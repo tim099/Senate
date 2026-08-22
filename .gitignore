@@ -30,3 +30,15 @@ senate.local.json
 
 ### ImGui 視窗佈局（使用者自己拖出來的，屬於這台機器的偏好）
 imgui.ini
+
+### 一鍵 build 的產物（repo 根的執行檔）
+/senate.exe
+
+### 一鍵 build 的產物
+/senate.cmd
+/senate
+
+### 一鍵 build 的產物（根層執行檔與原生 DLL）
+/senate.exe
+/cimgui.dll
+/glfw3.dll

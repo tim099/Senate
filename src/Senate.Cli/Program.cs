@@ -17,8 +17,18 @@ public static class Program
     public static int Main(string[] iArgs)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        string aCmd = iArgs.Length > 0 ? iArgs[0].ToLowerInvariant() : "doctor";
         string aRepoRoot = RepoRoot();
+
+        // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
+        //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
+        //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
+        if (iArgs.Length == 0 && ConsoleHost.LaunchedFromExplorer())
+        {
+            ConsoleHost.HideConsoleWindow();
+            return CmdUi(aRepoRoot, new[] { "ui", "--window" });
+        }
+
+        string aCmd = iArgs.Length > 0 ? iArgs[0].ToLowerInvariant() : "doctor";
 
         try
         {
@@ -275,6 +285,7 @@ public static class Program
         if (iError != null) Console.Error.WriteLine($"✗ {iError}");
         Console.WriteLine("""
             senate <command>
+              （不給指令 ＝ doctor；**從檔案總管雙擊 ＝ 直接開 GUI 視窗**）
 
               init                建立 senate.local.json（樣板：config/senate.local.example.json；已存在則不覆寫）
               doctor              印出環境與各專案的讀數（唯讀）。exit 1 ＝ 有項目不通過

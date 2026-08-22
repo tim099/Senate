@@ -1,43 +1,76 @@
 # Senate
 
-跨專案的 agent 後台 —— **不依賴 Unity**。用設定檔關聯到各個專案，所以同一套系統可以同時管多個 repo。
+**Senate 是一套後台工具**，用來管理你電腦上的多個專案 —— 例如自動把改動存檔（commit）、看各專案現在的狀態。
 
-Unity Editor 在這個架構裡從「宿主」降級成「其中一個 client」：只有真的需要 Editor API 的事
-（asset / build / compile）留在 Unity，其餘（git 自動提交、帳本、訊息、排程）由本系統做，
-**Editor 關著也照樣能跑**。
+它跟 Unity 是分開的：**Unity 關著的時候它照樣能做事。**
 
-## 一鍵配置
+---
 
-clone 完只要跑這一支（會檢查前置 → build → 建立本機設定 → 印讀數）：
+## 安裝（第一次才需要）
+
+需要先裝好兩樣東西：
+
+| 要裝什麼 | 從哪裡拿 |
+|---|---|
+| .NET 10 SDK | <https://dotnet.microsoft.com/download> |
+| Git（2.25 以上） | <https://git-scm.com/download/win> |
+
+裝好之後，在 Senate 這個資料夾裡執行：
 
 ```powershell
-./setup.ps1
+.\setup.ps1
 ```
 
-Git Bash / Linux / macOS：
+它會自己檢查東西齊不齊、編譯一次，然後幫你建立設定檔。**畫面最後會印一張表**，
+每一列後面有 `✓` 就是那一項沒問題。
 
-```bash
-./setup.sh
+> 用 Git Bash 的話跑 `./setup.sh`，效果一樣。
+
+---
+
+## 打包（改過程式之後跑一次）
+
+```powershell
+.\build.ps1
 ```
 
-前置只有兩樣：**.NET 10 SDK** 與 **git ≥ 2.25**（`--pathspec-from-file` 需要）。
-兩支腳本刻意只做編排，所有判斷都在 `senate doctor` 裡 —— 檢查邏輯寫在腳本裡就會變成兩份會漂的實作。
+跑完你會在 Senate 資料夾裡看到 **`senate.exe`** —— 那就是執行檔（旁邊那兩顆 `cimgui.dll` / `glfw3.dll` 是它要用的，別刪）。
 
-## 指令
+build 的最後會**自己試跑一次、也自己開一次視窗**確認真的能用；
+有問題它會直接說是哪一格，不會只印「成功」。
 
-| 指令 | 做什麼 |
+---
+
+## 開啟畫面
+
+```powershell
+.\senate.exe ui --window
+```
+
+會跳出一個深色的視窗，裡面是各專案的狀態表。**關掉視窗就結束。**
+
+視窗裡的兩顆按鈕：
+
+| 按鈕 | 做什麼 |
 |---|---|
-| `senate init` | 從 `config/senate.local.example.json` 建立 `senate.local.json`（**已存在則不覆寫**），接著跑 doctor |
-| `senate doctor` | 印環境與各專案的讀數（唯讀）。exit 1 ＝ 有啟用中的項目不通過 |
-| `senate ui --click <id>` | 把後台頁輸出成純文字；`--click` 模擬按下某顆鈕（**沒有視窗也能驗互動**） |
+| 重新取讀數 | 重新去看各專案現在的狀態（標題的「第 N 次」會加一） |
+| 開啟設定檔 | 用系統預設的編輯器打開設定檔 |
 
-```bash
-dotnet run --project src/Senate.Cli -- doctor
+---
+
+## 不開視窗也能看
+
+```powershell
+.\senate.exe doctor
 ```
 
-## 設定：專案關聯
+同一份內容，直接印在終端機裡（適合貼給別人看、或放進自動化流程）。
 
-`senate.local.json`（**不入版控**，因為它有機器絕對路徑；樣板在 `config/`）：
+---
+
+## 設定要管哪些專案
+
+編輯 Senate 資料夾裡的 **`senate.local.json`**（`setup` 會幫你建好一份範本）：
 
 ```jsonc
 {
@@ -48,60 +81,30 @@ dotnet run --project src/Senate.Cli -- doctor
 }
 ```
 
-- `agentCommandsRoot: "auto"` → 先讀 `<root>/.agentcommands_root.local` pointer 檔，沒有就用 `<root>/AgentCommands`。
-  **只有這兩個位置，不猜第三個** —— 猜錯的症狀是寫進另一棵資料樹而且不報錯。
-- `enabled: false` 的專案仍留在清單裡並顯示為「停用」：「我關掉它」與「我沒設定過它」是兩件事。
+| 欄位 | 意思 |
+|---|---|
+| `name` | 你自己看的名字（會出現在畫面上） |
+| `root` | 專案資料夾的完整路徑（用 `/` 或 `\\`） |
+| `agentCommandsRoot` | 填 `"auto"` 就好，它會自己找 |
+| `enabled` | `false` ＝ 暫時不管這個專案（**還是會列出來，標成「停用」**） |
 
-## 架構
+> 這個檔案裡有你電腦的路徑，所以**不會**被上傳到 GitHub。要分享設定請改 `config/senate.local.example.json`。
 
-```
-src/
-├── Senate.Core/   資料與外部世界（設定、git CLI、專案探測）。零 UI 依賴
-├── Senate.Gui/    UI 中間層 —— immediate-mode 撰寫 API → 節點樹 → renderer
-└── Senate.Cli/    headless 入口 ＋ 後台頁面
-```
+---
 
-### UI 為什麼分中間層
+## 遇到問題
 
-撰寫端是 `GUILayout` 手感（一頁一個方法、從上往下寫、按鈕回傳值就是事件），但那些呼叫**不直接畫像素**，
-而是長出一棵節點樹；再由 renderer 決定畫成什麼：
+| 畫面上寫什麼 | 意思 / 怎麼處理 |
+|---|---|
+| `路徑不存在` | 設定檔裡的 `root` 打錯，或那個資料夾被搬走了 |
+| `非 git repo` | 那個資料夾不是 git 專案 |
+| `⚠ N 已 staged` | 你自己先把檔案加進待提交清單了 ⇒ 自動提交會**跳過**這個專案，先自己提交或取消 |
+| `Editor 在跑` | Unity 開著，自動提交會讓 Unity 那邊做，Senate 不動它 |
+| `⚠ 找不到中文字型` | 視窗裡的中文會變方塊（不是壞了，是這台機器沒有那顆字型） |
+| `✗ 開窗失敗` | 這台機器沒有桌面環境（例如遠端連線）⇒ 用上面「不開視窗也能看」那招 |
 
-```csharp
-void Draw(Ui g)
-{
-    g.Title("問題回報管理");
-    using (g.Row())
-    {
-        m_Filter = g.TextField("篩選", m_Filter);
-        if (g.Button("重新載入", "bug/reload")) Reload();
-    }
-}
-```
+---
 
-- **`GuiTextRenderer`（已可用）** → 純文字。UI 於是能 diff、能快照測試、能貼進聊天室給人看
-- **ImGui renderer（未做）** → 原生視窗，頁面碼一行都不用改
-- 之後要換 HTML／Blazor 也只是第三個 renderer
+## 給開發／維護的人
 
-⇒ 這一層的價值不是「換畫布方便」，是**UI 有讀數可以對**，不用「看起來對」。
-
-### 幾條不打算讓步的規矩
-
-- **id 用資料鍵，不用呼叫順序**。順序推導的 id 在清單增刪時會漂，而漂掉不報錯 ——
-  只會讓勾選／滾動／focus 跑到別人身上。撞名退回序號時會記進 `Ui.Diagnostics`，讓它看得見。
-- **git 一律呼叫真的 `git.exe`**（不用 libgit2 綁定）：`.gitignore` 邊界、submodule、CRLF、hooks
-  換一套實作就有差異，而那種差異不報錯。所有呼叫釘 `-c core.quotepath=false`
-  （否則非 ASCII 路徑會印成八進位轉義，比對時每個中文檔名都會被判成不一樣）。
-- **兩態不得同形**：「沒設定」／「設定了但不存在」／「可用」是三個狀態，不准壓成「不可用」。
-- **摘要只能宣告它真的檢查過的東西**（停用的專案不計入通過，就要說出跳過幾個）。
-
-## 產物與版控
-
-`bin/` `obj/` `build/` 全部不入版控 —— 其中 `obj/project.assets.json` 與 `*.nuget.g.props`
-帶有 `packageFolders = C:\Users\<你>\.nuget\packages\`，那是**這台機器**的 NuGet 快取位置。
-它是 restore 產物，不是設定：進了版控就是每個人每次 commit 都帶一筆假 diff。
-
-## 進行中
-
-- [ ] `senate autocommit scan|commit` —— 第一個實用功能（Editor 關著也能收檔）
-- [ ] ImGui renderer（`--ui`）＋ CJK 字型與 IME 實測
-- [ ] 表格 renderer 尚未吃 `--width`（欄寬取自然寬度，窄視窗會超出）
+程式架構、設計決定、指令完整清單、設定檔規格 → **[`Docs/DOC_INDEX.md`](Docs/DOC_INDEX.md)**

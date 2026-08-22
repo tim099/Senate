@@ -1,0 +1,27 @@
+# 區塊職責：釘住各類型檔案的行尾，讓 clone 出來的東西真的能跑。
+# 物理意義：🩸 這台機器 core.autocrlf 會把 checkout 的檔轉成 CRLF ——
+#           而 shell script 的 shebang 變成 `#!/usr/bin/env sh\r` 就會得到
+#           `bad interpreter: No such file or directory`。
+#           ⚠ 在**我這台**不會發生（工作區的檔是我用 LF 寫的），
+#           只有「clone 一份新的」才會現形 ⇒ 這種錯天生會躲過作者的測試。
+# 數值影響：純 checkout 行為，不改檔案內容語意。
+
+* text=auto
+
+# sh 一定要 LF（見上）
+*.sh text eol=lf
+
+# Windows 這邊反過來要 CRLF
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# ⚠ .ps1 的 UTF-8 BOM 是**內容**不是行尾，git 會照原樣存 ——
+#   但別用工具「幫忙」去 BOM：PowerShell 5.1 沒 BOM 會用 ANSI 讀，中文直接壞（見 Docs/Logs/Decisions.md D10）。
+
+# 二進位（別讓 git 動它們）
+*.png binary
+*.ttf binary
+*.ttc binary
+*.dll binary
+*.exe binary

@@ -2,7 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Senate.Core\Senate.Core.csproj" />
-    <ProjectReference Include="..\Senate.Ui\Senate.Ui.csproj" />
     <ProjectReference Include="..\Senate.Desktop\Senate.Desktop.csproj" />
   </ItemGroup>
 

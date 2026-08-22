@@ -1,4 +1,4 @@
-# 一鍵配置（Windows / PowerShell）—— clone 完只要跑這一支。
+﻿# 一鍵配置（Windows / PowerShell）—— clone 完只要跑這一支。
 #
 # 區塊職責：檢查前置、build、產生本機設定、印讀數。
 # 物理意義：這支腳本刻意**只做編排**，所有判斷都在 `senate doctor` 裡（C#）——
@@ -7,6 +7,7 @@
 # 數值影響：不覆寫既有的 senate.local.json（那是 init 的保證，不是這裡的）。
 
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $root = $PSScriptRoot
 
 Write-Host '── Senate 一鍵配置 ─────────────────────────────'
