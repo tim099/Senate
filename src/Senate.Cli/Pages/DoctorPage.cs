@@ -5,24 +5,22 @@
 //           ③ 沒有視窗也能驗收 UI —— 文字輸出可以 diff、可以貼給人看
 // 數值影響：唯讀。它不改任何設定，也不動任何 repo 的 index。
 using Senate.Core;
-using Senate.Gui;
+using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
 
 public sealed class DoctorPage
 {
-    readonly EnvReading m_Env;
-    readonly IReadOnlyList<ProjectReading> m_Projects;
+    readonly DoctorModel m_Model;
 
-    public DoctorPage(EnvReading iEnv, IReadOnlyList<ProjectReading> iProjects)
-    {
-        m_Env = iEnv;
-        m_Projects = iProjects;
-    }
+    public DoctorPage(DoctorModel iModel) { m_Model = iModel; }
 
-    public void Draw(Ui g)
+    EnvReading m_Env => m_Model.Env;
+    IReadOnlyList<ProjectReading> m_Projects => m_Model.Projects;
+
+    public void Draw(SCP_Ui g)
     {
-        g.Title("Senate 環境檢查");
+        g.Title($"Senate 環境檢查（第 {m_Model.RefreshCount} 次取讀數）");
 
         using (g.Box("執行環境"))
         {
@@ -83,9 +81,24 @@ public sealed class DoctorPage
         g.Space();
         using (g.Row())
         {
-            if (g.Button("重新取讀數", "doctor/refresh")) { /* renderer 端接：重跑 probe */ }
-            if (g.Button("開啟設定檔", "doctor/open-config")) { }
+            // 按鈕的回傳值就是事件（GUILayout 語意）—— 這裡真的做事，不是裝飾
+            if (g.Button("重新取讀數", "doctor/refresh")) m_Model.Refresh();
+            if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
         }
+    }
+
+    void OpenConfig()
+    {
+        // 開檔案總管／預設編輯器。⚠ headless 環境會失敗 —— 失敗要說出來，不要當作按了沒事
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = m_Env.ConfigPath,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception e) { Console.Error.WriteLine($"⚠ 開啟設定檔失敗：{e.Message}"); }
     }
 
     static string StateText(ProbeState s) => s switch

@@ -7,7 +7,8 @@
 //   2 = 用法錯誤（未知指令）   3 = 設定檔存在但內容壞了
 using Senate.Cli.Pages;
 using Senate.Core;
-using Senate.Gui;
+using SCP.Core.Gui;
+using Senate.Desktop;
 
 namespace Senate.Cli;
 
@@ -68,10 +69,11 @@ public static class Program
     // ── senate doctor ─────────────────────────────────────────
     static int CmdDoctor(string iRepoRoot, string[] iArgs)
     {
-        var (aEnv, aProjects, aCfgBroken) = Collect(iRepoRoot);
-        var aUi = new Ui();
-        new DoctorPage(aEnv, aProjects).Draw(aUi);
-        Console.Write(GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
+        var aModel = new DoctorModel(iRepoRoot);
+        var (aEnv, aProjects, aCfgBroken) = (aModel.Env, aModel.Projects, aModel.ConfigBroken);
+        var aUi = new SCP_Ui();
+        new DoctorPage(aModel).Draw(aUi);
+        Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
 
         foreach (string d in aUi.Diagnostics) Console.Error.WriteLine($"⚠ gui: {d}");
 
@@ -93,13 +95,112 @@ public static class Program
     //           於是互動也有讀數可驗，不是只有靜態畫面。
     static int CmdUi(string iRepoRoot, string[] iArgs)
     {
+        bool aWindow = HasFlag(iArgs, "--window");
+        string? aShot = ArgValue(iArgs, "--screenshot");
+        if (aWindow || aShot != null) return RunWindow(iRepoRoot, iArgs, aShot);
+
+        int aWidth = Width(iArgs);
+        var aState = UiDriver.Load(iRepoRoot);
+
+        if (HasFlag(iArgs, "--reset"))
+        {
+            aState = new SCP_GuiState();
+            UiDriver.Save(iRepoRoot, aState);
+            Console.WriteLine("・session 已清空（欄位與勾選回到頁面預設）");
+        }
+
+        var aModel = new DoctorModel(iRepoRoot);
+
+        // 先畫一趟拿到當前的樹（用來驗 id 是否存在）—— 對不存在的 id 下指令必須擋下
+        var (aProbeTree, _) = UiDriver.Apply(aModel, aState, null, aWidth);
+
         string? aClick = ArgValue(iArgs, "--click");
-        var (aEnv, aProjects, _) = Collect(iRepoRoot);
-        var aInput = new GuiInput { ClickedId = aClick };
-        var aUi = new Ui(aInput);
-        new DoctorPage(aEnv, aProjects).Draw(aUi);
-        Console.Write(GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
-        if (aClick != null) Console.WriteLine($"（模擬點擊：{aClick}）");
+        string? aSet = ArgValue(iArgs, "--set");
+        string? aToggle = ArgValue(iArgs, "--toggle");
+
+        foreach (string? aId in new[] { aClick, aToggle })
+        {
+            if (aId == null) continue;
+            if (SCP_GuiQuery.Find(aProbeTree, aId) == null)
+            {
+                Console.Error.WriteLine($"✗ 畫面上沒有這個 id：{aId}");
+                Console.Error.WriteLine("  用 `senate ui --list` 看目前有哪些可互動元件。");
+                return 2;   // 靜默失敗會讓「按了沒反應」與「按錯了」同形
+            }
+        }
+
+        if (aSet != null)
+        {
+            int eq = aSet.IndexOf('=');
+            if (eq <= 0) { Console.Error.WriteLine("✗ --set 的格式是 <id>=<值>"); return 2; }
+            string aSetId = aSet.Substring(0, eq);
+            string aVal = aSet.Substring(eq + 1);
+            if (SCP_GuiQuery.Find(aProbeTree, aSetId) == null)
+            {
+                Console.Error.WriteLine($"✗ 畫面上沒有這個 id：{aSetId}（`senate ui --list` 看清單）");
+                return 2;
+            }
+            aState.Fields[aSetId] = aVal;
+            Console.WriteLine($"・已設定 {aSetId} = {aVal}");
+        }
+
+        if (aToggle != null)
+        {
+            var aElem = SCP_GuiQuery.Find(aProbeTree, aToggle);
+            bool aOld = aState.Toggles.TryGetValue(aToggle, out bool v) ? v : (aElem?.On ?? false);
+            aState.Toggles[aToggle] = !aOld;
+            Console.WriteLine($"・已切換 {aToggle}：{aOld} → {!aOld}");
+        }
+
+        var (aTree, aText) = UiDriver.Apply(aModel, aState, aClick, aWidth);
+        UiDriver.Save(iRepoRoot, aState);
+
+        if (HasFlag(iArgs, "--list")) { Console.Write(UiDriver.ListElements(aTree, aWidth)); return 0; }
+        if (HasFlag(iArgs, "--json")) { Console.WriteLine(SCP_GuiQuery.ToJson(aTree).ToJson()); return 0; }
+
+        Console.Write(aText);
+        if (aClick != null) Console.WriteLine($"（已按下：{aClick}）");
+        return 0;
+    }
+
+    // ── senate ui --window / --screenshot <path> ──────────────
+    // 物理意義：**同一份頁面碼**餵給 ImGui renderer —— 頁面一行都沒改。
+    //           --screenshot 是給沒有眼睛的人（CI／agent）用的驗收出口：
+    //           原生視窗拍不到就沒有讀數，而「中文變方塊」這種事不會報錯。
+    static int RunWindow(string iRepoRoot, string[] iArgs, string? iShot)
+    {
+        var aModel = new DoctorModel(iRepoRoot);   // 讀數在開窗前取好（探測不可以每幀跑）
+        var aPage = new DoctorPage(aModel);
+
+        var aWin = new SenateWindow("Senate", input =>
+        {
+            var aUi = new SCP_Ui(input);
+            aPage.Draw(aUi);
+            return aUi.Root;
+        });
+
+        if (SenateWindow.FindCjkFont() == null)
+            Console.WriteLine("⚠ 找不到中文字型 —— 中文會顯示為方塊（不是字型壞了，是沒載到）");
+
+        try
+        {
+            aWin.Run(iShot);
+            Console.WriteLine($"字型：{aWin.LoadedFonts}");
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"✗ 開窗失敗：{e.GetType().Name}: {e.Message}");
+            Console.Error.WriteLine("  這台機器有桌面 session 嗎？headless 環境請用 `senate ui`（純文字）。");
+            return 1;
+        }
+
+        if (iShot != null)
+        {
+            bool aOk = File.Exists(iShot);
+            long aSize = aOk ? new FileInfo(iShot).Length : 0;
+            Console.WriteLine(aOk ? $"✓ 截圖已落檔：{iShot}（{aSize} bytes）" : $"✗ 截圖沒有落檔：{iShot}");
+            return aOk ? 0 : 1;
+        }
         return 0;
     }
 
@@ -108,10 +209,9 @@ public static class Program
     //           那些檔是 Unity 端寫出來的，所以驗收方式是拿真檔案去跑，不是自己造樣本。
     static int CmdSelfTest(string iRepoRoot, string[] iArgs)
     {
-        var (_, aProjects, _) = Collect(iRepoRoot);
-        var aRows = SelfTest.Run(aProjects);
+        var aRows = SelfTest.Run(new DoctorModel(iRepoRoot).Projects);
 
-        var aUi = new Ui();
+        var aUi = new SCP_Ui();
         aUi.Title("SCP_Core 自我對拍");
         using (aUi.Table("項目", "讀數", "判定"))
         {
@@ -123,7 +223,7 @@ public static class Program
                     _ => "— 跳過",
                 });
         }
-        Console.Write(GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
+        Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
 
         int aFail = aRows.Count(r => r.Result == CheckResult.Fail);
         int aSkip = aRows.Count(r => r.Result == CheckResult.Skipped);
@@ -135,30 +235,6 @@ public static class Program
     }
 
     // ── 讀數收集 ──────────────────────────────────────────────
-    static (EnvReading, List<ProjectReading>, bool) Collect(string iRepoRoot)
-    {
-        string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
-        bool aBroken = false;
-        SenateConfig? aCfg = null;
-        try { aCfg = SenateConfig.Load(aCfgPath); }
-        catch (InvalidDataException e) { aBroken = true; Console.Error.WriteLine($"✗ {e.Message}"); }
-
-        var aEnv = new EnvReading(
-            DotnetCli.SdkVersion(),
-            DotnetCli.RuntimeVersion,
-            GitCli.Version(),
-            aCfgPath,
-            File.Exists(aCfgPath));
-
-        var aList = new List<ProjectReading>();
-        if (aCfg != null)
-        {
-            foreach (string err in aCfg.Validate()) Console.Error.WriteLine($"⚠ 設定：{err}");
-            foreach (var p in aCfg.Projects) aList.Add(ProjectProbe.Probe(p));
-        }
-        return (aEnv, aList, aBroken);
-    }
-
     // ── 雜項 ──────────────────────────────────────────────────
     /// <summary>
     /// repo 根：從執行檔往上找第一個含 `.git` 的目錄；找不到就用當前目錄。
@@ -176,7 +252,13 @@ public static class Program
     }
 
     static int Width(string[] iArgs)
-        => int.TryParse(ArgValue(iArgs, "--width"), out int w) && w >= 40 ? w : GuiTextRenderer.DefaultWidth;
+        => int.TryParse(ArgValue(iArgs, "--width"), out int w) && w >= 40 ? w : SCP_GuiTextRenderer.DefaultWidth;
+
+    static bool HasFlag(string[] iArgs, string iName)
+    {
+        foreach (string a in iArgs) if (string.Equals(a, iName, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
 
     static string? ArgValue(string[] iArgs, string iName)
     {
@@ -196,7 +278,15 @@ public static class Program
 
               init                建立 senate.local.json（樣板：config/senate.local.example.json；已存在則不覆寫）
               doctor              印出環境與各專案的讀數（唯讀）。exit 1 ＝ 有項目不通過
-              ui [--click <id>]   把後台頁面輸出成純文字；--click 模擬按下某顆鈕（無視窗也能驗互動）
+              ui                  把後台頁面輸出成純文字
+                --list            列出畫面上所有可互動元件（id / 類型 / 現值 / 怎麼操作）
+                --click <id>      按下某顆鈕（會實際跑該頁的 handler）
+                --set <id>=<值>   填欄位（跨次記住，存在 build/ui_session.json）
+                --toggle <id>     切換勾選
+                --reset           清空 session
+                --json            整棵畫面樹輸出成 JSON（給程式讀）
+              ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
+              ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 
             共用選項：--width <n>   文字輸出寬度（預設 96）
