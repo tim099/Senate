@@ -1,0 +1,3 @@
+[submodule "SCP_Core"]
+	path = SCP_Core
+	url = https://github.com/tim099/SCP_Core.git
