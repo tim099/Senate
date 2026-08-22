@@ -1,0 +1,23 @@
+<!--
+  區塊職責：全 solution 共用的編譯設定（TFM / 語言選項）。
+  物理意義：每個 csproj 各寫一份的話，遲早有一個檔案漂掉，而漂掉的症狀是
+            「同一個 solution 裡兩個專案的 nullable 行為不同」—— 兩邊都不報錯。
+  數值影響：純建置設定，不影響執行期行為。
+  ⚠ 刻意**不改** bin/obj 的位置：BaseIntermediateOutputPath 要在 NuGet targets 之前生效，
+    改它能動但會在 restore 邊界長出難查的怪事。集中產物省下的只是 .gitignore 兩行。
+-->
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+
+    <!-- nullable 開著，且 null 相關警告當錯誤 ——
+         這個系統要治的病有一大族是「不存在被印成 0 / 空」，
+         那族在 C# 裡的第一道防線就是 nullable 分析。當警告等於沒開。 -->
+    <Nullable>enable</Nullable>
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

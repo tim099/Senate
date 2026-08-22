@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Senate.Cli/Senate.Cli.csproj" />
+    <Project Path="src/Senate.Core/Senate.Core.csproj" />
+    <Project Path="src/Senate.Gui/Senate.Gui.csproj" />
+  </Folder>
+</Solution>
