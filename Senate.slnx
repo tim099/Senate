@@ -4,4 +4,7 @@
     <Project Path="src/Senate.Core/Senate.Core.csproj" />
     <Project Path="src/Senate.Gui/Senate.Gui.csproj" />
   </Folder>
+  <Folder Name="/submodule/">
+    <Project Path="SCP_Core/SCP_Core.csproj" />
+  </Folder>
 </Solution>
