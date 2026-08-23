@@ -138,6 +138,78 @@ SCP_GuiPage（abstract）
 
 ---
 
+## 摺疊：狀態是資料，不是 renderer 的內部秘密
+
+```csharp
+using (var aFold = g.Fold("執行環境", "doctor/env"))
+    if (aFold.Open) { …畫內容… }        // ⚠ 收合時不要建子節點
+```
+
+| 判準 | 為什麼 |
+|---|---|
+| 摺疊狀態住在 `SCP_GuiInput.Folds` / `SCP_GuiState.Folds`（存 session） | 讓 ImGui 自己記的話，狀態在它的 id 空間裡 —— 頁面／CLI／session 都讀不到，於是「我摺起來的東西」換個驅動方式就散了 |
+| 收合時**子節點根本不建** | 畫了再隱藏等於沒摺：深樹照樣付整棵的錢，而且文字模式會印出「看不見的內容」 |
+| `Folds` 跟 `Toggles` **分開** | 摺疊是看畫面的人的偏好，勾選是資料。混在一起「我把區塊收起來」會被存成一筆資料修改，然後出現在 diff 裡 |
+| 可摺疊的框進 `--list`（`HowTo` ＝ `--fold <id>`） | 看不見畫面的人要知道「有東西被收起來」，否則那段內容在他眼裡等於不存在 |
+| 文字模式畫 `▼` / `▶` | 沒有標記的話「收起來了」與「裡面是空的」長得一模一樣 |
+
+⚠ 視窗那側**慢一幀**：這一幀點開的區塊，內容要等下一幀頁面重畫才會有
+（子節點在收合時沒被建出來 —— 那正是它省事的原因）。
+
+## 版位：欄位名稱在左邊
+
+ImGui 原生把 label 畫在控件**右邊**，一排欄位下來眼睛要左右跳。
+`GuiImGuiRenderer.LabelLeft` 把它挪到左邊並對齊到 `SCP_GuiStyle.LabelWidth`（基準 150 × scale）。
+⚠ 標籤比欄寬長時**不裁字、直接推開** —— 裁掉的字不會報錯，只會讓人讀不懂那一格是什麼
+（現況：`AgentCommandsRoot` 這種長名字會把自己的輸入框推右邊，這是已知取捨）。
+文字 renderer 本來就是 `名稱: ⟨值⟩`，兩側一致。
+
+---
+
+## 自動繪製與自動序列化（反射三層）
+
+```
+SCP_Reflect（快取層 —— 唯一入口）
+  ├── SchemaOf(type)      ← 型別 → 成員描述（快取；immediate mode 每幀都要，不能每次重掃）
+  ├── AllTypes / TypeByFullName / ResolveTypes(name)   ← 撞名時回全部，不自動挑第一個
+  ├── TryParse(type, text, allowNull, out value, out err)   ← 字串 → 值（invariant）
+  ├── TryCreate(type, out err) / ClearCache() / Describe()
+  ▼
+SCP_TypeSchema ＋ SCP_MemberSchema（描述層 —— 兩個消費端共用同一份分類）
+  ├── SCP_ValueKind：Bool / Integer / Decimal / Text / Choice / Nested / ListOf / MapOf / Unsupported
+  ├── Get(owner) / TrySet(owner, value, out err) / CanWrite / IsNullable / ElementType
+  └── [SCP_Ignore] 兩邊都跳過
+  ▼                                    ▼
+SCP_JsonMapper（物件 ↔ SCP_JsonData）   SCP_GuiInspector（物件 ↔ 畫面）
+  ToJson / Populate / Create             Draw(ui, target, key) → { Changed, Notes }
+```
+
+⭐ **為什麼要有中間那層**：序列化與繪製各自判斷「這個成員是數字還是清單」的話，
+遲早出現**畫得出來但存不進去**（或反過來）—— 而那不會報錯，只會有一個欄位改了之後回不來。
+⇒ 分類只有一份，兩邊都吃它。以後型別加一個欄位，設定頁**一行都不用改**就會出現。
+
+| 判準 | 而不是 |
+|---|---|
+| 不支援的成員**留在清單裡並帶原因**（畫面上一行灰字、JSON 那側進 Diagnostics） | 靜默略過 —— 消失的欄位讓人以為資料本來就沒有那一格 |
+| 讀取端：JSON 缺 key ⇒ **保留物件現值** | 寫 0／null —— 「沒設過」與「設成 0」不得同形 |
+| 型別不合 ⇒ 不寫入 ＋ 記一筆 | 盡力而為的轉換（`"abc"` → `0` 比整筆失敗難查十倍） |
+| 打錯字 ⇒ 不寫入、**不清掉使用者打的字**，畫一行「現值還是 X」 | 靜默還原 —— 「我打了字它自己跳回去」找不到人問 |
+| struct 成員改完**寫回去** | 就地改 —— 值型別是複本，不寫回等於沒改而且不報錯 |
+| 循環參考／超過深度 ⇒ 停手並記一筆 | 遞迴到 stack overflow（崩潰訊息不會說是哪個欄位） |
+| 介面／抽象成員 ⇒ Unsupported | 猜實作型別 —— 猜錯的症狀是「存進去的是另一個型別的資料」 |
+
+⚠ **已知邊界**（都寫在 `UnsupportedReason` 裡，不是漏看）：陣列（長度變更要重建實例，用 `List<T>`）、
+非 string key 的字典、非 `List<T>` 的序列、多型（沒有型別標記）、private 成員（**刻意**不收：
+預設把別人的內部狀態攤到畫面上並存進 JSON 是不可逆的決定）。
+
+⚠ **清單項目的 id 是索引** ⇒ 增刪之後後面每一項的 id 都位移（欄位值可能跟到隔壁）。
+本層沒有穩定的項目鍵可用，所以**畫一行警告**而不是假裝沒事；字典用 key 當 id，沒有這個問題。
+
+Senate 的第一個消費者是 `SettingsPage`（`ui --click doctor/open-settings`）——
+那一頁沒有一行欄位碼。
+
+---
+
 ## 顯示參數：`SCP_GuiStyle`（尺寸／間距／字級／顏色的單一來源）
 
 ```

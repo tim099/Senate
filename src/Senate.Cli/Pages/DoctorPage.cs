@@ -92,6 +92,7 @@ public sealed class DoctorPage : SCP_GuiPage
             if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
             // 導覽：push 一頁上去（返回鈕由 controller 自己畫，id 固定 page/back）
             if (g.Button("介面尺寸…", "doctor/open-style")) Controller?.Push(new StylePage(m_Model));
+            if (g.Button("設定…", "doctor/open-settings")) Controller?.Push(new SettingsPage(m_Model));
         }
     }
 

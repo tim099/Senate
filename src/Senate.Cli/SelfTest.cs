@@ -7,6 +7,7 @@
 using Senate.Core;
 using SCP.Core.Gui;
 using SCP.Core.Json;
+using SCP.Core.Reflect;
 
 namespace Senate.Cli;
 
@@ -24,6 +25,10 @@ public static class SelfTest
         aRows.Add(ConfigRoundTripKeepsUnknownKeys());
         aRows.Add(StyleRoundTrip());
         aRows.Add(PageStack());
+        aRows.Add(TypeSchemaShape());
+        aRows.Add(MapperRoundTrip());
+        aRows.Add(InspectorEdits());
+        aRows.Add(FoldSemantics());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         return aRows;
     }
@@ -116,6 +121,202 @@ public static class SelfTest
         return new CheckRow("頁面堆疊",
             $"只畫最上頁={aOnlyTop}／返回鈕={aBackExists}／同實例擋下={aDupBlocked}／nav 存讀={aNavOk}"
             + $"／生命週期順序={aLifecycle}（{string.Join(",", aLog)}）／未知 key 停手={aStopOnUnknown}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+
+
+    /// <summary>
+    /// 摺疊的語意：收合時**子節點不存在**（不是畫了再隱藏）、狀態由輸入決定、可存進 session、
+    /// 而且可摺疊的框要出現在「可互動元件」清單裡（看不見畫面的人才知道有東西被收起來）。
+    /// </summary>
+    static CheckRow FoldSemantics()
+    {
+        // ① 預設展開 ⇒ 內容在
+        var aOpenUi = new SCP_Ui();
+        DrawFoldProbe(aOpenUi);
+        string aOpenText = SCP_GuiTextRenderer.Render(aOpenUi.Root, 120);
+        bool aOpenOk = aOpenText.Contains("▼", StringComparison.Ordinal)
+                       && aOpenText.Contains("裡面的內容", StringComparison.Ordinal);
+
+        // ② 收合 ⇒ 內容**根本沒被建出來**（樹裡找不到，不是畫面上看不到）
+        var aInput = new SCP_GuiInput();
+        aInput.Folds["probe/box"] = false;
+        var aShutUi = new SCP_Ui(aInput);
+        DrawFoldProbe(aShutUi);
+        string aShutText = SCP_GuiTextRenderer.Render(aShutUi.Root, 120);
+        bool aShutOk = aShutText.Contains("▶", StringComparison.Ordinal)
+                       && !aShutText.Contains("裡面的內容", StringComparison.Ordinal);
+
+        // ③ 可摺疊的框要在可互動清單裡，而且 HowTo 是 --fold
+        var aElem = SCP_GuiQuery.Find(aOpenUi.Root, "probe/box");
+        bool aListed = aElem != null && aElem.HowTo == "--fold probe/box" && aElem.On;
+
+        // ④ session 存讀（摺疊是偏好，跟資料分開存）
+        var aState = new SCP_GuiState();
+        aState.Folds["probe/box"] = false;
+        var aBack = SCP_GuiState.FromJson(SCP_JsonData.Parse(aState.ToJson().ToJson()));
+        bool aPersisted = aBack.Folds.TryGetValue("probe/box", out bool aVal) && !aVal
+                          && aBack.ToInput(null).Folds["probe/box"] == false;
+
+        bool aOk = aOpenOk && aShutOk && aListed && aPersisted;
+        return new CheckRow("摺疊",
+            $"展開時內容在={aOpenOk}／收合時子節點不存在={aShutOk}／出現在可互動清單（--fold）={aListed}"
+            + $"／session 存讀={aPersisted}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    static void DrawFoldProbe(SCP_Ui iUi)
+    {
+        using (var aFold = iUi.Fold("探針區塊", "probe/box"))
+            if (aFold.Open) iUi.Label("裡面的內容");
+    }
+
+    // ── 反射三層（型別快取 / 自動序列化 / 自動繪製）────────────────
+    /// <summary>對拍用的探針型別 —— 刻意把「支援」與「不支援」的成員擺在一起。</summary>
+    sealed class ProbeConfig
+    {
+        public bool Flag = true;
+        public int Count = 3;
+        public float Ratio = 0.5f;
+        public string Name = "初值";
+        public SCP_GuiSize Size = SCP_GuiSize.Medium;
+        public List<string> Tags = new() { "a", "b" };
+        public Dictionary<string, int> Scores = new() { { "x", 1 } };
+        public ProbeChild Child = new();
+
+        public int[] Legacy = new int[0];                       // 不支援：陣列
+        public Dictionary<int, string> BadMap = new();          // 不支援：key 不是 string
+        [SCP_Ignore] public string Secret = "不該出現";
+        public string ReadOnlyProp => "唯讀";
+    }
+
+    sealed class ProbeChild
+    {
+        public int Depth = 1;
+        public string Note = "child";
+    }
+
+    /// <summary>schema 的分類要對，而且**不支援的成員要留在清單裡帶原因**（不是消失）。</summary>
+    static CheckRow TypeSchemaShape()
+    {
+        var aSchema = SCP_Reflect.SchemaOf(typeof(ProbeConfig));
+        SCP_MemberSchema? aFlag = aSchema.Find("Flag");
+        SCP_MemberSchema? aCount = aSchema.Find("Count");
+        SCP_MemberSchema? aTags = aSchema.Find("Tags");
+        SCP_MemberSchema? aScores = aSchema.Find("Scores");
+        SCP_MemberSchema? aLegacy = aSchema.Find("Legacy");
+        SCP_MemberSchema? aBadMap = aSchema.Find("BadMap");
+        SCP_MemberSchema? aReadOnly = aSchema.Find("ReadOnlyProp");
+
+        bool aKinds = aFlag?.Kind == SCP_ValueKind.Bool
+                      && aCount?.Kind == SCP_ValueKind.Integer
+                      && aSchema.Find("Ratio")?.Kind == SCP_ValueKind.Decimal
+                      && aSchema.Find("Name")?.Kind == SCP_ValueKind.Text
+                      && aSchema.Find("Size")?.Kind == SCP_ValueKind.Choice
+                      && aTags?.Kind == SCP_ValueKind.ListOf && aTags.ElementType == typeof(string)
+                      && aScores?.Kind == SCP_ValueKind.MapOf && aScores.ElementType == typeof(int)
+                      && aSchema.Find("Child")?.Kind == SCP_ValueKind.Nested;
+
+        // 不支援的要在、要有原因（消失的欄位會讓人以為資料本來就沒有那一格）
+        bool aUnsupportedListed = aLegacy?.Kind == SCP_ValueKind.Unsupported
+                                  && aLegacy.UnsupportedReason.Length > 0
+                                  && aBadMap?.Kind == SCP_ValueKind.Unsupported
+                                  && aBadMap.UnsupportedReason.Length > 0;
+
+        bool aIgnored = aSchema.Find("Secret") == null;
+        bool aReadOnlyOk = aReadOnly != null && !aReadOnly.CanWrite;
+        bool aCached = ReferenceEquals(aSchema, SCP_Reflect.SchemaOf(typeof(ProbeConfig)));
+
+        bool aOk = aKinds && aUnsupportedListed && aIgnored && aReadOnlyOk && aCached;
+        return new CheckRow("型別 schema",
+            $"分類={aKinds}／不支援有列且有原因={aUnsupportedListed}／[SCP_Ignore] 跳過={aIgnored}"
+            + $"／唯讀屬性 CanWrite=false={aReadOnlyOk}／快取同一份={aCached}（成員 {aSchema.Members.Count} 個）",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>自動序列化的三個性質：round-trip 一致／缺 key 保留原值／型別不合不寫入且留紀錄。</summary>
+    static CheckRow MapperRoundTrip()
+    {
+        var aSrc = new ProbeConfig
+        {
+            Flag = false, Count = 42, Ratio = 1.25f, Name = "改過的名字",
+            Size = SCP_GuiSize.XL,
+            Tags = new List<string> { "紅", "綠", "藍" },
+            Scores = new Dictionary<string, int> { { "甲", 7 }, { "乙", 8 } },
+            Child = new ProbeChild { Depth = 9, Note = "巢狀" },
+        };
+
+        var aWriteOpt = new SCP_JsonMapOptions();
+        string aJson = SCP_JsonMapper.ToJson(aSrc, aWriteOpt).ToJson();
+
+        // 不支援的成員必須出現在 Diagnostics（靜默略過才是 bug）
+        bool aNoted = aWriteOpt.Diagnostics.Exists(d => d.Contains("Legacy", StringComparison.Ordinal))
+                      && aWriteOpt.Diagnostics.Exists(d => d.Contains("BadMap", StringComparison.Ordinal));
+
+        var aDst = new ProbeConfig();
+        SCP_JsonMapper.Populate(aDst, SCP_JsonData.Parse(aJson));
+        bool aSame = aDst.Flag == aSrc.Flag && aDst.Count == aSrc.Count
+                     && Math.Abs(aDst.Ratio - aSrc.Ratio) < 0.0001f && aDst.Name == aSrc.Name
+                     && aDst.Size == aSrc.Size
+                     && string.Join(",", aDst.Tags) == "紅,綠,藍"
+                     && aDst.Scores.Count == 2 && aDst.Scores["乙"] == 8
+                     && aDst.Child.Depth == 9 && aDst.Child.Note == "巢狀";
+
+        // 缺 key ⇒ 保留原值（那是「沒設過」，不是 0）
+        var aKeep = new ProbeConfig { Count = 77 };
+        SCP_JsonMapper.Populate(aKeep, SCP_JsonData.Parse("{\"Name\":\"只給名字\"}"));
+        bool aKeptOld = aKeep.Count == 77 && aKeep.Name == "只給名字";
+
+        // 型別不合 ⇒ 不寫入、留一筆（"abc" → 0 比整筆失敗難查十倍）
+        var aBad = new ProbeConfig { Count = 5 };
+        var aReadOpt = new SCP_JsonMapOptions();
+        SCP_JsonMapper.Populate(aBad, SCP_JsonData.Parse("{\"Count\":\"abc\"}"), aReadOpt);
+        bool aRefused = aBad.Count == 5 && aReadOpt.Diagnostics.Count > 0;
+
+        bool aOk = aNoted && aSame && aKeptOld && aRefused;
+        return new CheckRow("自動序列化",
+            $"round-trip 一致={aSame}／不支援有記錄={aNoted}／缺 key 保留原值={aKeptOld}"
+            + $"／型別不合不寫入={aRefused}（{aJson.Length} 字元）",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>自動繪製要真的改到物件（不是只畫得出來），而解析不了的輸入不可以靜默寫入或清空。</summary>
+    static CheckRow InspectorEdits()
+    {
+        // ① 純畫一次：每個成員都要出現，不支援的也要出現
+        var aObj = new ProbeConfig();
+        var aUi = new SCP_Ui();
+        SCP_GuiInspector.Draw(aUi, aObj, "cfg");
+        string aText = SCP_GuiTextRenderer.Render(aUi.Root, 200);
+        bool aDrawn = aText.Contains("Flag", StringComparison.Ordinal)
+                      && aText.Contains("Size", StringComparison.Ordinal)
+                      && aText.Contains("Child", StringComparison.Ordinal)
+                      && aText.Contains("Legacy", StringComparison.Ordinal)      // 不支援也要看得到
+                      && !aText.Contains("Secret", StringComparison.Ordinal);    // [SCP_Ignore] 不該出現
+
+        // ② 餵輸入 ⇒ 物件要真的變（欄位、勾選、enum 按鈕、巢狀欄位各一格）
+        var aEdit = new ProbeConfig();
+        var aInput = new SCP_GuiInput { ClickedId = "cfg/Size=Small" };
+        aInput.Fields["cfg/Name"] = "被改過";
+        aInput.Fields["cfg/Child/Depth"] = "5";
+        aInput.Toggles["cfg/Flag"] = false;
+        var aUi2 = new SCP_Ui(aInput);
+        var aRes = SCP_GuiInspector.Draw(aUi2, aEdit, "cfg");
+        bool aWrote = aRes.Changed && aEdit.Name == "被改過" && !aEdit.Flag
+                      && aEdit.Child.Depth == 5 && aEdit.Size == SCP_GuiSize.Small;
+
+        // ③ 打錯字 ⇒ 不寫入、留一筆、現值不變
+        var aKeep = new ProbeConfig { Count = 3 };
+        var aBadInput = new SCP_GuiInput();
+        aBadInput.Fields["cfg/Count"] = "abc";
+        var aUi3 = new SCP_Ui(aBadInput);
+        var aRes3 = SCP_GuiInspector.Draw(aUi3, aKeep, "cfg");
+        bool aRefused = aKeep.Count == 3 && aRes3.Notes.Exists(n => n.Contains("cfg/Count", StringComparison.Ordinal));
+
+        bool aOk = aDrawn && aWrote && aRefused;
+        return new CheckRow("自動繪製",
+            $"成員都畫出來（含不支援、排除 Ignore）={aDrawn}／輸入寫進物件={aWrote}／打錯字不寫入且留紀錄={aRefused}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 

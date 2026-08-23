@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -56,6 +56,7 @@ SCP_Core 共用碼的自我對拍。目前三項：
 | `--click <id>` | 按下按鈕 —— **真的會跑該頁的 handler**（兩趟繪製，見下） |
 | `--set <id>=<值>` | 填欄位（跨次記住） |
 | `--toggle <id>` | 切換勾選（讀現值後反轉） |
+| `--fold <id>` | 摺疊／展開一個區塊。⚠ 收合時**內容不會被建出來**，所以 `--list` 也看不到那一段的欄位 |
 | `--json` | 整棵畫面樹輸出成 JSON（給程式讀；文字輸出是給人看的） |
 | `--reset` | 清空 session（欄位與勾選回到頁面預設） |
 | `--window` | 開原生 ImGui 視窗，關窗才結束 |
@@ -63,6 +64,7 @@ SCP_Core 共用碼的自我對拍。目前三項：
 | `--width <n>` | 文字輸出寬度（字元格，預設 96），`doctor` / `selftest` 也吃 ⚠ 不吃 `--scale` |
 | `--scale <x>` | 介面縮放（0.5〜4，預設 1.0）。**本次有效，不寫回設定檔** |
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |
+| `--page <key>` | （視窗模式）開窗直接停在某一頁：`doctor` / `style` / `settings`。認不得的 key **exit 2**，不會靜默開在首頁 |
 
 **介面尺寸**：常設值住在 `senate.local.json` 的 `ui` 區塊，改它走畫面上的按鈕
 （尺寸現在自己一頁，先 push 進去再按）：
@@ -72,6 +74,25 @@ SCP_Core 共用碼的自我對拍。目前三項：
 ./senate.exe ui --click style/big            # 存進設定檔（回讀確認後才說成功）
 ./senate.exe ui --click page/back            # 返回上一頁
 ```
+
+**設定頁（自動繪製）**：畫的是**整份 `senate.local.json`**，欄位由反射產生 ⇒ id 就是成員路徑：
+
+```bash
+./senate.exe ui --click doctor/open-settings   # 進設定頁
+./senate.exe ui --set settings/Ui/Scale=1.5    # 改值（只改草稿，不寫檔）
+./senate.exe ui --fold settings/Projects       # 把專案清單收起來
+./senate.exe ui --click settings/save          # 寫檔（Validate 過才寫，寫完回讀確認）
+./senate.exe ui --click settings/revert        # 重新讀檔，丟掉未存的改動
+```
+
+改了不存**不會**寫檔（刻意不自動存：打字打到一半就落地的字級可能讓人看不見還原按鈕）。
+存檔走 `SenateConfig.Save` ⇒ `"//"` 註解與未知欄位照樣保留（D12）——
+實測：改一個值存檔、改回來再存，檔案與原檔**逐字相同**。
+⚠ 設定檔壞掉時這一頁**不提供編輯**（不用空白頂上去 —— 那會讓「檔壞了」長得像「還沒設定」，
+而按下儲存就把壞掉的內容換成一份空的，不可逆）。
+
+**視窗那側的驗收**：`ui --screenshot <p> --page settings` 可以在沒有人點的情況下
+拍到指定頁面 —— 加這條旗標的理由就是「視窗裡的頁面本來只有人點得到，所以沒有讀數」。
 
 `--scale` / `--size` 刻意不寫回檔案 —— 一道旗標改掉持久設定，
 下一個沒帶旗標的人會拿到別人上一次的臨時值，而那不會報錯。

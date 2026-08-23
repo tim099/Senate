@@ -23,6 +23,7 @@ public static class SenatePages
         {
             case DoctorPage.PageKey: return new DoctorPage(iModel);
             case StylePage.PageKey: return new StylePage(iModel);
+            case SettingsPage.PageKey: return new SettingsPage(iModel);
             default: return null;
         }
     }

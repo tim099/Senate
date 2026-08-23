@@ -33,12 +33,17 @@ public sealed class GuiImGuiRenderer
     public Dictionary<string, string> Fields { get; } = new();
     public Dictionary<string, bool> Toggles { get; } = new();
 
+    /// <summary>摺疊狀態（Box id → 展開中嗎）。⚠ 不能靠 ImGui 自己記 ——
+    /// 它記在自己的 id 空間裡，頁面／CLI／session 都讀不到，於是「我摺起來的東西」換個驅動方式就散了。</summary>
+    public Dictionary<string, bool> Folds { get; } = new();
+
     /// <summary>把上一幀收集到的互動包成下一次 Draw 的輸入，並清掉一次性的點擊。</summary>
     public SCP_GuiInput TakeInput()
     {
         var aInput = new SCP_GuiInput { ClickedId = ClickedId };
         foreach (var kv in Fields) aInput.Fields[kv.Key] = kv.Value;
         foreach (var kv in Toggles) aInput.Toggles[kv.Key] = kv.Value;
+        foreach (var kv in Folds) aInput.Folds[kv.Key] = kv.Value;
         ClickedId = null;          // 點擊是事件，只送一次（不清會變成每幀都在按）
         return aInput;
     }
@@ -90,7 +95,9 @@ public sealed class GuiImGuiRenderer
             case SCP_GuiNodeKind.Toggle:
             {
                 bool aOn = Toggles.TryGetValue(iNode.Id, out bool v) ? v : iNode.On;
-                if (ImGui.Checkbox(iNode.Text + "##" + iNode.Id, ref aOn)) Toggles[iNode.Id] = aOn;
+                // 標籤畫在**左邊**：ImGui 原生把 label 放右邊，一排欄位下來眼睛要左右跳
+                LabelLeft(iNode.Text);
+                if (ImGui.Checkbox("##" + iNode.Id, ref aOn)) Toggles[iNode.Id] = aOn;
                 break;
             }
 
@@ -98,8 +105,9 @@ public sealed class GuiImGuiRenderer
             {
                 string aVal = Fields.TryGetValue(iNode.Id, out string? s) ? s : iNode.Value;
                 // ⚠ 中文輸入（IME）就是在這個控件上見真章 —— 字型有載到才看得見候選字上屏的結果。
+                LabelLeft(iNode.Text);
                 ImGui.SetNextItemWidth(m_Style.TextFieldWidth);
-                if (ImGui.InputText(iNode.Text + "##" + iNode.Id, ref aVal, 4096)) Fields[iNode.Id] = aVal;
+                if (ImGui.InputText("##" + iNode.Id, ref aVal, 4096)) Fields[iNode.Id] = aVal;
                 break;
             }
 
@@ -121,14 +129,34 @@ public sealed class GuiImGuiRenderer
 
             case SCP_GuiNodeKind.Box:
             {
-                // 有標題就用可摺疊區塊，沒標題就只縮排 —— 對應文字 renderer 的 ┌─┐ 框
+                // 沒標題就只縮排 —— 對應文字 renderer 的 ┌─┐ 框
                 if (string.IsNullOrEmpty(iNode.Text))
                 {
                     ImGui.Indent();
                     foreach (var c in iNode.Children) RenderNode(c);
                     ImGui.Unindent();
+                    break;
                 }
-                else if (ImGui.CollapsingHeader(iNode.Text, ImGuiTreeNodeFlags.DefaultOpen))
+
+                if (!iNode.Collapsible)
+                {
+                    if (ImGui.CollapsingHeader(iNode.Text, ImGuiTreeNodeFlags.DefaultOpen))
+                    {
+                        ImGui.Indent();
+                        foreach (var c in iNode.Children) RenderNode(c);
+                        ImGui.Unindent();
+                    }
+                    break;
+                }
+
+                // ⭐ 可摺疊的框：狀態**由頁面那邊給**（SetNextItemOpen），使用者點了就回報回去。
+                //   ⚠ 慢一幀：這一幀點開的東西，內容要等下一幀頁面重畫才會有
+                //   （子節點在收合時根本沒被建出來 —— 那正是它省事的原因）。
+                bool aOpen = Folds.TryGetValue(iNode.Id, out bool aState) ? aState : iNode.Open;
+                ImGui.SetNextItemOpen(aOpen);
+                bool aNow = ImGui.CollapsingHeader(iNode.Text + "##" + iNode.Id);
+                if (aNow != aOpen) Folds[iNode.Id] = aNow;
+                if (aNow)
                 {
                     ImGui.Indent();
                     foreach (var c in iNode.Children) RenderNode(c);
@@ -183,6 +211,19 @@ public sealed class GuiImGuiRenderer
             }
         }
         ImGui.EndTable();
+    }
+
+    /// <summary>
+    /// 把標籤畫在控件**左邊**並對齊到 style 的欄寬。
+    /// <para>⚠ 標籤比欄寬長時不裁字、直接推開 —— 裁掉的字不會報錯，只會讓人讀不懂那一格是什麼。</para>
+    /// </summary>
+    void LabelLeft(string iLabel)
+    {
+        if (string.IsNullOrEmpty(iLabel)) return;
+        ImGui.TextUnformatted(iLabel);
+        float aTextW = ImGui.CalcTextSize(iLabel).X;
+        if (aTextW + m_Style.ItemSpacingX < m_Style.LabelWidth) ImGui.SameLine(m_Style.LabelWidth);
+        else ImGui.SameLine();
     }
 
     /// <summary>共用層的顏色 → ImGui 的 Vector4（共用層刻意不認識 System.Numerics）。</summary>

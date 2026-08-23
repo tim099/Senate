@@ -26,6 +26,9 @@ public sealed class DoctorModel
     /// </summary>
     public SCP_GuiStyle Style { get; }
 
+    /// <summary>repo 根（要寫回設定檔的頁面需要它 —— 別再從別的地方推導一次）。</summary>
+    public string RepoRoot => m_RepoRoot;
+
     /// <summary>上一次改尺寸的結果（成功或失敗都要有話說；null ＝ 這次還沒人改過）。</summary>
     public string? StyleMessage { get; private set; }
 

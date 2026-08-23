@@ -135,8 +135,9 @@ public static class Program
         string? aClick = ArgValue(iArgs, "--click");
         string? aSet = ArgValue(iArgs, "--set");
         string? aToggle = ArgValue(iArgs, "--toggle");
+        string? aFold = ArgValue(iArgs, "--fold");
 
-        foreach (string? aId in new[] { aClick, aToggle })
+        foreach (string? aId in new[] { aClick, aToggle, aFold })
         {
             if (aId == null) continue;
             if (SCP_GuiQuery.Find(aProbeTree, aId) == null)
@@ -170,6 +171,14 @@ public static class Program
             Console.WriteLine($"・已切換 {aToggle}：{aOld} → {!aOld}");
         }
 
+        if (aFold != null)
+        {
+            var aElem = SCP_GuiQuery.Find(aProbeTree, aFold);
+            bool aOld = aState.Folds.TryGetValue(aFold, out bool v) ? v : (aElem?.On ?? true);
+            aState.Folds[aFold] = !aOld;
+            Console.WriteLine($"・已{(aOld ? "收合" : "展開")} {aFold}");
+        }
+
         var (aTree, aText) = UiDriver.Apply(aModel, aState, aClick, aStyle);
         UiDriver.Save(iRepoRoot, aState);
 
@@ -194,6 +203,22 @@ public static class Program
         //   視窗活著的期間導覽狀態就在記憶體裡，不必像 CLI 那樣存進 session。
         var aCtrl = new SCP_GuiPageController();
         aCtrl.Push(SenatePages.Root(aModel));
+
+        // `--page <key>` 直接停在某一頁。⭐ 存在的理由是**驗收**：
+        //    視窗裡的頁面本來只有人點得到（截圖模式沒有點擊入口），
+        //    於是「那一頁在視窗裡畫不畫得出來」就沒有讀數。這條旗標把它變成有。
+        string? aPage = ArgValue(iArgs, "--page");
+        if (aPage != null)
+        {
+            SCP_GuiPage? aTarget = SenatePages.Create(aPage, aModel);
+            if (aTarget == null)
+            {
+                Console.Error.WriteLine($"✗ 認不得的頁面 key：{aPage}");
+                Console.Error.WriteLine("  現有：doctor / style / settings（見 Cli_Reference）");
+                return 2;   // 靜默開在首頁會讓「打錯 key」與「那頁是空的」同形
+            }
+            if (aTarget.Key != DoctorPage.PageKey) aCtrl.Push(aTarget);
+        }
 
         // ⚠ 傳的是**同一顆 style 物件**（不是複本）—— 使用者在頁面上換尺寸時，
         //   renderer 下一幀就讀得到新的間距。字級例外（綁在載入時的 atlas），要重開視窗。
@@ -357,9 +382,11 @@ public static class Program
                 --click <id>      按下某顆鈕（會實際跑該頁的 handler）
                 --set <id>=<值>   填欄位（跨次記住，存在 build/ui_session.json）
                 --toggle <id>     切換勾選
+                --fold <id>       摺疊／展開一個區塊（收合時內容不會被建出來）
                 --reset           清空 session
                 --json            整棵畫面樹輸出成 JSON（給程式讀）
               ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
+                --page <key>      開窗直接停在某一頁（doctor / style / settings）—— 給截圖驗收用
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 

@@ -12,6 +12,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SCP.Core.Gui;
+using SCP.Core.Reflect;
 
 namespace Senate.Core;
 
@@ -43,7 +44,10 @@ public sealed class SenateProject
     /// 那不是「格式化差異」，是**寫入端省略不可逆**：projects 還在，所以看起來一切正常。
     /// ⇒ 反序列化丟掉的東西，序列化就再也寫不回來 —— 除非像這樣顯式接住。</para>
     /// </summary>
+    /// <remarks>⚠ [SCP_Ignore]：自動繪製與自動序列化都跳過它 ——
+    /// 它是「本版不認得的欄位」的收容所，攤到畫面上讓人手改只會把它弄壞。</remarks>
     [JsonExtensionData]
+    [SCP_Ignore]
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
 }
 
@@ -90,7 +94,9 @@ public sealed class SenateConfig
     /// 那不是「格式化差異」，是**寫入端省略不可逆**：projects 還在，所以看起來一切正常。
     /// ⇒ 反序列化丟掉的東西，序列化就再也寫不回來 —— 除非像這樣顯式接住。</para>
     /// </summary>
+    /// <remarks>⚠ [SCP_Ignore]：同上 —— 不進畫面、不進自動序列化。</remarks>
     [JsonExtensionData]
+    [SCP_Ignore]
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
 
 
