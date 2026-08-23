@@ -1,7 +1,7 @@
 ---
 title: senate.local.json 規格
 description: 本機設定檔的欄位、schemaVersion 的處置、AgentCommands 資料根的解析規則、三態不得同形的驗證原則
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -32,7 +32,11 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
       "enabled": true,
       "profile": ""
     }
-  ]
+  ],
+  "ui": {
+    "scale": 2,
+    "textWidth": 96
+  }
 }
 ```
 
@@ -44,8 +48,27 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `projects[].agentCommandsRoot` | string | `"auto"`（預設）或明確路徑；相對路徑以 `root` 為基準 |
 | `projects[].enabled` | bool | `false` ⇒ 仍列出並標「停用」，但**不計入 doctor 的通過條件** |
 | `projects[].profile` | string | 分群規則 profile 名（尚未實作，保留） |
+| `ui.scale` | float | 介面縮放（0.5〜4，**預設 2.0**）。基準尺寸的唯一來源是 `SCP_GuiStyle`，這裡只存「使用者選了什麼」 |
+| `ui.textWidth` | int | 純文字輸出寬（字元格，預設 96）⚠ **不吃 `ui.scale`** —— 終端機的一格是字元不是像素 |
+
+`ui` 區塊是**這台機器的顯示偏好**，所以只住在不入版控的那一份：進了版控就會變成
+「別人的螢幕決定我的字級」。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。
+改常設值走畫面上的尺寸按鈕（`ui --click doctor/style/big`）；
+`--scale` / `--size` 是**一次性覆寫，不寫回檔案** —— 一道旗標改掉持久設定，
+下一個沒帶旗標的人會拿到別人的臨時值，而那不會報錯。
 
 `"//"` 開頭的 key 當註解用（parser 也容忍 `//` 與 `/* */`，但那是給手改檔案的寬容，不是格式的一部分）。
+
+### 寫回檔案時不會弄丟的東西（D12 的血證）
+
+| 東西 | 寫回後 |
+|---|---|
+| 本版不認得的欄位（含 `"//"` 註解鍵，根層與 `projects[]` 皆然） | **保留**（`[JsonExtensionData]`） |
+| 中文 | **不轉義**（沒設 `Encoder` 會變成 `\uXXXX` —— 合法 JSON，但人看不懂了） |
+| 註解鍵的**位置** | ⚠ 會被移到物件**尾端**（extension data 的寫出順序）—— 內容不丟，位置會變 |
+
+🩸 D11 的第一版把 `"//"` 那行整條吃掉，而 projects 還在 ⇒ 看起來一切正常。
+現在 `senate selftest` 的「設定檔 round-trip」一項就是守這個。
 
 ---
 

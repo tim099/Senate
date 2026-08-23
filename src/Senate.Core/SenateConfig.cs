@@ -8,8 +8,10 @@
 //             「看起來設定好了、但指向不存在的磁碟」的狀態 —— 那跟「還沒設定」不同形卻同樣安靜。
 // 數值影響：純資料 + 讀寫檔。找不到設定檔**不當錯誤**（回 null 並由呼叫端說「還沒 init」），
 //           但「檔在、內容壞」是錯誤 —— 這兩態不得同形。
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SCP.Core.Gui;
 
 namespace Senate.Core;
 
@@ -34,6 +36,41 @@ public sealed class SenateProject
 
     /// <summary>分群規則 profile 名（對應 config/profiles/&lt;name&gt;.json）。空 ＝ 用內建預設。</summary>
     public string Profile { get; set; } = "";
+
+    /// <summary>
+    /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。
+    /// <para>🩸 2026-08-23：介面尺寸寫回設定檔的第一版把使用者手寫的 <c>"//"</c> 註解整行吃掉了。
+    /// 那不是「格式化差異」，是**寫入端省略不可逆**：projects 還在，所以看起來一切正常。
+    /// ⇒ 反序列化丟掉的東西，序列化就再也寫不回來 —— 除非像這樣顯式接住。</para>
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+}
+
+/// <summary>
+/// 介面顯示偏好（尺寸／文字寬）。**這台機器的事**，所以住在不入版控的 senate.local.json ——
+/// 進了版控就會變成「別人的螢幕決定我的字級」。
+/// <para>⚠ 這裡只存「使用者選了什麼」，不存推導值。基準尺寸與縮放規則的唯一來源是
+/// <see cref="SCP_GuiStyle"/>；設定檔複製一份基準值就是第二個真相源。</para>
+/// </summary>
+public sealed class SenateUiSettings
+{
+    /// <summary>全域縮放。預設走 <see cref="SCP_GuiStyle.DefaultScale"/>（2.0 —— 1.0 實測太小）。</summary>
+    public float Scale { get; set; } = SCP_GuiStyle.DefaultScale;
+
+    /// <summary>純文字輸出寬（字元格）。⚠ 不吃 Scale —— 終端機的一格是字元不是像素。</summary>
+    public int TextWidth { get; set; } = SCP_GuiTextRenderer.DefaultWidth;
+
+    public SCP_GuiStyle ToStyle()
+    {
+        var aStyle = new SCP_GuiStyle();
+        aStyle.SetScale(Scale);
+        aStyle.TextWidth = Math.Max(40, TextWidth);
+        return aStyle;
+    }
+
+    public static SenateUiSettings FromStyle(SCP_GuiStyle iStyle)
+        => new() { Scale = iStyle.Scale, TextWidth = iStyle.TextWidth };
 }
 
 /// <summary>senate.local.json 的根物件。</summary>
@@ -43,6 +80,19 @@ public sealed class SenateConfig
     public int SchemaVersion { get; set; } = 1;
 
     public List<SenateProject> Projects { get; set; } = new();
+
+    /// <summary>介面顯示偏好。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。</summary>
+    public SenateUiSettings Ui { get; set; } = new();
+
+    /// <summary>
+    /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。
+    /// <para>🩸 2026-08-23：介面尺寸寫回設定檔的第一版把使用者手寫的 <c>"//"</c> 註解整行吃掉了。
+    /// 那不是「格式化差異」，是**寫入端省略不可逆**：projects 還在，所以看起來一切正常。
+    /// ⇒ 反序列化丟掉的東西，序列化就再也寫不回來 —— 除非像這樣顯式接住。</para>
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+
 
     public const int CurrentSchemaVersion = 1;
 
@@ -54,6 +104,11 @@ public sealed class SenateConfig
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+
+        // 🩸 不設 Encoder 的話中文會被寫成 \uXXXX：檔案還是合法 JSON，但**人看不懂了** ——
+        //    而這份檔的前提就是「使用者會自己手改」。只有機器讀得懂的註解等於沒有註解。
+        //    （這裡的 Unsafe 指的是不做 HTML 轉義；本檔寫的是磁碟，不會被塞進網頁。）
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
     /// <summary>本機設定檔的預設位置：repo 根的 senate.local.json。</summary>

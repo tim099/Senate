@@ -6,8 +6,10 @@
 //           ⇒ 判準：字型不是「有沒有載」，是「**這一頁實際用到的每一個字元**有沒有 glyph」。
 // 數值影響：合併第二顆字型（Segoe UI Symbol）補符號區。pinned handle 存成 static ——
 //           font atlas 是在本函式回來之後才建的，range 陣列在那之前被 GC 移動就會拿到垃圾。
+// 字級來源：SCP_GuiStyle（顯示參數的單一來源）—— 這裡不再自己決定 18f 是多少。
 using System.Runtime.InteropServices;
 using ImGuiNET;
+using SCP.Core.Gui;
 
 namespace Senate.Desktop;
 
@@ -41,24 +43,58 @@ public static class SenateFonts
         @"C:\Windows\Fonts\seguiemj.ttf",   // Segoe UI Emoji
     };
 
-    /// <summary>回傳實際載到的字型描述（給呼叫端印出來 —— 沒載到要說，不要裝作正常）。</summary>
-    public static string Configure(ImGuiIOPtr iIo, string? iCjkFontPath, float iSize)
+    /// <summary>
+    /// 這一次載到的字型。<c>Body</c> 是預設字型（第一顆），<c>Title</c> 是標題用的大一號。
+    /// <para>⚠ 兩顆是**各自一個字級**的獨立 atlas 條目 —— ImGui 的字級不能事後乘倍率放大而不模糊，
+    /// 所以「標題比本文大」必須在載入時就決定。⇒ 改 scale 要重開視窗，這件事得說出來。</para>
+    /// </summary>
+    public sealed class FontSet
+    {
+        public ImFontPtr Body;
+        public ImFontPtr Title;
+        public string Description = "";
+    }
+
+    /// <summary>
+    /// 依 <see cref="SCP_GuiStyle"/> 載入本文與標題兩個字級（含符號字型合併）。
+    /// 回傳實際載到什麼 —— 沒載到要說，不要裝作正常。
+    /// </summary>
+    public static FontSet Configure(ImGuiIOPtr iIo, string? iCjkFontPath, SCP_GuiStyle iStyle)
     {
         var aLoaded = new List<string>();
         IntPtr aRanges = Pin(s_Ranges);
+        var aSet = new FontSet();
 
+        float aBody = iStyle.FontSize;
+        float aTitle = iStyle.TitleFontSize;
+
+        aSet.Body = AddOne(iIo, iCjkFontPath, aBody, aRanges, aLoaded);
+        // 標題只在真的比本文大時才多載一顆（同字級載兩次是白吃 atlas 空間）
+        aSet.Title = aTitle > aBody + 0.5f
+            ? AddOne(iIo, iCjkFontPath, aTitle, aRanges, aLoaded)
+            : aSet.Body;
+
+        aSet.Description = string.Join(" + ", aLoaded)
+            + $"｜字級 本文 {aBody:0.#} / 標題 {aTitle:0.#}（scale {iStyle.Scale:0.##}）";
+        return aSet;
+    }
+
+    /// <summary>載一顆字型 ＋ 合併符號字型。回傳的是**本文那一顆**的 handle（符號是 merge 進去的）。</summary>
+    static ImFontPtr AddOne(ImGuiIOPtr iIo, string? iCjkFontPath, float iSize, IntPtr iRanges, List<string> oLoaded)
+    {
+        ImFontPtr aFont;
         if (iCjkFontPath != null && File.Exists(iCjkFontPath))
         {
-            iIo.Fonts.AddFontFromFileTTF(iCjkFontPath, iSize, null, aRanges);
-            aLoaded.Add(Path.GetFileName(iCjkFontPath));
+            aFont = iIo.Fonts.AddFontFromFileTTF(iCjkFontPath, iSize, null, iRanges);
+            oLoaded.Add($"{Path.GetFileName(iCjkFontPath)}@{iSize:0.#}");
         }
         else
         {
-            iIo.Fonts.AddFontDefault();
-            aLoaded.Add("(內建 ASCII 字型 —— 中文會是方塊)");
+            aFont = iIo.Fonts.AddFontDefault();
+            oLoaded.Add("(內建 ASCII 字型 —— 中文會是方塊)");
         }
 
-        // 合併符號字型：MergeMode 讓缺的 glyph 從第二顆補進同一個 atlas
+        // 合併符號字型：MergeMode 讓缺的 glyph 從第二顆補進**剛剛那一顆**的 atlas
         foreach (string aPath in s_SymbolFonts)
         {
             if (!File.Exists(aPath)) continue;
@@ -68,13 +104,12 @@ public static class SenateFonts
                 {
                     MergeMode = true,
                 };
-                iIo.Fonts.AddFontFromFileTTF(aPath, iSize, aCfg, aRanges);
+                iIo.Fonts.AddFontFromFileTTF(aPath, iSize, aCfg, iRanges);
             }
-            aLoaded.Add(Path.GetFileName(aPath) + "(merge)");
+            oLoaded.Add(Path.GetFileName(aPath) + "(merge)");
             break;   // 一顆補齊就夠，多合併只是白吃 atlas 空間
         }
-
-        return string.Join(" + ", aLoaded);
+        return aFont;
     }
 
     static IntPtr Pin(ushort[] iArray)

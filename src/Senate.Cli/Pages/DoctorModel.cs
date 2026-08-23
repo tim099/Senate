@@ -5,6 +5,7 @@
 // 數值影響：Refresh() 會跑 git status／stat 心跳檔（唯讀）。RefreshCount 是讀數 ——
 //           agent 或人按了之後可以確認「真的重跑了」，而不是靠畫面看起來一樣就以為沒動。
 using Senate.Core;
+using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
 
@@ -19,12 +20,34 @@ public sealed class DoctorModel
     /// <summary>刷新過幾次（含建構那次）。給「按了到底有沒有生效」一個可讀的證據。</summary>
     public int RefreshCount { get; private set; }
 
+    /// <summary>
+    /// 顯示參數（尺寸／間距／字級）。**在建構時讀一次**，不跟著 Refresh 重載 ——
+    /// 重載會把使用者這一輪剛換、還沒存成功的尺寸悄悄吃掉。
+    /// </summary>
+    public SCP_GuiStyle Style { get; }
+
+    /// <summary>上一次改尺寸的結果（成功或失敗都要有話說；null ＝ 這次還沒人改過）。</summary>
+    public string? StyleMessage { get; private set; }
+
     public DoctorModel(string iRepoRoot)
     {
         m_RepoRoot = iRepoRoot;
         Env = null!;
         Projects = new List<ProjectReading>();
+        Style = SenateUiStore.Load(iRepoRoot, w => Console.Error.WriteLine($"⚠ {w}"));
         Refresh();
+    }
+
+    /// <summary>
+    /// 套用使用者選的尺寸並**寫回設定檔**。
+    /// <para>兩件事顯式分開做：先改記憶中的 style（這一輪就生效），再存檔（下次也生效）——
+    /// 存檔失敗時不回滾，但把失敗說出來：「這次有效、下次沒有」比「安靜地都沒有」好查。</para>
+    /// </summary>
+    public void ApplySize(SCP_GuiSize iSize)
+    {
+        Style.SetPreset(iSize);
+        var (aOk, aMsg) = SenateUiStore.Save(m_RepoRoot, Style);
+        StyleMessage = (aOk ? "✓ " : "⚠ ") + aMsg;
     }
 
     public void Refresh()

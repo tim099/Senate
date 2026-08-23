@@ -5,6 +5,7 @@
 // 數值影響：純讀。找不到樣本檔時回報「跳過（沒有樣本）」，**不當成通過** ——
 //           「沒測」與「測過而且對」同形是這個 repo 最貴的錯誤形狀。
 using Senate.Core;
+using SCP.Core.Gui;
 using SCP.Core.Json;
 
 namespace Senate.Cli;
@@ -20,6 +21,8 @@ public static class SelfTest
         var aRows = new List<CheckRow>();
         aRows.Add(MissingSemantics());
         aRows.Add(WriterStability());
+        aRows.Add(ConfigRoundTripKeepsUnknownKeys());
+        aRows.Add(StyleRoundTrip());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         return aRows;
     }
@@ -60,6 +63,68 @@ public static class SelfTest
             "輸出穩定性",
             $"round-trip 逐字相同={a1 == a2}／插入順序保留={aOrderKept}／中文不轉義={aCjkRaw}",
             a1 == a2 && aOrderKept && aCjkRaw ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 設定檔 round-trip **不可以吃掉本版不認得的欄位**（含使用者手寫的 <c>"//"</c> 註解鍵）。
+    /// <para>🩸 這一項是為一隻真的 bug 立的：2026-08-23 介面尺寸寫回設定檔的第一版，
+    /// 把 <c>"//"</c> 那行整條吃掉 —— projects 還在，所以看起來一切正常。</para>
+    /// </summary>
+    static CheckRow ConfigRoundTripKeepsUnknownKeys()
+    {
+        string aPath = Path.Combine(Path.GetTempPath(), "senate_selftest_config.json");
+        const string aSrc = """
+            {
+              "//": "手寫註解，不可以被吃掉",
+              "schemaVersion": 1,
+              "projects": [ { "name": "X", "root": "D:/X", "//p": "專案層註解" } ],
+              "未來版本的欄位": 42
+            }
+            """;
+        try
+        {
+            File.WriteAllText(aPath, aSrc);
+            SenateConfig? aCfg = SenateConfig.Load(aPath);
+            if (aCfg == null) return new CheckRow("設定檔 round-trip", "讀不到剛寫出的暫存檔", CheckResult.Fail);
+
+            aCfg.Ui.Scale = 1.75f;          // 模擬「使用者改了尺寸」那條寫入路徑
+            aCfg.Save(aPath);
+            string aBack = File.ReadAllText(aPath);
+
+            bool aRootNote = aBack.Contains("手寫註解", StringComparison.Ordinal);
+            bool aProjNote = aBack.Contains("專案層註解", StringComparison.Ordinal);
+            bool aFuture = aBack.Contains("未來版本的欄位", StringComparison.Ordinal);
+            bool aUi = SenateConfig.Load(aPath)?.Ui.Scale == 1.75f;
+
+            return new CheckRow("設定檔 round-trip",
+                $"根層註解保留={aRootNote}／專案層註解保留={aProjNote}／未知欄位保留={aFuture}／ui.scale 回讀={aUi}",
+                aRootNote && aProjNote && aFuture && aUi ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow("設定檔 round-trip", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
+        finally { try { File.Delete(aPath); } catch { /* 暫存檔刪不掉不影響判定 */ } }
+    }
+
+    /// <summary>顯示參數的 round-trip：存進 JSON 再讀回來要是同一份，且缺欄位用預設（不是 0）。</summary>
+    static CheckRow StyleRoundTrip()
+    {
+        var aStyle = new SCP_GuiStyle();
+        aStyle.SetScale(1.5f);
+        aStyle.TextWidth = 120;
+        SCP_GuiStyle aBack = SCP_GuiStyle.FromJson(SCP_JsonData.Parse(aStyle.ToJson().ToJson()));
+        bool aSame = Math.Abs(aBack.Scale - 1.5f) < 0.001f && aBack.TextWidth == 120;
+
+        // 空物件 ⇒ 預設值（「沒設過」不可以變成 0）
+        SCP_GuiStyle aEmpty = SCP_GuiStyle.FromJson(SCP_JsonData.Parse("{}"));
+        bool aDefault = Math.Abs(aEmpty.Scale - SCP_GuiStyle.DefaultScale) < 0.001f && aEmpty.TextWidth >= 40;
+
+        // 超出範圍要被夾，不可以照收（NaN／0 會讓每個尺寸都變 0 而版位不報錯）
+        var aClamp = new SCP_GuiStyle();
+        aClamp.SetScale(99f);
+        bool aClamped = Math.Abs(aClamp.Scale - SCP_GuiStyle.MaxScale) < 0.001f;
+
+        return new CheckRow("顯示參數 round-trip",
+            $"存讀一致={aSame}／缺欄位用預設={aDefault}（{aEmpty.Scale:0.##}）／超範圍夾住={aClamped}",
+            aSame && aDefault && aClamped ? CheckResult.Pass : CheckResult.Fail);
     }
 
     /// <summary>

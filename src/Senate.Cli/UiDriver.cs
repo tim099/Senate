@@ -41,7 +41,7 @@ public static class UiDriver
 
     /// <summary>跑一次操作：套用動作 → 兩趟繪製 → 回傳（樹, 文字）。</summary>
     public static (SCP_GuiNode tree, string text) Apply(
-        DoctorModel iModel, SCP_GuiState iState, string? iClickId, int iWidth)
+        DoctorModel iModel, SCP_GuiState iState, string? iClickId, SCP_GuiStyle iStyle)
     {
         // 第一趟：帶 click，讓 handler 真的跑（回傳的樹是舊畫面，不拿來顯示）
         if (iClickId != null)
@@ -52,11 +52,11 @@ public static class UiDriver
         // 第二趟：不帶 click，這才是操作之後的畫面
         var aUi = new SCP_Ui(iState.ToInput(null));
         new DoctorPage(iModel).Draw(aUi);
-        return (aUi.Root, SCP_GuiTextRenderer.Render(aUi.Root, iWidth));
+        return (aUi.Root, SCP_GuiTextRenderer.Render(aUi.Root, iStyle));
     }
 
     /// <summary>列出畫面上所有可互動元件 —— 「看不見畫面的人」的操作目錄。</summary>
-    public static string ListElements(SCP_GuiNode iTree, int iWidth)
+    public static string ListElements(SCP_GuiNode iTree, SCP_GuiStyle iStyle)
     {
         var aUi = new SCP_Ui();
         aUi.Title("可互動元件");
@@ -67,6 +67,6 @@ public static class UiDriver
                     e.Kind == SCP_GuiNodeKind.Toggle ? (e.On ? "on" : "off") : e.Value,
                     e.HowTo);
         }
-        return SCP_GuiTextRenderer.Render(aUi.Root, iWidth);
+        return SCP_GuiTextRenderer.Render(aUi.Root, iStyle);
     }
 }

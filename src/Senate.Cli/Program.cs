@@ -81,9 +81,13 @@ public static class Program
     {
         var aModel = new DoctorModel(iRepoRoot);
         var (aEnv, aProjects, aCfgBroken) = (aModel.Env, aModel.Projects, aModel.ConfigBroken);
+        // ⚠ 順序有意義：旗標的覆寫要在 Draw **之前**套進 style ——
+        //   反過來的話畫面上那行「當前尺寸」印的是覆寫前的值（我第一版就是這樣，
+        //   `--scale 9` 警告說夾成 4，畫面卻寫 scale=2）。**尺寸的讀數自己也會說謊。**
+        var aStyle = StyleFrom(iArgs, aModel);
         var aUi = new SCP_Ui();
         new DoctorPage(aModel).Draw(aUi);
-        Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
+        Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, aStyle));
 
         foreach (string d in aUi.Diagnostics) Console.Error.WriteLine($"⚠ gui: {d}");
 
@@ -109,7 +113,6 @@ public static class Program
         string? aShot = ArgValue(iArgs, "--screenshot");
         if (aWindow || aShot != null) return RunWindow(iRepoRoot, iArgs, aShot);
 
-        int aWidth = Width(iArgs);
         var aState = UiDriver.Load(iRepoRoot);
 
         if (HasFlag(iArgs, "--reset"))
@@ -120,9 +123,10 @@ public static class Program
         }
 
         var aModel = new DoctorModel(iRepoRoot);
+        var aStyle = StyleFrom(iArgs, aModel);
 
         // 先畫一趟拿到當前的樹（用來驗 id 是否存在）—— 對不存在的 id 下指令必須擋下
-        var (aProbeTree, _) = UiDriver.Apply(aModel, aState, null, aWidth);
+        var (aProbeTree, _) = UiDriver.Apply(aModel, aState, null, aStyle);
 
         string? aClick = ArgValue(iArgs, "--click");
         string? aSet = ArgValue(iArgs, "--set");
@@ -162,10 +166,10 @@ public static class Program
             Console.WriteLine($"・已切換 {aToggle}：{aOld} → {!aOld}");
         }
 
-        var (aTree, aText) = UiDriver.Apply(aModel, aState, aClick, aWidth);
+        var (aTree, aText) = UiDriver.Apply(aModel, aState, aClick, aStyle);
         UiDriver.Save(iRepoRoot, aState);
 
-        if (HasFlag(iArgs, "--list")) { Console.Write(UiDriver.ListElements(aTree, aWidth)); return 0; }
+        if (HasFlag(iArgs, "--list")) { Console.Write(UiDriver.ListElements(aTree, aStyle)); return 0; }
         if (HasFlag(iArgs, "--json")) { Console.WriteLine(SCP_GuiQuery.ToJson(aTree).ToJson()); return 0; }
 
         Console.Write(aText);
@@ -181,13 +185,18 @@ public static class Program
     {
         var aModel = new DoctorModel(iRepoRoot);   // 讀數在開窗前取好（探測不可以每幀跑）
         var aPage = new DoctorPage(aModel);
+        var aStyle = StyleFrom(iArgs, aModel);
 
+        // ⚠ 傳的是**同一顆 style 物件**（不是複本）—— 使用者在頁面上換尺寸時，
+        //   renderer 下一幀就讀得到新的間距。字級例外（綁在載入時的 atlas），要重開視窗。
         var aWin = new SenateWindow("Senate", input =>
         {
             var aUi = new SCP_Ui(input);
             aPage.Draw(aUi);
             return aUi.Root;
-        });
+        }, aStyle);
+
+        Console.WriteLine($"介面尺寸：{aStyle.Describe()}");
 
         if (SenateWindow.FindCjkFont() == null)
             Console.WriteLine("⚠ 找不到中文字型 —— 中文會顯示為方塊（不是字型壞了，是沒載到）");
@@ -219,7 +228,9 @@ public static class Program
     //           那些檔是 Unity 端寫出來的，所以驗收方式是拿真檔案去跑，不是自己造樣本。
     static int CmdSelfTest(string iRepoRoot, string[] iArgs)
     {
-        var aRows = SelfTest.Run(new DoctorModel(iRepoRoot).Projects);
+        var aModel = new DoctorModel(iRepoRoot);
+        var aStyle = StyleFrom(iArgs, aModel);   // 同 doctor：覆寫先套，再畫
+        var aRows = SelfTest.Run(aModel.Projects);
 
         var aUi = new SCP_Ui();
         aUi.Title("SCP_Core 自我對拍");
@@ -233,7 +244,7 @@ public static class Program
                     _ => "— 跳過",
                 });
         }
-        Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, Width(iArgs)));
+        Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, aStyle));
 
         int aFail = aRows.Count(r => r.Result == CheckResult.Fail);
         int aSkip = aRows.Count(r => r.Result == CheckResult.Skipped);
@@ -263,6 +274,49 @@ public static class Program
 
     static int Width(string[] iArgs)
         => int.TryParse(ArgValue(iArgs, "--width"), out int w) && w >= 40 ? w : SCP_GuiTextRenderer.DefaultWidth;
+
+    /// <summary>
+    /// 這一次要用的顯示參數：**設定檔的值**（model 讀好的）＋ 命令列的一次性覆寫。
+    /// <para>⚠ `--scale` / `--size` 刻意**不寫回設定檔** —— 一道旗標改掉持久設定，
+    /// 下一次沒帶旗標的人會拿到別人上一次的臨時值，而那不會報錯。要改常設值走頁面上的尺寸按鈕。</para>
+    /// </summary>
+    static SCP_GuiStyle StyleFrom(string[] iArgs, DoctorModel iModel)
+    {
+        SCP_GuiStyle aStyle = iModel.Style;
+
+        string? aWidth = ArgValue(iArgs, "--width");
+        if (aWidth != null)
+        {
+            if (int.TryParse(aWidth, out int w) && w >= 40) aStyle.TextWidth = w;
+            else Console.Error.WriteLine($"⚠ --width {aWidth} 不是 ≥40 的整數 —— 這次用 {aStyle.TextWidth}");
+        }
+
+        string? aScale = ArgValue(iArgs, "--scale");
+        if (aScale != null)
+        {
+            if (float.TryParse(aScale, System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out float s))
+            {
+                float aGot = aStyle.SetScale(s);
+                if (Math.Abs(aGot - s) > 0.001f)
+                    Console.Error.WriteLine($"⚠ --scale {s:0.##} 超出範圍，夾成 {aGot:0.##}"
+                        + $"（{SCP_GuiStyle.MinScale:0.##}〜{SCP_GuiStyle.MaxScale:0.##}）");
+            }
+            else Console.Error.WriteLine($"⚠ --scale {aScale} 不是數字 —— 這次用 {aStyle.Scale:0.##}");
+        }
+
+        string? aSize = ArgValue(iArgs, "--size");
+        if (aSize != null)
+        {
+            bool aHit = false;
+            foreach (SCP_GuiSize s in SCP_GuiStyle.AllSizes)
+                if (string.Equals(aSize, s.ToString(), StringComparison.OrdinalIgnoreCase))
+                { aStyle.SetPreset(s); aHit = true; break; }
+            if (!aHit)
+                Console.Error.WriteLine($"⚠ --size {aSize} 認不得（small／medium／big／xl）—— 這次用 {aStyle.Scale:0.##}");
+        }
+        return aStyle;
+    }
 
     static bool HasFlag(string[] iArgs, string iName)
     {
@@ -300,7 +354,11 @@ public static class Program
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 
-            共用選項：--width <n>   文字輸出寬度（預設 96）
+            共用選項：
+              --width <n>       文字輸出寬度（字元格，預設 96）⚠ 不吃 --scale
+              --scale <x>       介面縮放（0.5〜4，預設 2.0；本次有效，不寫回設定檔）
+              --size <段>       small(1×) / medium(1.5×) / big(2×) / xl(2.5×) —— 同上，本次有效
+            常設尺寸改在畫面上（`ui --click doctor/style/big`，會寫回 senate.local.json 的 ui 區塊）
             """);
         return iCode;
     }

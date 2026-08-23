@@ -23,7 +23,8 @@ public sealed class SenateWindow : IDisposable
 
     readonly DrawPage m_Draw;
     readonly string m_Title;
-    readonly GuiImGuiRenderer m_Renderer = new();
+    readonly SCP_GuiStyle m_Style;
+    readonly GuiImGuiRenderer m_Renderer;
 
     IWindow? m_Window;
     GL? m_Gl;
@@ -34,10 +35,12 @@ public sealed class SenateWindow : IDisposable
     int m_ScreenshotAtFrame;
     int m_Frame;
 
-    public SenateWindow(string iTitle, DrawPage iDraw)
+    public SenateWindow(string iTitle, DrawPage iDraw, SCP_GuiStyle? iStyle = null)
     {
         m_Title = iTitle;
         m_Draw = iDraw;
+        m_Style = iStyle ?? new SCP_GuiStyle();
+        m_Renderer = new GuiImGuiRenderer(m_Style);
     }
 
     /// <summary>找一顆有中文的字型。找不到就回 null（呼叫端要**說出來**，不要假裝有載到）。</summary>
@@ -60,11 +63,20 @@ public sealed class SenateWindow : IDisposable
 
     /// <summary>實際載到的字型（呼叫端印出來給人看 —— 「以為載到了」是這一族最常見的錯）。</summary>
     public string LoadedFonts { get; private set; } = "(尚未載入)";
-    public float FontSize { get; set; } = 18f;
 
-    /// <summary>跑起來。iScreenshotPath 非 null ⇒ 拍完就結束（不進互動迴圈）。</summary>
-    public void Run(string? iScreenshotPath = null, int iScreenshotAtFrame = 8, int iWidth = 1280, int iHeight = 800)
+    /// <summary>本文字級 —— 唯一來源是 <see cref="SCP_GuiStyle"/>，本類別不再自己存一份。</summary>
+    public float FontSize => m_Style.FontSize;
+
+    /// <summary>顯示參數（尺寸／間距／顏色）。</summary>
+    public SCP_GuiStyle Style => m_Style;
+
+    /// <summary>
+    /// 跑起來。iScreenshotPath 非 null ⇒ 拍完就結束（不進互動迴圈）。
+    /// <para>iWidth / iHeight ≤ 0 ⇒ 用 style 算出來的預設尺寸（會被螢幕可用區夾住）。</para>
+    /// </summary>
+    public void Run(string? iScreenshotPath = null, int iScreenshotAtFrame = 8, int iWidth = 0, int iHeight = 0)
     {
+        (iWidth, iHeight) = ResolveWindowSize(iWidth, iHeight);
         m_ScreenshotPath = iScreenshotPath;
         m_ScreenshotAtFrame = iScreenshotAtFrame;
 
@@ -83,6 +95,34 @@ public sealed class SenateWindow : IDisposable
         m_Window.Dispose();
     }
 
+    /// <summary>
+    /// 決定視窗尺寸：style 的預設值（＝基準 × scale）**夾在主螢幕可用區之內**。
+    /// <para>🩸 為什麼要夾：scale 2.0 時 1280×800 會變 2560×1600 ——
+    /// 在 1920×1080 的機器上那是一個比桌面還大的視窗，標題欄跑到螢幕外、關不掉，
+    /// 而它不會報錯（「開起來就是壞的」不是例外，是版位）。
+    /// 問不到螢幕尺寸時**不猜**，直接用 style 的值（問不到與量到 0 不得同形）。</para>
+    /// </summary>
+    (int w, int h) ResolveWindowSize(int iWidth, int iHeight)
+    {
+        int aW = iWidth > 0 ? iWidth : m_Style.WindowWidth;
+        int aH = iHeight > 0 ? iHeight : m_Style.WindowHeight;
+        try
+        {
+            var aMon = Silk.NET.Windowing.Monitor.GetMainMonitor(null);
+            var aBounds = aMon.Bounds;
+            if (aBounds.Size.X > 0 && aBounds.Size.Y > 0)
+            {
+                aW = Math.Min(aW, (int)(aBounds.Size.X * 0.95f));
+                aH = Math.Min(aH, (int)(aBounds.Size.Y * 0.90f));
+            }
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"⚠ 問不到主螢幕尺寸（{e.GetType().Name}）—— 視窗用 style 的 {aW}×{aH}，沒有夾");
+        }
+        return (aW, aH);
+    }
+
     void OnLoad()
     {
         IWindow aWin = m_Window ?? throw new InvalidOperationException("OnLoad 在 window 建立前被呼叫");
@@ -93,13 +133,34 @@ public sealed class SenateWindow : IDisposable
         // 字型全在 onConfigureIO 裡自己組（中文 ＋ 符號合併）——
         // 🩸 用 ImGuiFontConfig + GetGlyphRangesChineseFull 的第一版：中文好了，
         //    但 ✓ ≥ ⇒ ⚠ 全變成 ?（那份 range 不含符號區），而缺字不報錯。詳見 SenateFonts。
+        SenateFonts.FontSet? aFonts = null;
         m_Controller = new ImGuiController(m_Gl, aWin, m_Input, null,
-            () => { LoadedFonts = SenateFonts.Configure(ImGui.GetIO(), FontPath, FontSize); });
+            () =>
+            {
+                aFonts = SenateFonts.Configure(ImGui.GetIO(), FontPath, m_Style);
+                LoadedFonts = aFonts.Description;
+            });
 
-        var aStyle = ImGui.GetStyle();
-        aStyle.WindowRounding = 4f;
-        aStyle.FrameRounding = 3f;
         ImGui.StyleColorsDark();
+        ApplyStyle();
+
+        // 標題字型交給 renderer（沒載到就不設 ⇒ 標題用本文字級，不假裝有大一號）
+        if (aFonts != null) m_Renderer.TitleFont = aFonts.Title;
+    }
+
+    /// <summary>把 <see cref="SCP_GuiStyle"/> 的尺寸／間距灌進 ImGui 的全域樣式。</summary>
+    void ApplyStyle()
+    {
+        var aStyle = ImGui.GetStyle();
+        aStyle.WindowRounding = m_Style.WindowRounding;
+        aStyle.FrameRounding = m_Style.FrameRounding;
+        aStyle.WindowPadding = new System.Numerics.Vector2(m_Style.WindowPaddingX, m_Style.WindowPaddingY);
+        aStyle.FramePadding = new System.Numerics.Vector2(m_Style.FramePaddingX, m_Style.FramePaddingY);
+        aStyle.ItemSpacing = new System.Numerics.Vector2(m_Style.ItemSpacingX, m_Style.ItemSpacingY);
+        aStyle.CellPadding = new System.Numerics.Vector2(m_Style.CellPaddingX, m_Style.CellPaddingY);
+        aStyle.IndentSpacing = m_Style.IndentSpacing;
+        aStyle.ScrollbarSize = m_Style.ScrollbarSize;
+        aStyle.GrabMinSize = m_Style.GrabMinSize;
     }
 
     void OnRender(double iDelta)
@@ -107,7 +168,12 @@ public sealed class SenateWindow : IDisposable
         m_Frame++;
         m_Controller!.Update((float)iDelta);
 
-        m_Gl!.ClearColor(0.09f, 0.09f, 0.11f, 1f);
+        // 每幀重灌尺寸／間距：使用者在頁面上換尺寸時**版位即時跟著變**。
+        // ⚠ 字級不在這裡 —— ImGui 的字級綁在載入時建好的 atlas，換字級要重開視窗（要說出來，不要假裝生效）。
+        ApplyStyle();
+
+        var aBg = m_Style.BackgroundColor;
+        m_Gl!.ClearColor(aBg.R, aBg.G, aBg.B, aBg.A);
         m_Gl.Clear((uint)ClearBufferMask.ColorBufferBit);
 
         // 頁面填滿整個視窗（這是後台，不是多視窗編輯器）

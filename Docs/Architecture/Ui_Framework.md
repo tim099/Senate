@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
 description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、非 UI 操控介面與 session 狀態
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -103,6 +103,42 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
   （文字模式沒有真正的水平版位，硬排會互相蓋掉，寧可誠實換行）。
 - ⚠ **已知缺口**：表格還不吃 `--width`（欄寬取自然寬度，窄視窗會超出）。
 
+## 顯示參數：`SCP_GuiStyle`（尺寸／間距／字級／顏色的單一來源）
+
+```
+SCP_GuiStyle
+  ├── Scale（0.5〜4，**預設 2.0**）＋ 四段預設 小1× / 中1.5× / 大2× / 特大2.5×
+  ├── Scaled(n) / ScaledInt(n)        ← 等同 UCL_GUIStyle.GetScaledSize
+  ├── FontSize / TitleFontSize / ItemSpacing* / FramePadding* / CellPadding*
+  │   IndentSpacing / ScrollbarSize / ButtonMinWidth / WindowWidth …（＝基準值 × Scale）
+  ├── NoteColor / BackgroundColor      ← renderer 無關的顏色（不碰 Vector4 / UnityEngine.Color）
+  ├── Text* （TextWidth / TextIndent / TextColumnGap …）⚠ **不吃 Scale**
+  ├── Describe()                       ← 一行人可讀的當前設定（尺寸也要有讀數）
+  ├── DrawPicker(ui)                   ← 畫四顆尺寸按鈕，回傳被按的那一段（不自己套用、不寫檔）
+  └── ToJson() / FromJson()            ← 持久化由呼叫端做（本層零 IO）
+```
+
+誰吃它：
+
+| 消費端 | 吃到什麼 |
+|---|---|
+| `SCP_GuiTextRenderer.Render(root, style)` | `TextWidth` / 縮排 / 欄距（**不含 Scale**） |
+| `GuiImGuiRenderer` | Note 顏色、按鈕最小寬、輸入框寬、標題字型 |
+| `SenateWindow` | 字級（載入時）、ImGui 全域 metrics（**每幀重灌 ⇒ 版位即時跟著換**）、底色、視窗預設尺寸 |
+| `senate.local.json` 的 `ui` 區塊 | 使用者選的 `scale` / `textWidth`（走 `SenateUiStore`） |
+
+⚠ 三件要記住的：
+
+1. **文字模式不吃 Scale** —— 終端機的一格是字元不是像素，乘 2 只會讓表格超出視窗。
+2. **字級改了要重開視窗** —— ImGui 的字級綁在載入時建好的 font atlas；
+   間距／padding 每幀重灌所以即時生效。這件事頁面上有寫，不假裝生效。
+3. **視窗預設尺寸要夾在螢幕內** —— scale 2 時 1280×800 變 2560×1600，
+   在 1920×1080 的機器上那是一個標題欄在螢幕外的視窗，而它不會報錯。
+
+（設計理由與血證 → [../Logs/Decisions](../Logs/Decisions.md)（D11／D12））
+
+---
+
 ## 字型（Senate.Desktop）
 
 判準不是「字型有沒有載」，是**「這一頁實際用到的每個字元有沒有 glyph」**。
@@ -110,4 +146,6 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
 🩸 只載 `GetGlyphRangesChineseFull()` 的第一版：中文正常，但 `✓ ≥ ⇒ ⚠` 全變 `?`
 （那份 range 不含符號區），而**缺字不報錯**。
 修法：`SenateFonts` 自訂 12 個字元區塊 ＋ merge `seguisym.ttf`。
+字級由 `SCP_GuiStyle` 決定，且**本文與標題各載一顆**（同一顆字型兩個字級）——
+ImGui 沒辦法把既有 atlas 的字放大而不模糊，所以「標題比本文大」必須在載入時就決定。
 pinned handle 存成 static —— font atlas 在設定函式回來之後才建，range 陣列被 GC 移動就會拿到垃圾。

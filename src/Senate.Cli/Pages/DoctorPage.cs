@@ -85,6 +85,28 @@ public sealed class DoctorPage
             if (g.Button("重新取讀數", "doctor/refresh")) m_Model.Refresh();
             if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
         }
+
+        DrawStyleSection(g);
+    }
+
+    /// <summary>
+    /// 介面尺寸區塊。⭐ 把「它以為自己多大」印出來（<see cref="SCP_GuiStyle.Describe"/>）——
+    /// 尺寸這種東西「看起來變大了」不算讀數，截圖旁邊沒有數字就對不起來。
+    /// </summary>
+    void DrawStyleSection(SCP_Ui g)
+    {
+        g.Space();
+        using (g.Box("介面尺寸", "doctor/style"))
+        {
+            g.Label(m_Model.Style.Describe());
+
+            SCP_GuiSize? aPick = m_Model.Style.DrawPicker(g, "doctor/style");
+            if (aPick.HasValue) m_Model.ApplySize(aPick.Value);
+
+            if (m_Model.StyleMessage != null) g.Note(m_Model.StyleMessage);
+            g.Note("字級要重開視窗才會換（ImGui 的字級綁在載入時建好的 atlas）；間距與版位即時生效。");
+            g.Note("純文字輸出的寬度不吃這個 scale —— 終端機的一格是字元不是像素（要調用 --width）。");
+        }
     }
 
     void OpenConfig()

@@ -1,7 +1,7 @@
 ---
 title: 設計拍板紀錄（ADR）
 description: Senate 與 SCP_Core 的關鍵決策、當時的理由、以及被實測推翻或修正的部分。新決策往下加，不改舊條目
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -156,3 +156,51 @@ Missing closing '}' in statement block or type definition.
 
 **附帶修的**：覆寫剛 publish 出來的 exe 會撞兩種鎖（exe 正在執行中／防毒正在掃 74MB 檔）
 ⇒ 兩支腳本都加重試三次，仍失敗就明說是哪一種原因（實撞過一次 `IOException`，重跑就好）。
+
+---
+
+## D11 · 顯示參數收成一個統合 class，預設縮放 **2.0**（2026-08-23，Tim）
+
+**決策**：新增 `SCP_GuiStyle`（共用層，renderer 無關）當**顯示參數的單一來源** ——
+元件尺寸、間距、字級、顏色、文字模式排版寬全部從它問。概念取自 Unity 端的
+`UCL_GUIStyle`（全域 `Scale` ＋ `GetScaledSize()` ＋ Small/Medium/Big/XL 四段），
+但**不照抄 `GUIStyle` 那一層**：共用層一碰 UI 函式庫的型別，另一邊就搬不進去。
+
+**為什麼要有**：那些數字原本散在三處（`GuiImGuiRenderer` 的 `Vector4(0.65f…)`、
+`SCP_GuiTextRenderer.DefaultWidth = 96`、`SenateWindow.FontSize = 18f`）——
+各自都對，但**沒有一處知道另一處**。調一次尺寸要改三個檔，而漏掉的那個不會報錯，
+只會「有一半變大了」。
+
+**預設 `Scale = 2.0`（不是 1.0）**：Tim 實測 ImGui 出廠值＋18px 字在桌面上太小到不想讀，
+而**不想讀等於這些讀數沒寫**。⇒ 預設值要對準真的會被看的那一格，不是函式庫的出廠值。
+
+**刻意分開的一格**：文字模式的 `TextWidth` 等參數**不吃 `Scale`** ——
+終端機的一格是字元不是像素，乘 2 只會讓表格超出視窗。
+（這正是「通則套在前提不成立的那群人身上會安靜地毀掉東西」的形狀。）
+
+**已知限制（說出來，不假裝生效）**：ImGui 的字級綁在載入時建好的 font atlas
+⇒ 換尺寸時**間距與版位即時生效、字級要重開視窗**。頁面上那條 Note 就是講這件事。
+
+**視窗尺寸要夾**：scale 2 時 1280×800 會變 2560×1600 —— 在 1920×1080 的機器上
+那是比桌面還大的視窗（標題欄跑到螢幕外），而它不會報錯。
+⇒ `ResolveWindowSize` 夾在主螢幕可用區之內；問不到螢幕尺寸時**不猜**，直接用 style 的值並說出來。
+
+---
+
+## D12 · 設定檔的寫入端不准吃掉它不認得的東西（2026-08-23，自己咬的）
+
+**現象**：D11 的第一版把介面尺寸寫回 `senate.local.json`，
+**使用者手寫的 `"//"` 註解整行消失**。projects 還在，所以看起來一切正常。
+
+**兩隻，成因不同**：
+① 反序列化丟掉未知欄位 ⇒ 序列化就再也寫不回來。修法：`[JsonExtensionData]`（根層與 projects 各一份）。
+② `JsonSerializerOptions` 沒設 `Encoder` ⇒ 中文被寫成 `\uXXXX`。檔案仍是合法 JSON，
+   但**人看不懂了** —— 而這份檔的前提就是「使用者會自己手改」。
+   修法：`JavaScriptEncoder.UnsafeRelaxedJsonEscaping`（寫的是磁碟，不是網頁）。
+
+⚠ **副作用（已知、不掩蓋）**：extension data 會被寫在物件**尾端**，
+所以原本放在第一行的 `"//"` 註解寫回後會跑到最後一行。內容不丟，位置會變。
+
+**護欄**：`senate selftest` 新增「設定檔 round-trip」一項 ——
+根層註解／專案層註解／未知欄位三者都要在寫回後還在，而不是只驗 `ui.scale` 讀得回來。
+🩸 抓到這隻的不是我又看一遍，是那一項從 `False` 變 `True` 的那一格字。
