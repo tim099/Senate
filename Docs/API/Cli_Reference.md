@@ -61,13 +61,16 @@ SCP_Core 共用碼的自我對拍。目前三項：
 | `--window` | 開原生 ImGui 視窗，關窗才結束 |
 | `--screenshot <path>` | 開窗、畫幾幀、存 PNG 後**自己關掉** |
 | `--width <n>` | 文字輸出寬度（字元格，預設 96），`doctor` / `selftest` 也吃 ⚠ 不吃 `--scale` |
-| `--scale <x>` | 介面縮放（0.5〜4，預設 2.0）。**本次有效，不寫回設定檔** |
+| `--scale <x>` | 介面縮放（0.5〜4，預設 1.0）。**本次有效，不寫回設定檔** |
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |
 
-**介面尺寸**：常設值住在 `senate.local.json` 的 `ui` 區塊，改它走畫面上的按鈕：
+**介面尺寸**：常設值住在 `senate.local.json` 的 `ui` 區塊，改它走畫面上的按鈕
+（尺寸現在自己一頁，先 push 進去再按）：
 
 ```bash
-./senate.exe ui --click doctor/style/big     # 存進設定檔（回讀確認後才說成功）
+./senate.exe ui --click doctor/open-style    # 進「介面尺寸」頁
+./senate.exe ui --click style/big            # 存進設定檔（回讀確認後才說成功）
+./senate.exe ui --click page/back            # 返回上一頁
 ```
 
 `--scale` / `--size` 刻意不寫回檔案 —— 一道旗標改掉持久設定，
@@ -77,8 +80,15 @@ SCP_Core 共用碼的自我對拍。目前三項：
 **兩趟繪製**：帶 `--click` 時先畫一趟（讓 handler 執行），再畫第二趟當顯示。
 只畫一趟會顯示按下**前**的狀態，看起來像沒反應。
 
-**session**：欄位與勾選存在 `build/ui_session.json`。
-每次 CLI 都是新 process ⇒ 不存檔的話多步操作不可能成立。**點擊不進 session**（它是事件不是狀態）。
+**session**：欄位、勾選、**現在停在哪一疊頁面**（`nav`，內容是 page key）存在
+`build/ui_session.json`。每次 CLI 都是新 process ⇒ 不存檔的話多步操作不可能成立
+（症狀會是「我按了進去，下一道指令卻回到首頁」，看起來像按鈕失效）。
+**點擊不進 session**（它是事件不是狀態）。
+
+**頁面導覽**：`page/back` 是固定 id（`Count > 1` 時才畫得出來）；
+每一頁的 key 見 `--list` 的輸出前綴。`--reset` 會把導覽一起清回根頁。
+⚠ session 裡的 key 對不上現在的頁面時**停在那裡並印警告**，不會悄悄退回首頁 ——
+「你要的那頁不存在了」不可以長得像「你本來就在首頁」。
 
 **id 不存在時擋下並回 exit 2**，並指向 `--list` —— 靜默失敗會讓「按了沒反應」與「按錯了」同形。
 

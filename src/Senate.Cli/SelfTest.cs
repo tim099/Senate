@@ -23,6 +23,7 @@ public static class SelfTest
         aRows.Add(WriterStability());
         aRows.Add(ConfigRoundTripKeepsUnknownKeys());
         aRows.Add(StyleRoundTrip());
+        aRows.Add(PageStack());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         return aRows;
     }
@@ -63,6 +64,73 @@ public static class SelfTest
             "輸出穩定性",
             $"round-trip 逐字相同={a1 == a2}／插入順序保留={aOrderKept}／中文不轉義={aCjkRaw}",
             a1 == a2 && aOrderKept && aCjkRaw ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 頁面堆疊的性質：只有最上方那頁會被畫、生命週期呼叫順序、同實例 push 兩次要擋、
+    /// 導覽路徑存讀一致、認不得的 key 要**停在那裡**而不是悄悄退回根頁。
+    /// </summary>
+    static CheckRow PageStack()
+    {
+        var aLog = new List<string>();
+        var aCtrl = new SCP_GuiPageController();
+        var aA = new ProbePage("a", aLog);
+        var aB = new ProbePage("b", aLog);
+
+        aCtrl.Push(aA);
+        aCtrl.Push(aB);
+
+        // ① 只畫最上方那頁
+        var aUi = new SCP_Ui();
+        aCtrl.Draw(aUi);
+        string aText = SCP_GuiTextRenderer.Render(aUi.Root);
+        bool aOnlyTop = aText.Contains("我是 b", StringComparison.Ordinal)
+                        && !aText.Contains("我是 a", StringComparison.Ordinal);
+
+        // ② 返回鈕在 Count>1 時存在且 id 固定（agent 靠它返回）
+        bool aBackExists = SCP_GuiQuery.Find(aUi.Root, SCP_GuiPageController.BackButtonId) != null;
+
+        // ③ 同一個實例 push 兩次要丟例外（stack 裡兩個相同引用會讓 Pop/Remove 看運氣）
+        bool aDupBlocked = false;
+        try { aCtrl.Push(aB); }
+        catch (InvalidOperationException) { aDupBlocked = true; }
+
+        // ④ 導覽路徑存讀一致（走 SCP_GuiState 的 nav）
+        var aState = new SCP_GuiState();
+        aState.Nav = aCtrl.PathKeys;
+        var aBack = SCP_GuiState.FromJson(SCP_JsonData.Parse(aState.ToJson().ToJson()));
+        bool aNavOk = aBack.Nav.Count == 2 && aBack.Nav[0] == "a" && aBack.Nav[1] == "b";
+
+        // ⑤ pop 的生命週期順序
+        aCtrl.Pop();
+        bool aLifecycle = string.Join(",", aLog) == "a:push,b:push,a:pause,b:close,a:resume";
+
+        // ⑥ 認不得的 key ⇒ 回報它、停在原地（不可以悄悄退回根頁）
+        var aCtrl2 = new SCP_GuiPageController();
+        aCtrl2.Push(new ProbePage("a", aLog));
+        string? aBadKey = aCtrl2.RestorePath(new List<string> { "a", "沒這頁" },
+                                             k => k == "a" ? null : null);
+        bool aStopOnUnknown = aBadKey == "沒這頁" && aCtrl2.Count == 1;
+
+        bool aOk = aOnlyTop && aBackExists && aDupBlocked && aNavOk && aLifecycle && aStopOnUnknown;
+        return new CheckRow("頁面堆疊",
+            $"只畫最上頁={aOnlyTop}／返回鈕={aBackExists}／同實例擋下={aDupBlocked}／nav 存讀={aNavOk}"
+            + $"／生命週期順序={aLifecycle}（{string.Join(",", aLog)}）／未知 key 停手={aStopOnUnknown}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>對拍用的假頁 —— 把生命週期呼叫記成可比對的字串。</summary>
+    sealed class ProbePage : SCP_GuiPage
+    {
+        readonly string m_Key;
+        readonly List<string> m_Log;
+        public ProbePage(string iKey, List<string> iLog) { m_Key = iKey; m_Log = iLog; }
+        public override string Key => m_Key;
+        public override void Draw(SCP_Ui iUi) => iUi.Label($"我是 {m_Key}");
+        public override void OnPush() => m_Log.Add($"{m_Key}:push");
+        public override void OnPause() => m_Log.Add($"{m_Key}:pause");
+        public override void OnResume() => m_Log.Add($"{m_Key}:resume");
+        public override void OnClose() { m_Log.Add($"{m_Key}:close"); base.OnClose(); }
     }
 
     /// <summary>

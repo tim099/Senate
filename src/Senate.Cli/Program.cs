@@ -86,7 +86,11 @@ public static class Program
         //   `--scale 9` 警告說夾成 4，畫面卻寫 scale=2）。**尺寸的讀數自己也會說謊。**
         var aStyle = StyleFrom(iArgs, aModel);
         var aUi = new SCP_Ui();
-        new DoctorPage(aModel).Draw(aUi);
+        // doctor 是一次性讀數，但照樣走 controller —— 標題與麵包屑都住那一層，
+        // 繞過它就會變成「doctor 的畫面跟 ui 的畫面長得不一樣」而沒人知道為什麼。
+        var aCtrl = new SCP_GuiPageController();
+        aCtrl.Push(SenatePages.Root(aModel));
+        aCtrl.Draw(aUi);
         Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, aStyle));
 
         foreach (string d in aUi.Diagnostics) Console.Error.WriteLine($"⚠ gui: {d}");
@@ -184,15 +188,20 @@ public static class Program
     static int RunWindow(string iRepoRoot, string[] iArgs, string? iShot)
     {
         var aModel = new DoctorModel(iRepoRoot);   // 讀數在開窗前取好（探測不可以每幀跑）
-        var aPage = new DoctorPage(aModel);
         var aStyle = StyleFrom(iArgs, aModel);
+
+        // ⭐ 一個 Window 一套 controller（不是全域單例）—— 開第二個視窗時兩邊不會互相蓋。
+        //   視窗活著的期間導覽狀態就在記憶體裡，不必像 CLI 那樣存進 session。
+        var aCtrl = new SCP_GuiPageController();
+        aCtrl.Push(SenatePages.Root(aModel));
 
         // ⚠ 傳的是**同一顆 style 物件**（不是複本）—— 使用者在頁面上換尺寸時，
         //   renderer 下一幀就讀得到新的間距。字級例外（綁在載入時的 atlas），要重開視窗。
         var aWin = new SenateWindow("Senate", input =>
         {
             var aUi = new SCP_Ui(input);
-            aPage.Draw(aUi);
+            aCtrl.Tick();
+            aCtrl.Draw(aUi);
             return aUi.Root;
         }, aStyle);
 

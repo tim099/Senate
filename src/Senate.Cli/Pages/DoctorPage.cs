@@ -9,18 +9,24 @@ using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
 
-public sealed class DoctorPage
+public sealed class DoctorPage : SCP_GuiPage
 {
     readonly DoctorModel m_Model;
 
     public DoctorPage(DoctorModel iModel) { m_Model = iModel; }
 
+    public override string Key => PageKey;
+    public const string PageKey = "doctor";
+
+    /// <summary>標題交給 controller 畫（麵包屑也吃它）—— 所以這裡**不含**取讀數次數，那是讀數不是身分。</summary>
+    public override string Title => "Senate 環境檢查";
+
     EnvReading m_Env => m_Model.Env;
     IReadOnlyList<ProjectReading> m_Projects => m_Model.Projects;
 
-    public void Draw(SCP_Ui g)
+    public override void Draw(SCP_Ui g)
     {
-        g.Title($"Senate 環境檢查（第 {m_Model.RefreshCount} 次取讀數）");
+        g.Note($"第 {m_Model.RefreshCount} 次取讀數");
 
         using (g.Box("執行環境"))
         {
@@ -84,28 +90,8 @@ public sealed class DoctorPage
             // 按鈕的回傳值就是事件（GUILayout 語意）—— 這裡真的做事，不是裝飾
             if (g.Button("重新取讀數", "doctor/refresh")) m_Model.Refresh();
             if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
-        }
-
-        DrawStyleSection(g);
-    }
-
-    /// <summary>
-    /// 介面尺寸區塊。⭐ 把「它以為自己多大」印出來（<see cref="SCP_GuiStyle.Describe"/>）——
-    /// 尺寸這種東西「看起來變大了」不算讀數，截圖旁邊沒有數字就對不起來。
-    /// </summary>
-    void DrawStyleSection(SCP_Ui g)
-    {
-        g.Space();
-        using (g.Box("介面尺寸", "doctor/style"))
-        {
-            g.Label(m_Model.Style.Describe());
-
-            SCP_GuiSize? aPick = m_Model.Style.DrawPicker(g, "doctor/style");
-            if (aPick.HasValue) m_Model.ApplySize(aPick.Value);
-
-            if (m_Model.StyleMessage != null) g.Note(m_Model.StyleMessage);
-            g.Note("字級要重開視窗才會換（ImGui 的字級綁在載入時建好的 atlas）；間距與版位即時生效。");
-            g.Note("純文字輸出的寬度不吃這個 scale —— 終端機的一格是字元不是像素（要調用 --width）。");
+            // 導覽：push 一頁上去（返回鈕由 controller 自己畫，id 固定 page/back）
+            if (g.Button("介面尺寸…", "doctor/open-style")) Controller?.Push(new StylePage(m_Model));
         }
     }
 

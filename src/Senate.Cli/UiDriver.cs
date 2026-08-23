@@ -39,19 +39,46 @@ public static class UiDriver
         File.WriteAllText(p, iState.ToJson().ToJson() + "\n");
     }
 
-    /// <summary>跑一次操作：套用動作 → 兩趟繪製 → 回傳（樹, 文字）。</summary>
+    /// <summary>
+    /// 依 session 裡的導覽路徑重建這一疊頁面（根頁永遠是第一層）。
+    /// <para>復原不了時**停在那裡並說出來** —— 悄悄退回首頁會讓
+    /// 「你要的那頁不存在了」長得像「你本來就在首頁」。</para>
+    /// </summary>
+    static SCP_GuiPageController BuildController(DoctorModel iModel, SCP_GuiState iState)
+    {
+        var aCtrl = new SCP_GuiPageController();
+        aCtrl.Push(SenatePages.Root(iModel));
+
+        string? aBad = aCtrl.RestorePath(iState.Nav, k => SenatePages.Create(k, iModel));
+        if (aBad != null)
+            Console.Error.WriteLine(
+                $"⚠ 回不到頁面 '{aBad}'（session 的導覽路徑對不上現在的頁面）—— 這次停在：{aCtrl.PathText}");
+        return aCtrl;
+    }
+
+    /// <summary>
+    /// 跑一次操作：重建頁面堆疊 → 套用動作 → 兩趟繪製 → 回傳（樹, 文字）。
+    /// <para>⚠ 導覽（push／pop）在**第一趟**就發生，所以第二趟畫的是**新的那一頁** ——
+    /// CLI 這側沒有「慢一幀」（視窗那側有，那是 retained 畫布的性質）。
+    /// 兩側行為不同這件事要知道，不然「同一顆按鈕在視窗要按兩次」會被當成 bug。</para>
+    /// </summary>
     public static (SCP_GuiNode tree, string text) Apply(
         DoctorModel iModel, SCP_GuiState iState, string? iClickId, SCP_GuiStyle iStyle)
     {
+        var aCtrl = BuildController(iModel, iState);
+
         // 第一趟：帶 click，讓 handler 真的跑（回傳的樹是舊畫面，不拿來顯示）
         if (iClickId != null)
         {
             var aFirst = new SCP_Ui(iState.ToInput(iClickId));
-            new DoctorPage(iModel).Draw(aFirst);
+            aCtrl.Draw(aFirst);
         }
         // 第二趟：不帶 click，這才是操作之後的畫面
         var aUi = new SCP_Ui(iState.ToInput(null));
-        new DoctorPage(iModel).Draw(aUi);
+        aCtrl.Draw(aUi);
+
+        // 導覽是狀態不是事件 ⇒ 存回去，否則下一道指令會回到根頁（看起來像按鈕沒反應）
+        iState.Nav = aCtrl.PathKeys;
         return (aUi.Root, SCP_GuiTextRenderer.Render(aUi.Root, iStyle));
     }
 

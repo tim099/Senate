@@ -103,11 +103,46 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
   （文字模式沒有真正的水平版位，硬排會互相蓋掉，寧可誠實換行）。
 - ⚠ **已知缺口**：表格還不吃 `--width`（欄寬取自然寬度，窄視窗會超出）。
 
+## 頁面堆疊：`SCP_GuiPage` / `SCP_GuiPageController`
+
+```
+SCP_GuiPageController（一個 Window 一套 —— 沒有全域單例）
+  ├── Push / Pop / PopUntil / PopUntilKey / PopAll / Remove / Replace
+  ├── Draw(ui)     ← 只畫 TopPage；Count>1 時自動畫麵包屑＋返回鈕（id 固定 page/back）
+  ├── Tick()       ← 只給 TopPage
+  ├── PathText     ← 「首頁 ▸ 細節」（人看的）
+  └── PathKeys / RestorePath(keys, factory)   ← 導覽狀態（機器讀的，進 session 的 nav）
+
+SCP_GuiPage（abstract）
+  ├── Key          ← **契約**：進 session、進 agent 指令。用資料本身的鍵，⛔ 不用序號
+  ├── Title        ← controller 畫（麵包屑也吃它）
+  ├── Draw(ui)     ← 撰寫端一頁一個方法（GUILayout 手感）
+  ├── OnPush / OnPause / OnResume / OnClose / CloseEvent
+  └── Controller?.Push(new OtherPage(...))    ← 導覽就是 push
+```
+
+| 為什麼這樣 | 而不是 |
+|---|---|
+| **一個 Window 一套 controller** | UCL 的 `Ins` 單例 —— 開第二個視窗會互相蓋，而畫面只像「那頁跑到別的窗去了」 |
+| 同一個 page 實例 push 兩次 ⇒ **丟例外** | 安靜接受 —— stack 裡兩個相同引用會讓 `Pop`／`Remove` 移掉哪一個變成看運氣 |
+| 導覽路徑存進 session（`nav`） | 只放記憶體 —— CLI 每次都是新 process，兩步操作會變成「按了進去又跳回首頁」 |
+| 復原不了的 key **停手並回報** | 悄悄退回根頁 —— 「那頁不存在了」會長得像「你本來就在首頁」 |
+| 空堆疊畫一行說明 | 留白 —— 分不出「沒有頁面」與「頁面畫不出來」 |
+
+⚠ **兩側的導覽時序不同**：CLI 是兩趟繪製 ⇒ push／pop 同一次呼叫就看得到；
+視窗是 retained 畫布 ⇒ **慢一幀**（跟按鈕回傳值同一個成因）。
+
+⚠ **頁面自帶 id 命名空間**（`SCP_Ui.IdScope(page.Key)`，版面上透明）——
+兩頁各有一個沒傳 key 的「篩選」欄位時不會互相吃到對方的 session 值。
+顯式 key 不受影響（逐字採用是契約）。
+
+---
+
 ## 顯示參數：`SCP_GuiStyle`（尺寸／間距／字級／顏色的單一來源）
 
 ```
 SCP_GuiStyle
-  ├── Scale（0.5〜4，**預設 2.0**）＋ 四段預設 小1× / 中1.5× / 大2× / 特大2.5×
+  ├── Scale（0.5〜4，**預設 1.0**）＋ 四段預設 小1× / 中1.5× / 大2× / 特大2.5×
   ├── Scaled(n) / ScaledInt(n)        ← 等同 UCL_GUIStyle.GetScaledSize
   ├── FontSize / TitleFontSize / ItemSpacing* / FramePadding* / CellPadding*
   │   IndentSpacing / ScrollbarSize / ButtonMinWidth / WindowWidth …（＝基準值 × Scale）

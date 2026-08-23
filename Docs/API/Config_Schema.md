@@ -34,7 +34,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
     }
   ],
   "ui": {
-    "scale": 2,
+    "scale": 1,
     "textWidth": 96
   }
 }
@@ -48,7 +48,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `projects[].agentCommandsRoot` | string | `"auto"`（預設）或明確路徑；相對路徑以 `root` 為基準 |
 | `projects[].enabled` | bool | `false` ⇒ 仍列出並標「停用」，但**不計入 doctor 的通過條件** |
 | `projects[].profile` | string | 分群規則 profile 名（尚未實作，保留） |
-| `ui.scale` | float | 介面縮放（0.5〜4，**預設 2.0**）。基準尺寸的唯一來源是 `SCP_GuiStyle`，這裡只存「使用者選了什麼」 |
+| `ui.scale` | float | 介面縮放（0.5〜4，**預設 1.0** —— 實機按過四段之後定的，見 D13）。基準尺寸的唯一來源是 `SCP_GuiStyle`，這裡只存「使用者選了什麼」 |
 | `ui.textWidth` | int | 純文字輸出寬（字元格，預設 96）⚠ **不吃 `ui.scale`** —— 終端機的一格是字元不是像素 |
 
 `ui` 區塊是**這台機器的顯示偏好**，所以只住在不入版控的那一份：進了版控就會變成
