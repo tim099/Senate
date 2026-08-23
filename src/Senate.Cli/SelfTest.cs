@@ -29,6 +29,11 @@ public static class SelfTest
         aRows.Add(MapperRoundTrip());
         aRows.Add(InspectorEdits());
         aRows.Add(FoldSemantics());
+        aRows.Add(DropdownWidget());
+        aRows.Add(PageCatalogShape());
+        aRows.Add(RowLayout());
+        aRows.Add(SourceHint());
+        aRows.Add(SourceCapabilityFallback());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         return aRows;
     }
@@ -318,6 +323,311 @@ public static class SelfTest
         return new CheckRow("自動繪製",
             $"成員都畫出來（含不支援、排除 Ignore）={aDrawn}／輸入寫進物件={aWrote}／打錯字不寫入且留紀錄={aRefused}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 下拉選單（複合元件）：收合時不建子節點、搜尋是**關鍵字不是 regex**、分頁邊界、
+    /// 以及選了之後有沒有把選擇寫回去。
+    /// <para>⚠ 第三項（regex）是刻意跟 UCL 那側不同的一格：UCL 用 <c>new Regex(input)</c>，
+    /// 編譯失敗就退回「不篩」—— 於是打一個 <c>(</c> 會讓清單看起來全部符合。
+    /// 這裡驗的是「打 <c>(</c> 應該是 0 筆」，因為使用者打的是關鍵字。</para>
+    /// </summary>
+    static CheckRow DropdownWidget()
+    {
+        var aOptions = new List<SCP_GuiOption>();
+        for (int i = 0; i < 30; i++) aOptions.Add(new SCP_GuiOption("k" + i, "項目 " + i));
+
+        // ① 收合 ⇒ 樹裡只有那一顆鈕（不是「畫了再隱藏」）；而且**沒有任何狀態時預設就是收合**
+        //    🩸 Tim 看到的「預設展開」不是這裡的預設值，是我在 CLI 點開的 session 漏進了視窗（見 D18）
+        var aShut = new SCP_Ui();
+        aShut.Dropdown("頁面", aOptions, "k0", "d");
+        bool aShutOk = SCP_GuiQuery.Interactive(aShut.Root).Count == 1;
+        bool aDefaultShut = aShutOk
+                            && SCP_GuiTextRenderer.Render(aShut.Root, 120).Contains("▼", StringComparison.Ordinal);
+
+        // ② 展開 ⇒ 搜尋框 ＋ 一頁 12 筆 ＋ 只有「下一頁」（第一頁沒有上一頁鈕，而不是有一顆按了沒事的）
+        var aOpenUi = DrawDropdown(aOptions, null, null, out _);
+        var aOpenEls = SCP_GuiQuery.Interactive(aOpenUi.Root);
+        int aRows = CountPrefix(aOpenEls, "d/pick/");
+        bool aOpenOk = aRows == SCP_GuiWidgets.DefaultRowsPerPage
+                       && HasId(aOpenEls, "d/search") && HasId(aOpenEls, "d/next") && !HasId(aOpenEls, "d/prev");
+
+        // ③ 搜尋：空白分隔的關鍵字要**每一個都命中**（AND）——
+        //    "項目 1" ＝ 兩個關鍵字，所以 1／10-19／**21** 共 12 筆（不是 11：「項目 21」兩個字串都含）。
+        //    🩸 我第一版把答案寫成 11，紅燈的是斷言不是程式 —— AND 語意本來就會多命中 21。
+        //    ／regex 字元不是樣式而是字面（"(" ⇒ 0 筆，UCL 那側會退回「不篩」⇒ 30 筆）
+        int aHitsKeyword = SCP_GuiWidgets.Filter(aOptions, "項目 1").Count;
+        int aHitsParen = SCP_GuiWidgets.Filter(aOptions, "(").Count;
+        bool aSearchOk = aHitsKeyword == 12 && aHitsParen == 0;
+
+        // ④ 展開後的結構：頭與選項在**同一個等寬群組**裡（版位靠這個 —— 清單對齊自己的頭）
+        SCP_GuiNode? aGroup = FindUniformGroup(aOpenUi.Root);
+        bool aGrouped = aGroup != null
+                        && aGroup.Children.Count > 0
+                        && aGroup.Children[0].Kind == SCP_GuiNodeKind.Button
+                        && aGroup.Children[0].Id == "d";     // 第一個就是那顆頭
+
+        // ⑤ 選一項 ⇒ 回傳新值，而且**寫回請求**裡有值與「收起來」
+        var aPickUi = DrawDropdown(aOptions, "d/pick/k7", null, out string aPicked);
+        var aWrites = aPickUi.FieldWrites;
+        bool aPickOk = aPicked == "k7"
+                       && WroteEquals(aWrites, "d/value", "k7")
+                       && WroteEquals(aWrites, "d/open", "0");
+
+        // ⑤ 頁碼被搜尋縮短時要夾回去（不夾的話畫面是一片空白，跟「沒有符合的項目」同形）
+        DrawDropdown(aOptions, null, "99", out _, iUiOut: out SCP_Ui aClampUi);
+        bool aClampOk = WroteEquals(aClampUi.FieldWrites, "d/page", "2");   // 30 筆 / 12 ⇒ 3 頁，夾到 index 2
+
+        bool aOk = aDefaultShut && aShutOk && aOpenOk && aSearchOk && aPickOk && aClampOk && aGrouped;
+        return new CheckRow("下拉選單",
+            $"預設摺疊={aDefaultShut}／收合時子節點不存在={aShutOk}／展開分頁（{aRows} 列＋下一頁）={aOpenOk}"
+            + $"／頭與選項同一個等寬群組={aGrouped}"
+            + $"／關鍵字比對（\"項目 1\"={aHitsKeyword}、\"(\"={aHitsParen}）={aSearchOk}"
+            + $"／選取寫回={aPickOk}／頁碼夾取={aClampOk}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>畫一次下拉（展開狀態），回傳那一輪的 SCP_Ui 與選中的值。</summary>
+    static SCP_Ui DrawDropdown(List<SCP_GuiOption> iOptions, string? iClick, string? iPage, out string oPicked)
+        => DrawDropdown(iOptions, iClick, iPage, out oPicked, out _);
+
+    static SCP_Ui DrawDropdown(List<SCP_GuiOption> iOptions, string? iClick, string? iPage,
+        out string oPicked, out SCP_Ui iUiOut)
+    {
+        var aInput = new SCP_GuiInput { ClickedId = iClick };
+        aInput.Fields["d/open"] = "1";
+        if (iPage != null) aInput.Fields["d/page"] = iPage;
+        var aUi = new SCP_Ui(aInput);
+        oPicked = aUi.Dropdown("頁面", iOptions, "k0", "d");
+        iUiOut = aUi;
+        return aUi;
+    }
+
+    static bool HasId(List<SCP_GuiElement> iEls, string iId)
+    {
+        foreach (var e in iEls) if (e.Id == iId) return true;
+        return false;
+    }
+
+    static int CountPrefix(List<SCP_GuiElement> iEls, string iPrefix)
+    {
+        int n = 0;
+        foreach (var e in iEls) if (e.Id.StartsWith(iPrefix, StringComparison.Ordinal)) n++;
+        return n;
+    }
+
+    /// <summary>找出樹裡第一個宣告等寬的群組（下拉展開後的那一塊）。</summary>
+    static SCP_GuiNode? FindUniformGroup(SCP_GuiNode iNode)
+    {
+        if (iNode.UniformWidth) return iNode;
+        foreach (var c in iNode.Children)
+        {
+            var aHit = FindUniformGroup(c);
+            if (aHit != null) return aHit;
+        }
+        return null;
+    }
+
+    static bool WroteEquals(IReadOnlyList<KeyValuePair<string, string>> iWrites, string iId, string iValue)
+    {
+        foreach (var kv in iWrites) if (kv.Key == iId && kv.Value == iValue) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// 頁面目錄：opt-in（MenuGroup 為 null 的不列）、分組篩選、認不得的 key 回 null、
+    /// 以及**一頁建不出來不可以擋住整個清單**（要記一筆診斷，不是靜默消失）。
+    /// </summary>
+    static CheckRow PageCatalogShape()
+    {
+        var aCatalog = new SCP_GuiPageCatalog();
+        aCatalog.Register("a", () => new ProbeToolPage("a", "甲頁", "組一"));
+        aCatalog.Register("b", () => new ProbeToolPage("b", "乙頁", "組二"));
+        aCatalog.Register("c", () => new ProbeToolPage("c", "丙頁", "組一"));
+        aCatalog.Register("hidden", () => new ProbeToolPage("hidden", "藏起來的頁", null));
+        aCatalog.Register("boom", () => throw new InvalidOperationException("我壞掉了"));
+
+        bool aOptIn = aCatalog.Entries.Count == 3;                       // hidden 與 boom 都不在
+        bool aGrouped = aCatalog.Groups.Count == 2
+                        && aCatalog.InGroup("組一").Count == 2
+                        && aCatalog.InGroup("").Count == 3;              // 空 ＝ 不篩
+        bool aBroken = aCatalog.Diagnostics.Count == 1
+                       && aCatalog.Diagnostics[0].Contains("boom", StringComparison.Ordinal);
+        bool aUnknown = aCatalog.Create("nope") == null && aCatalog.Create("a") != null;
+        bool aHiddenStillCreatable = aCatalog.Create("hidden") != null;  // 不列 ≠ 不存在
+
+        bool aDupThrew = false;
+        try { aCatalog.Register("a", () => new ProbeToolPage("a", "重複", "組一")); }
+        catch (InvalidOperationException) { aDupThrew = true; }
+
+        bool aOk = aOptIn && aGrouped && aBroken && aUnknown && aHiddenStillCreatable && aDupThrew;
+        return new CheckRow("頁面目錄",
+            $"opt-in（{aCatalog.Entries.Count}/5 列出）={aOptIn}／分組篩選={aGrouped}"
+            + $"／壞頁記一筆不擋清單={aBroken}／認不得的 key 回 null={aUnknown}"
+            + $"／不列但仍造得出來={aHiddenStillCreatable}／重複登記丟例外={aDupThrew}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// Row 的排版規則：**連續的 inline 併成一行，遇到群組換行**。
+    /// <para>🩸 2026-08-23 Tim 的截圖：ImGui renderer 對每個子節點都 SameLine()，
+    /// 於是「一顆鈕 ＋ 一個展開的下拉」把整疊選項畫在那顆鈕上面，**疊成一團**。
+    /// 文字 renderer 當時是「全部 inline 才併，否則整列逐項換行」—— 不會疊，但也不會併。
+    /// 兩邊都改成同一條規則，而「誰算 inline」只有一份（<c>SCP_GuiNode.IsInline</c>）。</para>
+    /// <para>⚠ 這一項只驗得到文字 renderer。ImGui 那側的讀數是截圖，不在這裡。</para>
+    /// </summary>
+    static CheckRow RowLayout()
+    {
+        var aUi = new SCP_Ui();
+        using (aUi.Row())
+        {
+            aUi.Button("甲", "r/a");
+            aUi.Button("乙", "r/b");
+            using (aUi.Box("")) aUi.Button("群組裡面", "r/inner");
+            aUi.Button("丙", "r/c");
+        }
+        string[] aLines = SCP_GuiTextRenderer.Render(aUi.Root, 60)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        // 期望：① 甲乙同一行 ② 群組自己的框 ③ 丙**不會**被吸回甲乙那行
+        bool aJoined = aLines.Length > 0 && aLines[0].Contains("[ 甲 ]") && aLines[0].Contains("[ 乙 ]");
+        bool aBoxBroke = aLines.Any(l => l.Contains("群組裡面"))
+                         && !aLines.Any(l => l.Contains("[ 甲 ]") && l.Contains("群組裡面"));
+        bool aTailOwnLine = aLines.Any(l => l.Contains("[ 丙 ]") && !l.Contains("[ 甲 ]"));
+
+        // 分類只有一份：群組類一律不是 inline
+        bool aKinds = SCP_GuiNode.IsInline(SCP_GuiNodeKind.Button)
+                      && SCP_GuiNode.IsInline(SCP_GuiNodeKind.TextField)
+                      && !SCP_GuiNode.IsInline(SCP_GuiNodeKind.Box)
+                      && !SCP_GuiNode.IsInline(SCP_GuiNodeKind.Table)
+                      && !SCP_GuiNode.IsInline(SCP_GuiNodeKind.Row);
+
+        bool aOk = aJoined && aBoxBroke && aTailOwnLine && aKinds;
+        return new CheckRow("Row 排版",
+            $"連續 inline 併一行={aJoined}／群組會換行（不疊在鈕上）={aBoxBroke}"
+            + $"／群組後面的鈕自己一行={aTailOwnLine}／inline 分類只有一份={aKinds}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 「原始碼」鈕的路徑來源。**這一項存在是因為它只能量不能推**：
+    /// <c>[CallerFilePath]</c> 只有在子類**顯式寫 <c>: base()</c>** 時才會被填。
+    /// <para>釘住它的理由：忘了寫的症狀是「精確路徑悄悄變成 null」，
+    /// 而畫面上看起來完全一樣（會退回用類別名找）。編譯器哪天改行為也要有人喊。</para>
+    /// </summary>
+    static CheckRow SourceHint()
+    {
+        var aImplicit = new ProbeToolPage("a", "甲頁", "組一");     // 隱式 base()
+        var aExplicit = new ProbeSourcePage();                       // 顯式 : base()
+
+        bool aImplicitNull = aImplicit.SourceFilePath == null;
+        bool aExplicitFilled = aExplicit.SourceFilePath != null
+                               && aExplicit.SourceFilePath.EndsWith("SelfTest.cs", StringComparison.Ordinal);
+        bool aFallback = aImplicit.SourceFileName == "ProbeToolPage.cs";
+
+        // 宿主端：純檔名找得回來、找不到要說出原因（不是靜默失敗）
+        string aFound = SenateShell.Reveal("這個檔一定不存在.cs", AppContext.BaseDirectory);
+        bool aLoudMiss = aFound.StartsWith("⚠", StringComparison.Ordinal) && aFound.Contains("找不到");
+
+        bool aOk = aImplicitNull && aExplicitFilled && aFallback && aLoudMiss;
+        return new CheckRow("原始碼路徑",
+            $"隱式 base() ⇒ null={aImplicitNull}／顯式 : base() ⇒ 填入本檔={aExplicitFilled}"
+            + $"／退回類別名={aFallback}（{aImplicit.SourceFileName}）／找不到會出聲={aLoudMiss}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 「這一頁是哪個 class」這個資訊在**每一種宿主能力組合**下都要到得了使用者手上。
+    /// <para>三種狀態 ＋ 一種失敗：① 能開檔案總管 ② 只能複製 ③ 兩種都沒有 ④ 能開但這次開不起來。
+    /// ⚠ 用 stub 換掉 <c>SCP_GuiHost</c> 的兩個委派（跑完還原）——
+    /// **不碰真的剪貼簿**：selftest 把使用者的剪貼簿蓋掉是一個誰都不會預期的副作用。
+    /// ⇒ 代價要說：真的 <c>clip.exe</c> 寫得進去這件事，這一項**沒有**驗到。</para>
+    /// </summary>
+    static CheckRow SourceCapabilityFallback()
+    {
+        var aSavedReveal = SCP_GuiHost.RevealInFileManager;
+        var aSavedCopy = SCP_GuiHost.CopyToClipboard;
+        try
+        {
+            // ① 能開檔案總管 ⇒ 只有「原始碼」那顆
+            SCP_GuiHost.RevealInFileManager = _ => "✓ 假裝開了";
+            SCP_GuiHost.CopyToClipboard = _ => "✓ 假裝複製了";
+            var aA = Ids(DrawProbe(null));
+            bool aOkA = aA.Contains(SCP_GuiToolPage.SourceButtonId)
+                        && !aA.Contains(SCP_GuiToolPage.CopyClassButtonId);
+
+            // ② 開不了 ⇒ 換成「複製類別名」
+            SCP_GuiHost.RevealInFileManager = null;
+            var aB = Ids(DrawProbe(null));
+            bool aOkB = aB.Contains(SCP_GuiToolPage.CopyClassButtonId)
+                        && !aB.Contains(SCP_GuiToolPage.SourceButtonId);
+
+            // ③ 兩種都沒有 ⇒ 兩顆鈕都不畫，但類別名要印在 page key 那行
+            SCP_GuiHost.CopyToClipboard = null;
+            var aCUi = DrawProbe(null);
+            var aC = Ids(aCUi);
+            string aCText = SCP_GuiTextRenderer.Render(aCUi.Root, 120);
+            bool aOkC = !aC.Contains(SCP_GuiToolPage.SourceButtonId)
+                        && !aC.Contains(SCP_GuiToolPage.CopyClassButtonId)
+                        && aCText.Contains("ProbeSourcePage", StringComparison.Ordinal);
+
+            // ④ 裝了但這次失敗 ⇒ 自動退到複製，而且訊息裡看得到類別名
+            SCP_GuiHost.RevealInFileManager = _ => "⚠ 假裝開不起來";
+            SCP_GuiHost.CopyToClipboard = _ => "✓ 假裝複製了";
+            string aDText = SCP_GuiTextRenderer.Render(DrawProbe(SCP_GuiToolPage.SourceButtonId).Root, 200);
+            bool aOkD = aDText.Contains("已改為複製類別名", StringComparison.Ordinal)
+                        && aDText.Contains("ProbeSourcePage", StringComparison.Ordinal);
+
+            bool aOk = aOkA && aOkB && aOkC && aOkD;
+            return new CheckRow("原始碼／類別名退路",
+                $"能開檔案總管⇒只有原始碼鈕={aOkA}／開不了⇒換成複製鈕={aOkB}"
+                + $"／兩種都沒有⇒類別名印在 page key 那行={aOkC}／開不起來⇒自動退到複製={aOkD}"
+                + "（用 stub，沒有碰真的剪貼簿 ⇒ clip.exe 本身未驗）",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally
+        {
+            SCP_GuiHost.RevealInFileManager = aSavedReveal;
+            SCP_GuiHost.CopyToClipboard = aSavedCopy;
+        }
+    }
+
+    static SCP_Ui DrawProbe(string? iClickId)
+    {
+        var aUi = new SCP_Ui(new SCP_GuiInput { ClickedId = iClickId });
+        new ProbeSourcePage().Draw(aUi);
+        return aUi;
+    }
+
+    static List<string> Ids(SCP_Ui iUi)
+    {
+        var aIds = new List<string>();
+        foreach (var e in SCP_GuiQuery.Interactive(iUi.Root)) aIds.Add(e.Id);
+        return aIds;
+    }
+
+    /// <summary>對拍用：**顯式** <c>: base()</c> 的假頁（用來量 CallerFilePath 有沒有被填）。</summary>
+    sealed class ProbeSourcePage : SCP_GuiToolPage
+    {
+        public ProbeSourcePage() : base() { }
+        public override string Key => "probe-source";
+        protected override void DrawContent(SCP_Ui iUi) { }
+    }
+
+    /// <summary>對拍用的假工具頁。</summary>
+    sealed class ProbeToolPage : SCP_GuiToolPage
+    {
+        readonly string m_Key;
+        readonly string m_Title;
+        readonly string? m_Group;
+        public ProbeToolPage(string iKey, string iTitle, string? iGroup)
+        {
+            m_Key = iKey; m_Title = iTitle; m_Group = iGroup;
+        }
+        public override string Key => m_Key;
+        public override string Title => m_Title;
+        public override string? MenuGroup => m_Group;
+        protected override void DrawContent(SCP_Ui iUi) => iUi.Label($"我是 {m_Key}");
     }
 
     /// <summary>對拍用的假頁 —— 把生命週期呼叫記成可比對的字串。</summary>

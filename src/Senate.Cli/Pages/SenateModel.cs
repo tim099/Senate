@@ -1,5 +1,8 @@
-// 區塊職責：Doctor 頁的資料 —— 讀數 ＋ 一顆「重新取讀數」的動作。
+// 區塊職責：**整個後台共用的 model** —— 環境／專案讀數、顯示參數、repo 根，以及改尺寸這個動作。
 // 物理意義：頁面每幀都會被重畫，但**探測不可以每幀都跑**（那會每秒對每個專案跑好幾次 git）。
+//           ⚠ 本類別原名 `DoctorModel` —— 那個名字在只有 Doctor 一頁的時候是對的，
+//           但入口頁／尺寸頁／設定頁都吃它之後就變成一個比事實小的名字（"這是誰的 model？"）。
+//           改名不是美觀問題：名字比事實小會讓下一個人在它旁邊再開第二份 app 級狀態。
 //           ⇒ 讀數住在 model 裡，只有在被要求時才刷新。這也讓「按下重新取讀數」有一個真的效果，
 //           而不是一顆按了沒事發生的裝飾。
 // 數值影響：Refresh() 會跑 git status／stat 心跳檔（唯讀）。RefreshCount 是讀數 ——
@@ -9,7 +12,7 @@ using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
 
-public sealed class DoctorModel
+public sealed class SenateModel
 {
     readonly string m_RepoRoot;
 
@@ -32,7 +35,7 @@ public sealed class DoctorModel
     /// <summary>上一次改尺寸的結果（成功或失敗都要有話說；null ＝ 這次還沒人改過）。</summary>
     public string? StyleMessage { get; private set; }
 
-    public DoctorModel(string iRepoRoot)
+    public SenateModel(string iRepoRoot)
     {
         m_RepoRoot = iRepoRoot;
         Env = null!;
@@ -77,4 +80,18 @@ public sealed class DoctorModel
         Projects = aList;
         RefreshCount++;
     }
+}
+
+/// <summary>
+/// 環境讀數（跟專案無關的那半）。住在 model 這一層而不是頁面那一層 ——
+/// 它是資料，不是某一頁的私有東西。
+/// </summary>
+public sealed record EnvReading(
+    string? DotnetSdkVersion,
+    string RuntimeVersion,
+    Version? GitVersion,
+    string ConfigPath,
+    bool ConfigExists)
+{
+    public bool GitOkForPathspec => GitVersion != null && GitVersion >= GitCli.MinVersionForPathspecFromFile;
 }

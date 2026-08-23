@@ -14,9 +14,9 @@ using Senate.Core;
 
 namespace Senate.Cli.Pages;
 
-public sealed class SettingsPage : SCP_GuiPage
+public sealed class SettingsPage : SCP_GuiToolPage
 {
-    readonly DoctorModel m_Model;
+    readonly SenateModel m_Model;
     readonly string m_RepoRoot;
     readonly string m_ConfigPath;
 
@@ -27,18 +27,29 @@ public sealed class SettingsPage : SCP_GuiPage
     bool m_Dirty;
     string? m_Message;
 
-    public SettingsPage(DoctorModel iModel)
+    /// <summary>`: base()` 讓 [CallerFilePath] 填 SourceFilePath（隱式 base() 會是 null）。</summary>
+    public SettingsPage(SenateModel iModel) : base()
     {
         m_Model = iModel;
         m_RepoRoot = iModel.RepoRoot;
         m_ConfigPath = SenateConfig.DefaultPath(m_RepoRoot);
-        Load();
     }
+
+    /// <summary>
+    /// 讀檔在 <c>OnPush</c> 不在建構子。
+    /// <para>⚠ 這不是風格問題：頁面目錄（<see cref="SCP.Core.Gui.SCP_GuiPageCatalog"/>）為了讀
+    /// 標題與分組會**建一次實例然後丟掉** —— 建構子碰磁碟的話，光是「列出有哪些頁」
+    /// 就會去讀一次設定檔，而那筆 IO 不屬於任何人按下的動作。</para>
+    /// </summary>
+    public override void OnPush() { base.OnPush(); Load(); }
 
     public override string Key => PageKey;
     public const string PageKey = "settings";
 
     public override string Title => "設定（自動繪製）";
+
+    /// <summary>列進入口頁的「設定」組。</summary>
+    public override string? MenuGroup => "設定";
 
     void Load()
     {
@@ -58,7 +69,7 @@ public sealed class SettingsPage : SCP_GuiPage
         }
     }
 
-    public override void Draw(SCP_Ui g)
+    protected override void DrawContent(SCP_Ui g)
     {
         g.Note("這一頁的欄位沒有一行是手寫的 —— 全部由 SCP_GuiInspector 從型別反射出來。");
 

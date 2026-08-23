@@ -19,6 +19,12 @@ public static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         string aRepoRoot = RepoRoot();
 
+        // 宿主能力：共用層想要「開啟原始碼所在位置」那顆鈕，但它不准碰 OS ⇒ 由這裡掛實作。
+        // ⚠ 沒掛的話那顆鈕**根本不會畫**（不是畫一顆按了沒事的鈕）—— 見 SCP_GuiHost。
+        SCP_GuiHost.RevealInFileManager = SenateShell.MakeRevealer(aRepoRoot);
+        // 退路：開不了檔案總管的宿主至少要能把類別名複製起來（見 SCP_GuiToolPage.ShowCopyClassButton）
+        SCP_GuiHost.CopyToClipboard = SenateShell.Copy;
+
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
         //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
@@ -79,7 +85,7 @@ public static class Program
     // ── senate doctor ─────────────────────────────────────────
     static int CmdDoctor(string iRepoRoot, string[] iArgs)
     {
-        var aModel = new DoctorModel(iRepoRoot);
+        var aModel = new SenateModel(iRepoRoot);
         var (aEnv, aProjects, aCfgBroken) = (aModel.Env, aModel.Projects, aModel.ConfigBroken);
         // ⚠ 順序有意義：旗標的覆寫要在 Draw **之前**套進 style ——
         //   反過來的話畫面上那行「當前尺寸」印的是覆寫前的值（我第一版就是這樣，
@@ -88,8 +94,12 @@ public static class Program
         var aUi = new SCP_Ui();
         // doctor 是一次性讀數，但照樣走 controller —— 標題與麵包屑都住那一層，
         // 繞過它就會變成「doctor 的畫面跟 ui 的畫面長得不一樣」而沒人知道為什麼。
+        // ⚠ 這裡 push 的是**診斷頁**不是根頁：`senate doctor` 這道指令的意思是「印環境讀數」，
+        //   根頁換成入口頁之後如果跟著換，那道指令會安靜地變成印一份選單。
         var aCtrl = new SCP_GuiPageController();
-        aCtrl.Push(SenatePages.Root(aModel));
+        var aCatalog = SenatePages.BuildCatalog(aModel);
+        aCtrl.Push(aCatalog.Create(DoctorPage.PageKey)
+            ?? throw new InvalidOperationException("頁面目錄裡沒有 doctor 頁"));
         aCtrl.Draw(aUi);
         Console.Write(SCP_GuiTextRenderer.Render(aUi.Root, aStyle));
 
@@ -126,11 +136,12 @@ public static class Program
             Console.WriteLine("・session 已清空（欄位與勾選回到頁面預設）");
         }
 
-        var aModel = new DoctorModel(iRepoRoot);
+        var aModel = new SenateModel(iRepoRoot);
         var aStyle = StyleFrom(iArgs, aModel);
+        var aCatalog = SenatePages.BuildCatalog(aModel);
 
         // 先畫一趟拿到當前的樹（用來驗 id 是否存在）—— 對不存在的 id 下指令必須擋下
-        var (aProbeTree, _) = UiDriver.Apply(aModel, aState, null, aStyle);
+        var (aProbeTree, _) = UiDriver.Apply(aCatalog, aState, null, aStyle);
 
         string? aClick = ArgValue(iArgs, "--click");
         string? aSet = ArgValue(iArgs, "--set");
@@ -179,7 +190,7 @@ public static class Program
             Console.WriteLine($"・已{(aOld ? "收合" : "展開")} {aFold}");
         }
 
-        var (aTree, aText) = UiDriver.Apply(aModel, aState, aClick, aStyle);
+        var (aTree, aText) = UiDriver.Apply(aCatalog, aState, aClick, aStyle);
         UiDriver.Save(iRepoRoot, aState);
 
         if (HasFlag(iArgs, "--list")) { Console.Write(UiDriver.ListElements(aTree, aStyle)); return 0; }
@@ -196,13 +207,14 @@ public static class Program
     //           原生視窗拍不到就沒有讀數，而「中文變方塊」這種事不會報錯。
     static int RunWindow(string iRepoRoot, string[] iArgs, string? iShot)
     {
-        var aModel = new DoctorModel(iRepoRoot);   // 讀數在開窗前取好（探測不可以每幀跑）
+        var aModel = new SenateModel(iRepoRoot);   // 讀數在開窗前取好（探測不可以每幀跑）
         var aStyle = StyleFrom(iArgs, aModel);
 
         // ⭐ 一個 Window 一套 controller（不是全域單例）—— 開第二個視窗時兩邊不會互相蓋。
         //   視窗活著的期間導覽狀態就在記憶體裡，不必像 CLI 那樣存進 session。
+        var aCatalog = SenatePages.BuildCatalog(aModel);
         var aCtrl = new SCP_GuiPageController();
-        aCtrl.Push(SenatePages.Root(aModel));
+        aCtrl.Push(SenatePages.Root(aCatalog));
 
         // `--page <key>` 直接停在某一頁。⭐ 存在的理由是**驗收**：
         //    視窗裡的頁面本來只有人點得到（截圖模式沒有點擊入口），
@@ -210,14 +222,15 @@ public static class Program
         string? aPage = ArgValue(iArgs, "--page");
         if (aPage != null)
         {
-            SCP_GuiPage? aTarget = SenatePages.Create(aPage, aModel);
+            SCP_GuiPage? aTarget = aCatalog.Create(aPage);
             if (aTarget == null)
             {
                 Console.Error.WriteLine($"✗ 認不得的頁面 key：{aPage}");
-                Console.Error.WriteLine("  現有：doctor / style / settings（見 Cli_Reference）");
+                // 清單從目錄印，不寫死 —— 寫死的那一行會在加頁的時候安靜地過期
+                Console.Error.WriteLine($"  現有：{string.Join(" / ", aCatalog.AllKeys)}");
                 return 2;   // 靜默開在首頁會讓「打錯 key」與「那頁是空的」同形
             }
-            if (aTarget.Key != DoctorPage.PageKey) aCtrl.Push(aTarget);
+            if (aTarget.Key != SenatePages.RootKey) aCtrl.Push(aTarget);
         }
 
         // ⚠ 傳的是**同一顆 style 物件**（不是複本）—— 使用者在頁面上換尺寸時，
@@ -227,8 +240,18 @@ public static class Program
             var aUi = new SCP_Ui(input);
             aCtrl.Tick();
             aCtrl.Draw(aUi);
-            return aUi.Root;
+            return aUi;   // ⚠ 回整個 SCP_Ui 不是只回 Root —— 頁面要求的欄位寫入掛在它身上
         }, aStyle);
+
+        // 🩸 視窗**預設不接續** CLI session。
+        //    第一版是無條件接續，於是我在終端機測試時點開的下拉，變成 Tim 開窗時「預設就是展開的」——
+        //    那不是他的操作，是我的殘留狀態漏過了驅動端的邊界。
+        //    ⇒ 只有在**要驗收**的時候才接（截圖模式自動開，或顯式 --seed-session）。
+        if (iShot != null || HasFlag(iArgs, "--seed-session"))
+        {
+            aWin.Seed(UiDriver.Load(iRepoRoot));
+            Console.WriteLine($"・已接續 CLI session（{UiDriver.SessionPath(iRepoRoot)}）的欄位／勾選／摺疊");
+        }
 
         Console.WriteLine($"介面尺寸：{aStyle.Describe()}");
 
@@ -262,7 +285,7 @@ public static class Program
     //           那些檔是 Unity 端寫出來的，所以驗收方式是拿真檔案去跑，不是自己造樣本。
     static int CmdSelfTest(string iRepoRoot, string[] iArgs)
     {
-        var aModel = new DoctorModel(iRepoRoot);
+        var aModel = new SenateModel(iRepoRoot);
         var aStyle = StyleFrom(iArgs, aModel);   // 同 doctor：覆寫先套，再畫
         var aRows = SelfTest.Run(aModel.Projects);
 
@@ -314,7 +337,7 @@ public static class Program
     /// <para>⚠ `--scale` / `--size` 刻意**不寫回設定檔** —— 一道旗標改掉持久設定，
     /// 下一次沒帶旗標的人會拿到別人上一次的臨時值，而那不會報錯。要改常設值走頁面上的尺寸按鈕。</para>
     /// </summary>
-    static SCP_GuiStyle StyleFrom(string[] iArgs, DoctorModel iModel)
+    static SCP_GuiStyle StyleFrom(string[] iArgs, SenateModel iModel)
     {
         SCP_GuiStyle aStyle = iModel.Style;
 
@@ -386,7 +409,8 @@ public static class Program
                 --reset           清空 session
                 --json            整棵畫面樹輸出成 JSON（給程式讀）
               ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
-                --page <key>      開窗直接停在某一頁（doctor / style / settings）—— 給截圖驗收用
+                --page <key>      開窗直接停在某一頁（home / doctor / style / settings）—— 給截圖驗收用
+                --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 
@@ -394,7 +418,7 @@ public static class Program
               --width <n>       文字輸出寬度（字元格，預設 96）⚠ 不吃 --scale
               --scale <x>       介面縮放（0.5〜4，預設 2.0；本次有效，不寫回設定檔）
               --size <段>       small(1×) / medium(1.5×) / big(2×) / xl(2.5×) —— 同上，本次有效
-            常設尺寸改在畫面上（`ui --click doctor/style/big`，會寫回 senate.local.json 的 ui 區塊）
+            常設尺寸改在畫面上（入口頁 `ui --click home/size/big`，會寫回 senate.local.json 的 ui 區塊）
             """);
         return iCode;
     }

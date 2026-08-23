@@ -44,12 +44,12 @@ public static class UiDriver
     /// <para>復原不了時**停在那裡並說出來** —— 悄悄退回首頁會讓
     /// 「你要的那頁不存在了」長得像「你本來就在首頁」。</para>
     /// </summary>
-    static SCP_GuiPageController BuildController(DoctorModel iModel, SCP_GuiState iState)
+    static SCP_GuiPageController BuildController(SCP_GuiPageCatalog iCatalog, SCP_GuiState iState)
     {
         var aCtrl = new SCP_GuiPageController();
-        aCtrl.Push(SenatePages.Root(iModel));
+        aCtrl.Push(SenatePages.Root(iCatalog));
 
-        string? aBad = aCtrl.RestorePath(iState.Nav, k => SenatePages.Create(k, iModel));
+        string? aBad = aCtrl.RestorePath(iState.Nav, k => iCatalog.Create(k));
         if (aBad != null)
             Console.Error.WriteLine(
                 $"⚠ 回不到頁面 '{aBad}'（session 的導覽路徑對不上現在的頁面）—— 這次停在：{aCtrl.PathText}");
@@ -63,23 +63,36 @@ public static class UiDriver
     /// 兩側行為不同這件事要知道，不然「同一顆按鈕在視窗要按兩次」會被當成 bug。</para>
     /// </summary>
     public static (SCP_GuiNode tree, string text) Apply(
-        DoctorModel iModel, SCP_GuiState iState, string? iClickId, SCP_GuiStyle iStyle)
+        SCP_GuiPageCatalog iCatalog, SCP_GuiState iState, string? iClickId, SCP_GuiStyle iStyle)
     {
-        var aCtrl = BuildController(iModel, iState);
+        var aCtrl = BuildController(iCatalog, iState);
 
         // 第一趟：帶 click，讓 handler 真的跑（回傳的樹是舊畫面，不拿來顯示）
         if (iClickId != null)
         {
             var aFirst = new SCP_Ui(iState.ToInput(iClickId));
             aCtrl.Draw(aFirst);
+            ApplyWrites(aFirst, iState);   // ⚠ 要在第二趟之前套 —— 不然第二趟畫的是「選之前」的下拉
         }
         // 第二趟：不帶 click，這才是操作之後的畫面
         var aUi = new SCP_Ui(iState.ToInput(null));
         aCtrl.Draw(aUi);
+        ApplyWrites(aUi, iState);
 
         // 導覽是狀態不是事件 ⇒ 存回去，否則下一道指令會回到根頁（看起來像按鈕沒反應）
         iState.Nav = aCtrl.PathKeys;
         return (aUi.Root, SCP_GuiTextRenderer.Render(aUi.Root, iStyle));
+    }
+
+    /// <summary>
+    /// 把頁面這一輪要求的欄位寫入套進 session 狀態（複合元件的內部狀態靠這條路，見 SCP_Ui.FieldWrites）。
+    /// <para>⚠ 為什麼要存進 session 而不是留在記憶體：下拉「開著」「搜尋字是什麼」「選了哪一項」
+    /// 都得撐過 process 邊界 —— 不然「點開下拉」與「按下其中一項」是兩道指令，
+    /// 第二道會發現下拉已經關上了。</para>
+    /// </summary>
+    static void ApplyWrites(SCP_Ui iUi, SCP_GuiState oState)
+    {
+        foreach (var kv in iUi.FieldWrites) oState.Fields[kv.Key] = kv.Value;
     }
 
     /// <summary>列出畫面上所有可互動元件 —— 「看不見畫面的人」的操作目錄。</summary>

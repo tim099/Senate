@@ -83,6 +83,39 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
 
 ---
 
+## Row 的排版規則（兩個 renderer，**同一棵樹、不同能力**）
+
+| renderer | Row 怎麼排 |
+|---|---|
+| **ImGui**（有真正的水平版位） | 每個子節點都 `SameLine`；**群組包在 `BeginGroup`／`EndGroup` 裡** ⇒ 群組內每一行從群組起點開始，可以排在別人右邊 |
+| **文字**（沒有水平版位） | 連續的 inline 併成一行；**遇到群組就換行**，並印一行 `· ⟨視窗模式：下面這塊排在上一行的右邊⟩` |
+
+誰算 inline 只有一份 —— `SCP_GuiNode.IsInline`（Label／Note／Button／Toggle／TextField）。
+
+🩸 **血證（2026-08-23，Tim 的截圖）**：ImGui renderer 原本對**每一個**子節點都 `SameLine()`，
+包括群組。`SameLine` 只把游標移到前一個元件的右邊，而群組會往下長好幾行 ——
+於是一顆鈕旁邊放一個**展開的下拉選單**時，整疊選項畫在那顆鈕上面，**疊成一團**。
+不報錯，只是看不懂。
+
+⚠ 值得記的是**為什麼我沒看到**：文字 renderer 當時的規則是「全部 inline 才併，
+否則整列逐項換行」—— 它不會疊，所以同一棵樹在我這邊完全正常。
+「兩個 renderer 互為證人」這件事**只有在有人真的去看另一個 renderer 時才成立**；
+我一直只看文字那個。
+
+| 判準 | 而不是 |
+|---|---|
+| ImGui：群組用 `BeginGroup` 排到右邊 | 直接 `SameLine` —— 群組會往下長，結果是**疊在前一項上面** |
+| ImGui：第一版修法是「跟文字模式一樣換行」，後來改掉 | 那不疊了，但**放棄了 ImGui 做得到的事**（一顆鈕旁邊放一整塊垂直內容 ＝ Unity GUILayout 的手感） |
+| 文字：換行 ＋ **印一行註記**說「視窗那側是排在右邊的」 | 靜默換行 —— 讀文字輸出的人會以為版面真的是上下排的（我就是這樣漏掉那次重疊的） |
+| 文字：**不模擬** ImGui 的水平版位 | 自己再寫一套排版引擎去「預測」另一個 renderer —— 那是第二份產線，而它會漂 |
+| 規則不同，但**分類只寫一份** | 各自判斷一次（D14 同一條：分類分岔的症狀不會報錯） |
+
+⚠ **所以文字模式證明的是「內容與結構」，不是「版位」。** 它答得出
+「有哪些元件、誰在誰裡面、誰跟誰同一行、順序是什麼」；
+答不出「寬度、對齊、有沒有重疊」。⇒ **版位只有截圖是證人**（`--screenshot`）。
+
+---
+
 ## 非 UI 操控介面（`SCP_GuiDriver`）
 
 - `SCP_GuiQuery.Interactive(tree)` → 可互動元件清單（id／類型／標籤／現值／**怎麼操作**）
@@ -99,15 +132,117 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
 
 - **全角字寬度算 2 格**（`SCP_GuiTextRenderer.Width`）—— 用 `string.Length` 對齊表格會歪，
   而歪掉的表格不會報錯，只會讓人不想讀。
-- `Row` 全是 inline 節點時串成一行；含群組時退化為逐項換行
-  （文字模式沒有真正的水平版位，硬排會互相蓋掉，寧可誠實換行）。
+- `Row` 把**連續的 inline 子節點**串成一行，遇到群組（Box／Table／巢狀 Row）就換行。
+  這條規則**兩個 renderer 共用**，而「誰算 inline」只有一份：`SCP_GuiNode.IsInline`。
 - ⚠ **已知缺口**：表格還不吃 `--width`（欄寬取自然寬度，窄視窗會超出）。
+
+## 跨輪狀態住在哪（對照 Unity 端的 `UCL_ObjectDictionary`）
+
+UCL 那側的 `UCL_GUILayout.PopupSearch` 把自己的內部狀態（開闔 `_Show`、搜尋字 `_Search`、
+分頁子 dict）塞進呼叫端傳進來的 `UCL_ObjectDictionary`。這裡有對應的東西，但**形狀刻意不同**：
+
+| | UCL：`UCL_ObjectDictionary` | 這裡：`SCP_GuiInput` / `SCP_GuiState` |
+|---|---|---|
+| 誰持有 | **頁面自己**的欄位（`readonly UCL_ObjectDictionary m_Dic`） | **驅動端**：renderer 的三個字典，或 `build/ui_session.json` |
+| 命名 | 呼叫端自己給的 dict ＋ 字串 key（＋ `GetSubDic` 巢狀） | **全域 id 命名空間** —— 跟 `--click` / `--set` / `--fold` 是同一組字 |
+| 型別 | 任意 `object` | 只有 `string`（Fields）與 `bool`（Toggles / Folds） |
+| 活多久 | 頁面物件活著的期間（記憶體） | 跨 process（存進 session 檔） |
+| 外部能不能看／改 | 不能 | 能：`--list` 看得到、`--set` 改得動、檔案可 diff |
+
+⇒ 換來的是「元件的內部狀態也有讀數」：下拉選單開著沒開著、搜尋打了什麼、停在第幾頁，
+全部是可以被別人檢查的資料，而不是某個頁面物件裡的私有欄位。
+**代價要說**：這些內部狀態跟使用者的資料混在同一個 `Fields` 字典裡，
+session 檔會看到 `home/page/open` 這種「不是資料的資料」。UCL 那側因為 dict 是頁面私有的，沒有這個問題。
+
+### 缺的那一半：`SCP_Ui.SetField` / `FieldWrites`
+
+`UCL_ObjectDictionary` 是**讀寫**的，元件可以隨手 `SetData`。而這裡原本只有單向：
+使用者打字 → renderer 寫 → 頁面讀。於是「頁面自己想改一個欄位」沒有落點 ——
+清空搜尋框、下拉選了一項要記起來、翻頁，全都做不到。
+
+```csharp
+string aOpen = g.FieldValue("d/open", "0");   // 讀（不畫任何節點）
+g.SetField("d/open", "1");                    // 寫（只是記下請求）
+```
+
+`SetField` **不改任何狀態**，只把請求記進 `SCP_Ui.FieldWrites`；由驅動端在 Draw 之後套用
+（`UiDriver.ApplyWrites` → session／`GuiImGuiRenderer.ApplyWrites` → renderer 的字典）。
+
+| 判準 | 為什麼 |
+|---|---|
+| 只在**事件發生那一輪**寫 | 每輪無條件寫會跟使用者正在打的字打架，症狀是「我打的字自己跳回去」 |
+| `FieldValue` 先看同一輪的 `FieldWrites` | 不然「這一輪選了 A、同一輪後面讀到舊值 B」，那種不一致在 immediate mode 最難查 |
+| CLI 的**第一趟繪製之後就套** | 不套的話第二趟畫的是「選之前」的下拉 —— 看起來像選了沒反應 |
+| 視窗那側在 Render 之後套 | 這一幀顯示頁面自己算出來的結果，套進 renderer 是給下一幀用（跟按鈕事件同一個「慢一幀」節奏） |
+
+---
+
+## 等寬群組：`SCP_GuiNode.UniformWidth`
+
+`Column(iUniformWidth: true)` / `Box(…, iUniformWidth: true)` ⇒ **直接子節點裡的鈕等寬**
+（寬度取那群鈕裡最寬的自然寬度；同群組裡的輸入框跟著切齊右緣）。
+
+它是**意圖不是尺寸** —— 共用層不講像素，renderer 自己決定怎麼達成：
+
+| renderer | 怎麼做 |
+|---|---|
+| ImGui | 量出最寬那顆，套給同群組的直接子鈕；輸入框用「剩下的寬度」 |
+| 文字 | **刻意忽略** —— 終端機一格是字元，等寬只會補出尾隨空白，而那會弄髒 diff |
+
+⚠ 只約束**直接**子節點：巢狀的分頁列（`◀ 上一頁 / 下一頁 ▶`）不會被撐成一樣寬。
+
+🩸 兩格實測踩到的：
+1. **無標題的 `Box` 在 ImGui 裡不畫任何東西**（沒有框、沒有標頭），所以它原本唯一的視覺效果
+   就是那個 `Indent()` —— 而那個縮排沒有依據（沒有標頭可以縮在下面），只會讓內容跟外面對不齊。
+   ⇒ 現在當成純群組容器（版面上透明）。文字那側**有**框，所以照舊縮排。
+2. 等寬群組裡的輸入框第一版沿用頁面級的 `LabelWidth`（150×scale ＝ 225px），
+   而整個群組才 290px ⇒ 標籤先吃掉 225，輸入框只剩 65，我再把它撐回 165，**整條凸出群組 100px**。
+   ⇒ 那個對齊欄是**頁面級的約定**，套進窄群組前提就不成立了。群組裡改成「標籤自然寬 ＋ 剩下全給輸入框」。
+
+---
+
+## 下拉選單（可搜尋）：`SCP_Ui.Dropdown`
+
+概念取自 `UCL_GUILayout.PopupSearch`：一顆顯示現值的鈕 → 點開 → 搜尋框 ＋ 分頁的選項列。
+
+```csharp
+string aPick = g.Dropdown("頁面", aOptions, aDefaultKey, "home/page");
+if (g.Button("開啟", "home/open")) Open(aPick);
+```
+
+⭐ **它沒有新增任何節點型別**。新增一種 `SCP_GuiNodeKind` 要同時改五個地方
+（enum／撰寫端／文字 renderer／ImGui renderer／可互動元件清單），而漏掉的那一處不會報錯，
+只會「某個 renderer 少畫一塊」。用既有節點（Button／TextField／Box）組出來的元件，
+四種驅動方式**天生就會**。
+
+它用的 id（全部是 `iKey` 的前綴，可以直接抄去下指令）：
+
+| id | 是什麼 |
+|---|---|
+| `<key>` | 展開／收合那顆鈕 |
+| `<key>/value` | 選中的值 —— **`--set` 可以直接指定，不必先點開** |
+| `<key>/search`　`<key>/page` | 搜尋字／第幾頁（0 起算） |
+| `<key>/pick/<value>` | 每一個選項的鈕（id 用 **value 本身**，不用序號 —— 搜尋與翻頁都會改變序號） |
+
+| 判準 | 而不是 |
+|---|---|
+| 搜尋是**空白分隔的關鍵字，每個都要命中**（子字串、忽略大小寫） | regex —— UCL 那側編譯失敗時退回「不篩」，於是打一個 `(` 會讓清單看起來全部符合，而使用者以為自己在搜尋 |
+| **預設摺疊**（`iDefaultOpen: false`） | 一進來就攤開 —— 那是替使用者決定他想選東西，而清單會把版面吃光 |
+| 展開時把**頭與選項包成同一個等寬群組** | 頭在外、清單在內 —— 清單就得去對齊「別人的位置」，而它不知道別人在哪 |
+| 收合時**子節點根本不建** | 畫了再隱藏（同 `Fold` 的判準） |
+| 收合時**不包群組** | 一律包 —— 只有一顆鈕時包群組只會讓文字模式多換一行 |
+| 頁碼被搜尋縮短時**夾回去並寫回** | 停在不存在的頁 ⇒ 畫面一片空白，跟「沒有符合的項目」同形 |
+| 邊界上**不畫**上一頁／下一頁 | 畫一顆按了沒事的鈕（那看起來像壞的） |
+| 現值不在清單裡 ⇒ 標 `⚠(不在清單裡)` | 靜默跳到第 0 項 —— 使用者會以為自己選的是那一項 |
+| 選項為空 ⇒ 畫一行「(沒有可選的項目)」 | 什麼都不畫（「沒選項」與「元件沒畫出來」不得同形） |
+
+---
 
 ## 頁面堆疊：`SCP_GuiPage` / `SCP_GuiPageController`
 
 ```
 SCP_GuiPageController（一個 Window 一套 —— 沒有全域單例）
-  ├── Push / Pop / PopUntil / PopUntilKey / PopAll / Remove / Replace
+  ├── Push / Pop / PopUntil / PopUntilKey / PopAll / PopToRoot / Remove / Replace
   ├── Draw(ui)     ← 只畫 TopPage；Count>1 時自動畫麵包屑＋返回鈕（id 固定 page/back）
   ├── Tick()       ← 只給 TopPage
   ├── PathText     ← 「首頁 ▸ 細節」（人看的）
@@ -128,6 +263,8 @@ SCP_GuiPage（abstract）
 | 導覽路徑存進 session（`nav`） | 只放記憶體 —— CLI 每次都是新 process，兩步操作會變成「按了進去又跳回首頁」 |
 | 復原不了的 key **停手並回報** | 悄悄退回根頁 —— 「那頁不存在了」會長得像「你本來就在首頁」 |
 | 空堆疊畫一行說明 | 留白 —— 分不出「沒有頁面」與「頁面畫不出來」 |
+| 「回首頁」＝ `PopToRoot`（留最底層那頁） | UCL 的 Close ＝ `PopAll` —— 這裡最底層就是入口頁，清空的結果不是關閉是空白畫面 |
+| 頁面可宣告 `OwnsNavBar` ⇒ controller 不再自動畫返回鈕 | 兩邊都畫 —— 不會報錯，只會多一顆 id 是 `page/back#2` 的返回鈕，而 agent 照 `--list` 抄到的就是那顆 |
 
 ⚠ **兩側的導覽時序不同**：CLI 是兩趟繪製 ⇒ push／pop 同一次呼叫就看得到；
 視窗是 retained 畫布 ⇒ **慢一幀**（跟按鈕回傳值同一個成因）。
@@ -135,6 +272,150 @@ SCP_GuiPage（abstract）
 ⚠ **頁面自帶 id 命名空間**（`SCP_Ui.IdScope(page.Key)`，版面上透明）——
 兩頁各有一個沒傳 key 的「篩選」欄位時不會互相吃到對方的 session 值。
 顯式 key 不受影響（逐字採用是契約）。
+
+---
+
+### 標準頁骨架：`SCP_GuiToolPage`（工具列 ＋ 內容）
+
+```
+SCP_GuiToolPage : SCP_GuiPage
+  ├── MenuGroup (string?)    ← 入口頁清單的 opt-in ＋ 分組名（null ＝ 不列）
+  ├── DrawToolBar(ui)        ← ◀ 返回｜⌂ 首頁｜<子類的鈕>｜page key
+  │     ├── ToolBarButtons(ui)   ← 子類的擴充點（＝ UCL 的 TopBarButtons）
+  │     └── ShowBackButton / ShowHomeButton / ShowKeyHint
+  ├── DrawContent(ui)        ← 子類實作（＝ UCL 的 ContentOnGUI）
+  └── Draw(ui)  **sealed**   ← 工具列 ＋ 內容，不給覆寫
+```
+
+概念取自 Unity 端的 `UCL_EditorPage`（TopBar：Back／Close／Help ＋ TopBarButtons ＋ ContentOnGUI）
+與 `UCL_CommonEditorPage`（`ShowInPageMenu` 決定要不要列進選單）。**四格刻意不照抄：**
+
+| 這裡 | UCL | 為什麼 |
+|---|---|---|
+| **一層**（`SCP_GuiToolPage`） | 兩層（`UCL_EditorPage` ＋ `UCL_CommonEditorPage`） | 兩層都只有同一批消費端；分兩層只多一個「該繼承哪一個」的問題 |
+| `MenuGroup`（**string?**） | `ShowInPageMenu`（bool） | bool 只能答「要不要出現」，清單一長就是一坨沒結構的鈕；字串同時答「要不要」與「跟誰一國」⇒ 入口頁可以先篩分組。⚠ 空字串 ≠ null：空字串是「列進去、沒有分組名」 |
+| `Draw` 是 **sealed** | `OnGUI()` 可覆寫 | 覆寫掉的話返回鈕會不見，而那個症狀看起來像框架壞了，不像自己少呼叫一行 |
+| 工具列尾巴印 **page key** | 印類名 ＋ Copy 鈕 | 類名對使用者沒用途，page key 才是 `--page`／session `nav`／麵包屑共用的那個字。沒有 Copy 鈕：共用層碰不到剪貼簿，而「一顆按了沒事的鈕」比沒有那顆鈕糟 |
+
+### 工具列上的「原始碼」鈕
+
+打開這一頁的 `.cs` 所在資料夾（Windows 會**選取**那個檔）。它是 UCL 那顆 Help 鈕的同一格 ——
+位置也一樣：導覽鈕之後、子類的自訂鈕之前。
+
+路徑**雙軌**，因為單軌會安靜地壞：
+
+| 來源 | 怎麼來 | 什麼時候用 |
+|---|---|---|
+| `SourceFilePath` | `[CallerFilePath]` 編譯時烤進去 | 精確；但**只有子類寫了 `: base()` 才有** |
+| `SourceFileName` | `GetType().Name + ".cs"` | 退路；由宿主拿去 repo 裡找 |
+
+🩸 **實測（2026-08-23，.NET 10）—— 這件事只能量不能推：**
+
+```csharp
+class Implicit : B { public Implicit(int x) { } }           // F = null
+class Explicit : B { public Explicit(int x) : base() { } }  // F = "…\p.cs"  ✓
+class NoCtor   : B { }                                      // F = null
+```
+
+⇒ 隱式 `base()` 與「根本沒寫 ctor」都拿不到。所以它**不能是唯一來源**：
+忘了寫 `: base()` 的症狀會是「那顆鈕安靜地不見」，而那是這裡最不想要的失敗形狀。
+現在忘了寫只會**掉精確度**（退回用類別名找），鈕還在。
+
+⚠ 宿主端找檔時，找到**多個同名檔就停手並說出來**，不挑第一個 ——
+「開到另一個同名檔」跟「開對了」在畫面上長得一樣。
+
+#### 退路階梯：「這一頁是哪個 class」不可以在任何一條路徑上掉在地上
+
+| 宿主有什麼 | 畫面上是什麼 |
+|---|---|
+| 能開檔案總管 | 「原始碼」鈕 → 選取那個 `.cs` |
+| 開檔案總管**這次失敗**（headless／遠端桌面／路徑不在這台機器） | **自動退到複製類別名**，訊息寫「…／已改為複製類別名：HomePage」 |
+| 沒裝 reveal、只有剪貼簿 | 換成「複製類別名」鈕（是**取代**不是並列 —— 兩顆回答的是同一個問題） |
+| 兩種都沒有 | 兩顆鈕都不畫，`page key` 那行改印 `page key: home（HomePage）` |
+| 連剪貼簿都失敗 | 訊息本身帶著那個名字（`⚠ 複製不了（…）—— 類別名是 HomePage`） |
+
+📌 判準：**這條功能的價值是「讓人知道那是什麼」，所以每一種失敗都必須把那個名字說出來。**
+⚠ 為什麼「reveal 失敗」要自動退而不是叫人去按另一顆鈕：那顆鈕的出現條件是
+「**連 reveal 都沒裝**」，而實際會發生的是「裝了但這次失敗」—— 那時它根本不在畫面上。
+
+⚠ page key **不等於**類別名（`home` ↔ `HomePage`），所以 key hint 不能拿來頂這一格。
+
+⚠ `DrawToolBar` **先收集動作、離開 `Row` 之後才執行** —— handler 裡的 push／pop 會改變
+`ShowBackButton` 的答案，在同一輪的 Row 中途改變版面會讓後面幾顆鈕的 id 跟著漂。
+
+⚠ 工具列**不 try/catch**。UCL 那側包了 `Debug.LogException` 吞得起來，共用層沒有 logger ——
+吞了就是真的沒有讀數（「那顆鈕沒反應」變成沒人查得到的事）。
+
+---
+
+## 頁面目錄：`SCP_GuiPageCatalog`（key → 工廠 ＋ 選單中繼資料）
+
+入口頁要問三件事：有哪些頁、分幾組、選了怎麼生出來。
+
+```csharp
+var aCatalog = new SCP_GuiPageCatalog();
+aCatalog.Register(HomePage.PageKey, () => new HomePage(aModel, aCatalog));
+aCatalog.Register(DoctorPage.PageKey, () => new DoctorPage(aModel));
+SCP_GuiPage? aPage = aCatalog.Create("doctor");    // 認不得回 null
+```
+
+⭐ **顯式登記，不反射掃 assembly**（UCL 那側是反射）。兩個理由：
+
+1. 這裡的頁面建構要吃 model（沒有無參 ctor），`Activator.CreateInstance` 生不出來。
+2. 反射掃出來的清單會隨「哪些 assembly 剛好載入」而變，而那個差異**不會報錯** ——
+   症狀是「同一份程式在別台機器少了兩頁」。
+
+| 判準 | 而不是 |
+|---|---|
+| 一頁建不出來 ⇒ 記進 `Diagnostics` 並跳過，**由入口頁畫出來** | 靜默略過（一頁悄悄消失，跟「本來就沒有那頁」同形） |
+| 同一個 key 登記兩次 ⇒ 丟例外 | 後蓋前 —— `Create` 回哪個、清單列哪個會變成看運氣 |
+| 登記的 key 與頁面自己的 `Key` 不一致 ⇒ 記一筆診斷，**以頁面為準** | 沉默 —— session 的 `nav` 存的是頁面的 `Key`，兩份不一致會讓復原失敗 |
+| `MenuGroup` 為 null 的頁**仍然造得出來** | 不列＝不存在（`--page` 應該還是進得去） |
+
+⚠ **這個設計的隱含前提：頁面的建構子必須便宜。** 目錄為了讀標題與分組會把每一頁
+**建一次再丟掉**（中繼資料快取一次，`Invalidate()` 可重掃）。
+所以 `SettingsPage` 的讀檔從建構子搬到了 `OnPush` —— 光是「列出有哪些頁」不該去讀一次設定檔。
+
+---
+
+## 宿主能力：`SCP_GuiHost`
+
+共用層的邊界是「純函式 ＋ 零依賴」，所以它開不了檔案總管、碰不到剪貼簿。
+但頁面基底**知道自己想要那顆鈕** ⇒ 由宿主在啟動時把實作掛進來：
+
+```csharp
+SCP_GuiHost.RevealInFileManager = SenateShell.MakeRevealer(aRepoRoot);   // Program.Main
+```
+
+| 判準 | 為什麼 |
+|---|---|
+| 沒掛實作 ⇒ 那顆鈕**根本不畫** | 畫一顆按了不會有事的鈕，比沒有那顆鈕糟 |
+| `CopyToClipboard` 是 `RevealInFileManager` 的**退路**，不是並列的第二顆鈕 | 兩顆都畫 —— 它們回答同一個問題，只是把工具列變長 |
+| 委派回**一行人可讀的結果**（成功也要有話說） | 效果發生在另一個視窗 ⇒ 這個畫面不會有任何變化，沒有那行字的話「開起來了」與「什麼都沒發生」同形 |
+| 它是 `static`（而 page controller 不是） | 同一條判準的兩側：**把「只有一個」縮到它真正只有一個的那一層**。「這台機器怎麼開檔案總管」是每個 process 一個；「現在停在哪一疊頁面」是每個視窗一個 |
+
+---
+
+## 視窗接續 CLI 的狀態：`SenateWindow.Seed`
+
+視窗模式原本不吃 session ⇒ 「展開的下拉／收起來的區塊在 ImGui 裡長怎樣」沒有截圖讀數
+（`--screenshot` 開起來一定是收合狀態）。現在開窗前會把 session 的
+欄位／勾選／摺疊灌成初始值：
+
+```bash
+./senate.exe ui --click home/page                          # 用 CLI 擺好狀態（這一側會驗 id）
+./senate.exe ui --screenshot build/x.png --page home       # 再開窗截圖
+```
+
+⚠ **預設不接續**（要 `--seed-session`，截圖模式自動開）。
+🩸 第一版是無條件接續，於是我在終端機測試時點開的下拉，變成 Tim 開窗時「**預設就是展開的**」——
+那不是他的操作，是**我的殘留狀態漏過了驅動端的邊界**。
+📌 一般形：**把兩個驅動端的狀態接起來很方便，而方便的方向就是髒東西流動的方向。**
+
+⚠ **單向**：視窗不會把使用者在視窗裡的操作寫回 session（雙向要處理「誰後寫誰贏」，
+而那是沒有人要求過的功能；單向講出來就不會被誤會）。
+⚠ **不含導覽（`nav`）**：視窗要停在哪一頁走 `--page`（兩個機制搶著決定同一件事的結果是
+「我明明指定了頁卻開在別頁」）。
 
 ---
 

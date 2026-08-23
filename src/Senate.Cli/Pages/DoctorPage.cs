@@ -1,4 +1,4 @@
-// 區塊職責：環境／專案關聯的**第一頁後台** —— 用 Gui（中間層）畫，一份頁面碼兩種輸出。
+// 區塊職責：環境／專案關聯的**診斷頁** —— 用 Gui（中間層）畫，一份頁面碼四種輸出。
 // 物理意義：這一頁刻意只做「取讀數並攤開」。它同時是三件事的證明：
 //           ① 撰寫端手感是 GUILayout（一頁一個方法、從上往下寫）
 //           ② 同一份碼可以輸出成純文字（現在）與 ImGui 視窗（之後），頁面碼一行都不用改
@@ -9,11 +9,12 @@ using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
 
-public sealed class DoctorPage : SCP_GuiPage
+public sealed class DoctorPage : SCP_GuiToolPage
 {
-    readonly DoctorModel m_Model;
+    readonly SenateModel m_Model;
 
-    public DoctorPage(DoctorModel iModel) { m_Model = iModel; }
+    /// <summary>`: base()` 讓 [CallerFilePath] 填 SourceFilePath（隱式 base() 會是 null）。</summary>
+    public DoctorPage(SenateModel iModel) : base() { m_Model = iModel; }
 
     public override string Key => PageKey;
     public const string PageKey = "doctor";
@@ -21,10 +22,24 @@ public sealed class DoctorPage : SCP_GuiPage
     /// <summary>標題交給 controller 畫（麵包屑也吃它）—— 所以這裡**不含**取讀數次數，那是讀數不是身分。</summary>
     public override string Title => "Senate 環境檢查";
 
+    /// <summary>列進入口頁的「診斷」組。</summary>
+    public override string? MenuGroup => "診斷";
+
     EnvReading m_Env => m_Model.Env;
     IReadOnlyList<ProjectReading> m_Projects => m_Model.Projects;
 
-    public override void Draw(SCP_Ui g)
+    /// <summary>
+    /// 工具列的鈕 —— 這一頁的兩個動作都是「對這一頁做的事」，所以放工具列而不是內容底部。
+    /// ⚠ id 沿用舊的（`doctor/refresh` / `doctor/open-config`）：那是契約，
+    /// 版面搬家不可以順手換掉別人腳本裡的字。
+    /// </summary>
+    protected override void ToolBarButtons(SCP_Ui g)
+    {
+        if (g.Button("重新取讀數", "doctor/refresh")) m_Model.Refresh();
+        if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
+    }
+
+    protected override void DrawContent(SCP_Ui g)
     {
         g.Note($"第 {m_Model.RefreshCount} 次取讀數");
 
@@ -84,16 +99,6 @@ public sealed class DoctorPage : SCP_GuiPage
                 g.Note($"{p.Name}：資料根解析到 {p.AgentCommandsRoot}，但那個目錄不存在");
         }
 
-        g.Space();
-        using (g.Row())
-        {
-            // 按鈕的回傳值就是事件（GUILayout 語意）—— 這裡真的做事，不是裝飾
-            if (g.Button("重新取讀數", "doctor/refresh")) m_Model.Refresh();
-            if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
-            // 導覽：push 一頁上去（返回鈕由 controller 自己畫，id 固定 page/back）
-            if (g.Button("介面尺寸…", "doctor/open-style")) Controller?.Push(new StylePage(m_Model));
-            if (g.Button("設定…", "doctor/open-settings")) Controller?.Push(new SettingsPage(m_Model));
-        }
     }
 
     void OpenConfig()
@@ -117,15 +122,4 @@ public sealed class DoctorPage : SCP_GuiPage
         ProbeState.NotGitRepo => "非 git repo",
         _ => "未設定",
     };
-}
-
-/// <summary>環境讀數（跟專案無關的那半）。</summary>
-public sealed record EnvReading(
-    string? DotnetSdkVersion,
-    string RuntimeVersion,
-    Version? GitVersion,
-    string ConfigPath,
-    bool ConfigExists)
-{
-    public bool GitOkForPathspec => GitVersion != null && GitVersion >= GitCli.MinVersionForPathspecFromFile;
 }

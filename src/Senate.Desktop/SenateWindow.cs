@@ -18,8 +18,13 @@ namespace Senate.Desktop;
 
 public sealed class SenateWindow : IDisposable
 {
-    /// <summary>畫一頁：吃這一輪的輸入，回傳畫好的節點樹。</summary>
-    public delegate SCP_GuiNode DrawPage(SCP_GuiInput iInput);
+    /// <summary>
+    /// 畫一頁：吃這一輪的輸入，回傳畫好的 <see cref="SCP_Ui"/>。
+    /// <para>⚠ 回的是整個 <c>SCP_Ui</c> 而不是 <c>Root</c> —— 因為除了節點樹之外，
+    /// 頁面這一輪**要求寫回的欄位值**（<see cref="SCP_Ui.FieldWrites"/>）也掛在它身上。
+    /// 只回樹的話，下拉選單選了一項之後那個選擇無處可去，畫面下一幀會跳回舊值。</para>
+    /// </summary>
+    public delegate SCP_Ui DrawPage(SCP_GuiInput iInput);
 
     readonly DrawPage m_Draw;
     readonly string m_Title;
@@ -69,6 +74,25 @@ public sealed class SenateWindow : IDisposable
 
     /// <summary>顯示參數（尺寸／間距／顏色）。</summary>
     public SCP_GuiStyle Style => m_Style;
+
+    /// <summary>
+    /// 把跨輪狀態（欄位／勾選／摺疊）灌進 renderer 當**初始值** —— 讓視窗接續 CLI session。
+    /// <para>⭐ 存在的理由是驗收：視窗裡「展開的下拉／收起來的區塊」本來只有人點得到，
+    /// 截圖模式沒有點擊入口 ⇒ 那些狀態在視窗長什麼樣**沒有讀數**。
+    /// 先用 CLI（`--set` / `--fold` / `--click`，那一側會驗 id 存不存在）擺好狀態，再開窗截圖。</para>
+    /// <para>⚠ **單向**：視窗不會把使用者在視窗裡的操作寫回 session。
+    /// 兩邊互寫要處理「誰後寫誰贏」，而那是一個沒有人要求過的功能；
+    /// 單向的行為講出來就不會被誤會，雙向寫壞了才會。</para>
+    /// <para>⚠ **不含導覽（nav）**：視窗要停在哪一頁走 `--page`。
+    /// 兩個機制搶著決定同一件事的結果是「我明明指定了頁卻開在別頁」。</para>
+    /// </summary>
+    public void Seed(SCP_GuiState iState)
+    {
+        if (iState == null) return;
+        foreach (var kv in iState.Fields) m_Renderer.Fields[kv.Key] = kv.Value;
+        foreach (var kv in iState.Toggles) m_Renderer.Toggles[kv.Key] = kv.Value;
+        foreach (var kv in iState.Folds) m_Renderer.Folds[kv.Key] = kv.Value;
+    }
 
     /// <summary>
     /// 跑起來。iScreenshotPath 非 null ⇒ 拍完就結束（不進互動迴圈）。
@@ -184,8 +208,11 @@ public sealed class SenateWindow : IDisposable
             ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoBringToFrontOnFocus);
 
-        SCP_GuiNode aTree = m_Draw(m_Renderer.TakeInput());
-        m_Renderer.Render(aTree);
+        SCP_Ui aUi = m_Draw(m_Renderer.TakeInput());
+        m_Renderer.Render(aUi.Root);
+        // 頁面要求的欄位寫入在**畫完之後**才套 —— 這一幀顯示的是頁面自己算出來的結果，
+        // 套進 renderer 是為了下一幀（跟按鈕事件同一個「慢一幀」的節奏）。
+        m_Renderer.ApplyWrites(aUi);
 
         ImGui.End();
         m_Controller.Render();

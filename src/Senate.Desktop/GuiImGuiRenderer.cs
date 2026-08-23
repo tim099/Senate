@@ -48,12 +48,27 @@ public sealed class GuiImGuiRenderer
         return aInput;
     }
 
+    /// <summary>
+    /// 套用頁面這一輪要求的欄位寫入（下拉的開闔／選擇／頁碼走這條路）。
+    /// <para>⚠ 只有頁面**主動要求**時才會有東西 —— 每幀無條件覆寫的話，
+    /// 使用者正在 InputText 裡打的字會被蓋掉，而症狀是「打了字自己跳回去」。</para>
+    /// </summary>
+    public void ApplyWrites(SCP_Ui iUi)
+    {
+        foreach (var kv in iUi.FieldWrites) Fields[kv.Key] = kv.Value;
+    }
+
     public void Render(SCP_GuiNode iRoot)
     {
         foreach (var aChild in iRoot.Children) RenderNode(aChild);
     }
 
-    void RenderNode(SCP_GuiNode iNode)
+    /// <param name="iForcedWidth">
+    /// 由「等寬群組」（<see cref="SCP_GuiNode.UniformWidth"/>）指定給**直接子節點**的寬度；
+    /// 0 ＝ 沒有指定。⚠ 遞迴進更深一層時不往下傳 —— 等寬只約束直接子節點，
+    /// 不然巢狀的分頁列也會被撐成一樣寬。
+    /// </param>
+    void RenderNode(SCP_GuiNode iNode, float iForcedWidth = 0f)
     {
         switch (iNode.Kind)
         {
@@ -85,8 +100,7 @@ public sealed class GuiImGuiRenderer
                 // 最小寬度走 style（一排按鈕寬度不一會讓版面看起來是壞的），
                 // ⚠ 但取 max 不是直接套：ImGui 的 size 是**確定尺寸**不是下限，
                 //   寫死就會把長標籤裁掉 —— 而裁掉的字不會報錯。
-                float aTextW = ImGui.CalcTextSize(iNode.Text).X;
-                float aW = Math.Max(m_Style.ButtonMinWidth, aTextW + m_Style.FramePaddingX * 2f);
+                float aW = iForcedWidth > 0f ? iForcedWidth : ButtonNaturalWidth(iNode.Text);
                 if (ImGui.Button(iNode.Text + "##" + iNode.Id, new Vector2(aW, 0f)))
                     ClickedId = iNode.Id;
                 break;
@@ -105,36 +119,71 @@ public sealed class GuiImGuiRenderer
             {
                 string aVal = Fields.TryGetValue(iNode.Id, out string? s) ? s : iNode.Value;
                 // ⚠ 中文輸入（IME）就是在這個控件上見真章 —— 字型有載到才看得見候選字上屏的結果。
-                LabelLeft(iNode.Text);
-                ImGui.SetNextItemWidth(m_Style.TextFieldWidth);
+                // 等寬群組裡的輸入框要跟旁邊的鈕**切齊右緣**。
+                // 🩸 第一版沿用頁面級的 LabelWidth 對齊欄（150×scale ＝ 225px），
+                //    而整個群組才 290px ⇒ 標籤先吃掉 225，輸入框只剩 65，
+                //    我再用 `Max(TextFieldWidth*0.5, …)` 把它撐回 165 —— 於是整條凸出群組 100px。
+                //    ⇒ 那個對齊欄是**頁面級的約定**，套進一個窄群組裡前提就不成立了。
+                //    群組裡改成「標籤自然寬 ＋ 剩下的全給輸入框」。
+                if (iForcedWidth > 0f)
+                {
+                    float aLabelW = LabelNaturalSpan(iNode.Text);
+                    LabelLeftCompact(iNode.Text);
+                    ImGui.SetNextItemWidth(Math.Max(m_Style.ButtonMinWidth * 0.5f, iForcedWidth - aLabelW));
+                }
+                else
+                {
+                    LabelLeft(iNode.Text);
+                    ImGui.SetNextItemWidth(m_Style.TextFieldWidth);
+                }
                 if (ImGui.InputText("##" + iNode.Id, ref aVal, 4096)) Fields[iNode.Id] = aVal;
                 break;
             }
 
             case SCP_GuiNodeKind.Row:
             {
+                // 🩸 2026-08-23：舊版對每一個子節點都 SameLine()，包括群組（Box／Table／巢狀 Row）。
+                //    SameLine 只把游標移到前一個元件的右邊，而群組會往下長好幾行 ——
+                //    於是展開的下拉整疊畫在同一列的鈕上面，**疊成一團**。抓到它的是 Tim 的截圖。
+                //    ⚠ 我的第一版修法是「遇群組就換行」（照文字 renderer 的規矩）——
+                //    那不疊了，但也放棄了 ImGui **做得到**的東西：`BeginGroup` 會把游標的 X
+                //    當成群組的新左緣，群組裡的每一行都從那裡開始。
+                //    ⇒ 正解是**包成群組**而不是換行：一顆鈕旁邊放一整塊垂直內容，
+                //    而那塊內容的左緣對齊它自己的起點（＝ Unity 端 GUILayout 的手感）。
                 bool aFirst = true;
                 foreach (var c in iNode.Children)
                 {
                     if (!aFirst) ImGui.SameLine();
                     aFirst = false;
+
+                    if (SCP_GuiNode.IsInline(c.Kind)) { RenderNode(c); continue; }
+                    ImGui.BeginGroup();
                     RenderNode(c);
+                    ImGui.EndGroup();
                 }
                 break;
             }
 
             case SCP_GuiNodeKind.Column:
-                foreach (var c in iNode.Children) RenderNode(c);
+            {
+                float aUniform = UniformWidthOf(iNode);
+                foreach (var c in iNode.Children) RenderNode(c, aUniform);
                 break;
+            }
 
             case SCP_GuiNodeKind.Box:
             {
                 // 沒標題就只縮排 —— 對應文字 renderer 的 ┌─┐ 框
+                float aUniform = UniformWidthOf(iNode);
+
                 if (string.IsNullOrEmpty(iNode.Text))
                 {
-                    ImGui.Indent();
-                    foreach (var c in iNode.Children) RenderNode(c);
-                    ImGui.Unindent();
+                    // ⚠ 沒標題的 Box 在 ImGui 裡**不畫任何東西**（沒有框、沒有標頭）——
+                    //    所以「縮排」曾經是它唯一的視覺效果，而那個縮排是憑空來的：
+                    //    沒有標頭可以縮在下面，卻讓內容跟外面的東西對不齊。
+                    //    ⇒ 當成純粹的群組容器（同 IdScope 的「版面上透明」）。
+                    //    文字 renderer 那側照舊畫框並縮排 —— 它**有**框，縮排才有依據。
+                    foreach (var c in iNode.Children) RenderNode(c, aUniform);
                     break;
                 }
 
@@ -143,7 +192,7 @@ public sealed class GuiImGuiRenderer
                     if (ImGui.CollapsingHeader(iNode.Text, ImGuiTreeNodeFlags.DefaultOpen))
                     {
                         ImGui.Indent();
-                        foreach (var c in iNode.Children) RenderNode(c);
+                        foreach (var c in iNode.Children) RenderNode(c, aUniform);
                         ImGui.Unindent();
                     }
                     break;
@@ -159,7 +208,7 @@ public sealed class GuiImGuiRenderer
                 if (aNow)
                 {
                     ImGui.Indent();
-                    foreach (var c in iNode.Children) RenderNode(c);
+                    foreach (var c in iNode.Children) RenderNode(c, aUniform);
                     ImGui.Unindent();
                 }
                 break;
@@ -211,6 +260,36 @@ public sealed class GuiImGuiRenderer
             }
         }
         ImGui.EndTable();
+    }
+
+    /// <summary>一顆鈕不被撐開時的自然寬度（文字寬 ＋ padding，但不小於 style 的下限）。</summary>
+    float ButtonNaturalWidth(string iText)
+        => Math.Max(m_Style.ButtonMinWidth, ImGui.CalcTextSize(iText).X + m_Style.FramePaddingX * 2f);
+
+    /// <summary>標籤畫在左邊、**不對齊頁面級欄位欄**時佔掉的水平空間。</summary>
+    float LabelNaturalSpan(string iLabel)
+        => string.IsNullOrEmpty(iLabel) ? 0f : ImGui.CalcTextSize(iLabel).X + m_Style.ItemSpacingX;
+
+    /// <summary>標籤畫在左邊，緊貼著（不補到 LabelWidth）—— 給窄群組用。</summary>
+    void LabelLeftCompact(string iLabel)
+    {
+        if (string.IsNullOrEmpty(iLabel)) return;
+        ImGui.TextUnformatted(iLabel);
+        ImGui.SameLine();
+    }
+
+    /// <summary>
+    /// 等寬群組要用的寬度 ＝ **直接子節點裡最寬的那顆鈕**（沒宣告等寬 ⇒ 0，各自照自然寬度）。
+    /// <para>為什麼要等寬：一排寬度不一的選項，眼睛沒有一條可以往下掃的直線 ——
+    /// 那不是美觀問題，是「要看第幾項」每一次都得重新對焦。（形狀取自 Unity 端的 PopupSearch。）</para>
+    /// </summary>
+    float UniformWidthOf(SCP_GuiNode iNode)
+    {
+        if (!iNode.UniformWidth) return 0f;
+        float aMax = 0f;
+        foreach (var c in iNode.Children)
+            if (c.Kind == SCP_GuiNodeKind.Button) aMax = Math.Max(aMax, ButtonNaturalWidth(c.Text));
+        return aMax;
     }
 
     /// <summary>
