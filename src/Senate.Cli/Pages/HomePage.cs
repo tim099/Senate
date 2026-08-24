@@ -86,25 +86,30 @@ public sealed class HomePage : SCP_GuiToolPage
             foreach (string grp in m_Catalog.Groups)
                 aGroupOptions.Add(new SCP_GuiOption(grp, grp.Length == 0 ? "(未分組)" : grp));
 
-            string aGroup = g.Dropdown("分組", aGroupOptions, "", "home/group");
-            List<SCP_GuiPageEntry> aEntries = m_Catalog.InGroup(aGroup);
-
-            if (aEntries.Count == 0)
-            {
-                // 選了一個現在沒有頁的分組（重掃之後可能發生）—— 說出來，不要畫一片空白
-                g.Note($"分組「{aGroup}」現在沒有任何頁面。");
-                return;
-            }
-
-            // ② 可搜尋的下拉 ＋ 開啟鈕（頁面多起來時走這條）
-            var aPageOptions = new List<SCP_GuiOption>(aEntries.Count);
-            foreach (SCP_GuiPageEntry e in aEntries) aPageOptions.Add(new SCP_GuiOption(e.Key, e.Label));
 
 
+            IReadOnlyList<SCP_GuiPageEntry> aEntries = m_Catalog.Entries;
 
             using (g.Row())
             {
                 bool aOpen = g.Button("開啟", "home/open");
+
+                string aGroup = g.Dropdown("分組", aGroupOptions, "", "home/group");
+                aEntries = m_Catalog.InGroup(aGroup);
+
+                if (aEntries.Count == 0)
+                {
+                    // 選了一個現在沒有頁的分組（重掃之後可能發生）—— 說出來，不要畫一片空白
+                    g.Note($"分組「{aGroup}」現在沒有任何頁面。");
+                    aEntries = m_Catalog.Entries;// 退回全部，讓下面的「直達鈕」還是能畫出來
+                }
+
+                // ② 可搜尋的下拉 ＋ 開啟鈕（頁面多起來時走這條）
+                var aPageOptions = new List<SCP_GuiOption>(aEntries.Count);
+                foreach (SCP_GuiPageEntry e in aEntries) aPageOptions.Add(new SCP_GuiOption(e.Key, e.Label));
+
+
+                
                 string aPick = g.Dropdown("頁面", aPageOptions, aEntries[0].Key, "home/page");
 
                 // 換了分組之後，上一次選的頁可能已經不在清單裡 ⇒ 退回這一組的第一個並說出來
@@ -143,7 +148,7 @@ public sealed class HomePage : SCP_GuiToolPage
         Controller?.Push(aPage);
     }
 
-    static bool Contains(List<SCP_GuiPageEntry> iEntries, string iKey)
+    static bool Contains(IReadOnlyList<SCP_GuiPageEntry> iEntries, string iKey)
     {
         foreach (SCP_GuiPageEntry e in iEntries) if (e.Key == iKey) return true;
         return false;
