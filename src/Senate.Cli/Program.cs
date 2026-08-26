@@ -8,6 +8,7 @@
 using Senate.Cli.Pages;
 using Senate.Core;
 using SCP.Core.Gui;
+using SCP.Core.Proc;
 using Senate.Desktop;
 
 namespace Senate.Cli;
@@ -22,6 +23,17 @@ public static class Program
         // 宿主能力：共用層想要「開啟原始碼所在位置」那顆鈕，但它不准碰 OS ⇒ 由這裡掛實作。
         // ⚠ 沒掛的話那顆鈕**根本不會畫**（不是畫一顆按了沒事的鈕）—— 見 SCP_GuiHost。
         SCP_GuiHost.RevealInFileManager = SenateShell.MakeRevealer(aRepoRoot);
+
+        // 宿主能力：child process 的登記中心。共用層不知道狀態該落在哪 ⇒ 由這裡指定。
+        // ⚠ 沒 Configure 的話整個服務停用（每顆 process 都沒人接管得到），所以掛在最前面、
+        //   不掛在「會用到它的那個指令」裡 —— 漏掛的症狀是孤兒 process，而那不會當場叫。
+        // 落點在 build/ 底下（.gitignore 已擋）：這是 runtime 狀態，不是設定。
+        SCP_ProcessRegistry.Configure(Path.Combine(aRepoRoot, "build", "_process_registry"));
+        SCP_ProcessRegistry.Warn = iMessage => Console.Error.WriteLine($"⚠ {iMessage}");
+        // CLI 是「一次呼叫一顆 process」⇒ 每次啟動就是一個**一定會經過**的時機。
+        // 不清的話殘檔會無聲累積，而堆積出來的畫面跟屍潮長得一樣，一樣會訓練人忽略那張表。
+        try { SCP_ProcessRegistry.CleanupStale(); }
+        catch (Exception e) { Console.Error.WriteLine($"⚠ process 登記清理失敗：{e.Message}"); }
         // 退路：開不了檔案總管的宿主至少要能把類別名複製起來（見 SCP_GuiToolPage.ShowCopyClassButton）
         SCP_GuiHost.CopyToClipboard = SenateShell.Copy;
 

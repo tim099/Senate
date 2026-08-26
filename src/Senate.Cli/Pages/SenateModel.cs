@@ -8,6 +8,7 @@
 // 數值影響：Refresh() 會跑 git status／stat 心跳檔（唯讀）。RefreshCount 是讀數 ——
 //           agent 或人按了之後可以確認「真的重跑了」，而不是靠畫面看起來一樣就以為沒動。
 using Senate.Core;
+using SCP.Core.Git;
 using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
@@ -69,7 +70,7 @@ public sealed class SenateModel
         }
 
         Env = new EnvReading(DotnetCli.SdkVersion(), DotnetCli.RuntimeVersion,
-            GitCli.Version(), aCfgPath, File.Exists(aCfgPath));
+            SCP_Git.Version(), aCfgPath, File.Exists(aCfgPath));
 
         var aList = new List<ProjectReading>();
         if (aCfg != null)
@@ -93,5 +94,5 @@ public sealed record EnvReading(
     string ConfigPath,
     bool ConfigExists)
 {
-    public bool GitOkForPathspec => GitVersion != null && GitVersion >= GitCli.MinVersionForPathspecFromFile;
+    public bool GitOkForPathspec => GitVersion != null && GitVersion >= SCP_Git.MinVersionForPathspecFromFile;
 }

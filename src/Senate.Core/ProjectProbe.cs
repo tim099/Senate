@@ -5,6 +5,11 @@
 //             把它們壓成「不可用」是這套系統最貴的錯誤形狀（LY 專案 2026-08-21：
 //             查無帳戶被 GetBalance 回成 0，於是「不存在」長得跟「餘額零」一樣）。
 // 數值影響：純讀（git status / File.Exists / mtime），不寫任何檔。
+//           git 讀數走 SCP_Core 的共用層（SCP_GitRepo）—— 本專案**不自己開第二份 git 封裝**：
+//           護欄（core.quotepath / GIT_TERMINAL_PROMPT / 逾時 kill / process 登記）只能有一個落點，
+//           而第二份實作漏掉其中一格的症狀全是靜默的。
+using SCP.Core.Git;
+
 namespace Senate.Core;
 
 public enum ProbeState { NotConfigured, Missing, NotGitRepo, Ok }
@@ -44,7 +49,7 @@ public static class ProjectProbe
         if (!Directory.Exists(aRoot))
             return new ProjectReading(aName, aRoot, ProbeState.Missing, null, null, 0, null, false, null, iProject.Enabled);
 
-        if (!GitCli.IsRepo(aRoot))
+        if (!SCP_Git.IsRepo(aRoot))
             return new ProjectReading(aName, aRoot, ProbeState.NotGitRepo, null, null, 0, null, false, null, iProject.Enabled);
 
         string? aDataRoot = ResolveAgentCommandsRoot(aRoot, iProject.AgentCommandsRoot);
@@ -72,9 +77,11 @@ public static class ProjectProbe
 
         return new ProjectReading(
             aName, aRoot, ProbeState.Ok,
-            GitCli.Branch(aRoot),
-            GitCli.DirtyCount(aRoot),
-            GitCli.StagedPaths(aRoot).Count,
+            SCP_GitRepo.Branch(aRoot),
+            // ⚠ ChangeCount **含 untracked**（顯示用的那把尺）。安全線要用的是
+            //   SCP_GitRepo.DirtyState（不含 untracked）—— 兩把尺不得互相代用。
+            SCP_GitRepo.ChangeCount(aRoot),
+            SCP_GitRepo.StagedPaths(aRoot).Count,
             aDataRoot, aDataRootExists,
             aHbText, iProject.Enabled)
         { EditorLikelyRunning = aEditorAlive };
