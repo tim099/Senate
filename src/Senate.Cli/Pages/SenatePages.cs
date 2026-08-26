@@ -30,6 +30,7 @@ public static class SenatePages
         //（它自己 MenuGroup = null，所以不會把自己列進自己的清單 —— 同 UCL 排除 EditorMenuPage 那一格）
         aCatalog.Register(HomePage.PageKey, () => new HomePage(iModel, aCatalog));
         aCatalog.Register(DoctorPage.PageKey, () => new DoctorPage(iModel));
+        aCatalog.Register(SubmoduleSyncPage.PageKey, () => new SubmoduleSyncPage(iModel));
         aCatalog.Register(StylePage.PageKey, () => new StylePage(iModel));
         aCatalog.Register(SettingsPage.PageKey, () => new SettingsPage(iModel));
         return aCatalog;

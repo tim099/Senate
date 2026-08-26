@@ -7,6 +7,7 @@
 //   2 = 用法錯誤（未知指令）   3 = 設定檔存在但內容壞了
 using Senate.Cli.Pages;
 using Senate.Core;
+using SCP.Core.Git;
 using SCP.Core.Gui;
 using SCP.Core.Proc;
 using Senate.Desktop;
@@ -55,6 +56,7 @@ public static class Program
                 "init" => CmdInit(aRepoRoot),
                 "doctor" => CmdDoctor(aRepoRoot, iArgs),
                 "ui" => CmdUi(aRepoRoot, iArgs),
+                "submodule" => CmdSubmodule(aRepoRoot, iArgs),
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
                 "--help" or "-h" or "help" => Usage(0),
                 _ => Usage(2, $"認不得的指令 '{aCmd}'"),
@@ -324,6 +326,228 @@ public static class Program
         return aFail > 0 ? 1 : 0;
     }
 
+    // ── senate submodule status / sync ────────────────────────
+    // 區塊職責：submodule 的**寫入端**（唯讀那半是 status，跟頁面同一份掃描層）。
+    // 物理意義：為什麼寫入端在 CLI 而不在頁面上 —— CLI 一次呼叫一顆 process，
+    //           而一輪 fetch＋pull＋push 跨十幾個 submodule 是分鐘級的事。
+    //           塞進「按鈕按下去那一幀」在 CLI 模式做不到，會變成一顆按了沒事的鈕，
+    //           而那比沒有鈕糟。這裡同步跑完、印報告、用 exit code 說結果。
+    // 數值影響：status 唯讀。sync 會移動各 submodule 的 HEAD（--checkout / --pull）
+    //           與寫遠端（--push）。
+    // exit：0 ＝ 沒有失敗　1 ＝ 有失敗　2 ＝ 用法錯誤
+    static int CmdSubmodule(string iRepoRoot, string[] iArgs)
+    {
+        string aSub = iArgs.Length > 1 ? iArgs[1].ToLowerInvariant() : "";
+        if (aSub != "status" && aSub != "sync")
+            return Usage(2, $"submodule 要 status 或 sync（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）");
+
+        bool aWrite = aSub == "sync";
+        bool aCheckout = HasFlag(iArgs, "--checkout");
+        bool aPull = HasFlag(iArgs, "--pull");
+        bool aPush = HasFlag(iArgs, "--push");
+        bool aDryRun = HasFlag(iArgs, "--dry-run");
+
+        // ⚠ 目標 repo：sync **不給預設值**。
+        //   🩸 UCL 那邊的血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
+        //      回報一整排 ✓，而 B 的 submodule 一個位元組都沒動 —— 綠燈全亮，量到的是別的 repo。
+        //   ⇒ 會寫東西的指令必須**顯式**指定對象；唯讀的 status 才給預設（猜錯也不會壞東西）。
+        string? aRoot = ResolveSubmoduleRoot(iRepoRoot, iArgs, aWrite, out string aRootWhy);
+        // 提示要跟著**使用者剛打的**子指令走 —— 對 status 印 sync 的用法就是指錯地方，
+        // 而指錯地方的提示比沒有提示糟（它讓人照著做，然後撞第二次）。
+        if (aRoot == null) return SubmoduleUsageError(aRootWhy, $"senate submodule {aSub} --root <repo 路徑>");
+
+        if (aWrite && !aCheckout && !aPull && !aPush)
+            return SubmoduleUsageError("sync 要至少一個動作：--checkout / --pull / --push", "都不給就等於 status —— 那條路唯讀，直接跑 senate submodule status");
+
+        // push 會寫遠端 ⇒ 要一個明示。互動式確認在這裡做不到（stdin 是 null device），
+        // 所以確認的形態是「再打四個字」而不是「按 Enter」。
+        if (aWrite && aPush && !aDryRun && !HasFlag(iArgs, "--yes"))
+            return SubmoduleUsageError("--push 會把本地 commit 寫到遠端 —— 需要 --yes 明示", "先看它要做什麼：同一條指令加 --dry-run（不動任何東西）");
+
+        string? aBranch = ArgValue(iArgs, "--branch");
+        bool aFetch = HasFlag(iArgs, "--fetch");
+        bool aIncludeRoot = HasFlag(iArgs, "--include-root");
+        bool aPushAll = HasFlag(iArgs, "--push-all-remotes");
+        List<string> aOnly = ArgValues(iArgs, "--only");
+
+        Console.WriteLine($"· 對象：{aRoot}　（{aRootWhy}）");
+        if (aBranch != null) Console.WriteLine($"· 全域預設 branch：{aBranch}");
+        if (aOnly.Count > 0) Console.WriteLine($"· 只處理：{string.Join(" , ", aOnly)}");
+
+        var aScan = SubmoduleScan.Scan(aRoot, aFetch, aBranch,
+            iProgress: aFetch ? p => Console.Error.WriteLine($"  … fetch {p}") : null);
+        if (!aScan.Ok)
+        {
+            Console.Error.WriteLine($"✗ {aScan.Error}");
+            return 1;
+        }
+        foreach (string aWarning in aScan.Warnings) Console.Error.WriteLine(aWarning);
+
+        // 掃描結果先攤開 —— 動手之前一定要先看得到「它認為每一顆該去哪」。
+        PrintScan(aScan, aFetch);
+
+        // --only 指到不存在的路徑要擋下：靜默處理 0 顆會長得像「都做完了」。
+        if (aOnly.Count > 0)
+        {
+            var aKnown = new HashSet<string>();
+            foreach (var aItem in aScan.Items) aKnown.Add(aItem.Entry.Path);
+            var aMissing = aOnly.FindAll(p => !aKnown.Contains(p));
+            if (aMissing.Count > 0)
+                return SubmoduleUsageError($"--only 指到不存在的 submodule：{string.Join(" , ", aMissing)}", "上面那份清單就是這個 repo 真的有的 submodule");
+        }
+
+        if (!aWrite) return 0;
+
+        var aOptions = new SCP_GitSyncOptions
+        {
+            Checkout = aCheckout,
+            Pull = aPull,
+            Push = aPush,
+            PushAllRemotes = aPushAll,
+        };
+
+        if (aDryRun)
+        {
+            Console.WriteLine();
+            Console.WriteLine("── dry-run：以下是**打算**做的事，這一輪不會動任何東西 ──");
+            string aPlan = (aCheckout ? "切到目標 branch → " : "")
+                           + (aPull ? "pull（ff-only）→ " : "")
+                           + (aPush ? (aPushAll ? "push（該 repo 所有 remote）" : "push（origin）") : "");
+            Console.WriteLine($"  動作：{aPlan.TrimEnd(' ', '→', ' ')}");
+            Console.WriteLine($"  順序：由深到淺（巢狀最深先動）{(aIncludeRoot ? "，root 最後（root 永不切 branch）" : "，不含 root")}");
+            Console.WriteLine("  ⚠ dirty / detached 有未合併 commit / 解析不到目標的，動手當下會現場重問並跳過 ——");
+            Console.WriteLine("    所以這份清單是「範圍」，不是「保證會成功的名單」。");
+            return 0;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("── 執行 ──");
+        var aRows = SubmoduleScan.RunBatch(aScan, aOptions, aIncludeRoot,
+            aOnly.Count > 0 ? aOnly : null, iLog: Console.WriteLine);
+
+        int aOk = 0, aSkip = 0, aFail = 0;
+        foreach (var aRow in aRows)
+        {
+            if (aRow.Outcome == SCP_GitSyncOutcome.Ok) aOk++;
+            else if (aRow.Outcome == SCP_GitSyncOutcome.Skipped) aSkip++;
+            else aFail++;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"⇒ ✓{aOk} ⏭{aSkip} ✗{aFail}");
+        foreach (var aRow in aRows)
+        {
+            if (aRow.Outcome != SCP_GitSyncOutcome.Ok) Console.WriteLine($"   {aRow.Label}：{aRow.Summary}");
+        }
+        // ⚠ 跳過**不算失敗**（那是刻意的保護），但它一定要出現在上面那一行裡 ——
+        //   只印「✓ 完成」會讓「跳過 8 顆」看起來像「做完 8 顆」。
+        return aFail > 0 ? 1 : 0;
+    }
+
+    /// <summary>
+    /// 參數少一格／給錯了的出口。
+    /// <para>⚠ 刻意**不吐整份 Usage**：40 行說明會把「你少給了 --yes」那一句擠到看不見，
+    /// 而那一句才是使用者現在需要的東西。要完整說明的人自己打 --help。</para>
+    /// <para>認不得的**子指令**是另一回事（那時人不知道有什麼可打）—— 那條仍走 Usage。</para>
+    /// </summary>
+    static int SubmoduleUsageError(string iError, string iHint)
+    {
+        Console.Error.WriteLine($"✗ {iError}");
+        if (iHint.Length > 0) Console.Error.WriteLine($"  ↳ {iHint}");
+        Console.Error.WriteLine("  完整說明：senate --help");
+        return 2;
+    }
+
+    /// <summary>
+    /// 決定要對哪個 repo 動手。
+    /// <para>--root 顯式路徑 ＞ --project 設定檔裡的名字 ＞（唯讀時）Senate 自己。</para>
+    /// </summary>
+    static string? ResolveSubmoduleRoot(string iRepoRoot, string[] iArgs, bool iWrite, out string oWhy)
+    {
+        string? aRoot = ArgValue(iArgs, "--root");
+        if (aRoot != null)
+        {
+            oWhy = "--root 指定";
+            if (!Directory.Exists(aRoot)) { oWhy = $"--root 路徑不存在：{aRoot}"; return null; }
+            return aRoot;
+        }
+
+        string? aProject = ArgValue(iArgs, "--project");
+        if (aProject != null)
+        {
+            string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
+            SenateConfig? aCfg = SenateConfig.Load(aCfgPath);
+            // ⚠ 「還沒有設定檔」與「檔在但沒這個專案」是兩件事，訊息必須分得出來：
+            //   前者要跑 senate init，後者要去改 projects[]。壓成同一句會讓人改錯地方。
+            if (aCfg == null)
+            {
+                oWhy = $"還沒有設定檔（{aCfgPath}）—— 先跑 senate init，或直接用 --root";
+                return null;
+            }
+            foreach (var aItem in aCfg.Projects)
+            {
+                if (!string.Equals(aItem.Name, aProject, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.IsNullOrWhiteSpace(aItem.Root)) { oWhy = $"專案 '{aProject}' 沒有設 root"; return null; }
+                // ⚠ 停用的專案要擋下並說出來 —— 「我關掉它」與「找不到」是兩件事。
+                if (!aItem.Enabled) { oWhy = $"專案 '{aProject}' 在設定檔裡是停用的（enabled=false）"; return null; }
+                oWhy = $"--project {aItem.Name}";
+                return aItem.Root;
+            }
+            oWhy = $"設定檔裡沒有名叫 '{aProject}' 的專案";
+            return null;
+        }
+
+        if (iWrite)
+        {
+            // 見 CmdSubmodule 的血證註解：會寫東西的指令不猜對象。
+            oWhy = "sync 必須顯式指定對象：--root <路徑> 或 --project <設定檔裡的名字>";
+            return null;
+        }
+        oWhy = "預設（Senate 自己）";
+        return iRepoRoot;
+    }
+
+    static void PrintScan(SubmoduleScanResult iScan, bool iFetched)
+    {
+        if (iScan.Items.Count == 0)
+        {
+            Console.WriteLine("· 這個 repo 沒有 submodule（掃描成功，真的是零）");
+            return;
+        }
+        Console.WriteLine(iFetched
+            ? "· 已 fetch ⇒ ahead/behind 是即時值"
+            : "· 未 fetch ⇒ ahead/behind 以各列自己「上次 fetch」為準");
+        foreach (var aItem in iScan.Items)
+        {
+            string aCurrent = aItem.Entry.Uninitialized ? "⛔未init"
+                : aItem.CurrentBranch == null ? "⚠問不到"
+                : aItem.CurrentBranch == SCP_Git.DetachedHead ? "⛔detached"
+                : (aItem.OnTarget ? "✓" : "⚠") + aItem.CurrentBranch;
+            string aDirty = aItem.Entry.Uninitialized ? "-"
+                : aItem.Dirty == SCP_GitDirtyState.Clean ? "乾淨"
+                : aItem.Dirty == SCP_GitDirtyState.Dirty ? "⚠dirty" : "⚠status問不到";
+            string aAheadBehind = aItem.Entry.Uninitialized ? "-"
+                : aItem.AheadBehind.Known ? $"↑{aItem.AheadBehind.Ahead} ↓{aItem.AheadBehind.Behind}" : "未知";
+            Console.WriteLine($"  · {aItem.Entry.Path}"
+                + $"　目前={aCurrent}"
+                + $"　目標={(aItem.TargetBranch.Length > 0 ? aItem.TargetBranch : "—")}"
+                + $"（{SubmoduleScan.SourceText(aItem.TargetSource)}）"
+                + $"　{aDirty}　{aAheadBehind}　fetch={aItem.FetchAgeText}"
+                + (aItem.Remotes.Count > 1 ? $"　⇈{string.Join("/", aItem.Remotes)}" : ""));
+        }
+    }
+
+    /// <summary>可重複的旗標（<c>--only a --only b</c>）—— 單值的 ArgValue 只拿第一個。</summary>
+    static List<string> ArgValues(string[] iArgs, string iName)
+    {
+        var aList = new List<string>();
+        for (int i = 0; i < iArgs.Length - 1; ++i)
+        {
+            if (iArgs[i] == iName && !iArgs[i + 1].StartsWith("--")) aList.Add(iArgs[i + 1]);
+        }
+        return aList;
+    }
+
     // ── 讀數收集 ──────────────────────────────────────────────
     // ── 雜項 ──────────────────────────────────────────────────
     /// <summary>
@@ -421,9 +645,23 @@ public static class Program
                 --reset           清空 session
                 --json            整棵畫面樹輸出成 JSON（給程式讀）
               ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
-                --page <key>      開窗直接停在某一頁（home / doctor / style / settings）—— 給截圖驗收用
+                --page <key>      開窗直接停在某一頁（home / doctor / submodule / style / settings）—— 給截圖驗收用
                 --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
+              submodule status    列出 submodule 的 branch / 髒不髒 / 領先落後（唯讀）
+                --root <path>     對哪個 repo（status 不給就是 Senate 自己）
+                --project <name>  改用 senate.local.json 裡的專案（停用的會擋下並說原因）
+                --branch <b>      全域預設 branch（解析順序的第三層）
+                --fetch           先逐顆 fetch 再讀 ⇒ ahead/behind 才是即時值
+              submodule sync      切 branch / pull / push（**會改變狀態**）
+                --checkout        切到目標 branch（dirty、HEAD 有未合併 commit 一律跳過並列出）
+                --pull            pull --ff-only（分岔就列出來，不替人 merge）
+                --push            寫遠端 ⇒ **必須同時給 --yes**
+                --push-all-remotes  推該 repo 的每一個 remote（關 ＝ 只推 origin）
+                --include-root    root 也一起 pull / push（**root 永遠不切 branch**）
+                --only <path>     只處理某幾顆（可重複；指到不存在的會擋下）
+                --dry-run         只印打算做什麼，不動任何東西
+                ⚠ sync **不給預設對象** —— 必須 --root 或 --project（對錯的 repo 動手是最貴的錯）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 
             共用選項：
