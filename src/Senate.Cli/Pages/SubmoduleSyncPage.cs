@@ -1,16 +1,16 @@
 // 區塊職責：Git Submodule 狀態頁 —— **唯讀**，但把「這一輪打算怎麼做」完整表達得出來：
 //           哪些 submodule 納入、每一顆的目標 branch 是哪條（以及那個目標是哪一層解析出來的）、
 //           要不要含 root、要不要推所有 remote，最後**組出一條可以直接照抄去跑的指令**。
-// 物理意義：概念取自 Unity 端的 UCL_GitSubmoduleSyncPage，但**這一頁刻意不放寫入鈕**。
-//           理由是宿主形狀，不是保守：CLI 一次呼叫一顆 process，
-//           一輪 fetch＋pull＋push 跨十幾個 submodule 是分鐘級的事，
-//           塞進「按鈕按下去那一幀」在 CLI 模式做不到 ⇒ 會變成一顆按了沒事的鈕，
-//           而那比沒有鈕糟。寫入端走 `senate submodule sync`。
-//           ⭐ 那條理由**只約束到「誰動手」，不約束「誰決定」** ——
-//             UCL 那頁的價值有一半在逐項設定（排除哪幾顆、這顆要切哪條 branch），
-//             而那半完全是唯讀的。本頁把它補上，然後把意圖**編譯成指令**：
-//             使用者在畫面上把範圍調對，複製一行去跑，動手的仍然是 CLI。
-//           ⇒ 分界線落在「決定」與「動手」之間，而不是落在「有沒有這個功能」。
+// 物理意義：概念取自 Unity 端的 UCL_GitSubmoduleSyncPage —— 逐項設定 ＋ 工具列上會動手的三顆鈕。
+//           🩸 **這一頁曾經刻意不放寫入鈕**，理由是宿主形狀：一輪 fetch＋pull＋push 跨十幾顆
+//             submodule 是**分鐘級**的事，而純文字那側畫幾趟就結束 process ⇒
+//             丟到背景等於什麼都不會發生，同步跑又會凍住視窗。
+//           ⇒ 2026-08-28 Tim 要求加上，於是那條限制被**正面解掉**而不是繞開：
+//             `SubmoduleSyncJob` 把批次跑在背景執行緒，
+//             `SCP_GuiHost.RedrawsContinuously` 讓同一份頁面碼在兩種宿主上都對
+//             （會重畫的丟背景並每幀顯示進度；不重畫的同步跑完才返回）。
+//           ⚠ 那條舊理由**仍然是對的** —— 它只是不再是「不做」的理由，而是「怎麼做」的規格。
+//             指令也照舊印出來：那不是退路，是給腳本與 CI 用的另一個消費端。
 // 數值影響：掃描唯讀。`submodule/fetch` 開著時掃描會先逐顆 fetch（只動 remote-tracking ref，
 //           不碰工作目錄），關著時 ahead/behind 以上次 fetch 為準 —— 而那個新鮮度**逐列標**。
 //           本頁自己不跑任何寫入型 git。
@@ -95,18 +95,276 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     /// </summary>
     protected override void ToolBarButtons(SCP_Ui g)
     {
-        // ⚠ ToggleValue 只讀驅動端的字典、不建節點 ⇒ 這裡讀得到那個開關的值，
-        //   即使它的節點要等 DrawContent 才被建出來（工具列先畫）。
-        bool aFetch = g.ToggleValue("submodule/fetch", false);
+        // ⚠ ToggleValue / FieldValue 只讀驅動端的字典、不建節點 ⇒ 工具列讀得到那些設定的值，
+        //   即使它們的節點要等 DrawContent 才被建出來（工具列**先於**內容區畫）。
+        //   ⭐ 這就是操作鈕能放在工具列的原因：設定的真相源在 session，不在「這一輪畫到哪了」。
+        bool aFetch = g.ToggleValue(FetchId, false);
         if (g.Button(aFetch ? "重新掃描（含 fetch）" : "重新掃描", "submodule/rescan"))
         {
-            // ⚠ 顯式傳生效值，不靠 `m_Scan?.Root` 兜 —— 工具列**先於** DrawContent 畫，
-            //   而新 process 的第一輪 `m_Scan` 還是 null ⇒ 那條路會掃到「Senate 自己」，
-            //   而畫面下一段馬上又用生效值掃一次。同一顆鈕掃兩個不同的 repo，
-            //   使用者只會看到「按一下要等兩倍久」。
+            // ⚠ 顯式傳生效值，不靠 `m_Scan?.Root` 兜 —— 新 process 的第一輪 `m_Scan` 還是 null
+            //   ⇒ 那條路會掃到「Senate 自己」，而畫面下一段馬上又用生效值掃一次。
+            //   同一顆鈕掃兩個不同的 repo，使用者只會看到「按一下要等兩倍久」。
             Rescan(aFetch, g.FieldValue(RootAppliedId, m_Model.RepoRoot),
                 g.FieldValue(BranchAppliedId, ""), null);
         }
+
+        // ── 會動手的三顆（Tim 2026-08-28 要求放在工具列）─────────────────
+        // ⚠ 執行中一律**不畫**操作鈕（不是畫成灰的 —— 共用層沒有 disabled，
+        //   而一顆按了沒事的鈕看起來像壞的）。進度顯示在內容區頂部。
+        if (m_Job != null) { g.Label($"⏳ {m_Job.Label} 執行中…"); return; }
+
+        // 🩸 這裡原本有一道「`m_Scan` 沒資料就不畫鈕」的閘，而它讓那三顆鈕**永遠不出現**：
+        //   工具列**先於**內容區畫，而掃描發生在內容區 ⇒ 工具列看到的 `m_Scan` 永遠是 null。
+        //   （視窗那側第二幀就會有，但純文字那側只畫一趟 ⇒ 那一側完全看不到操作鈕。
+        //     實測：`ui --list` 只列得出「重新掃描」。）
+        // ⇒ 鈕**無條件畫**，按下去那一刻才確保掃描（`EnsureScannedForJob`）。
+        //   那不是「按了沒事的鈕」—— 它會先掃再跑，或說出為什麼不能跑。
+
+        // 待確認態：把原本三顆鈕換成「確認／取消」兩顆。
+        // ⚠ 用**兩段式**而不是彈一個 modal：共用層沒有 modal 節點，而兩段式用既有節點組出來
+        //   ⇒ 四種驅動方式天生就會，CLI 那側也可重放（--click 兩次）。
+        //   它跟 CLI 端 `--push` 要求 `--yes` 是同一道手勢：**寫遠端要一個明示**。
+        // 🩸 待確認態住 **session** 不住頁面欄位：CLI 每次呼叫都是新 process ⇒
+        //   放頁面欄位的話「我按了 Push」活不過那一個指令，於是純文字那側**永遠停在第一步**
+        //   （實測：按 run-push 之後 `--list` 列出來的還是三顆操作鈕）。
+        //   跟生效值同一個模式 —— 那個坑我今天已經踩過一次。
+        SyncAction? aPending = ActionFromKey(g.FieldValue(PendingId, ""));
+        if (aPending != null)
+        {
+            if (g.Button($"⚠ 確定執行「{aPending.Label}」", "submodule/confirm"))
+            {
+                g.SetField(PendingId, "");
+                RequestJob(g, aPending);
+            }
+            if (g.Button("取消", "submodule/confirm-cancel")) g.SetField(PendingId, "");
+            return;
+        }
+
+        // 不碰遠端 ⇒ 不需要二次確認（到處都要確認 ＝ 沒有確認）。
+        if (g.Button("切 → pull（不推）", "submodule/run-pull"))
+            RequestJob(g, new SyncAction("切 → pull", iCheckout: true, iPull: true, iPush: false));
+
+        // 寫遠端 ⇒ 走兩段式確認（那道手勢跟 CLI 端 `--push` 要求 `--yes` 是同一個東西）。
+        if (g.Button("Push", "submodule/run-push")) g.SetField(PendingId, PushKey);
+        if (g.Button("一鍵同步（切 → pull → push）", "submodule/run-sync")) g.SetField(PendingId, SyncKey);
+    }
+
+    /// <summary>一個要跑的動作（哪三步）。</summary>
+    sealed record SyncAction(string Label, bool iCheckout, bool iPull, bool iPush);
+
+    /// <summary>執行中的批次（null ＝ 沒在跑）。</summary>
+    SubmoduleSyncJob? m_Job;
+
+    /// <summary>上一輪的結果（給報告區；null ＝ 這個 session 還沒跑過）。</summary>
+    SubmoduleSyncProgress? m_LastResult;
+
+    /// <summary>上一輪的動作名（報告要說出「這份報告是哪個動作的」）。</summary>
+    string m_LastLabel = "";
+
+    /// <summary>待確認的動作住這個 session 欄位（"" ＝ 沒有）。內部狀態，`--set` 碰不到。</summary>
+    const string PendingId = "submodule/pending";
+    const string PushKey = "push";
+    const string SyncKey = "sync";
+
+    /// <summary>
+    /// 把 session 裡的 key 還原成動作。
+    /// <para>⚠ 存 key 而不是存三個 bool：一個「壞掉的 key」會安靜地變成
+    /// 「沒有待確認」（回 null），而三個 bool 的壞法是**跑一個沒有人要求的組合**。
+    /// 兩種壞法都會發生，但前者看得出來。</para>
+    /// </summary>
+    static SyncAction? ActionFromKey(string iKey) => iKey switch
+    {
+        PushKey => new SyncAction("push", iCheckout: false, iPull: false, iPush: true),
+        SyncKey => new SyncAction("一鍵同步", iCheckout: true, iPull: true, iPush: true),
+        _ => null,
+    };
+
+    /// <summary>擋下批次時要說的那句（null ＝ 沒有）。</summary>
+    string? m_JobMessage;
+
+    /// <summary>
+    /// 按下操作鈕的入口 —— **先確保有一張可用的照片，再起 job**。
+    /// </summary>
+    void RequestJob(SCP_Ui g, SyncAction iAction)
+    {
+        m_JobMessage = null;
+        if (!EnsureScannedForJob(g)) return;
+        StartJob(g, iAction);
+    }
+
+    /// <summary>
+    /// 確保手上有一張「可以拿來決定範圍」的照片。回 false ＝ 不能跑（理由寫進 <see cref="m_JobMessage"/>）。
+    /// <para>⚠ 為什麼要分兩階段掃：`RunBatch` 用的目標 branch 來自**照片**的 <c>TargetBranch</c>，
+    /// 而那是掃描當下帶著 overrides 算出來的 ⇒ 一張「不帶 overrides」的照片會讓逐項覆寫**靜默失效**
+    /// （它會照啟發式的目標去切，而報告上是一排 ✓）。所以拿到 items 之後要再比一次指紋。</para>
+    /// <para>正常流程（內容區已經掃過、指紋含 overrides）第一個 if 就回 true ⇒ 零額外掃描。</para>
+    /// </summary>
+    bool EnsureScannedForJob(SCP_Ui g)
+    {
+        string aRoot = g.FieldValue(RootAppliedId, m_Model.RepoRoot);
+        string aBranch = g.FieldValue(BranchAppliedId, "");
+
+        // ① 還沒有照片 ⇒ 先掃一次（這一輪拿不到 overrides —— 它們的 id 要靠 items 才列舉得出來）
+        if (m_Scan == null) Rescan(iFetch: false, aRoot, aBranch, null);
+
+        if (m_Scan is not { Ok: true } aScan)
+        {
+            m_JobMessage = $"✗ 掃不到那個 repo，所以不知道要對誰動手：{m_Scan?.Error ?? "(還沒掃)"}";
+            return false;
+        }
+        if (aScan.Items.Count == 0)
+        {
+            // 「沒有 submodule」是有效答案，不是錯誤 —— 但它一定要說出來，
+            // 不然按下去什麼都不發生跟「這顆鈕壞了」同形。
+            m_JobMessage = "・這個 repo 沒有 submodule —— 沒有東西可以同步。";
+            return false;
+        }
+
+        // ② 有 items 了 ⇒ 現在讀得到逐項覆寫。照片若不是用這組設定拍的，重拍一張。
+        var aSettings = CollectSettings(g);
+        string aFp = Fingerprint(aRoot, aBranch, aSettings.Overrides, aSettings.Options.Fetch);
+        if (aFp != m_ScannedFingerprint)
+            Rescan(aSettings.Options.Fetch, aRoot, aBranch, aSettings.Overrides);
+
+        return m_Scan is { Ok: true, Items.Count: > 0 };
+    }
+    /// <summary>
+    /// 起一輪批次。
+    /// <para>⚠ 兩種宿主走**同一份碼**，差別只在最後那一行等不等：
+    /// 會重畫的宿主（ImGui 視窗）丟到背景、每幀顯示進度；
+    /// 不重畫的（純文字／指令驅動）**必須同步等完** —— 那一側畫幾趟就結束 process，
+    /// 丟到背景等於什麼都不會發生，而那個症狀跟「這顆鈕壞了」同形。</para>
+    /// </summary>
+    void StartJob(SCP_Ui g, SyncAction iAction)
+    {
+        if (m_Job != null) return;                       // 一次只准一輪（第二次按下不該跑兩輪 git）
+        if (m_Scan is not { Ok: true } aScan) return;
+
+        var aSettings = CollectSettings(g);
+        var aOptions = new SCP_GitSyncOptions
+        {
+            Checkout = iAction.iCheckout,
+            Pull = iAction.iPull,
+            Push = iAction.iPush,
+            PushAllRemotes = aSettings.Options.PushAllRemotes,
+        };
+
+        // ⚠ 傳 only 的規則跟印指令那邊一致：有排除才傳白名單，全選就傳 null。
+        //   傳一份「剛好等於全部」的白名單也會對，但那讓兩條路的行為不再逐字相同，
+        //   而分岔的那天不會有人發現。
+        List<string>? aOnly = null;
+        if (aSettings.Excluded.Count > 0)
+        {
+            aOnly = new List<string>();
+            foreach (var aItem in aScan.Items)
+                if (!aSettings.Excluded.Contains(aItem.Entry.Path)) aOnly.Add(aItem.Entry.Path);
+        }
+
+        var aJob = new SubmoduleSyncJob(iAction.Label, aScan, aOptions, aSettings.Options.IncludeRoot, aOnly);
+        m_Job = aJob;
+        m_LastResult = null;
+        aJob.Start();
+
+        if (!SCP_GuiHost.RedrawsContinuously)
+        {
+            aJob.WaitForExit();
+            HarvestJob();      // 同一輪就把結果搬進來 ⇒ 這一趟繪製就看得到報告
+        }
+    }
+
+    /// <summary>
+    /// 執行中的進度，或上一輪的報告。
+    /// <para>⚠ 進度放**內容區頂部**而不是工具列：工具列那一行要留給「按什麼」，
+    /// 而進度是「現在怎樣」—— 逐條 log 塞進工具列會把那一行撐爛，兩種 renderer 都會。</para>
+    /// </summary>
+    void DrawJobStatus(SCP_Ui g)
+    {
+        // 擋下的理由要看得見 —— 按了沒反應跟「這顆鈕壞了」同形。
+        if (m_JobMessage != null) g.Note($"　{m_JobMessage}");
+
+        if (m_Job != null)
+        {
+            SubmoduleSyncProgress aSnap = m_Job.Snapshot();
+            using (g.Box($"⏳ {m_Job.Label} 執行中　{aSnap.Done} / {aSnap.Total}"))
+            {
+                // 當前那一行是**進度顯示**，不是統計 —— 真相源是結束後的 Rows（見 job 的註解）。
+                if (aSnap.Current.Length > 0) g.Note(aSnap.Current);
+                g.Note("⚠ **沒有取消鈕**：git 跑到一半被 kill 可能留下 `index.lock` 或半完成的 fetch，"
+                       + "而那個殘局比多等一會兒貴得多。每一顆 git 自己有逾時上限（本機 120s、走網路 300s）。");
+                g.Note("　執行中不重掃、也不畫操作鈕 —— 下面那張表是**動手之前**的照片，跑完會自動重讀。");
+            }
+            g.Space();
+            return;
+        }
+
+        if (m_LastResult is not SubmoduleSyncProgress aResult) return;
+
+        using (g.Box($"上一輪：{m_LastLabel}　✓{aResult.OkCount} ⏭{aResult.SkipCount} ✗{aResult.FailCount}"))
+        {
+            // ⚠ 背景執行緒炸掉的例外不會自己出現在任何地方 ⇒ 這一行是它唯一的出口。
+            if (aResult.Error != null)
+                g.Note($"✗ **批次本身炸了**（不是某一顆失敗）：{aResult.Error}");
+
+            // ⚠ 跳過**不算失敗**（那是刻意的保護），但它一定要出現在摘要那一行裡 ——
+            //   只印「✓ 完成」會讓「跳過 8 顆」看起來像「做完 8 顆」。
+            var aRows = aResult.Rows;
+            if (aRows != null && aRows.Count > 0)
+            {
+                bool aAnyNotOk = false;
+                foreach (var aRow in aRows) if (aRow.Outcome != SCP_GitSyncOutcome.Ok) aAnyNotOk = true;
+                if (aAnyNotOk)
+                {
+                    // 只列**不是 ✓** 的（全過的那些沒有人需要逐行讀）。
+                    using (g.Table("沒有做完的", "為什麼"))
+                    {
+                        foreach (var aRow in aRows)
+                        {
+                            if (aRow.Outcome == SCP_GitSyncOutcome.Ok) continue;
+                            g.TableRow(aRow.Label, aRow.Summary);
+                        }
+                    }
+                }
+                else
+                {
+                    g.Note($"✓ 全部 {aRows.Count} 顆都做完了（沒有跳過、沒有失敗）。");
+                }
+            }
+
+            // 完整經過收在摺疊裡 —— 它是查問題時要的東西，不是每次都要讀的東西。
+            // ⚠ 收合時子節點不建（Fold 的契約），所以攤開才付那些節點的錢。
+            using (var aFold = g.Fold($"完整經過（{aResult.Log.Count} 行）", "submodule/job-log", iDefaultOpen: false))
+            {
+                if (aFold.Open)
+                {
+                    if (aResult.Log.Count == 0) g.Note("（這一輪沒有印出任何經過 —— 範圍可能是空的）");
+                    foreach (string aLine in aResult.Log) g.Note(aLine);
+                }
+            }
+
+            g.Note("　⚠ 這份報告說「切好了」不算數 —— 下面那張表是**跑完之後重讀**的狀態，那才是讀數。");
+        }
+        g.Space();
+    }
+    /// <summary>
+    /// 批次跑完了就把結果搬進頁面（**UI 執行緒做**，背景不直接寫頁面狀態）。
+    /// <para>⚠ 搬完之後重掃一次：報告說「切好了」不算數，**狀態表讀回來的才算**。</para>
+    /// </summary>
+    void HarvestJob(SCP_Ui? g = null)
+    {
+        if (m_Job == null) return;
+        SubmoduleSyncProgress aSnap = m_Job.Snapshot();
+        if (!aSnap.Finished) return;
+
+        m_LastResult = aSnap;
+        m_LastLabel = m_Job.Label;
+        m_Job = null;
+
+        // 重掃用生效值（跟指紋那條路同一組值），fetch 一律不帶 ——
+        // 剛動完手要看的是「現在停在哪」，不是再去問一次遠端。
+        Rescan(iFetch: false,
+            g != null ? g.FieldValue(RootAppliedId, m_Model.RepoRoot) : m_Scan?.Root,
+            g != null ? g.FieldValue(BranchAppliedId, "") : null,
+            null);
     }
 
     protected override void DrawContent(SCP_Ui g)
@@ -120,6 +378,10 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         //     它們是單次離散事件，不會連續觸發，而且立即看到結果才是那些元件的價值。
         // 生效值 —— 住 session，跨 process 活得下來（見 RootAppliedId 的血證）。
         // 草稿欄位的**預設**就是它：一進頁面欄位顯示「現在掃的是誰」，而不是一格空白。
+        // ── ⓿ 批次跑完了就收割（UI 執行緒做，背景不直接寫頁面狀態）──────
+        HarvestJob(g);
+        DrawJobStatus(g);
+
         string aAppliedRoot = g.FieldValue(RootAppliedId, m_Model.RepoRoot);
         string aAppliedBranch = g.FieldValue(BranchAppliedId, "");
 
@@ -182,8 +444,11 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         //   · fetch 與逐項覆寫是點選 ⇒ 進指紋，立即生效
         //     （不進的話「我開了先 fetch」就是一顆開了不會有事的開關）
         // ⚠ `m_Scan == null` 也算不符 —— 新 process 的第一輪就是靠這個條件掃第一次。
+        // ⚠ 批次執行中**一律不重掃**：那會在背景正在移動 HEAD 的同時去讀狀態 ——
+        //   讀到的是一張「一半」的照片，而它看起來跟一張完整的照片一模一樣。
+        //   跑完之後 HarvestJob 會自己重掃一次（報告說切好了不算數，狀態表讀回來的才算）。
         string aFingerprint = Fingerprint(aAppliedRoot, aAppliedBranch, aOverrides, aOptions.Fetch);
-        if (m_Scan == null || aFingerprint != m_ScannedFingerprint)
+        if (m_Job == null && (m_Scan == null || aFingerprint != m_ScannedFingerprint))
         {
             Rescan(aOptions.Fetch, aAppliedRoot, aAppliedBranch, aOverrides);
         }
@@ -228,6 +493,46 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     /// <summary>本頁的三個全域開關。</summary>
     readonly record struct SyncOptions(bool Fetch, bool IncludeRoot, bool PushAllRemotes);
 
+    // 三個開關的 id —— 抽成常數是因為它們有**兩個讀取端**（畫的那份、工具列純讀那份）。
+    // ⚠ 字面重複兩次的東西遲早只改一邊，而 id 打錯的症狀是「那個開關讀回預設值」，不是報錯。
+    const string FetchId = "submodule/fetch";
+    const string IncludeRootId = "submodule/include-root";
+    const string PushAllId = "submodule/push-all-remotes";
+
+    /// <summary>這一輪的完整意圖（給工具列的操作鈕用）。</summary>
+    readonly record struct PageSettings(
+        SyncOptions Options, Dictionary<string, string> Overrides, List<string> Excluded);
+
+    /// <summary>
+    /// 讀出這一輪的完整設定 —— **純讀，不畫任何節點**。
+    /// <para>⭐ 操作鈕放在工具列（Tim 2026-08-28 指定）而工具列**先於**內容區畫 ⇒
+    /// 按下去那一刻，逐項設定的節點還沒被建出來。這條路讓工具列讀得到它們：
+    /// 設定的真相源是**驅動端的 session**，不是「這一輪畫到哪了」。</para>
+    /// <para>⚠ 與 <see cref="DrawPerItemSettings"/> 讀的是**同一組 id**（都走 <see cref="OnlyId"/> /
+    /// <see cref="BranchId"/>）—— id 的產生只有一份，所以兩邊不會漂。</para>
+    /// </summary>
+    PageSettings CollectSettings(SCP_Ui g)
+    {
+        var aOptions = new SyncOptions(
+            g.ToggleValue(FetchId, false),
+            g.ToggleValue(IncludeRootId, false),
+            g.ToggleValue(PushAllId, false));
+
+        var aOverrides = new Dictionary<string, string>();
+        var aExcluded = new List<string>();
+        if (m_Scan is { Ok: true } aScan)
+        {
+            foreach (var aItem in aScan.Items)
+            {
+                string aPath = aItem.Entry.Path;
+                if (!g.ToggleValue(OnlyId(aPath), true)) aExcluded.Add(aPath);
+                string aPick = g.FieldValue(BranchId(aPath) + "/value", AutoValue);
+                if (aPick != AutoValue && aPick.Length > 0) aOverrides[aPath] = aPick;
+            }
+        }
+        return new PageSettings(aOptions, aOverrides, aExcluded);
+    }
+
     /// <summary>
     /// 三個開關。
     /// <para>⚠ 它們的狀態住在驅動端（session／renderer 的 Toggles），本頁只給預設值 ——
@@ -240,9 +545,9 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         // 這個開關是 fetch 的**唯一**入口（工具列那顆鈕吃它的值，見 ToolBarButtons 的血證）。
         // 一開就會立刻重掃並走網路 —— 那是使用者按下去要的東西，不是副作用。
         bool aFetch = g.Toggle("先 fetch 再讀（走網路；不開的話 ahead/behind 是上次 fetch 的舊值）",
-            false, "submodule/fetch");
-        bool aIncludeRoot = g.Toggle("root repo 本身也一起 pull / push", false, "submodule/include-root");
-        bool aPushAll = g.Toggle("push 推到該 repo 的**所有** remote（關 ＝ 只推 origin）", false, "submodule/push-all-remotes");
+            false, FetchId);
+        bool aIncludeRoot = g.Toggle("root repo 本身也一起 pull / push", false, IncludeRootId);
+        bool aPushAll = g.Toggle("push 推到該 repo 的**所有** remote（關 ＝ 只推 origin）", false, PushAllId);
 
         if (aIncludeRoot)
             g.Note("　⚠ root **永遠不切 branch** —— 專案根換分支影響整個工程，那個動作該是人自己下的，不進批次。");
@@ -568,8 +873,9 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
 
     /// <summary>
     /// 下一步該打什麼 —— **把畫面上的意圖編譯成指令**。
-    /// <para>本頁不放寫入鈕（見檔頭），所以這一格不是附錄，是這一頁的出口：
-    /// 一個「只能看不能動」的畫面如果不指路，看得到問題的人就卡在這裡了。</para>
+    /// <para>⚠ 工具列已經有會動手的鈕了（2026-08-28），所以這一格**不再是唯一的出口** ——
+    /// 但它沒有變成裝飾：指令是給**腳本與 CI** 的消費端，而且 `--dry-run` 只有這條路有。
+    /// 兩者吃同一組設定，所以「畫面上調好的範圍」與「複製去跑的範圍」逐字相同。</para>
     /// <para>⚠ 指令帶的是**畫面上現在的設定**（排除清單、逐項覆寫、三個開關），
     /// 不是一份寫死的範本。範本會在使用者調整設定之後靜默過期，
     /// 而過期的提示比沒有提示糟 —— 它讓人照著做，然後得到一個他沒有要的範圍。</para>
@@ -581,7 +887,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
 
         int aIncluded = m_Scan.Items.Count - iExcluded.Count;
 
-        using (g.Box("要動手的話（寫入端在 CLI，不在這一頁）"))
+        using (g.Box("同一件事的指令版（貼進腳本／CI，或想先 --dry-run 看範圍）"))
         {
             if (aIncluded == 0)
             {

@@ -130,10 +130,13 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 #### 跟頁面的分工
 
-`Submodule 狀態` 頁（`ui --click home/open/submodule`）**唯讀**：它負責「決定」——
-選 repo（**一個可以直接打路徑的欄位**，預設 Senate 自己；設定檔有專案時另有下拉當捷徑）、
-挑全域預設、逐顆勾選納入／排除、逐顆指定 branch、三個開關 ——
-然後把這些意圖**編譯成一條可以直接照抄的指令**印出來。動手的仍然是這裡的 `sync`。
+`Submodule 狀態` 頁（`ui --click home/open/submodule`）**決定與動手都做得到**：
+
+- **決定**：選 repo（可直接打路徑，預設 Senate 自己）、全域預設 branch、
+  逐顆納入／排除、逐顆指定 branch、三個開關。
+- **動手**：工具列三顆鈕 —— `切 → pull（不推）` / `Push` / `一鍵同步（切 → pull → push）`。
+  寫遠端的兩顆走**兩段式確認**（按一次變成「⚠ 確定執行…」＋「取消」，再按才跑），
+  而那道手勢跟這裡的 `--push` 要求 `--yes` 是同一個東西。
 
 ⚠ 頁面上**打字的兩格（repo 路徑、全域預設 branch）是草稿**，要按「✓ 套用並重新掃描」才生效
 （勾選與下拉是立即生效）。理由：在視窗裡打字是逐字元的，值一變就重掃等於打一個路徑跑 N 輪 git。
@@ -148,16 +151,33 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 ./senate.exe ui --click submodule/root/paste                # 從剪貼簿貼路徑（只填草稿）
 ./senate.exe ui --fold submodule/per-item                   # 展開逐項設定（收合時裡面的 id 不存在）
 ./senate.exe ui --toggle submodule/only/<submodule 路徑>     # 排除／納入某一顆
+./senate.exe ui --click submodule/run-pull                  # 切 → pull（不碰遠端，直接跑）
+./senate.exe ui --click submodule/run-push                  # 進待確認態（**不會**直接推）
+./senate.exe ui --click submodule/confirm                   # 確認 ⇒ 這一步才寫遠端
+./senate.exe ui --click submodule/confirm-cancel            # 放棄那個待確認的動作
 ```
 
-⚠ `submodule/root/applied` 與 `submodule/default-branch/applied` 是**內部狀態不是畫面元件**
-⇒ `--set` 會被「畫面上沒有這個 id」擋下（那是對的：換 repo 就走上面那兩步，
-跟人在畫面上做的動作完全一樣）。
+⚠ `submodule/root/applied`、`submodule/default-branch/applied` 與 `submodule/pending`
+是**內部狀態不是畫面元件** ⇒ `--set` 會被「畫面上沒有這個 id」擋下（那是對的：
+換 repo 或確認動作都走上面那些 `--click`，跟人在畫面上做的動作完全一樣）。
 
-⇒ 分界線落在「決定」與「動手」之間。
-理由是宿主形狀：CLI 一次呼叫一顆 process，而一輪 fetch＋pull＋push 跨十幾個 submodule
-是分鐘級的事 —— 塞進「按鈕按下去那一幀」會變成一顆按了沒事的鈕，而那比沒有鈕糟。
+### 🩸 這一頁曾經刻意不放寫入鈕
 
+原本的理由是宿主形狀：一輪 fetch＋pull＋push 跨十幾顆 submodule 是**分鐘級**的事，
+而純文字那側畫幾趟就結束 process（丟到背景等於什麼都不會發生），視窗那側同步跑又會凍住畫面。
+
+⇒ 2026-08-28 那條限制被**正面解掉**而不是繞開：批次跑在背景執行緒（`SubmoduleSyncJob`，
+本 repo 第一個背景工作），而 `SCP_GuiHost.RedrawsContinuously` 讓同一份頁面碼在兩種宿主上都對 ——
+**會重畫的丟背景並每幀顯示進度，不重畫的同步跑完才返回**。
+📌 那條舊理由**仍然是對的**，它只是不再是「不做」的理由，而是「怎麼做」的規格。
+
+⚠ **沒有取消鈕**：git 跑到一半被 kill 可能留下 `index.lock` 或半完成的 fetch，
+而那個殘局比多等一會兒貴得多。每一顆 git 自己有逾時上限（本機 120s、走網路 300s）。
+⚠ 批次執行中**不重掃、也不畫操作鈕**；跑完會自動重讀一次狀態 ——
+報告說「切好了」不算數，狀態表讀回來的才算。
+
+⇒ 那麼這裡的 `sync` 還有什麼用？**腳本與 CI**，以及 `--dry-run`（只有指令這條路有）。
+頁面照舊把等價指令印出來，而兩者吃**同一組設定** ⇒ 畫面上調好的範圍與複製去跑的範圍逐字相同。
 ### `ui`
 
 把後台頁輸出成純文字。旗標：

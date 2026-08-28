@@ -284,6 +284,13 @@ public static class Program
             Console.WriteLine($"・已接續 CLI session（{UiDriver.SessionPath(iRepoRoot)}）的欄位／勾選／摺疊");
         }
 
+        // ⭐ **這一行決定長時間工作跑在哪裡。** 視窗是連續 render loop ⇒ 頁面可以把批次丟到背景、
+        //   每幀顯示進度。純文字那一側**不設**（預設 false）⇒ 頁面會同步跑完才返回，
+        //   因為那一側畫幾趟就結束 process，丟到背景等於什麼都不會發生。
+        //   ⚠ 設在這裡而不是 Main 開頭：它是**這一種宿主**的性質，不是這台機器的性質
+        //   （同一支 exe 兩條路，`SCP_GuiHost.RevealInFileManager` 那種才屬於 Main）。
+        SCP_GuiHost.RedrawsContinuously = true;
+
         // 鍵盤／剪貼簿診斷 —— 「Ctrl+V 沒反應」有三個斷點，而它們在畫面上長得一樣（見 DrawKeyDebug）。
         aWin.KeyDebug = HasFlag(iArgs, "--keydebug");
         if (aWin.KeyDebug) Console.WriteLine("・keydebug 開著 —— 畫面底部會多一行鍵盤／剪貼簿讀數");
