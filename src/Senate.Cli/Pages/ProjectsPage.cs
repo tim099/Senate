@@ -43,6 +43,7 @@ public sealed class ProjectsPage : SCP_GuiToolPage
     {
         m_LoadError = null;
         m_Dirty = false;
+        m_Probes.Clear();     // 重新進頁／重新讀取 ⇒ 探測讀數也重取（快取是為了幀率，不是為了舊照片）
         try
         {
             m_Draft = SenateConfig.Load(m_ConfigPath);
@@ -66,7 +67,8 @@ public sealed class ProjectsPage : SCP_GuiToolPage
         }
 
         g.Note($"這裡改的是 `{Path.GetFileName(m_ConfigPath)}` 的 projects[]（與「設定」頁同一份檔）——"
-               + "按「儲存」才寫回，探測讀數是現場的不是存檔的。");
+               + "按「儲存」才寫回；探測讀數是快取的，改了路徑按「重新探測」。");
+        if (g.Button("🔄 重新探測全部", "projects/reprobe")) m_Probes.Clear();
 
         // ── 既有專案：逐列欄位 ＋ 現場探測 ─────────────────────────────
         for (int i = 0; i < m_Draft.Projects.Count; i++)
@@ -86,8 +88,14 @@ public sealed class ProjectsPage : SCP_GuiToolPage
                 bool aEnabled = g.Toggle("啟用", aProj.Enabled, aId + "/enabled");
                 if (aEnabled != aProj.Enabled) { aProj.Enabled = aEnabled; m_Dirty = true; }
 
-                // 現場探測 —— 讀的是**欄位現值**（含未儲存的草稿），所以打錯路徑當場就紅。
-                ProjectReading aReading = ProjectProbe.Probe(aProj);
+                // 探測讀數走**快取**，key＝(root, enabled)。
+                // 🩸 第一版在這裡每輪直呼 ProjectProbe.Probe —— 一次 probe 是 3 支 git 子程序，
+                //   視窗宿主連續重繪（每秒數十輪）⇒ 每秒噴幾十×N 支 git，整頁卡死（Tim 實測回報）。
+                //   文字宿主畫一輪就結束所以完全測不到 —— 「會重畫的宿主」才是這種成本的照妖鏡。
+                // ⇒ 同一個 (root, enabled) 只 probe 一次；改路徑＝換 key，新 key 自動補一次。
+                //   打字的半截路徑也各算一個 key，但那些走 Probe 的「路徑不存在」early-out（零 git）。
+                //   代價：Editor 心跳在快取裡會過期 —— 那顆「在跑」要現值就按「重新探測」。
+                ProjectReading aReading = ProbeOf(aProj);
                 g.Label($"　探測：{StateText(aReading.State)}"
                         + (aReading.AgentCommandsRoot != null
                             ? $"　資料根 {aReading.AgentCommandsRoot}{(aReading.AgentCommandsRootExists ? " ✓" : " ⚠不存在")}"
@@ -175,6 +183,18 @@ public sealed class ProjectsPage : SCP_GuiToolPage
             m_Dirty = false;
         }
         catch (InvalidDataException e) { m_Message = $"⚠ 寫完之後回讀失敗（檔案可能壞了）：{e.Message}"; }
+    }
+
+    /// <summary>探測快取：key ＝ "root|enabled"（探測結果只依這兩格）。「重新探測」＝清空。</summary>
+    readonly Dictionary<string, ProjectReading> m_Probes = new(StringComparer.OrdinalIgnoreCase);
+
+    ProjectReading ProbeOf(SenateProject iProj)
+    {
+        string aKey = CleanPath(iProj.Root) + "|" + (iProj.Enabled ? "1" : "0");
+        if (m_Probes.TryGetValue(aKey, out ProjectReading? aCached)) return aCached;
+        ProjectReading aReading = ProjectProbe.Probe(iProj);
+        m_Probes[aKey] = aReading;
+        return aReading;
     }
 
     /// <summary>去掉包住整串的引號與前後空白（檔案總管「複製路徑」帶雙引號 —— submodule 頁同一課）。</summary>

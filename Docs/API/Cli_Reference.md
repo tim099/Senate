@@ -185,9 +185,14 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 ### `專案關聯` 頁（`ui --click home/open/projects`）
 
-增刪改 `senate.local.json` 的 projects[]，**逐列附現場探測讀數**（路徑在不在／git repo 嗎／
+增刪改 `senate.local.json` 的 projects[]，**逐列附探測讀數**（路徑在不在／git repo 嗎／
 AgentCommands 資料根解析到哪、存不存在／Editor 在不在跑）—— root 打錯當場就紅，
 不必等 cmd 派過去永遠 pending 才發現。貼路徑會自動去掉檔案總管「複製路徑」帶的雙引號。
+
+⚠ 探測讀數走**快取**（key＝root＋enabled；進頁與「🔄 重新探測全部」時重取）——
+🩸 第一版每輪重繪直呼 Probe（一次 3 支 git 子程序），視窗宿主連續重繪 ⇒ 每秒數十×N 支 git，
+整頁卡死；文字宿主畫一輪就結束所以完全測不到。**會重畫的宿主才是這種成本的照妖鏡。**
+代價：Editor 心跳那格在快取裡會過期，要現值按重新探測。
 
 - 與「設定」頁（自動繪製）**寫同一份檔、同一支 Save** ⇒ 未知欄位與 `"//"` 註解照樣保留；
   本頁只是 projects[] 的窄而順的那條路，不是第二個真相源。
