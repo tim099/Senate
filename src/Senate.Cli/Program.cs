@@ -74,6 +74,7 @@ public static class Program
                 "doctor" => CmdDoctor(aRepoRoot, iArgs),
                 "ui" => CmdUi(aRepoRoot, iArgs),
                 "submodule" => CmdSubmodule(aRepoRoot, iArgs),
+                "cmd" => CmdAgent(aRepoRoot, iArgs),
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
                 "--help" or "-h" or "help" => Usage(0),
                 _ => Usage(2, $"認不得的指令 '{aCmd}'"),
@@ -559,6 +560,134 @@ public static class Program
         return aFail > 0 ? 1 : 0;
     }
 
+    // ── senate cmd ───────────────────────────────────────────
+    // 區塊職責：AgentCommands 派遣的 CLI 入口 —— run / status 兩個子動作。
+    // 物理意義：run_cmd.py 的 C# 對應（協議本體在 Senate.Core/AgentCmdClient.cs）——
+    //           **沒有 python 的環境（Codex）也能派 Cmd**。對象專案由 senate.local.json 的
+    //           projects[] 指定（--project 挑名字；只有一個啟用專案時可省略）。
+    // 數值影響：run 會寫目標專案的 queue/trigger（Editor 端接手執行）；status 唯讀。
+    //           exit code 與 run_cmd.py 對齊：0 成功／2 失敗或用法錯／3 逾時。
+    // ⚠ v1 刻意不做的（跟 run_cmd.py 的差距，別當成壞掉）：
+    //   schema 預檢與 type 別名（fail-open —— 打錯 type 由 Editor 端擋並附 did-you-mean）、
+    //   Tavern wait-reply 握手引擎、op=post 成功後的 catch-up cursor 提交。
+    //   後兩格對「拿 senate 發酒館訊息」的人是真差距 —— 要做的時候去讀 run_cmd.py 對應段。
+    static int CmdAgent(string iRepoRoot, string[] iArgs)
+    {
+        string aSub = iArgs.Length > 1 ? iArgs[1].ToLowerInvariant() : "";
+        if (aSub != "run" && aSub != "status")
+            return AgentUsageError($"cmd 要 run 或 status（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）",
+                "senate cmd run <CmdType> [--project <名>] [--persona <p>] [--arg k=v]… [--arg-file k=<路徑>]…");
+
+        // ── 對象專案解析：--project 名字 ＞ 唯一啟用專案自動選（會說出來）＞ 擋下 ──
+        string? aProjName = ArgValue(iArgs, "--project");
+        string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
+        SenateConfig? aCfg = SenateConfig.Load(aCfgPath);
+        if (aCfg == null)
+            return AgentUsageError($"還沒有設定檔（{aCfgPath}）", "先跑 senate init，把目標 Unity 專案寫進 projects[]");
+        var aEnabled = aCfg.Projects.Where(p => p.Enabled && !string.IsNullOrWhiteSpace(p.Root)).ToList();
+        SenateProject? aProj;
+        if (aProjName != null)
+        {
+            aProj = aCfg.Projects.FirstOrDefault(p =>
+                string.Equals(p.Name, aProjName, StringComparison.OrdinalIgnoreCase));
+            if (aProj == null)
+                return AgentUsageError($"設定檔裡沒有名叫 '{aProjName}' 的專案",
+                    $"現有：{string.Join(" / ", aCfg.Projects.Select(p => p.Name))}");
+            if (!aProj.Enabled)
+                return AgentUsageError($"專案 '{aProj.Name}' 在設定檔裡是停用的（enabled=false）", "");
+        }
+        else if (aEnabled.Count == 1)
+        {
+            aProj = aEnabled[0];
+            Console.WriteLine($"· 未給 --project ⇒ 用唯一啟用的專案 '{aProj.Name}'（{aProj.Root}）");
+        }
+        else
+        {
+            // 多專案不猜 —— 派錯專案的 Cmd 會在別人的 Editor 上真的執行。
+            return AgentUsageError(
+                aEnabled.Count == 0 ? "設定檔裡沒有任何啟用中的專案" : "有多個啟用中的專案，不猜",
+                $"加 --project <名>；現有啟用：{string.Join(" / ", aEnabled.Select(p => p.Name))}");
+        }
+        string? aDataRoot = ProjectProbe.ResolveAgentCommandsRoot(aProj.Root, aProj.AgentCommandsRoot);
+        if (aDataRoot == null || !Directory.Exists(aDataRoot))
+            return AgentUsageError($"AgentCommands 資料根不存在：{aDataRoot ?? "(解析失敗)"}",
+                $"檢查 senate.local.json 專案 '{aProj.Name}' 的 root / agentCommandsRoot");
+
+        string? aPersona = ArgValue(iArgs, "--persona");
+
+        if (aSub == "status")
+        {
+            // 唯讀：印 trigger 狀態與 queue 殘量 —— 給「卡住了嗎」這一問一個讀數。
+            Console.WriteLine($"· 專案 {aProj.Name}　資料根 {aDataRoot}");
+            string aQueuesDir = Path.Combine(aDataRoot, "queues");
+            var aFolders = aPersona != null
+                ? new[] { AgentCmdClient.QueueFolder(aDataRoot, aPersona) }
+                : Directory.Exists(aQueuesDir) ? Directory.GetDirectories(aQueuesDir) : Array.Empty<string>();
+            foreach (string aDir in aFolders)
+            {
+                string aWho = Path.GetFileName(aDir);
+                string aState = AgentCmdClient.TriggerState(aDataRoot, aWho);
+                int aCount = 0;
+                string aQp = AgentCmdClient.QueuePath(aDataRoot, aWho);
+                try
+                {
+                    if (File.Exists(aQp) && System.Text.Json.Nodes.JsonNode.Parse(
+                            File.ReadAllText(aQp)) is System.Text.Json.Nodes.JsonObject aQ
+                        && aQ["Commands"] is System.Text.Json.Nodes.JsonArray aArr) aCount = aArr.Count;
+                }
+                catch { aCount = -1; }   // 壞檔要看得出來，不是印 0
+                Console.WriteLine($"  · {aWho}　state={aState}　queue={(aCount < 0 ? "⚠壞檔" : aCount.ToString())}");
+            }
+            return 0;
+        }
+
+        // ── run ──
+        string? aCmdType = iArgs.Length > 2 && !iArgs[2].StartsWith("--") ? iArgs[2] : null;
+        if (aCmdType == null)
+            return AgentUsageError("run 少了 <CmdType>", "senate cmd run Task --arg op=show --arg index=8");
+
+        var aCmdArgs = new Dictionary<string, string>();
+        foreach (string aPair in ArgValues(iArgs, "--arg"))
+        {
+            int aEq = aPair.IndexOf('=');
+            if (aEq <= 0) return AgentUsageError($"--arg 要 k=v 的形狀（收到 '{aPair}'）", "");
+            aCmdArgs[aPair[..aEq]] = aPair[(aEq + 1)..];
+        }
+        // --arg-file k=<路徑>：長內文不經過 shell（run_cmd.py 同律）—— 讀檔失敗直接擋，不寫 queue。
+        foreach (string aPair in ArgValues(iArgs, "--arg-file"))
+        {
+            int aEq = aPair.IndexOf('=');
+            if (aEq <= 0) return AgentUsageError($"--arg-file 要 k=<路徑> 的形狀（收到 '{aPair}'）", "");
+            string aFile = aPair[(aEq + 1)..];
+            if (!File.Exists(aFile)) return AgentUsageError($"--arg-file 指到不存在的檔：{aFile}", "");
+            aCmdArgs[aPair[..aEq]] = File.ReadAllText(aFile, System.Text.Encoding.UTF8);
+        }
+        double aTimeout = double.TryParse(ArgValue(iArgs, "--timeout"), out var t) ? t : AgentCmdClient.DefaultWaitTimeoutSec;
+        bool aNoWait = iArgs.Contains("--no-wait");
+
+        if (!AgentCmdClient.EnsureIdle(aDataRoot, aPersona, AgentCmdClient.DefaultAckTimeoutSec,
+                Console.WriteLine, out string aIdleWhy))
+        {
+            Console.Error.WriteLine($"✗ {aIdleWhy}");
+            return 2;
+        }
+        string aCmdId = AgentCmdClient.Submit(aDataRoot, aPersona, aCmdType, aCmdArgs, Console.WriteLine);
+        Console.WriteLine($"Submitted: {aCmdId}");
+        Console.WriteLine($"  Type={aCmdType}, Mode=OneShot → {aProj.Name}:{(string.IsNullOrWhiteSpace(aPersona) ? AgentCmdClient.AnonymousQueueId : aPersona)}");
+        Console.WriteLine("  Trigger written → pending.trigger（Editor 的 Auto-Watcher ~1s 內接手；沒動靜就檢查 Editor 開著沒）");
+        if (aNoWait) return 0;
+        return (int)AgentCmdClient.Wait(aDataRoot, aPersona, aCmdId, aTimeout,
+            AgentCmdClient.DefaultPollSec, Console.WriteLine, Console.Error.WriteLine);
+    }
+
+    static int AgentUsageError(string iError, string iHint)
+    {
+        Console.Error.WriteLine($"✗ {iError}");
+        if (iHint.Length > 0) Console.Error.WriteLine($"  ↳ {iHint}");
+        Console.Error.WriteLine("  完整說明：senate --help");
+        return 2;
+    }
+
     /// <summary>
     /// 參數少一格／給錯了的出口。
     /// <para>⚠ 刻意**不吐整份 Usage**：40 行說明會把「你少給了 --yes」那一句擠到看不見，
@@ -778,6 +907,14 @@ public static class Program
                 --only <path>     只處理某幾顆（可重複；指到不存在的會擋下）
                 --dry-run         只印打算做什麼，不動任何東西
                 ⚠ sync **不給預設對象** —— 必須 --root 或 --project（對錯的 repo 動手是最貴的錯）
+              cmd run <CmdType>   派一筆 AgentCommand 給目標專案的 Unity Editor（= run_cmd.py 的 C# 版）
+                --project <name>  對哪個專案（senate.local.json projects[]；只有一個啟用時可省）
+                --persona <p>     身分（決定 queue 路由並戳進 args；沒給走 anonymous）
+                --arg k=v         指令參數（可重複）
+                --arg-file k=<路徑>  參數值從檔案讀（長內文不經過 shell）
+                --timeout <秒>    等待逾時（預設 120）；--no-wait 送出就返回
+                ⚠ 需要目標專案的 Unity Editor 開著（Watcher 執行）—— 這是派遣不是代跑
+              cmd status          看各 persona queue 的 trigger 狀態與殘量（唯讀）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 
             共用選項：
