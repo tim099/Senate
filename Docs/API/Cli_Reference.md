@@ -178,6 +178,41 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 ⇒ 那麼這裡的 `sync` 還有什麼用？**腳本與 CI**，以及 `--dry-run`（只有指令這條路有）。
 頁面照舊把等價指令印出來，而兩者吃**同一組設定** ⇒ 畫面上調好的範圍與複製去跑的範圍逐字相同。
+
+### `cmd run` / `cmd status`
+
+把一筆 **AgentCommand** 派給目標 Unity 專案的 Editor（＝ UCL_Core `run_cmd.py` 的 C# 對應）。
+存在的理由：**沒有 python 的環境（Codex）也要能派 Cmd**。機制、協議與邊界的完整說明
+在 [`AgentCmd_Dispatch`](../Workflows/AgentCmd_Dispatch.md) —— 本節只列旗標與 exit code。
+
+```bash
+./senate.exe cmd run Task --persona summit --arg op=show --arg index=8
+./senate.exe cmd run Tavern --persona summit --arg op=post --arg room=tavern --arg-file body=D:/tmp/msg.md
+./senate.exe cmd status                       # 唯讀：各 persona queue 的 trigger 狀態與殘量
+```
+
+| 旗標 | 做什麼 |
+|---|---|
+| `--project <name>` | 對哪個專案（`senate.local.json` projects[]）。**只有一個啟用專案時可省略**（會印出它選了誰）；多個啟用不猜、停用的擋下並說原因 |
+| `--persona <p>` | 身分 —— 決定 queue 路由（`queues/<p>/`）並在 args 缺席時戳進 `persona`。沒給走 `anonymous` |
+| `--arg k=v` | 指令參數，可重複 |
+| `--arg-file k=<路徑>` | 參數值從檔案讀（UTF-8）—— **長內文不經過 shell**，檔案不存在直接擋、不寫 queue |
+| `--timeout <秒>` | 等待逾時（預設 120） |
+| `--no-wait` | 送出就返回（不等 Editor 執行完） |
+
+#### exit code（與 `run_cmd.py` 對齊）
+
+| code | 意思 |
+|---|---|
+| 0 | 成功（判定來源是 `_cmd_results/<id>.json`，不是「從 queue 消失」的推論） |
+| 2 | Cmd 失敗，或用法錯誤（失敗判決 stderr＋stdout 各印一份，附 Editor 端錯誤報告節錄） |
+| 3 | 逾時 —— Editor 沒開或 Watcher 停用。⚠ 此時**回傳檔沒被更新**，別去讀上一輪的 |
+
+⚠ 這是**派遣不是代跑**：目標專案的 Unity Editor 必須開著（`UCL_AgentCommandWatcher` 執行中），
+Senate 只負責 client 半邊。⚠ v1 與 `run_cmd.py` 的已知差距（刻意，不是壞掉）：
+無 schema 預檢與 type 別名（打錯 type 由 Editor 端擋並附 did-you-mean）、
+無 Tavern `wait-reply` 握手、`op=post` 成功後不提交 catch-up cursor。
+
 ### `ui`
 
 把後台頁輸出成純文字。旗標：
@@ -196,7 +231,7 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 | `--width <n>` | 文字輸出寬度（字元格，預設 96），`doctor` / `selftest` 也吃 ⚠ 不吃 `--scale` |
 | `--scale <x>` | 介面縮放（0.5〜4，預設 1.0）。**本次有效，不寫回設定檔** |
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |
-| `--seed-session` | （視窗模式）開窗時接續 CLI session 的欄位／勾選／摺疊（**截圖模式自動開**）。不帶的話視窗從乾淨狀態開始 —— 下拉一律是收合的 |
+| `--seed-session` | （視窗模式）開窗時接續 CLI session 的欄位／勾選／摺疊（**截圖模式自動開**）。不帶的話視窗從乾淨狀態開始 —— 下拉一律是收合的 |
 | `--keydebug` | （視窗模式）畫面底部多一行**鍵盤／剪貼簿讀數** —— 見下方「Ctrl+V 沒反應時怎麼查」 |
 | `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `submodule` / `style` / `settings`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
 

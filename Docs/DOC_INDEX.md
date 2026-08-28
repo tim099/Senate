@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-08-22
+last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -25,6 +25,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 文件 | 用途 |
 |---|---|
 | [Setup_And_Build](Workflows/Setup_And_Build.md) | 一鍵配置與一鍵 build 的流程、**為什麼不用 PublishSingleFile**、出廠驗收要驗什麼 |
+| [AgentCmd_Dispatch](Workflows/AgentCmd_Dispatch.md) | `senate cmd`：把 AgentCommand 派給目標 Unity 專案的 Editor（run_cmd.py 的 C# client）、專案設定、判定語意、**與 python 版的差距清單** |
 
 ## API — 介面規格
 
