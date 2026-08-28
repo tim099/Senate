@@ -41,6 +41,27 @@ build 的最後會**自己試跑一次、也自己開一次視窗**確認真的�
 
 ---
 
+## 全域安裝（選用 —— 讓 `senate` 在任何地方直接打）
+
+```powershell
+.\install.ps1
+```
+
+> Git Bash 的話跑 `./install.sh`，效果一樣。
+
+它把 Senate 資料夾加進**你自己的 PATH**（不碰系統 PATH、不用系統管理員），
+之後**新開的** CMD / PowerShell / Git Bash 裡直接打 `senate` 就能用 —— 跟 python 一樣：
+
+```
+senate cmd status
+senate doctor
+```
+
+⚠ 已經開著的終端機不會自動生效（PATH 是視窗開起來那一刻複製的）—— 開新的。
+要移除：`.\install.ps1 -Uninstall`（或 `./install.sh --uninstall`）。
+
+---
+
 ## 開啟畫面
 
 ```powershell

@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
 description: setup / build 兩支腳本的職責邊界、出廠驗收要驗什麼、為什麼不用 PublishSingleFile（兩個實測的坑）、產物與版控
-last_updated: 2026-08-22
+last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -71,6 +71,22 @@ Windows PowerShell **5.1** 沒有 BOM 就用 ANSI(cp950) 讀 `.ps1`
 
 `senate.exe` 正在執行中（Windows 不准覆寫）或防毒正在掃剛寫完的 74 MB 檔
 ⇒ 兩支腳本都重試三次，仍失敗就明說是哪一種原因（不要只丟 `IOException`）。
+
+## 全域安裝（install.sh / install.ps1）
+
+「像 python 一樣全域」＝ **PATH 找得到**，所以安裝工具只做一件事：把 repo 根
+（senate.exe 與原生 DLL 的所在）寫進**使用者 PATH**（HKCU，不碰系統 PATH、免管理員）。
+不搬檔案、不做 shim —— 搬出去的 exe 是第二份會過期的產物（repo 裡 build 了新版、
+PATH 上還是舊的，而兩顆 exe 印一樣的 usage）。
+
+- **寫入走 .NET `[Environment]::SetEnvironmentVariable(...,'User')`，不用 `setx`** ——
+  setx 有 1024 字元截斷，超過的部分**靜默丟掉**（症狀是別的工具突然找不到了）；
+  .NET 這條路無長度限制且會廣播 WM_SETTINGCHANGE。
+- 冪等（已在 PATH 不重複加）；`--uninstall` / `-Uninstall` 逐段比對移除
+  （**逐段**不是子字串 —— 子字串會把 `D:\Unity\Senate2` 誤判成同一條）。
+- 出廠驗收：用「系統＋使用者 PATH 重組」模擬新視窗，從 `%TEMP%` 解析並跑一次
+  `senate --help` —— 寫進 registry 不算數，解析得到才算。
+- ⚠ 已開著的終端機不會生效：PATH 是 process 啟動時複製的，開新視窗。
 
 ## 產物與版控
 
