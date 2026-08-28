@@ -140,7 +140,11 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 ⚠ 頁面上**打字的兩格（repo 路徑、全域預設 branch）是草稿**，要按「✓ 套用並重新掃描」才生效
 （勾選與下拉是立即生效）。理由：在視窗裡打字是逐字元的，值一變就重掃等於打一個路徑跑 N 輪 git。
-生效值住 session，所以跨指令／跨開窗記得住。
+生效值住 session，所以跨指令記得住 —— 但**視窗每次開都是新 session**。
+⇒ 值得留的設定按「💾 儲存本頁設定」落檔（`senate.pages.local.json`，SCP_Core JSON；
+存的是**生效值**不是草稿）。存檔值之後當各欄位的**預設值**用：
+優先序 ＝ session（這一輪動過的）＞ 存檔值 ＞ 硬預設。
+⚠ 存過 `fetch=true` 的話，下次開頁第一輪就會走網路 —— 那是存下來的意圖，不是副作用。
 
 ```bash
 ./senate.exe ui --click home/open/submodule                 # 進頁
@@ -178,6 +182,23 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 ⇒ 那麼這裡的 `sync` 還有什麼用？**腳本與 CI**，以及 `--dry-run`（只有指令這條路有）。
 頁面照舊把等價指令印出來，而兩者吃**同一組設定** ⇒ 畫面上調好的範圍與複製去跑的範圍逐字相同。
+
+### `專案關聯` 頁（`ui --click home/open/projects`）
+
+增刪改 `senate.local.json` 的 projects[]，**逐列附現場探測讀數**（路徑在不在／git repo 嗎／
+AgentCommands 資料根解析到哪、存不存在／Editor 在不在跑）—— root 打錯當場就紅，
+不必等 cmd 派過去永遠 pending 才發現。貼路徑會自動去掉檔案總管「複製路徑」帶的雙引號。
+
+- 與「設定」頁（自動繪製）**寫同一份檔、同一支 Save** ⇒ 未知欄位與 `"//"` 註解照樣保留；
+  本頁只是 projects[] 的窄而順的那條路，不是第二個真相源。
+- 增刪改都是**草稿**，按「儲存」才落檔（回讀驗證專案數）；新增會擋不存在的路徑與重複路徑。
+
+```bash
+./senate.exe ui --click home/open/projects                   # 進頁
+./senate.exe ui --set "projects/new/path=D:/Unity/LY"        # 填新專案路徑
+./senate.exe ui --click projects/new/add                     # 加進草稿（名稱先用資料夾名）
+./senate.exe ui --click projects/save                        # 儲存（寫回 senate.local.json）
+```
 
 ### `cmd run` / `cmd status`
 
@@ -233,7 +254,7 @@ Senate 只負責 client 半邊。⚠ v1 與 `run_cmd.py` 的已知差距（刻�
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |
 | `--seed-session` | （視窗模式）開窗時接續 CLI session 的欄位／勾選／摺疊（**截圖模式自動開**）。不帶的話視窗從乾淨狀態開始 —— 下拉一律是收合的 |
 | `--keydebug` | （視窗模式）畫面底部多一行**鍵盤／剪貼簿讀數** —— 見下方「Ctrl+V 沒反應時怎麼查」 |
-| `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `submodule` / `style` / `settings`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
+| `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `submodule` / `style` / `settings` / `projects`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
 
 **入口頁（根頁，key `home`）**：只有兩件事 —— 調介面尺寸、進到別的頁。
 

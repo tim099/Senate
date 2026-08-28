@@ -1,7 +1,7 @@
 ---
 title: senate.local.json 規格
 description: 本機設定檔的欄位、schemaVersion 的處置、AgentCommands 資料根的解析規則、三態不得同形的驗證原則
-last_updated: 2026-08-23
+last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -109,6 +109,20 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `DirtyCount` | `git status --porcelain -uall` 的行數 | 工作區有多髒 |
 | `StagedCount` | `git diff --cached --name-only` | **非 0 ⇒ 自動提交會跳過這個 repo**（呼叫前已 staged 的東西會被併進第一個群） |
 | `EditorHeartbeat` | stat `<資料根>/ChatTavern/bartender/_heartbeat.txt` | mtime ≤ 4 秒 ＝ Unity Editor 在 tick ⇒ 不動它的 index |
+
+---
+
+## 第二個本機檔：`senate.pages.local.json`（頁面設定）
+
+與 `senate.local.json` 刻意分開的另一份本機檔（同樣不入版控）：
+**各頁面「儲存本頁設定」的落點**（目前：`submodule` 區塊）。分開的理由 ——
+頁面每存一次就動一次主設定檔的 diff，而人開 diff 想看的是專案清單有沒有變。
+
+- 讀寫走 **SCP_Core 自帶的 JSON**（`SCP_JsonParser` / `SCP_JsonMapper` / `SCP_JsonWriter`，
+  Tim 2026-08-28 指定）—— 讀寫端在 `Senate.Core/SenatePageStore`。
+- 一頁一個頂層 key；存檔時**只換自己那格**，別頁的區塊原樣保留。
+- 「沒存過」回 null 不是錯誤；「檔在但壞」會說出來且不覆寫（兩態不得同形）。
+- 存檔值的語意是各頁欄位的**預設值**：session（這一輪動過的）＞ 存檔值 ＞ 硬預設。
 
 ---
 

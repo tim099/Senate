@@ -33,6 +33,7 @@ public static class SenatePages
         aCatalog.Register(SubmoduleSyncPage.PageKey, () => new SubmoduleSyncPage(iModel));
         aCatalog.Register(StylePage.PageKey, () => new StylePage(iModel));
         aCatalog.Register(SettingsPage.PageKey, () => new SettingsPage(iModel));
+        aCatalog.Register(ProjectsPage.PageKey, () => new ProjectsPage(iModel));
         return aCatalog;
     }
 

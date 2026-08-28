@@ -27,6 +27,8 @@ publish/
 ### Senate 本機設定（含絕對路徑 ⇒ 一台機器一份）
 # 樣板在 config/senate.local.example.json（那份入版控、不含任何機器路徑）
 senate.local.json
+# 頁面設定（各頁「儲存本頁設定」的落點；機器路徑，同樣不入版控）
+senate.pages.local.json
 
 ### ImGui 視窗佈局（使用者自己拖出來的，屬於這台機器的偏好）
 imgui.ini
