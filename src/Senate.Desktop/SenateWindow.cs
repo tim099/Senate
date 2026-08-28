@@ -69,6 +69,13 @@ public sealed class SenateWindow : IDisposable
     /// <summary>實際載到的字型（呼叫端印出來給人看 —— 「以為載到了」是這一族最常見的錯）。</summary>
     public string LoadedFonts { get; private set; } = "(尚未載入)";
 
+    /// <summary>
+    /// 剪貼簿有沒有接上 ImGui（Ctrl+C / Ctrl+V）。
+    /// <para>⚠ 一定要有這行讀數：沒接上的症狀是「按 Ctrl+V 安靜地沒反應」，
+    /// 而那跟「這個宿主本來就不支援」長得一模一樣 —— 兩者要分得出來。</para>
+    /// </summary>
+    public string ClipboardStatus { get; private set; } = "(尚未安裝)";
+
     /// <summary>本文字級 —— 唯一來源是 <see cref="SCP_GuiStyle"/>，本類別不再自己存一份。</summary>
     public float FontSize => m_Style.FontSize;
 
@@ -165,6 +172,10 @@ public sealed class SenateWindow : IDisposable
                 LoadedFonts = aFonts.Description;
             });
 
+        // 剪貼簿 —— 必須在 controller 建好之後（那時 io 才存在）。
+        // 🩸 這條線原本從來沒接上 ⇒ 視窗裡每一個輸入框都貼不上，而且不報錯。
+        ClipboardStatus = ImGuiClipboardBridge.Install(ImGui.GetIO());
+
         ImGui.StyleColorsDark();
         ApplyStyle();
 
@@ -187,9 +198,104 @@ public sealed class SenateWindow : IDisposable
         aStyle.GrabMinSize = m_Style.GrabMinSize;
     }
 
+    /// <summary>
+    /// 每幀把鍵盤 modifier（Ctrl / Shift / Alt / Super）餵給 ImGui。
+    /// <para>🩸 <b>為什麼要自己補</b>（2026-08-28，Tim 實測 Ctrl+V 沒反應）：
+    /// Silk.NET 的 <c>ImGuiController</c> 有 <c>AddKeyEvent</c> 與 <c>TranslateInputKeyToImGuiKey</c>，
+    /// 但它的 metadata 裡**完全沒有 <c>ModCtrl</c> / <c>ImGuiMod</c>**（只有 <c>get_KeyCtrl</c> 讀取）——
+    /// 也就是它從來沒有把 modifier 狀態送進 ImGui。
+    /// 而 ImGui 的快捷鍵（Ctrl+V / Ctrl+C / Ctrl+A / Ctrl+X）判斷的是 <c>io.KeyMods</c>，
+    /// 所以那些組合鍵**全部無效**，而**單獨打字照樣正常**（那條走 <c>AddInputCharacter</c>，
+    /// 跟 modifier 無關）—— 兩者症狀不同形，正是它難被發現的原因。</para>
+    /// <para>⚠ 順便把剪貼簿相關的字母鍵也補上：`TranslateInputKeyToImGuiKey` 有沒有涵蓋它們
+    /// 我沒有 IL 層的讀數，而 <c>AddKeyEvent</c> 對「狀態沒變」是幂等的 ⇒
+    /// 重複餵不會打架，漏掉才會壞。**在沒有讀數的地方選不會壞的那一邊。**</para>
+    /// </summary>
+    void FeedKeyModifiers()
+    {
+        if (m_Input == null || m_Input.Keyboards.Count == 0) return;
+        IKeyboard aKb = m_Input.Keyboards[0];
+        ImGuiIOPtr aIo = ImGui.GetIO();
+
+        bool aCtrl = aKb.IsKeyPressed(Key.ControlLeft) || aKb.IsKeyPressed(Key.ControlRight);
+        bool aShift = aKb.IsKeyPressed(Key.ShiftLeft) || aKb.IsKeyPressed(Key.ShiftRight);
+        bool aAlt = aKb.IsKeyPressed(Key.AltLeft) || aKb.IsKeyPressed(Key.AltRight);
+        bool aSuper = aKb.IsKeyPressed(Key.SuperLeft) || aKb.IsKeyPressed(Key.SuperRight);
+
+        // 兩種都餵（官方 backend 也是這樣做）：`Mod*` 給快捷鍵判斷用，
+        // 實體左右鍵給「哪一顆被按著」用。
+        aIo.AddKeyEvent(ImGuiKey.ModCtrl, aCtrl);
+        aIo.AddKeyEvent(ImGuiKey.ModShift, aShift);
+        aIo.AddKeyEvent(ImGuiKey.ModAlt, aAlt);
+        aIo.AddKeyEvent(ImGuiKey.ModSuper, aSuper);
+        aIo.AddKeyEvent(ImGuiKey.LeftCtrl, aKb.IsKeyPressed(Key.ControlLeft));
+        aIo.AddKeyEvent(ImGuiKey.RightCtrl, aKb.IsKeyPressed(Key.ControlRight));
+        aIo.AddKeyEvent(ImGuiKey.LeftShift, aKb.IsKeyPressed(Key.ShiftLeft));
+        aIo.AddKeyEvent(ImGuiKey.RightShift, aKb.IsKeyPressed(Key.ShiftRight));
+
+        // 剪貼簿與選取的四顆字母鍵 ＋ Insert（Shift+Insert 也是貼上）
+        aIo.AddKeyEvent(ImGuiKey.V, aKb.IsKeyPressed(Key.V));
+        aIo.AddKeyEvent(ImGuiKey.C, aKb.IsKeyPressed(Key.C));
+        aIo.AddKeyEvent(ImGuiKey.X, aKb.IsKeyPressed(Key.X));
+        aIo.AddKeyEvent(ImGuiKey.A, aKb.IsKeyPressed(Key.A));
+        aIo.AddKeyEvent(ImGuiKey.Insert, aKb.IsKeyPressed(Key.Insert));
+
+        m_LastKeyCtrl = aCtrl;
+        m_LastKeyV = aKb.IsKeyPressed(Key.V);
+    }
+
+    bool m_LastKeyCtrl;
+    bool m_LastKeyV;
+
+    /// <summary>自我對拍的結果：注入 ModCtrl 之後 io.KeyCtrl 讀回來是什麼（"(未跑)" ＝ 還沒到那一幀）。</summary>
+    string m_ProbeKeyCtrl = "(未跑)";
+
+    /// <summary>
+    /// 畫一行鍵盤／剪貼簿診斷（`--keydebug`）。
+    /// <para>⭐ 存在的理由：「Ctrl+V 沒反應」有三個可能的斷點 ——
+    /// ① ImGui 收不到 Ctrl ② ImGui 收到了但沒呼叫 callback ③ callback 被呼叫但剪貼簿是空的。
+    /// 三者在畫面上長得一模一樣，而這一行把它們分開。</para>
+    /// </summary>
+    void DrawKeyDebug()
+    {
+        ImGuiIOPtr aIo = ImGui.GetIO();
+        ImGui.Separator();
+        ImGui.TextUnformatted(
+            $"[keydebug] io.KeyCtrl={aIo.KeyCtrl}  Silk:Ctrl={m_LastKeyCtrl} V={m_LastKeyV}"
+            + $"  ｜ clipboard callback: Get={ImGuiClipboardBridge.GetCalls} Set={ImGuiClipboardBridge.SetCalls}"
+            + $"  ｜ WantTextInput={aIo.WantTextInput}");
+        ImGui.TextUnformatted(
+            $"  自我對拍（不需按鍵）：注入 ModCtrl=true 之後 io.KeyCtrl 讀回 = {m_ProbeKeyCtrl}"
+            + "　← 這格是 False 就是我補的那條路沒生效");
+        ImGui.TextUnformatted(
+            "  請你按：先點進「repo 路徑」欄位 → 按住 Ctrl 看 io.KeyCtrl 是否變 True → 按 Ctrl+V 看 Get 是否 +1。"
+            + " Get 不動 ⇒ ImGui 沒把組合鍵交給 InputText；Get 有動但沒字 ⇒ 剪貼簿是空的。");
+    }
+
+    /// <summary>開了就在畫面底部畫一行鍵盤／剪貼簿診斷（`ui --window --keydebug`）。</summary>
+    public bool KeyDebug { get; set; }
+
     void OnRender(double iDelta)
     {
         m_Frame++;
+
+        // ⚠ 補鍵盤 modifier **必須在 Update 之前**：`Update` 內部會呼叫 `ImGui.NewFrame`，
+        //   而 NewFrame 才會消化 AddKeyEvent 的事件佇列。放在後面的話 Ctrl 會慢一幀到，
+        //   於是 ImGui 看到 V 的那一幀 Ctrl 還是 false ⇒ 快捷鍵永遠差一步，而它不會報錯。
+        FeedKeyModifiers();
+
+        // keydebug 的**自我對拍**：注入一次 ModCtrl=true，下一幀讀回 io.KeyCtrl。
+        // ⭐ 驗的是「我補的那條路真的會讓 ImGui 的 KeyMods 變化」——
+        //   這一格不需要有人按鍵盤，所以它是我唯一能自己拿到的讀數。
+        //   ⚠ 必須在 FeedKeyModifiers **之後**（否則會被實際鍵盤狀態的 false 蓋掉）
+        //     且在 Update（NewFrame）之前（否則要等下一幀才被消化）。
+        if (KeyDebug)
+        {
+            if (m_Frame == 4) ImGui.GetIO().AddKeyEvent(ImGuiKey.ModCtrl, true);
+            else if (m_Frame == 5) m_ProbeKeyCtrl = ImGui.GetIO().KeyCtrl ? "True" : "False";
+            else if (m_Frame == 6) ImGui.GetIO().AddKeyEvent(ImGuiKey.ModCtrl, false);
+        }
+
         m_Controller!.Update((float)iDelta);
 
         // 每幀重灌尺寸／間距：使用者在頁面上換尺寸時**版位即時跟著變**。
@@ -213,6 +319,8 @@ public sealed class SenateWindow : IDisposable
         // 頁面要求的欄位寫入在**畫完之後**才套 —— 這一幀顯示的是頁面自己算出來的結果，
         // 套進 renderer 是為了下一幀（跟按鈕事件同一個「慢一幀」的節奏）。
         m_Renderer.ApplyWrites(aUi);
+
+        if (KeyDebug) DrawKeyDebug();
 
         ImGui.End();
         m_Controller.Render();

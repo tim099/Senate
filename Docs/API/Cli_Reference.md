@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-08-23
+last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -50,6 +50,114 @@ SCP_Core 共用碼的自我對拍。⚠ 這張表**只挑幾項舉例**，真正
 
 ⚠ 找不到樣本檔時回報「**跳過**」而非通過（沒測與測過而且對，不得同形）。
 
+**旗標**
+
+| 旗標 | 做什麼 |
+|---|---|
+| `--clipboard` | 多跑兩項剪貼簿對拍。⚠ **會覆蓋你的剪貼簿**（它就是在測寫入）⇒ 預設不跑 |
+
+`--clipboard` 的兩項分工：`剪貼簿 round-trip` 驗 `SenateClipboard` 讀寫通不通（測試字串含中文與符號，
+因為 Win32 是 UTF-16 而 ImGui 那端是 UTF-8，中間兩次轉碼）；`ImGui 剪貼簿 callback` 走**兩個
+callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活著）。
+⚠ 「按 Ctrl+V 時 ImGui 會不會呼叫它」要人親手按一次 —— 程式驗不到，所以那一項的讀數裡寫明了。
+
+### `submodule status` / `submodule sync`
+
+多層 submodule 專案的日常痛點：`submodule update` 之後全員 detached HEAD、分支跑掉、
+誰 ahead 誰 behind 沒人一眼看得到。`status` 把它收成一張表（**唯讀**），
+`sync` 是唯一會動手的那條路。
+
+兩者與 `Submodule 狀態` 頁吃**同一份掃描層**（`Senate.Core/SubmoduleScan`）。
+
+#### 共用旗標（status 與 sync 都吃）
+
+| 旗標 | 做什麼 |
+|---|---|
+| `--root <path>` | 對哪個 repo 動手。**sync 必填**（見下方安全設計）；status 不給就是 Senate 自己 |
+| `--project <name>` | 改用 `senate.local.json` 裡的專案名（停用／路徑壞掉的會擋下並說原因） |
+| `--branch <b>` | 全域預設 branch —— 目標解析的**第三層** |
+| `--set-branch <path>=<b>` | 逐項指定目標 branch —— 目標解析的**最高層**。可重複 |
+| `--fetch` | 先逐顆 fetch 再讀 ⇒ ahead/behind 才是即時值（只動 remote-tracking ref，不碰工作目錄） |
+| `--only <path>` | 只處理某幾顆（**白名單**，可重複） |
+
+**目標 branch 四層解析**：`--set-branch` ＞ `.gitmodules` 的 `branch =` ＞ `--branch` ＞ 啟發式
+（只有一條分支就用它／否則 master，沒 master 才 main）。
+⚠ 四層都空 ⇒ **那一顆跳過**，不會拿「目前所在」頂替（那等於沒有這個功能）。
+表格的「來源」欄會說出它是哪一層來的 —— 使用者看到「它想把我切到 Dev」時的第一個問題是「憑什麼」。
+
+⚠ `--only` 與 `--set-branch` 指到不存在的路徑一律**擋下**（exit 2），不靜默略過：
+`--only` 打錯是「少做一顆」（看得出來），而 `--set-branch` 打錯是「那顆照舊用啟發式的目標」——
+它會**照樣成功**，只是切到了另一條分支，而報告上是一排 ✓。
+
+#### `sync` 專屬旗標
+
+| 旗標 | 做什麼 |
+|---|---|
+| `--checkout` | 切到目標 branch（dirty、HEAD 有未合併 commit、branch 不存在，一律**跳過並列出**） |
+| `--pull` | `pull --ff-only`（分岔就失敗列出，不替人 merge / rebase） |
+| `--push` | 寫遠端 ⇒ **必須同時給 `--yes`** |
+| `--push-all-remotes` | 推該 repo 的每一個 remote（關 ＝ 只推 origin）。⚠ pull 不跟進 |
+| `--include-root` | root 也一起 pull / push。⚠ **root 永遠不切 branch** |
+| `--yes` | `--push` 的明示 |
+| `--dry-run` | 只印打算做什麼，不動任何東西 |
+
+至少要給一個動作（`--checkout` / `--pull` / `--push`），都不給會擋下並指回 `status`。
+
+#### 安全設計（三格，都是為了同一件事）
+
+1. **`sync` 不給預設對象** —— 必須 `--root` 或 `--project`。
+   🩸 UCL 那邊的血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
+   回報一整排 ✓，而 B 的 submodule 一個位元組都沒動 —— **綠燈全亮，量到的是別的 repo。**
+   ⇒ 會寫東西的指令不猜對象；唯讀的 `status` 才給預設（猜錯也不會壞東西）。
+2. **`--push` 另外要 `--yes`** —— 互動式確認在這裡做不到（stdin 是 null device），
+   所以確認的形態是「再打四個字」而不是「按 Enter」。
+3. **順序由深到淺，root 最後** —— parent 的 bump commit 引用 child 的 SHA，
+   先推 parent 會讓別人 pull 到指向遠端還不存在的 commit 的 gitlink（**靜默壞**，只有 clone 的人才發現）。
+
+⚠ 安全線（dirty / 在不在目標 branch / 有哪些 remote）一律在**動手當下現場重問 git**，
+不吃掃描快照 —— 掃描與按下去之間狀態會變，而「照片乾淨、現在髒了」會讓
+「dirty 就跳過」的承諾靜默失效，報告還照印 ✓。
+
+#### exit code
+
+| code | 意思 |
+|---|---|
+| 0 | 沒有失敗（**跳過不算失敗** —— 那是刻意的保護，但一定會出現在 `✓n ⏭n ✗n` 那一行） |
+| 1 | 有失敗 |
+| 2 | 用法錯誤 |
+
+⚠ 只印「✓ 完成」會讓「跳過 8 顆」看起來像「做完 8 顆」，所以摘要三個數字一起印。
+
+#### 跟頁面的分工
+
+`Submodule 狀態` 頁（`ui --click home/open/submodule`）**唯讀**：它負責「決定」——
+選 repo（**一個可以直接打路徑的欄位**，預設 Senate 自己；設定檔有專案時另有下拉當捷徑）、
+挑全域預設、逐顆勾選納入／排除、逐顆指定 branch、三個開關 ——
+然後把這些意圖**編譯成一條可以直接照抄的指令**印出來。動手的仍然是這裡的 `sync`。
+
+⚠ 頁面上**打字的兩格（repo 路徑、全域預設 branch）是草稿**，要按「✓ 套用並重新掃描」才生效
+（勾選與下拉是立即生效）。理由：在視窗裡打字是逐字元的，值一變就重掃等於打一個路徑跑 N 輪 git。
+生效值住 session，所以跨指令／跨開窗記得住。
+
+```bash
+./senate.exe ui --click home/open/submodule                 # 進頁
+./senate.exe ui --set submodule/root=D:/Unity/LY            # 填草稿（不會掃）
+./senate.exe ui --click submodule/apply                     # 套用 ⇒ 這一步才掃
+./senate.exe ui --click submodule/discard                   # 放棄草稿，欄位回生效值
+./senate.exe ui --click submodule/root/self                 # 改回 Senate 自己（立即生效）
+./senate.exe ui --click submodule/root/paste                # 從剪貼簿貼路徑（只填草稿）
+./senate.exe ui --fold submodule/per-item                   # 展開逐項設定（收合時裡面的 id 不存在）
+./senate.exe ui --toggle submodule/only/<submodule 路徑>     # 排除／納入某一顆
+```
+
+⚠ `submodule/root/applied` 與 `submodule/default-branch/applied` 是**內部狀態不是畫面元件**
+⇒ `--set` 會被「畫面上沒有這個 id」擋下（那是對的：換 repo 就走上面那兩步，
+跟人在畫面上做的動作完全一樣）。
+
+⇒ 分界線落在「決定」與「動手」之間。
+理由是宿主形狀：CLI 一次呼叫一顆 process，而一輪 fetch＋pull＋push 跨十幾個 submodule
+是分鐘級的事 —— 塞進「按鈕按下去那一幀」會變成一顆按了沒事的鈕，而那比沒有鈕糟。
+
 ### `ui`
 
 把後台頁輸出成純文字。旗標：
@@ -68,8 +176,9 @@ SCP_Core 共用碼的自我對拍。⚠ 這張表**只挑幾項舉例**，真正
 | `--width <n>` | 文字輸出寬度（字元格，預設 96），`doctor` / `selftest` 也吃 ⚠ 不吃 `--scale` |
 | `--scale <x>` | 介面縮放（0.5〜4，預設 1.0）。**本次有效，不寫回設定檔** |
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |
-| `--seed-session` | （視窗模式）開窗時接續 CLI session 的欄位／勾選／摺疊（**截圖模式自動開**）。不帶的話視窗從乾淨狀態開始 —— 下拉一律是收合的 |
-| `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `style` / `settings`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
+| `--seed-session` | （視窗模式）開窗時接續 CLI session 的欄位／勾選／摺疊（**截圖模式自動開**）。不帶的話視窗從乾淨狀態開始 —— 下拉一律是收合的 |
+| `--keydebug` | （視窗模式）畫面底部多一行**鍵盤／剪貼簿讀數** —— 見下方「Ctrl+V 沒反應時怎麼查」 |
+| `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `submodule` / `style` / `settings`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
 
 **入口頁（根頁，key `home`）**：只有兩件事 —— 調介面尺寸、進到別的頁。
 
@@ -140,6 +249,28 @@ SCP_Core 共用碼的自我對拍。⚠ 這張表**只挑幾項舉例**，真正
 
 ⚠ **視窗預設不接續** —— 🩸 第一版是無條件接續，於是在終端機測試時點開的下拉，
 變成別人開窗時「預設就是展開的」。那不是他的操作，是殘留狀態漏過了驅動端的邊界。
+
+### Ctrl+V 沒反應時怎麼查（`--keydebug`）
+
+```bash
+./senate.exe ui --window --keydebug
+```
+
+畫面底部會多三行，把「Ctrl+V 沒反應」的**三個斷點**分開：
+
+| 讀數 | 它回答什麼 |
+|---|---|
+| `io.KeyCtrl` / `Silk:Ctrl` / `V` | ImGui 有沒有收到 modifier 與 V 鍵（兩邊都印 ⇒ 分得出是 Silk 沒送還是 ImGui 沒收） |
+| `clipboard callback: Get / Set` | **ImGui 到底有沒有呼叫我們的 callback** —— 這是最關鍵的一格 |
+| 自我對拍（不需按鍵） | 注入 `ModCtrl=true` 之後 `io.KeyCtrl` 讀回什麼 ⇒ 驗「補 modifier 那條路本身有效」 |
+
+判讀：**`Get` 不動** ⇒ ImGui 沒把組合鍵交給 `InputText`（往鍵盤那半查）；
+**`Get` 有動但欄位沒字** ⇒ 剪貼簿是空的或格式不是文字（往剪貼簿那半查）。
+
+🩸 為什麼需要這一整套：2026-08-28 那次，兩層自我對拍**全過**、`Install` 也回報「已接上」，
+而 Tim 實測 Ctrl+V 仍然沒反應。把範圍切開的是他補的一句「**但是按鈕的貼上 OK**」——
+那一句立刻把「剪貼簿實作」整段排除掉了。
+⇒ 一個「三個斷點在畫面上長得一模一樣」的問題，必須有東西把它們分開，否則只能靠猜。
 
 `--scale` / `--size` 刻意不寫回檔案 —— 一道旗標改掉持久設定，
 下一個沒帶旗標的人會拿到別人上一次的臨時值，而那不會報錯。

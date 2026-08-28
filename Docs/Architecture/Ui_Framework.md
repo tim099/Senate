@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
 description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、非 UI 操控介面與 session 狀態
-last_updated: 2026-08-23
+last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -174,6 +174,26 @@ g.SetField("d/open", "1");                    // 寫（只是記下請求）
 | `FieldValue` 先看同一輪的 `FieldWrites` | 不然「這一輪選了 A、同一輪後面讀到舊值 B」，那種不一致在 immediate mode 最難查 |
 | CLI 的**第一趟繪製之後就套** | 不套的話第二趟畫的是「選之前」的下拉 —— 看起來像選了沒反應 |
 | 視窗那側在 Render 之後套 | 這一幀顯示頁面自己算出來的結果，套進 renderer 是給下一幀用（跟按鈕事件同一個「慢一幀」節奏） |
+
+### 勾選那側：`SCP_Ui.ToggleValue`（讀，**沒有**對偶的寫）
+
+```csharp
+bool aOn = g.ToggleValue("submodule/only/SCP_Core", iFallback: true);   // 讀（不畫任何節點）
+```
+
+🩸 **為什麼需要它（2026-08-28，Submodule 頁）**：`Fold` 的契約是**收合時子節點根本不建**，
+於是收合的那一輪讀不到區塊裡任何 `Toggle` 的回傳值。而那些勾選是**資料**
+（哪幾顆 submodule 納入這一輪）—— 讓它隨「我把區塊收起來」消失，
+等於使用者的設定被靜默丟掉，**而丟掉之後的畫面跟「使用者本來就沒設」長得一模一樣**。
+
+| 判準 | 為什麼 |
+|---|---|
+| 有 `ToggleValue`（讀） | `FieldValue` 已經是欄位那側的同一條路；勾選少了它就是不對稱，而不對稱的那一側會靜默掉資料 |
+| **沒有** `SetToggle`（寫） | 勾選是使用者的資料，頁面自己改它要有很好的理由。欄位那側有 `SetField` 是因為複合元件（下拉／分頁）的內部狀態非它不可 —— 目前沒有呼叫端需要寫勾選 ⇒ 不先開那個口 |
+| 收合時把「設定仍然生效」**畫出來** | 一個藏在收合區塊裡的排除清單，看起來跟「沒有排除」一模一樣 |
+
+⚠ 連帶的既有語意（不是 bug，但會咬）：**收合時 `--toggle <id>` 會被「畫面上沒有這個 id」擋下**
+（節點不存在）。要改那些勾選得先 `--fold` 展開。
 
 ---
 
@@ -393,6 +413,78 @@ SCP_GuiHost.RevealInFileManager = SenateShell.MakeRevealer(aRepoRoot);   // Prog
 | `CopyToClipboard` 是 `RevealInFileManager` 的**退路**，不是並列的第二顆鈕 | 兩顆都畫 —— 它們回答同一個問題，只是把工具列變長 |
 | 委派回**一行人可讀的結果**（成功也要有話說） | 效果發生在另一個視窗 ⇒ 這個畫面不會有任何變化，沒有那行字的話「開起來了」與「什麼都沒發生」同形 |
 | 它是 `static`（而 page controller 不是） | 同一條判準的兩側：**把「只有一個」縮到它真正只有一個的那一層**。「這台機器怎麼開檔案總管」是每個 process 一個；「現在停在哪一疊頁面」是每個視窗一個 |
+
+### `ReadClipboard`（2026-08-28 新增）—— 因為 ImGui 的 `InputText` 吃不到 Ctrl+V
+
+🩸 **全 repo 從來沒有接上 ImGui 的剪貼簿 callback**（`SetClipboardTextFn` /
+`GetClipboardTextFn` 零命中；Silk.NET 的 `ImGuiController` 不會自己設）⇒
+**視窗模式下每一個輸入框都貼不上**。而一個要求使用者手打絕對路徑的欄位，
+實際上就是一個不會被用的欄位。
+
+```csharp
+SCP_GuiHost.ReadClipboard = SenateShell.Paste;   // Program.Main
+```
+
+回傳 `SCP_ClipboardRead` 的**三格**（`Ok` / `Text` / `Message`）——
+「剪貼簿是空的」與「我讀不到剪貼簿」不得同形：壓成一個空字串之後，
+一個壞掉的能力會看起來像「使用者沒複製東西」，而那會讓人一直重按那顆鈕。
+
+⚠ 跟 `CopyToClipboard` **刻意分成兩個委派**：一個宿主可能只做得到其中一邊
+（寫走 `clip.exe` 很容易，讀在 Windows 上要繞 PowerShell 約半秒 —— 所以那條路
+**只掛在按鈕上，不放進每幀會跑的路徑**）。
+
+⚠ 這顆鈕原本是**繞道**（Ctrl+V 還是不能用）。**2026-08-28 已把 callback 接上**，
+所以現在它跟 Ctrl+V 走同一條路（見下一節）—— 鈕留著是因為它在**純文字模式**也能用
+（`--click submodule/root/paste`），而那一側沒有鍵盤事件。
+
+---
+
+## 剪貼簿：Ctrl+C / Ctrl+V（`ImGuiClipboardBridge`）
+
+```
+ImGui（Ctrl+C / Ctrl+V）
+   │  io.SetClipboardTextFn / io.GetClipboardTextFn   ← ImGui.NET 1.90.x 的位置
+   ▼
+ImGuiClipboardBridge（Senate.Desktop）── marshalling：UTF-8 ／ NUL 結尾 ／ 記憶體存活期
+   ▼
+SenateClipboard（Senate.Core）── Windows: Win32 CF_UNICODETEXT ／ 其他平台: SenateShell 的 process 路徑
+   ▲
+SCP_GuiHost.ReadClipboard / CopyToClipboard（「📋 貼上」鈕、「複製類別名」鈕）
+```
+
+⭐ **一份實作、三個消費端**（Ctrl+V／貼上鈕／複製鈕）—— 不會有「鈕能貼、Ctrl+V 不能」的分岔。
+
+🩸 **接上之前**：`SetClipboardTextFn` / `GetClipboardTextFn` 在整個 repo 零命中
+（Silk.NET 的 `ImGuiController` 不會自己設）⇒ 視窗模式下**每一個輸入框都貼不上**，
+而且**不報錯**。Tim 是在 Submodule 頁的 repo 路徑欄踩到的，但那一格只是它最先被發現的地方。
+
+| 判準 | 為什麼 |
+|---|---|
+| Windows 走 **Win32**，不走 `clip.exe`／PowerShell | callback 是「使用者按下組合鍵的那一幀」，而 process 啟動要 300〜500ms ⇒ 卡半秒的貼上會被讀成視窗當掉 |
+| delegate 存成 **static 欄位** | `GetFunctionPointerForDelegate` **不會**讓 delegate 活著 ⇒ 放區域變數的話 GC 隨時可回收，然後某次貼上跳進一塊已經不是函式的記憶體。症狀是隨機 crash，而且離安裝那一行很遠 |
+| 回給 ImGui 的 buffer 在**下一次**讀取時才釋放 | ImGui 的契約是「你回一個指標，我讀完就不管了」，它不替我們釋放；而讀完立刻釋放會在它還在讀的時候把地板抽掉 |
+| UTF-8 尾巴補 **NUL** | C 端靠它判斷長度，少一個位元組就會讀到別人的記憶體 |
+| callback 裡 **絕不讓例外飛出去** | native → managed 邊界上那是 undefined behavior，而 ImGui 沒有地方接它 ⇒ 最壞回 `IntPtr.Zero`（ImGui 當成剪貼簿是空的） |
+| `SetClipboardData` 成功後**不釋放**那塊記憶體 | 所有權轉移給系統 ⇒ 釋放它的症狀不是報錯，是別的程式貼出一段垃圾 |
+| `OpenClipboard` **重試** 6 次 | 剪貼簿是全機唯一資源，輸入法／剪貼簿管理員剛好開著時第一次會失敗 —— 那是常態不是錯誤。不重試的症狀是「Ctrl+V 有時候沒反應」，而間歇性失敗最難被回報清楚 |
+| 「剪貼簿是空的」與「讀不到剪貼簿」**分開回報** | 壓成空字串之後，一個壞掉的能力會看起來像「使用者沒複製東西」，而那會讓人一直重按 |
+| 「裡面是圖片／檔案」也是一種**成功** | `IsClipboardFormatAvailable(CF_UNICODETEXT)` 為 false ⇒ 那不是失敗，是「沒有文字可以貼」 |
+
+**讀數**（`senate selftest --clipboard`，⚠ **opt-in**，因為它會覆蓋使用者的剪貼簿）：
+
+| 項目 | 驗什麼 |
+|---|---|
+| 剪貼簿 round-trip | `SenateClipboard` 寫入→讀回逐字相同（測試字串含中文與符號 —— Win32 是 UTF-16、ImGui 那端是 UTF-8，兩次轉碼） |
+| ImGui 剪貼簿 callback | 走**兩個 callback 本身**：Set 寫入 → Get 讀回逐字相同 ＋ UTF-8 結尾真的有 NUL |
+
+開窗時工具列上方會印一行 `剪貼簿：已接上 ImGui（Ctrl+C / Ctrl+V 可用）`——
+⚠ 那行必須存在：沒接上的症狀是「按 Ctrl+V 安靜地沒反應」，跟「這個宿主本來就不支援」同形。
+
+⚠ **仍然沒有讀數的一格**：「ImGui 真的會在 Ctrl+V 時呼叫那個 callback」要人親手按一次 ——
+程式驗不到（截圖模式沒有鍵盤事件），所以**不假裝它被驗過**。
+⚠ 非 Windows 的 process 路徑（`pbpaste`／`xclip`）同樣沒有讀數（手上沒有那些平台）。
+⚠ ImGui.NET **1.91 之後** 這兩格搬到 `ImGui.GetPlatformIO().Platform_*` ——
+升版時要跟著改，而接錯地方的症狀是**靜默無效**（所以 `Install` 會讀回指標並回報）。
 
 ---
 

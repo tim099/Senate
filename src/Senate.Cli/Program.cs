@@ -36,7 +36,24 @@ public static class Program
         try { SCP_ProcessRegistry.CleanupStale(); }
         catch (Exception e) { Console.Error.WriteLine($"⚠ process 登記清理失敗：{e.Message}"); }
         // 退路：開不了檔案總管的宿主至少要能把類別名複製起來（見 SCP_GuiToolPage.ShowCopyClassButton）
-        SCP_GuiHost.CopyToClipboard = SenateShell.Copy;
+        // ⭐ 兩個方向都走 SenateClipboard（Windows Win32、其他平台委給 SenateShell 的 process 路徑）。
+        //   原本 Copy 走 clip.exe、Read 走 PowerShell，各要 300〜500ms —— 掛按鈕還可以，
+        //   但 ImGui 的 Ctrl+V callback 是「使用者按下組合鍵的那一幀」，卡半秒會被讀成視窗當掉。
+        //   ⇒ 收斂成一份快的實作，按鈕與 callback 吃同一條路（不會有「鈕能貼、Ctrl+V 不能」的分岔）。
+        SCP_GuiHost.CopyToClipboard = SenateClipboard.Write;
+        SCP_GuiHost.ReadClipboard = SenateClipboard.Read;
+
+        // 區塊職責：submodule 目標 branch 的**家規** —— 「資料夾名前綴 → 該追哪條 branch」。
+        // 物理意義：這是專案的命名慣例，不是 git 的性質 ⇒ SCP_GitSubmodule 刻意讓它預設為空、
+        //           由宿主宣告（寫死在共用層等於把一個專案的家規變成所有專案的預設）。
+        // 🩸 而 Senate 原本**沒有宣告這一半**，於是對 LY 跑的時候：
+        //    `Assets/Plugins/UCL_Core` 目前在 Dev，而啟發式算出 master（走到「其餘 → master」那條）
+        //    ⇒ 表格顯示 `⚠ Dev / 目標 master`，checkout 會被「HEAD 不在 master 歷史上」擋下並跳過。
+        //    不會切錯（安全線攔住了），但那一顆**永遠對不齊、永遠被跳過**，
+        //    而「被跳過」的訊息看起來完全像盡責。⇒ 機制在共用層、規則在這裡，兩半都要有人接。
+        // ⚠ 前綴比對區分大小寫、先命中先贏。要對非 UCL 系的 repo 停用就拿掉這一行；
+        //   之後若需要 per-repo 不同的家規，正解是搬進 senate.local.json（反射三層會自動畫出欄位）。
+        SCP_GitSubmodule.PrefixBranchRules.Add(new KeyValuePair<string, string>("UCL_", "Dev"));
 
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
@@ -267,6 +284,10 @@ public static class Program
             Console.WriteLine($"・已接續 CLI session（{UiDriver.SessionPath(iRepoRoot)}）的欄位／勾選／摺疊");
         }
 
+        // 鍵盤／剪貼簿診斷 —— 「Ctrl+V 沒反應」有三個斷點，而它們在畫面上長得一樣（見 DrawKeyDebug）。
+        aWin.KeyDebug = HasFlag(iArgs, "--keydebug");
+        if (aWin.KeyDebug) Console.WriteLine("・keydebug 開著 —— 畫面底部會多一行鍵盤／剪貼簿讀數");
+
         Console.WriteLine($"介面尺寸：{aStyle.Describe()}");
 
         if (SenateWindow.FindCjkFont() == null)
@@ -276,6 +297,7 @@ public static class Program
         {
             aWin.Run(iShot);
             Console.WriteLine($"字型：{aWin.LoadedFonts}");
+            Console.WriteLine($"{aWin.ClipboardStatus}");
         }
         catch (Exception e)
         {
@@ -303,6 +325,17 @@ public static class Program
         var aStyle = StyleFrom(iArgs, aModel);   // 同 doctor：覆寫先套，再畫
         var aRows = SelfTest.Run(aModel.Projects);
 
+        // 剪貼簿 round-trip 是 **opt-in**（`--clipboard`）。
+        // ⚠ 為什麼不進預設清單：它會**覆蓋使用者的剪貼簿**，而那是不可逆的
+        //   （沒有人保存舊內容；而且舊內容可能是圖片，寫回去也還原不了）。
+        //   一個「跑一下自我檢查」的指令不該有這種副作用 ——
+        //   但這條路又必須有讀數，否則「Ctrl+V 到底通不通」只能靠人去按。
+        if (HasFlag(iArgs, "--clipboard"))
+        {
+            aRows.Add(ClipboardRoundTrip());
+            aRows.Add(ImGuiClipboardRoundTrip());
+        }
+
         var aUi = new SCP_Ui();
         aUi.Title("SCP_Core 自我對拍");
         using (aUi.Table("項目", "讀數", "判定"))
@@ -324,6 +357,50 @@ public static class Program
         Console.WriteLine($"⇒ 通過 {aPass}／失敗 {aFail}／跳過 {aSkip}"
             + (aSkip > 0 ? "（跳過的項目沒有讀數，不算通過）" : ""));
         return aFail > 0 ? 1 : 0;
+    }
+
+    /// <summary>
+    /// 剪貼簿 round-trip —— 寫進去、讀回來、逐字比對。
+    /// <para>⚠ 這是 <c>SCP_GuiHost</c> 那兩個委派**實際走的同一條路**
+    /// （<see cref="SenateClipboard"/>），所以它同時是「📋 貼上」鈕與
+    /// ImGui 的 Ctrl+C／Ctrl+V callback 的讀數 —— 三者吃同一份實作，不會有其中一個偷偷壞掉。</para>
+    /// <para>⚠ 測試字串刻意含**中文與符號**：Win32 走 <c>CF_UNICODETEXT</c>（UTF-16），
+    /// 而 ImGui 那一端是 UTF-8 ⇒ 兩次轉碼。只用 ASCII 測的話，
+    /// 編碼漏掉的那一格會等到有人貼中文路徑才炸。</para>
+    /// </summary>
+    static CheckRow ClipboardRoundTrip()
+    {
+        const string aProbe = "剪貼簿對拍 ✓ ⇒ D:/Unity/LY ⚠ 測試";
+        string aWrote = SenateClipboard.Write(aProbe);
+        SCP_ClipboardRead aRead = SenateClipboard.Read();
+
+        if (!aRead.Ok)
+            return new CheckRow("剪貼簿 round-trip", $"寫入={aWrote}／讀取失敗={aRead.Message}", CheckResult.Fail);
+        if (aRead.Text != aProbe)
+            return new CheckRow("剪貼簿 round-trip",
+                $"讀回來的字**不一樣**（寫 {aProbe.Length} 字元、讀 {aRead.Text.Length} 字元）"
+                + $"—— 寫入={aWrote}", CheckResult.Fail);
+
+        return new CheckRow("剪貼簿 round-trip",
+            $"寫入→讀回逐字相同（{aProbe.Length} 字元，含中文與符號）／{aRead.Message}"
+            + "　⚠ 使用者原本的剪貼簿內容已被覆蓋（本項是 --clipboard 才跑的）",
+            CheckResult.Pass);
+    }
+
+    /// <summary>
+    /// 走 ImGui 那**兩個 callback 本身**的 round-trip —— 驗 marshalling，不是驗剪貼簿。
+    /// <para>⚠ 這一項與上一項的分工要講清楚：上一項驗「剪貼簿讀寫通不通」，
+    /// 這一項驗「ImGui 那一側的介面對不對」（UTF-8 編碼／NUL 結尾／記憶體還活著）。
+    /// 兩者都過之後，唯一沒有讀數的就只剩「ImGui 真的會在 Ctrl+V 時呼叫它」——
+    /// 那一格要人按一次鍵盤，程式驗不到，所以**不假裝它被驗過**。</para>
+    /// </summary>
+    static CheckRow ImGuiClipboardRoundTrip()
+    {
+        const string aProbe = "ImGui callback 對拍 ✓ ⇒ 中文 D:/Unity/LY";
+        var (aOk, aReading) = Senate.Desktop.ImGuiClipboardBridge.SelfCheck(aProbe);
+        return new CheckRow("ImGui 剪貼簿 callback",
+            aReading + "　⚠ 「按 Ctrl+V 時 ImGui 會不會呼叫它」要人親手按一次，本項驗不到",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
     // ── senate submodule status / sync ────────────────────────
@@ -370,11 +447,33 @@ public static class Program
         bool aPushAll = HasFlag(iArgs, "--push-all-remotes");
         List<string> aOnly = ArgValues(iArgs, "--only");
 
+        // 逐項覆寫：`--set-branch <path>=<branch>`（可重複）。四層解析裡最高優先的那一層。
+        // 為什麼需要它：`--branch` 只有**全域**一格，而一個 repo 底下的 submodule 常常各追不同分支
+        //（UCL_* 追 Dev、其餘追 master）。沒有這一格的話，「這顆要切別的」只能一顆一顆分開跑，
+        // 而分開跑會破壞 push 的深→淺順序（那條不變量是**整批**成立的，不是逐顆成立的）。
+        // ⚠ 語法錯（缺 `=`）立刻擋下並說出收到什麼 —— 靜默忽略一個打錯的覆寫，
+        //   會讓使用者以為自己指定了目標，然後看著它被切到另一條「看起來也合理」的分支。
+        var aOverrides = new Dictionary<string, string>();
+        foreach (string aPair in ArgValues(iArgs, "--set-branch"))
+        {
+            int aEq = aPair.IndexOf('=');
+            if (aEq <= 0 || aEq == aPair.Length - 1)
+                return SubmoduleUsageError($"--set-branch 要 <path>=<branch> 的形狀（收到 '{aPair}'）",
+                    "例：--set-branch Assets/Plugins/UCL_Core=Dev");
+            string aOvPath = aPair.Substring(0, aEq);
+            string aOvBranch = aPair.Substring(aEq + 1);
+            if (aOverrides.TryGetValue(aOvPath, out string? aPrev) && aPrev != aOvBranch)
+                return SubmoduleUsageError($"--set-branch 對同一個路徑給了兩個不同的分支（{aOvPath}：{aPrev} / {aOvBranch}）",
+                    "同一顆 submodule 只能有一個目標 —— 留下要的那一個");
+            aOverrides[aOvPath] = aOvBranch;
+        }
+
         Console.WriteLine($"· 對象：{aRoot}　（{aRootWhy}）");
         if (aBranch != null) Console.WriteLine($"· 全域預設 branch：{aBranch}");
         if (aOnly.Count > 0) Console.WriteLine($"· 只處理：{string.Join(" , ", aOnly)}");
+        foreach (var aOv in aOverrides) Console.WriteLine($"· 指定 branch：{aOv.Key} → {aOv.Value}");
 
-        var aScan = SubmoduleScan.Scan(aRoot, aFetch, aBranch,
+        var aScan = SubmoduleScan.Scan(aRoot, aFetch, aBranch, aOverrides,
             iProgress: aFetch ? p => Console.Error.WriteLine($"  … fetch {p}") : null);
         if (!aScan.Ok)
         {
@@ -386,14 +485,23 @@ public static class Program
         // 掃描結果先攤開 —— 動手之前一定要先看得到「它認為每一顆該去哪」。
         PrintScan(aScan, aFetch);
 
-        // --only 指到不存在的路徑要擋下：靜默處理 0 顆會長得像「都做完了」。
-        if (aOnly.Count > 0)
+        // 指到不存在的路徑要擋下：靜默處理 0 顆會長得像「都做完了」。
+        // ⚠ `--set-branch` 也要驗，而且理由更硬：`--only` 打錯是「少做一顆」（看得出來），
+        //   `--set-branch` 打錯是「那顆照舊用啟發式的目標」—— 它會**照樣成功**，
+        //   只是切到了另一條分支，而報告上是一排 ✓。
+        if (aOnly.Count > 0 || aOverrides.Count > 0)
         {
             var aKnown = new HashSet<string>();
             foreach (var aItem in aScan.Items) aKnown.Add(aItem.Entry.Path);
+
             var aMissing = aOnly.FindAll(p => !aKnown.Contains(p));
             if (aMissing.Count > 0)
                 return SubmoduleUsageError($"--only 指到不存在的 submodule：{string.Join(" , ", aMissing)}", "上面那份清單就是這個 repo 真的有的 submodule");
+
+            var aMissingOv = new List<string>();
+            foreach (var aOv in aOverrides) if (!aKnown.Contains(aOv.Key)) aMissingOv.Add(aOv.Key);
+            if (aMissingOv.Count > 0)
+                return SubmoduleUsageError($"--set-branch 指到不存在的 submodule：{string.Join(" , ", aMissingOv)}", "上面那份清單就是這個 repo 真的有的 submodule（路徑要跟它逐字一樣）");
         }
 
         if (!aWrite) return 0;
@@ -652,6 +760,7 @@ public static class Program
                 --root <path>     對哪個 repo（status 不給就是 Senate 自己）
                 --project <name>  改用 senate.local.json 裡的專案（停用的會擋下並說原因）
                 --branch <b>      全域預設 branch（解析順序的第三層）
+                --set-branch <path>=<b>  逐項指定目標 branch（解析順序的**最高**層；可重複）
                 --fetch           先逐顆 fetch 再讀 ⇒ ahead/behind 才是即時值
               submodule sync      切 branch / pull / push（**會改變狀態**）
                 --checkout        切到目標 branch（dirty、HEAD 有未合併 commit 一律跳過並列出）

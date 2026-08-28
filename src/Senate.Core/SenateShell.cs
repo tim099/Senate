@@ -5,6 +5,7 @@
 // 數值影響：唯讀（只是啟動一個外部程式）。不會建立、修改或刪除任何檔案。
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using SCP.Core.Gui;   // SCP_ClipboardRead（讀剪貼簿的三格結果）
 
 namespace Senate.Core;
 
@@ -145,6 +146,65 @@ public static class SenateShell
             return $"⚠ 複製不了（{e.GetType().Name}: {e.Message}）—— 類別名是 {iText}";
         }
         return $"✓ 已複製到剪貼簿：{iText}";
+    }
+
+    /// <summary>
+    /// 從剪貼簿讀一段字（Windows 走 PowerShell <c>Get-Clipboard</c>、macOS <c>pbpaste</c>、
+    /// Linux <c>xclip -o</c>）。
+    /// <para>⚠ Windows 沒有 <c>clip.exe</c> 的反向工具 ⇒ 只能繞 PowerShell，
+    /// 而那要付約半秒的啟動成本。**所以這條路只掛在按鈕上，不放進每幀會跑的路徑。**</para>
+    /// <para>⚠ 編碼要顯式釘 UTF-8（前綴設 <c>OutputEncoding</c> ＋ 這邊 <c>StandardOutputEncoding</c>）——
+    /// 不釘的話中文路徑會變成一串問號，而那看起來像「剪貼簿裡本來就是亂碼」。</para>
+    /// </summary>
+    public static SCP_ClipboardRead Paste()
+    {
+        var aOut = new SCP_ClipboardRead();
+
+        string aExe, aArgs;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            aExe = "powershell";
+            aArgs = "-NoProfile -NonInteractive -Command "
+                    + "\"[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw\"";
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) { aExe = "pbpaste"; aArgs = ""; }
+        else { aExe = "xclip"; aArgs = "-selection clipboard -o"; }
+
+        try
+        {
+            var aPsi = new ProcessStartInfo(aExe, aArgs)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+            };
+            using Process aProc = Process.Start(aPsi)
+                ?? throw new InvalidOperationException($"{aExe} 啟動不了");
+            string aText = aProc.StandardOutput.ReadToEnd();
+            // 同 Copy 的理由：不能無限等，卡住的話整個 UI 停在那一幀而且沒人知道為什麼。
+            if (!aProc.WaitForExit(5000))
+            {
+                aOut.Message = $"⚠ {aExe} 沒有在 5 秒內結束（沒有強制砍它）";
+                return aOut;
+            }
+            if (aProc.ExitCode != 0)
+            {
+                aOut.Message = $"⚠ {aExe} 回 exit {aProc.ExitCode}";
+                return aOut;
+            }
+            aOut.Ok = true;
+            aOut.Text = aText.Trim('\r', '\n', ' ', '\t');
+            aOut.Message = aOut.Text.Length == 0
+                ? "・剪貼簿是空的（讀到了，裡面沒東西）"
+                : $"✓ 讀到 {aOut.Text.Length} 個字元";
+        }
+        catch (Exception e)
+        {
+            aOut.Message = $"⚠ 讀不到剪貼簿（{e.GetType().Name}: {e.Message}）";
+        }
+        return aOut;
     }
 
     static void Start(string iExe, string iArgs)

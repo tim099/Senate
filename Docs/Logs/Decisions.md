@@ -1,7 +1,7 @@
 ---
 title: 設計拍板紀錄（ADR）
 description: Senate 與 SCP_Core 的關鍵決策、當時的理由、以及被實測推翻或修正的部分。新決策往下加，不改舊條目
-last_updated: 2026-08-23
+last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -522,3 +522,309 @@ Tim 問：文字輸出看不出具體排版？
 截圖三張逐步對帳：疊在一起 → 對齊但清單比頭寬且多縮一格 → 頭與選項同左緣同寬、搜尋框切齊右緣。
 ⚠ 搜尋框與分頁那一段是**把門檻臨時調成 1 才拍到的**（Senate 只有 3 頁，正常走不到）——
 拍完已還原；那不是產品設定。
+
+---
+
+## D19 · Submodule 頁補齊「決定」那半，寫入鈕仍不放（2026-08-28，kiara）
+
+移植 UCL 端 `UCL_GitSubmoduleSyncPage` 的第 4 步。前三步（SCP_Core git 四顆／呼叫端收斂／
+掃描層＋唯讀頁＋CLI 寫入端）見 `f96dd44` / `9a1b1be` / `1fb3f4e`。
+
+### ① 分界線在「決定」與「動手」之間，不在「有沒有這個功能」
+
+D18 之前那頁只有一張唯讀表，而 UCL 原頁的價值**有一半在逐項設定** ——
+排除哪幾顆、這一顆要切哪條 branch、要不要含 root、要不要推所有 remote。
+那半**完全是唯讀的**：它產生的是意圖，不是 git 呼叫。
+
+⇒ 本次把那半補上，並把意圖**編譯成一條可以直接照抄的指令**。動手的仍然是 `submodule sync`。
+
+📌 一般形：**「寫入端不在這裡」約束的是誰動手，不是誰決定。**
+把兩者綁在一起看，會讓一個純唯讀的功能因為「它旁邊那個功能不能做」而一起被砍掉。
+
+⚠ 原本那頁印的是**寫死的指令範本**。範本會在使用者調整設定之後靜默過期，
+而過期的提示比沒有提示糟 —— 它讓人照著做，然後得到一個他沒有要的範圍。
+
+### ② CLI 補 `--set-branch <path>=<branch>`（否則畫面上那個下拉是「設了不會有事」的元件）
+
+`--branch` 只有全域一格，而一個 repo 底下的 submodule 常常各追不同分支
+（UCL_* 追 Dev、其餘追 master）。沒有這一格的話，「這顆要切別的」只能一顆一顆分開跑，
+而分開跑會破壞 push 的**深→淺**順序（那條不變量是整批成立的，不是逐顆成立的）。
+
+守衛三格，都是 exit 2：語法缺 `=`／同一路徑給兩個不同分支／指到不存在的 submodule。
+⚠ 第三格的理由比 `--only` 硬：`--only` 打錯是「少做一顆」（看得出來），
+`--set-branch` 打錯是「那顆照舊用啟發式的目標」—— 它會**照樣成功**，只是切到另一條分支，
+而報告上是一排 ✓。
+
+### ③ 掃描指紋：防每幀重掃（Desktop 是連續 render loop）
+
+「設定改了就重掃」在 CLI 是對的（一次呼叫畫 2-3 趟），在 Desktop 是災難
+（每秒約 60 趟 Draw × 一整輪 git）。⇒ 存一份「這張照片是用什麼設定拍的」指紋，只有不符才重掃。
+
+🩸 指紋第一版用 `string.Join("", parts)` **沒有分隔符** ⇒
+`(root="D:/A", branch="B")` 與 `(root="D:/AB", branch="")` 得到同一個指紋。
+設定其實變了卻被判成沒變 ⇒ 拿上一個 repo 的照片配新設定，
+而那正是 UCL 那次「綠燈全亮、量到的是別的 repo」的形狀。改用 `|`（Windows 路徑與 git ref 名都禁用它）。
+
+### ④ fetch 從「兩顆鈕」收斂成「一個開關」
+
+原本工具列有「重新掃描」與「Fetch 全部後掃描」兩顆。fetch 開關一旦進了指紋（③），
+那顆「這次帶 fetch」的鈕就會在**下一幀**被「指紋說現在是不帶 fetch」的重掃蓋掉 ——
+按了等於沒按，而畫面上看不出它被回滾了。
+
+⇒ 開關是唯一的意圖來源，工具列那顆鈕吃它的值（文案跟著變「重新掃描（含 fetch）」）。
+📌 同 D13 那條：**兩個機制搶著決定同一件事，結果是其中一個安靜地不生效。**
+
+### ⑤ 共用層補 `SCP_Ui.ToggleValue`（讀勾選，不畫節點）
+
+`Fold` 收合時**子節點根本不建** ⇒ 收合那一輪讀不到裡面任何 `Toggle` 的回傳值。
+而那些勾選是**資料**（哪幾顆納入這一輪）—— 隨「我把區塊收起來」消失，
+等於使用者的設定被靜默丟掉，**而丟掉之後的畫面跟「本來就沒設」長得一模一樣**。
+
+刻意**不加** `SetToggle`：勾選是使用者的資料，目前沒有呼叫端需要寫它 ⇒ 不先開那個口。
+細節見 `Architecture/Ui_Framework` 的「勾選那側」。
+
+### ⑥ repo 目標＝**可以直接打路徑的欄位**（預設 Senate 自己）（Tim 2026-08-28 當面要求）
+
+第一版是「只能從 `senate.local.json` 的專案清單裡挑」的下拉。而這一頁最常見的用途本來就是
+**操作別的 repo** —— Senate 是後台，要整理的是 Unity 專案 ⇒ 只能挑清單等於把主要用途擋在設定之後
+（而且那台機器上根本還沒有 `senate.local.json`，下拉裡只有 Senate 自己一項）。
+
+⇒ 改成 `TextField`（預設 `m_Model.RepoRoot`）＋「↩ 改回 Senate 自己」鈕；
+設定檔有專案時**才**畫下拉，而那個下拉是**動作不是狀態**（選了就把值填進欄位）。
+
+| 判準 | 而不是 |
+|---|---|
+| 路徑只住在那個欄位裡（**單一真相源**） | 欄位與下拉各記一份 —— 「我明明選了 A 它卻掃了 B」，而那不會報錯 |
+| 「改回自己」鈕只在**真的不是自己**時畫 | 一直畫 —— 一顆按下去等於沒事的鈕看起來像壞的 |
+| 路徑比對走正規化（分隔符／尾斜線／大小寫） | 字串相等 —— 正斜線版、反斜線版、帶尾斜線版會被判成三個不同的 repo，於是那顆鈕對著同一個 repo 一直出現（假訊號會訓練人忽略訊號） |
+| 目標不是自己時**印一句事實**，不是警告 | 印警告 —— 操作別的 repo 是正常用法，把它標成異常會讓真正的警告變雜訊。⚠ 但那句話必須說：這個欄位的值**會被 session 記住**（跨 process），所以「上次改成 LY」下次開頁仍然生效 |
+| **沒有**「…」瀏覽鈕 | 畫一顆開不了對話框的鈕 —— 共用層零依賴、`SCP_GuiHost` 也沒有那格能力 |
+
+### ⑦ 🩸 啟發式的「家規」那一半，宿主從來沒宣告 —— 對 LY 跑才顯形
+
+`SCP_GitSubmodule.PrefixBranchRules`（資料夾名前綴 → 該追哪條 branch）是刻意設計成
+**預設空、由宿主宣告**的（家規不是 git 的性質，寫死在共用層等於把一個專案的慣例變成所有專案的預設）。
+那份 doc comment 甚至寫了範例：`PrefixBranchRules.Add(new KeyValuePair<string,string>("UCL_", "Dev"))`。
+
+**而 Senate 從來沒宣告過那一半**（全 repo 零呼叫端）。症狀只有在對 LY 跑的時候才出現：
+
+```
+Assets/Plugins/UCL_Core   目前=⚠Dev   目標=master（啟發式）   ← 走到「其餘 → master」那條
+```
+
+它**不會切錯**（`--checkout` 的祖先檢查會擋下並跳過），但那一顆**永遠對不齊、永遠被跳過** ——
+而「被跳過」的訊息看起來完全像盡責。📌 **機制在共用層、規則在宿主，兩半都要有人接；
+只接一半的症狀不是報錯，是一個看起來合理的錯答案。**
+
+⇒ `Program.Main` 補上宣告。修後 `目前=✓Dev 目標=Dev（啟發式）`，
+而同一個 repo 裡的 `Assets/Plugins/SCP_Core` 仍是 `master`（`SCP_` 不命中 `UCL_` 前綴，沒有誤傷）。
+
+⚠ 這是寫在**碼**裡的家規，所以：要對非 UCL 系 repo 停用就拿掉那一行；
+需要 per-repo 不同家規時正解是搬進 `senate.local.json`（反射三層會自動畫出欄位）。
+📌 **根治其實在 LY 那邊**：`.gitmodules` 寫 `branch = Dev` 是 git 原生欄位（解析的第二層），
+任何工具都吃它，不必每個工具各自宣告一次家規。
+
+### ⑧ 打字欄位改成**草稿＋套用**（Tim 2026-08-28 回報：貼不上、而且會直接刷新）
+
+🩸 ⑥ 那版是「值一變就重掃」，而**在視窗裡打字是逐字元的** ——
+打 `D:/Unity/LY` 會觸發 11 次重掃，每次跑一整輪 git（LY 有 24 顆 submodule）。
+那不是慢，是視窗在打字期間卡死，而症狀看起來像「這個欄位壞了」。
+
+⇒ **打字類走草稿，點選類維持立即生效**：
+
+| 元件 | 何時生效 | 為什麼 |
+|---|---|---|
+| repo 路徑、全域預設 branch（`TextField`） | 按「✓ 套用並重新掃描」 | 逐字元事件，會連續觸發 |
+| 勾選、下拉、「改回 Senate 自己」、清單挑專案 | 立即 | 單次離散事件，而且立即看到結果才是那些元件的價值 |
+
+配套三格：「✗ 放棄改動」把生效值寫回欄位（不然使用者分不出自己看的是草稿還是生效值）；
+草稿與生效值不同時**印一行**說「下面的表格與指令仍然是 X」（不印的話「我已經改成 LY 了」
+與「表格還是 Senate 的」會被讀成工具壞了）；表格與指令一律吃**生效值**，不吃草稿。
+
+🩸 **而第一版的生效值只放在頁面欄位，跨 process 就丟了**：CLI 每次呼叫都是新 process，
+`m_Scan` 是 null ⇒ 「我上一步套用的是 LY」消失，每個指令都要先按一次套用。
+實測：`--set submodule/root=X` 之後按「放棄改動」，欄位回到 Senate 而不是剛套用的 LY。
+⇒ 生效值住 session（`submodule/root/applied` / `submodule/default-branch/applied`，
+跟 Dropdown 的 `<key>/value` 同一個模式）。
+📌 一般形：**「現在生效的是什麼」跟「使用者正在編輯什麼」是兩份狀態，
+而前者的生命週期必須跟宿主的生命週期一樣長。**
+
+連帶把 `OnPush` 的掃描拿掉了：要掃誰取決於 session 裡的生效值，而那時還沒有 `SCP_Ui` 可以讀 ——
+在那裡掃只能掃「Senate 自己」，然後 `DrawContent` 用生效值再掃一次 ⇒ **每次開頁白跑一輪 git**。
+掃描收斂成一個落點（指紋比對，`m_Scan == null` 也算不符）。
+
+### ⑨ ImGui 的 `InputText` 吃不到 Ctrl+V ⇒ 補一顆「📋 貼上」鈕
+
+Tim 回報「無法貼上路徑，只能手打」。查證：**ImGui 的剪貼簿 callback 從來沒被接上**
+（`SetClipboardTextFn` / `GetClipboardTextFn` 全 repo 零命中；Silk.NET 的 `ImGuiController` 不會自己設）。
+⇒ 這不是這一頁的問題，**全站每一個輸入框都貼不上**。
+
+⇒ 短路徑先走：`SCP_GuiHost.ReadClipboard`（新的宿主能力，Windows 繞 PowerShell `Get-Clipboard -Raw`）
+＋ 頁面一顆「📋 貼上」鈕。沒掛實作的宿主**不畫那顆鈕**（同 `RevealInFileManager` 的契約）。
+
+| 判準 | 為什麼 |
+|---|---|
+| 讀的結果是**三格**（`Ok` / `Text` / `Message`） | 「剪貼簿是空的」與「我讀不到剪貼簿」不得同形 —— 壓成空字串會讓壞掉的能力看起來像「使用者沒複製東西」，而那會讓人一直重按 |
+| 貼上只**填草稿**、不套用 | 貼進來的路徑常常還要修一下（多一層、少一層），而「貼上就跑一輪 git」會讓修錯的那次白掃 |
+| 剝掉**包住整串**的雙引號 | 檔案總管的「複製路徑」給的是帶引號的字串 ⇒ 直接送進 `Directory.Exists` 一定 false，而畫面會說「路徑不存在」，於是使用者以為自己複製錯了。⚠ 只剝外層，不動路徑中間的字元（資料夾名可以含引號與空白） |
+| 只掛在**按鈕**上 | Windows 這條路要付約半秒的 PowerShell 啟動成本 ⇒ 不可以放進每幀會跑的路徑 |
+| 訊息一定要印出來 | 效果發生在**上面那個欄位**，而它下一輪才更新（慢一幀）⇒ 沒有那行字的話「貼上了」與「沒反應」同形 |
+
+⚠ **這只是繞道，不是修好**：使用者的肌肉記憶是 Ctrl+V，而且問題涵蓋全站所有輸入框。
+正解是接上 ImGui 的剪貼簿 callback（`Marshal.GetFunctionPointerForDelegate` ＋ 一塊自己管的
+UTF-8 buffer ＋ Win32 `OpenClipboard`／`GetClipboardData`，約 60 行 unsafe 在 `Senate.Desktop`）——
+那會讓 Ctrl+C／Ctrl+V 在每一個 `InputText` 都能用。**刻意不在這一輪順手做**：
+它是 renderer/宿主層的改動、要動 unsafe 與非受管記憶體，寫壞的症狀是整個視窗掛掉，
+該單獨做、單獨驗。
+
+### ⑩ 把 ImGui 的剪貼簿 callback **真的接上**（Tim 2026-08-28 要求，接續 ⑨）
+
+⑨ 那顆「📋 貼上」鈕是繞道 —— 使用者的肌肉記憶是 Ctrl+V，而且問題涵蓋全站每一個輸入框。
+這一格把它接上：
+
+```
+ImGui（Ctrl+C / Ctrl+V）
+   │  io.SetClipboardTextFn / io.GetClipboardTextFn      ← ImGui.NET **1.90.8.1** 的位置
+   ▼
+ImGuiClipboardBridge（Senate.Desktop）── marshalling：UTF-8 ／ NUL ／ 記憶體存活期
+   ▼
+SenateClipboard（Senate.Core）── Windows: Win32 CF_UNICODETEXT ／ 其他: SenateShell 的 process 路徑
+   ▲
+SCP_GuiHost.ReadClipboard / CopyToClipboard（貼上鈕、複製類別名鈕）
+```
+
+⭐ **一份實作、三個消費端**（Ctrl+V／貼上鈕／複製鈕）—— 不會有「鈕能貼、Ctrl+V 不能」的分岔。
+順手把 `CopyToClipboard` 從 `clip.exe` 換成同一條路（原本那條要付 process 啟動成本）。
+
+判準（每一條的症狀都不是編譯錯誤，所以逐條寫在 `ImGuiClipboardBridge` 旁邊）：
+
+| 判準 | 寫錯的症狀 |
+|---|---|
+| Windows 走 Win32，不走 `clip.exe`／PowerShell | callback 是「按下組合鍵的那一幀」，process 啟動 300〜500ms ⇒ 卡半秒的貼上被讀成視窗當掉 |
+| delegate 存 **static 欄位** | `GetFunctionPointerForDelegate` 不會讓 delegate 活著 ⇒ **隨機 crash**，而且離安裝那行很遠 |
+| buffer 在**下一次**讀取時才釋放 | 讀完立刻釋放 ＝ 在 ImGui 還在讀的時候把地板抽掉 |
+| UTF-8 尾巴補 NUL | C 端讀過頭 ⇒ 貼出一串垃圾 |
+| callback 裡不讓例外飛出去 | native → managed 邊界上是 UB，ImGui 沒有地方接它 |
+| `SetClipboardData` 成功後**不**釋放記憶體 | 所有權已轉移給系統 ⇒ 別的程式貼出垃圾 |
+| `OpenClipboard` 重試 6 次 | 剪貼簿是全機唯一資源；不重試 ⇒ 「Ctrl+V 有時候沒反應」，間歇性失敗最難被回報 |
+| 「空的」／「讀不到」／「裡面是圖片」**三種分開** | 壓成空字串 ⇒ 壞掉的能力看起來像「使用者沒複製東西」，人會一直重按 |
+
+**驗收分三層，而第三層刻意留白：**
+
+1. `selftest --clipboard` 的 `剪貼簿 round-trip` —— `SenateClipboard` 寫入→讀回逐字相同
+2. 同上的 `ImGui 剪貼簿 callback` —— 走**兩個 callback 本身**，逐字相同 ＋ NUL 真的在
+3. **「ImGui 真的會在 Ctrl+V 時呼叫它」要人親手按一次** —— 程式驗不到（截圖模式沒有鍵盤事件）
+
+⇒ 第 3 層在 selftest 的讀數裡**寫明它沒被驗**，不讓「兩項全過」被讀成「Ctrl+V 一定能用」。
+📌 這正是 summit 憲法判準⑤的「窄報／寬報」那一格：**一個沒有代價的樂觀宣稱不會自己停下來。**
+
+⚠ `--clipboard` 是 **opt-in**：它會覆蓋使用者的剪貼簿，而那不可逆（舊內容可能是圖片，寫回也還原不了）。
+一個「跑一下自我檢查」的指令不該有這種副作用。
+⚠ 非 Windows 的 `pbpaste`／`xclip` 路徑同樣沒有讀數（手上沒有那些平台）。
+⚠ ImGui.NET **1.91 之後**這兩格搬到 `ImGui.GetPlatformIO().Platform_*` ——
+升版時要跟著改，而接錯地方是**靜默無效** ⇒ `Install` 會把指標讀回來並回報。
+
+### ⑪ 🩸 接上 callback 還是不夠 —— Silk.NET 的 ImGuiController **從來沒送 modifier**
+
+⑩ 做完之後兩層自我對拍全過、`Install` 回報「已接上」，而 Tim 實測 **Ctrl+V 仍然沒反應**。
+
+⭐ **把範圍切開的是他補的一句「但是按鈕的貼上 OK」** ——
+那一句立刻把「剪貼簿實作」「`SCP_GuiHost` 那條路」「Win32 讀取」整段排除掉，
+剩下唯一的嫌疑是「ImGui 收不到那個組合鍵」。
+📌 一般形：**一個「哪一半壞了」的問題，最快的尺是找出「哪一半還好」。**
+
+查證（解析 `Silk.NET.OpenGL.Extensions.ImGui.dll` 的 metadata 字串堆疊）：
+
+| 名字 | 在不在 |
+|---|---|
+| `AddKeyEvent` / `TranslateInputKeyToImGuiKey` / `AddInputCharacter` | ✓ |
+| `SetClipboardTextFn` / `GetClipboardTextFn` | ✗（確認 controller 完全不碰 clipboard ⇒ 我們的橋是唯一那條） |
+| **`ModCtrl` / `ImGuiMod`** | **✗** —— 只有 `get_KeyCtrl`（讀取） |
+
+⇒ **它從來沒有把 modifier 狀態送進 ImGui。** 而 ImGui 的快捷鍵判斷的是 `io.KeyMods` ⇒
+Ctrl+V / Ctrl+C / Ctrl+A / Ctrl+X **全部無效**，而**單獨打字照樣正常**
+（那條走 `AddInputCharacter`，跟 modifier 無關）。
+📌 **兩者症狀不同形，正是它難被發現的原因** —— 「這個欄位只能手打」聽起來像功能缺失，不像 bug。
+
+⚠ 我第一次掃 dll 用的是「抓所有 ASCII 序列」的土法，結果連 `ImGuiKey` 都沒抓到 ——
+**尺壞了而讀數看起來像答案**。改成正經解析 PE → CLI header → metadata root → `#Strings` heap
+（354 個名字）才拿到可信的清單。
+
+**修法** `SenateWindow.FeedKeyModifiers()`，每幀自己補：
+
+| 判準 | 為什麼 |
+|---|---|
+| 在 `m_Controller.Update()` **之前**呼叫 | `Update` 內部跑 `ImGui.NewFrame`，而 NewFrame 才消化 `AddKeyEvent` 佇列。放後面 ⇒ Ctrl 慢一幀到，於是 ImGui 看到 V 的那一幀 Ctrl 還是 false ⇒ 快捷鍵永遠差一步，而它不報錯 |
+| `Mod*` 與實體左右鍵**都餵**（官方 backend 也是） | 前者給快捷鍵判斷，後者給「哪一顆被按著」 |
+| 順便補 `V` / `C` / `X` / `A` / `Insert` | `TranslateInputKeyToImGuiKey` 有沒有涵蓋它們我沒有 IL 層的讀數，而 `AddKeyEvent` 對「狀態沒變」是**幂等**的 ⇒ 重複餵不會打架，漏掉才會壞。**在沒有讀數的地方選不會壞的那一邊** |
+
+**`--keydebug`：把三個斷點分開。** 「Ctrl+V 沒反應」有三個可能的斷點，
+而它們在畫面上長得一模一樣：① ImGui 收不到 Ctrl ② 收到了但沒呼叫 callback
+③ callback 被呼叫但剪貼簿是空的。
+⇒ 畫面底部印 `io.KeyCtrl` / `Silk:Ctrl` / `V` / **`clipboard callback Get/Set` 計數** / `WantTextInput`。
+⭐ 那個 **callback 計數器**是唯一能區分 ①② 的東西。
+
+⭐ 另外加一個**不需按鍵的自我對拍**：第 4 幀注入 `ModCtrl=true`、第 5 幀讀回 `io.KeyCtrl`。
+截圖實測 **讀回 True** ⇒ 「補 modifier 這條路本身有效」有讀數了，不必等人按鍵盤才知道那一半對不對。
+
+⚠ **仍然要人按一次**：真實鍵盤 → Silk 的 `IsKeyPressed` → ImGui → `InputText` 這一整條，
+程式驗不到（截圖模式沒有鍵盤事件）。所以這一格**照舊不宣稱它被驗過**。
+
+**順手修的（截圖抓到的）**：「📋 貼上」的 📋（U+1F4CB）**在 `seguisym.ttf` 裡沒有 glyph**
+⇒ 畫成 `? 貼上`。換成 `⇣`（跟 ✓ ⇒ ⚠ 同區，字型已驗證有）。
+📌 同字型那條判準：**不是「字型有沒有載」，是「這一頁實際用到的每個字元有沒有 glyph」**，而缺字不報錯。
+⚠ 我是從自己的截圖上看到的 —— 只讀文字 renderer 的輸出，這一格永遠不會現形。
+### 讀數（實跑，不是推的）
+
+- `dotnet build Senate.slnx`：**0 警告 0 錯誤**（四個專案都重編）
+- `selftest`：**14 過 / 0 失敗 / 1 跳過**（跳過那項是「讀真檔」找不到樣本，與本次無關）
+- 文字驅動逐格：Fold 展開見 `[x] SCP_Core [目標：(自動 → master) ▼]`／
+  排除唯一那顆 ⇒ 觸發「每一顆都排除了 ⇒ 沒有可以跑的指令」／
+  收合後仍印「⚠ 收合中的逐項設定仍然生效：排除 1 顆」（⑤ 的活體）／
+  選 master ⇒ 表格「來源」欄由 `啟發式` 變 `指定`，指令長出 `--set-branch "SCP_Core=master"`
+- **照抄畫面印的指令去跑**：`submodule status --root … --set-branch "SCP_Core=master"` ⇒
+  exit 0、`目標=master（指定）`，與畫面一致（閉環）
+- 三個守衛實測 exit 2；`--only` 迴歸正常
+- 截圖 `build/submodule_page.png`：視窗跑得動 ⇒ **沒有每幀重掃卡死**（③ 的證人）
+- **對真正的目標 repo（LY）實跑**：`--set submodule/root=D:/Unity/LY` ⇒ 24 顆全列出，
+  含三層巢狀（`AgentCommands/ChatTavern/baton/letters/kiara`）與多 remote 標記
+  （`⇈ github.com / gitlab.private / origin`）；指令跟著長出 `--root "D:/Unity/LY"`。
+  「↩ 改回 Senate 自己」按下去回到 `D:\Unity\Senate`（1 顆），而那顆鈕自己消失（⑥ 的判準）
+- 啟發式修前後對拍：`UCL_Core` 由 `⚠Dev / 目標 master` 變 `✓Dev / 目標 Dev`，
+  同 repo 的 `SCP_Core` 維持 `master`（⑦ 沒有誤傷）
+- ⑧⑨ 逐格實跑（每一步都是獨立 process，所以順便驗了跨 process）：
+  預設是 Senate（1 顆）→ `--set submodule/root=D:/Unity/LY` **不重掃**且印「還沒生效」→
+  `--click submodule/apply` ⇒ 24 顆 → **新 process 不帶任何動作，仍是 LY 的 24 顆**（生效值持久化）→
+  設一個假路徑後 `--click submodule/discard` ⇒ 欄位回 LY、表格仍 24 顆 →
+  `--click submodule/root/self` ⇒ 1 顆且無「還沒生效」（點選立即生效）
+- 全域預設 branch 同樣走草稿：`--set …/default-branch=Dev` 印「還沒生效」；套用後
+  `SCP_Core` 那列變成 `目標 Dev／來源 全域預設`
+- 「📋 貼上」：剪貼簿放 `D:/Unity/LY` ⇒ 欄位填入、訊息「✓ 讀到 11 個字元」、**表格沒動**（只填草稿）；
+  再放帶引號的 `"D:/Unity/LY"` ⇒ 讀到 13 個字元而欄位是 11 字元的乾淨路徑（外層引號被剝掉）
+- 收工前 `ui --reset`：session 裡與 submodule 有關的 Fields／Toggles 全部歸零
+  （⚠ 測試中我曾把「全域預設 branch」套用成 `Dev`，那會讓每一顆的目標都變 Dev —— 已清掉）
+- ⑩ 的讀數：`selftest --clipboard` ⇒ **16 過 / 0 失敗 / 1 跳過**
+  （`剪貼簿 round-trip` 26 字元含中文與符號逐字相同；`ImGui 剪貼簿 callback` 36 字元 / 48 位元組、
+  UTF-8 結尾有 NUL）；開窗時印出 `剪貼簿：已接上 ImGui（Ctrl+C / Ctrl+V 可用）`
+  ＝ 兩個函式指標讀回來都非零。
+  空剪貼簿的行為也量了：貼上鈕回「・剪貼簿是空的（讀到了，裡面沒東西）」，與「讀不到」不同形。
+- ⚠ 一次量錯當場翻案：驗「預設 selftest 不跑剪貼簿」時用 `grep -c 剪貼簿` 回 1，
+  而那 1 是別的項目讀數裡「沒有碰真的剪貼簿」那句 —— **尺太寬**。改 grep 完整項目名後回 0。
+- ⑪ 的讀數：`--keydebug` 截圖 ⇒ 自我對拍那行印 **`注入 ModCtrl=true 之後 io.KeyCtrl 讀回 = True`**
+  （＝補 modifier 的機制有效）；診斷行本身畫得出來（截圖模式沒有鍵盤，所以
+  `io.KeyCtrl=False`／`Get=0 Set=0` 是預期值）。`⇣ 貼上` 在截圖上不再是問號。
+  `selftest --clipboard` 仍 16 過 0 失敗。
+- ⚠ **最後一格仍未驗**：真實鍵盤按 Ctrl+V 之後 `Get` 會不會 +1 —— 要人親手按，程式驗不到。
+
+🩸 驗收過程自己踩的：`cmd | tail -5; echo $?` 量到的是 `tail` 的退出碼 ——
+一個守衛的 exit 被讀成 0（實際是 2）。**這條寫在我見林裡，今天是第三次踩。**
+
+### 已知缺口（截圖暴露的既有版位問題，**本次刻意不修**）
+
+1. **三個 Toggle 的勾選框在文字右邊、彼此對不齊**（各自跟在自己那行文字後面）。
+   UCL 那側 checkbox 在左。這是 `GuiImGuiRenderer` 對 Toggle 的既有畫法 ——
+   本頁只是第一個一次放三個 Toggle 的頁面，所以它才顯形。
+2. **過長的 `Note` 在視窗裡被切掉右邊**（不換行）。同族於「表格還不吃 `--width`」那個已知缺口。
+
+⇒ 兩者都要動 renderer 層（UI 框架的決定，不是這一頁的），所以記在這裡等拍板，
+**不順手改** —— 順手改 renderer 會讓「這一頁的改動」與「全站版位的改動」混在同一筆裡。
