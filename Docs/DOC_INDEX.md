@@ -25,7 +25,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 文件 | 用途 |
 |---|---|
 | [Setup_And_Build](Workflows/Setup_And_Build.md) | 一鍵配置與一鍵 build 的流程、**為什麼不用 PublishSingleFile**、出廠驗收要驗什麼 |
-| [AgentCmd_Dispatch](Workflows/AgentCmd_Dispatch.md) | `senate cmd`：把 AgentCommand 派給目標 Unity 專案的 Editor（run_cmd.py 的 C# client）、專案設定、判定語意、**與 python 版的差距清單** |
+| [SCP_Cmd_System](Workflows/SCP_Cmd_System.md) | `senate cmd`：SCP_Core 內建的指令系統（**沒有 queue、不需要 Unity**）、參數規格與四種 exit code、怎麼寫一支新 Cmd |
+| [AgentCmd_Dispatch](Workflows/AgentCmd_Dispatch.md) | `senate ucmd`：把 AgentCommand 派給目標 Unity 專案的 Editor（run_cmd.py 的 C# client）、專案設定、判定語意、**與 python 版的差距清單** |
 
 ## API — 介面規格
 

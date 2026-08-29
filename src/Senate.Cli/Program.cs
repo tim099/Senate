@@ -55,6 +55,12 @@ public static class Program
         //   之後若需要 per-repo 不同的家規，正解是搬進 senate.local.json（反射三層會自動畫出欄位）。
         SCP_GitSubmodule.PrefixBranchRules.Add(new KeyValuePair<string, string>("UCL_", "Dev"));
 
+        // 宿主能力：SCP_CMD 的訊息要教人「照著打就會動」的指令 ⇒ 動詞由宿主宣告。
+        // ⚠ 共用層不准知道任何宿主的動詞（它預設只會說裸的 `cmd`）——
+        //   沒掛這一行的症狀是**錯誤訊息教人打一個在這個宿主上不存在的指令**，
+        //   而那不會編譯失敗、不會有人回報，只會讓照著訊息打的人以為自己打錯。
+        SCP.Core.Cmd.SCP_CmdRegistry.InvocationHint = "senate cmd";
+
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
         //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
@@ -74,7 +80,8 @@ public static class Program
                 "doctor" => CmdDoctor(aRepoRoot, iArgs),
                 "ui" => CmdUi(aRepoRoot, iArgs),
                 "submodule" => CmdSubmodule(aRepoRoot, iArgs),
-                "cmd" => CmdAgent(aRepoRoot, iArgs),
+                "ucmd" => CmdAgent(aRepoRoot, iArgs),   // Unity 那套（AgentCommand，走檔案協議）
+                "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
                 "--help" or "-h" or "help" => Usage(0),
                 _ => Usage(2, $"認不得的指令 '{aCmd}'"),
@@ -560,7 +567,7 @@ public static class Program
         return aFail > 0 ? 1 : 0;
     }
 
-    // ── senate cmd ───────────────────────────────────────────
+    // ── senate ucmd ──────────────────────────────────────────
     // 區塊職責：AgentCommands 派遣的 CLI 入口 —— run / status 兩個子動作。
     // 物理意義：run_cmd.py 的 C# 對應（協議本體在 Senate.Core/AgentCmdClient.cs）——
     //           **沒有 python 的環境（Codex）也能派 Cmd**。對象專案由 senate.local.json 的
@@ -576,7 +583,7 @@ public static class Program
         string aSub = iArgs.Length > 1 ? iArgs[1].ToLowerInvariant() : "";
         if (aSub != "run" && aSub != "status")
             return AgentUsageError($"cmd 要 run 或 status（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）",
-                "senate cmd run <CmdType> [--project <名>] [--persona <p>] [--arg k=v]… [--arg-file k=<路徑>]…");
+                "senate ucmd run <CmdType> [--project <名>] [--persona <p>] [--arg k=v]… [--arg-file k=<路徑>]…");
 
         // ── 對象專案解析：--project 名字 ＞ 唯一啟用專案自動選（會說出來）＞ 擋下 ──
         string? aProjName = ArgValue(iArgs, "--project");
@@ -644,7 +651,7 @@ public static class Program
         // ── run ──
         string? aCmdType = iArgs.Length > 2 && !iArgs[2].StartsWith("--") ? iArgs[2] : null;
         if (aCmdType == null)
-            return AgentUsageError("run 少了 <CmdType>", "senate cmd run Task --arg op=show --arg index=8");
+            return AgentUsageError("run 少了 <CmdType>", "senate ucmd run Task --arg op=show --arg index=8");
 
         var aCmdArgs = new Dictionary<string, string>();
         foreach (string aPair in ArgValues(iArgs, "--arg"))
@@ -871,6 +878,89 @@ public static class Program
     static string Rel(string iRoot, string iPath)
         => Path.GetRelativePath(iRoot, iPath).Replace('\\', '/');
 
+    // ── senate cmd ────────────────────────────────────────────
+    // 區塊職責：**SCP_CMD 的 CLI 宿主** —— 把命令列的字串交給 SCP_Core 的指令目錄跑。
+    // 物理意義：跟 `senate ucmd`（Unity 的 AgentCommand）是**兩套東西**，刻意不共用動詞：
+    //           那套是「寫檔案 → Unity Editor 接手 → 輪詢結果」，這套是**直接呼叫 C#**，
+    //           沒有 queue、沒有 Watcher、沒有「從 queue 消失代表結束」那套推論。
+    //           ⇒ Editor 沒開它照樣跑，因為它從頭到尾不需要 Editor。
+    // 數值影響：exit code 直接沿用 Cmd 的（0 成功／1 Cmd 失敗／2 用法錯／70 例外）。
+    static int CmdScp(string iRepoRoot, string[] iArgs)
+    {
+        string aName = "";
+        var aRawArgs = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        for (int i = 1; i < iArgs.Length; i++)
+        {
+            string aToken = iArgs[i];
+            if (aToken == "--arg" || aToken == "--arg-file")
+            {
+                if (i + 1 >= iArgs.Length) return Usage(2, $"{aToken} 少了 k=v");
+                string aPair = iArgs[++i];
+                int aEq = aPair.IndexOf('=');
+                if (aEq <= 0) return Usage(2, $"{aToken} 要 k=v 的形狀（收到 '{aPair}'）");
+                string aKey = aPair.Substring(0, aEq);
+                string aValue = aPair.Substring(aEq + 1);
+                if (aToken == "--arg-file")
+                {
+                    // 長內文不經過 shell —— 反引號那一族咬過太多次，判準不是「含不含特殊字元」。
+                    if (!File.Exists(aValue)) return Usage(2, $"--arg-file 指到不存在的檔：{aValue}");
+                    aValue = File.ReadAllText(aValue);
+                }
+                aRawArgs[aKey] = aValue;
+            }
+            else if (aToken.StartsWith("--", StringComparison.Ordinal))
+            {
+                return Usage(2, $"cmd 認不得的旗標 '{aToken}'");
+            }
+            else if (aName.Length == 0)
+            {
+                aName = aToken;
+            }
+            else
+            {
+                return Usage(2, $"cmd 只吃一個指令名（已經有 '{aName}'，又收到 '{aToken}'）");
+            }
+        }
+
+        if (aName.Length == 0) aName = "help";   // 不給名字 ＝ 印清單（那是使用者這時唯一想要的）
+
+        // 便利：letters_root 沒給就用設定檔那一格。**印出來**，不靜默注入 ——
+        // 靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」。
+        SCP.Core.Cmd.SCP_Cmd? aCmd = SCP.Core.Cmd.SCP_CmdRegistry.Find(aName);
+        if (aCmd != null && !aRawArgs.ContainsKey("letters_root") && DeclaresArg(aCmd, "letters_root"))
+        {
+            string? aRoot = null;
+            try { aRoot = PersonaLetters.LoadLettersRoot(iRepoRoot); }
+            catch (InvalidDataException e) { Console.Error.WriteLine($"✗ 設定檔有問題：{e.Message}"); return 3; }
+            if (aRoot != null)
+            {
+                aRawArgs["letters_root"] = aRoot;
+                Console.WriteLine($"· letters_root 沒給 ⇒ 用設定檔的 awakening.lettersRoot：{aRoot}");
+            }
+        }
+
+        SCP.Core.Cmd.SCP_CmdResult aResult = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
+
+        foreach (string aLine in aResult.Lines)
+        {
+            if (aResult.Ok) Console.WriteLine(aLine);
+            else Console.Error.WriteLine(aLine);
+        }
+        // 產出檔與純量分開印 —— 混在一起會讓數字被當成路徑去開（run_cmd 那邊的血證）。
+        foreach (string aOutput in aResult.Outputs) Console.WriteLine($"📄 回傳檔：{aOutput}");
+        foreach (KeyValuePair<string, string> aValue in aResult.Values)
+            Console.WriteLine($"🔢 {aValue.Key} = {aValue.Value}");
+        return aResult.ExitCode;
+    }
+
+    static bool DeclaresArg(SCP.Core.Cmd.SCP_Cmd iCmd, string iName)
+    {
+        foreach (SCP.Core.Cmd.SCP_CmdArgSpec aSpec in iCmd.ArgSpecs)
+            if (aSpec.Name == iName) return true;
+        return false;
+    }
+
     static int Usage(int iCode, string? iError = null)
     {
         if (iError != null) Console.Error.WriteLine($"✗ {iError}");
@@ -892,6 +982,10 @@ public static class Program
                 --page <key>      開窗直接停在某一頁（home / doctor / submodule / style / settings / projects）—— 給截圖驗收用
                 --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
+              cmd [<name>]        SCP_CMD —— 不依賴 Unity 的指令系統（沒有 queue，直接呼叫 C#）
+                                  不給 name ＝ 印出所有可用指令（等同 cmd help）
+                --arg k=v         指令參數，可重複。**沒宣告的參數名會被擋下**，不會靜默取預設
+                --arg-file k=<路徑>  參數值從檔案讀（UTF-8）—— 長內文不經過 shell
               submodule status    列出 submodule 的 branch / 髒不髒 / 領先落後（唯讀）
                 --root <path>     對哪個 repo（status 不給就是 Senate 自己）
                 --project <name>  改用 senate.local.json 裡的專案（停用的會擋下並說原因）
@@ -907,14 +1001,16 @@ public static class Program
                 --only <path>     只處理某幾顆（可重複；指到不存在的會擋下）
                 --dry-run         只印打算做什麼，不動任何東西
                 ⚠ sync **不給預設對象** —— 必須 --root 或 --project（對錯的 repo 動手是最貴的錯）
-              cmd run <CmdType>   派一筆 AgentCommand 給目標專案的 Unity Editor（= run_cmd.py 的 C# 版）
+              ucmd run <CmdType>  派一筆 AgentCommand 給目標專案的 Unity Editor（= run_cmd.py 的 C# 版）
+                                  ⚠ 2026-08-29 改名：這套 Unity 專用的從 `cmd` 改叫 `ucmd`，
+                                     `cmd` 讓給不依賴 Unity 的 SCP_CMD（見上）
                 --project <name>  對哪個專案（senate.local.json projects[]；只有一個啟用時可省）
                 --persona <p>     身分（決定 queue 路由並戳進 args；沒給走 anonymous）
                 --arg k=v         指令參數（可重複）
                 --arg-file k=<路徑>  參數值從檔案讀（長內文不經過 shell）
                 --timeout <秒>    等待逾時（預設 120）；--no-wait 送出就返回
                 ⚠ 需要目標專案的 Unity Editor 開著（Watcher 執行）—— 這是派遣不是代跑
-              cmd status          看各 persona queue 的 trigger 狀態與殘量（唯讀）
+              ucmd status         看各 persona queue 的 trigger 狀態與殘量（唯讀）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
 
             共用選項：

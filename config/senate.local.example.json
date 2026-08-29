@@ -3,7 +3,13 @@
   "//1": "⚠ 本檔入版控，所以裡面不可以有任何機器絕對路徑；實際路徑填在複製出去的那份（.gitignore 已擋）。",
   "//2": "agentCommandsRoot: \"auto\" = 先讀 <root>/.agentcommands_root.local pointer 檔，沒有就用 <root>/AgentCommands。",
   "//3": "enabled=false 的專案仍留在清單裡並顯示為「停用」—— 「我關掉它」與「我沒設定過它」是兩件事。",
+  "//4": "awakening.lettersRoot: persona 信件庫根目錄（後台「登入狀態」頁可以改）。空 = 還沒設定，不是某個猜出來的路徑。",
+  "//5": "awakening.sessionDir: session lock 目錄。\"auto\" = 從 lettersRoot 逐層往上找第一個 _session；填了就逐字採用。",
   "schemaVersion": 1,
+  "awakening": {
+    "lettersRoot": "",
+    "sessionDir": "auto"
+  },
   "projects": [
     {
       "name": "範例專案（改成你的，或整個刪掉）",

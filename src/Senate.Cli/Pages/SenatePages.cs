@@ -34,6 +34,7 @@ public static class SenatePages
         aCatalog.Register(StylePage.PageKey, () => new StylePage(iModel));
         aCatalog.Register(SettingsPage.PageKey, () => new SettingsPage(iModel));
         aCatalog.Register(ProjectsPage.PageKey, () => new ProjectsPage(iModel));
+        aCatalog.Register(LoginStatusPage.PageKey, () => new LoginStatusPage(iModel));
         return aCatalog;
     }
 

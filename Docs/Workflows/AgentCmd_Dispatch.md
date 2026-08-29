@@ -1,11 +1,16 @@
 ---
-title: AgentCommand 派遣（senate cmd）
+title: AgentCommand 派遣（senate ucmd）
 description: 用 senate.exe 把 AgentCommand 派給目標 Unity 專案的 Editor —— 檔案協議的 C# client 半邊、專案設定方式、判定與失敗語意、與 run_cmd.py 的差距清單
 last_updated: 2026-08-28
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
-# 📮 AgentCommand 派遣（`senate cmd`）
+# 📮 AgentCommand 派遣（`senate ucmd`）
+
+> ⚠ **2026-08-29 改名**：本系統的動詞從 `senate cmd` 改成 **`senate ucmd`**（u＝Unity）。
+> `cmd` 讓給不依賴 Unity 的 [SCP_CMD](SCP_Cmd_System.md)。舊動詞**不保留別名** ——
+> 留著會讓「打了不會動」變成「打了做了另一件事」，而這兩套一個要 Editor、一個不要。
+> ⚠ 下方 2026-08-28 的驗收讀數是用舊動詞跑的；**讀數本身沒變**，只有指令名換了。
 
 > 一句話：**`run_cmd.py` 的 C# 版 client** —— 沒有 python 的環境（Codex）也能派 Cmd 給
 > Unity Editor 執行。旗標與 exit code 速查在 [`Cli_Reference`](../API/Cli_Reference.md)，
@@ -18,7 +23,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 UCL_Core 的 AgentCommand 派遣**從頭到尾是檔案協議**：
 
 ```
-client（run_cmd.py 或 senate cmd）          Unity Editor（執行端）
+client（run_cmd.py 或 senate ucmd）         Unity Editor（執行端）
   │ 1. append queues/<persona>/queue.json      │
   │ 2. 寫 pending.trigger ────────────────────▶│ 3. Watcher 每秒輪詢，File.Move 原子接手
   │                                            │ 4. Runner 執行 handler
@@ -30,7 +35,7 @@ Editor 端零改動。所以：
 
 - ✅ **是**：一支不依賴 python 的派遣工具，跨專案（對象由設定檔指定）。
 - ⛔ **不是**：Cmd 的另一個執行端。**Editor 沒開就沒有人執行** ——
-  `cmd run` 會在逾時（預設 120s）後 exit 3。Senate 自己不跑任何 handler。
+  `ucmd run` 會在逾時（預設 120s）後 exit 3。Senate 自己不跑任何 handler。
 
 ## 設定：連到哪個 Unity 專案
 
@@ -86,8 +91,8 @@ queue 路徑樣板、queue entry 欄位、trigger 內容、result 檔判定，�
 
 ## 驗收讀數（2026-08-28 首發，LY 活 Editor 實測）
 
-- `cmd status`：列出 LY 資料根下 14 條 persona queue 的 state 與殘量。
-- `cmd run Task --persona basecamp --arg op=show --arg index=8` ⇒ Editor 接手、
+- `ucmd status`：列出 LY 資料根下 14 條 persona queue 的 state 與殘量。
+- `ucmd run Task --persona basecamp --arg op=show --arg index=8` ⇒ Editor 接手、
   Success（result 檔判定）、回傳檔檔頭 ts 為當下。
 - `index=99999` ⇒ exit 2、判決雙印、錯誤報告節錄。
 - 出廠 `senate.exe` 跑 `Tavern op=catchup` ⇒ `🔢 unread = 16`（values 回報接通）。

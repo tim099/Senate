@@ -53,7 +53,7 @@ build 的最後會**自己試跑一次、也自己開一次視窗**確認真的�
 之後**新開的** CMD / PowerShell / Git Bash 裡直接打 `senate` 就能用 —— 跟 python 一樣：
 
 ```
-senate cmd status
+senate ucmd status
 senate doctor
 ```
 
@@ -99,22 +99,41 @@ senate doctor
 
 ---
 
-## 把指令派給 Unity（`senate cmd`）
+## 把指令派給 Unity（`senate ucmd`）
 
 專案裡那套 AgentCommand（平常用 `run_cmd.py` 派的），**沒有 python 也能派** ——
 Senate 直接當派遣端，Unity Editor 照舊執行：
 
 ```
-senate cmd run Task --persona summit --arg op=show --arg index=8
-senate cmd status
+senate ucmd run Task --persona summit --arg op=show --arg index=8
+senate ucmd status
 ```
 
-- `cmd run <指令名>`：派一筆給目標專案的 Unity，**等它跑完**並印出回傳檔路徑。
+- `ucmd run <指令名>`：派一筆給目標專案的 Unity，**等它跑完**並印出回傳檔路徑。
   參數用 `--arg 名=值`（可重複）；長內文用 `--arg-file 名=檔案路徑`。
-- `cmd status`：看各身分的佇列現在是空的、排隊中、還是執行中（純看，不動任何東西）。
+- `ucmd status`：看各身分的佇列現在是空的、排隊中、還是執行中（純看，不動任何東西）。
 - 對哪個專案？設定檔只有一個啟用專案時**自動選**（會印出選了誰）；
   多個時加 `--project 名字` 點名 —— 它不猜，派錯專案的指令會在別人的 Unity 上真的跑。
 - ⚠ **目標專案的 Unity Editor 要開著**才有人執行；沒開的話等 120 秒後會明說逾時。
+- ⚠ **2026-08-29 改名**：這套原本叫 `senate cmd`，現在叫 `senate ucmd`（u＝Unity）；
+  `cmd` 讓給下面那套不需要 Unity 的。舊動詞不保留別名。
+
+---
+
+## 不需要 Unity 的指令（`senate cmd`）
+
+Senate 自己內建的一套指令系統（SCP_CMD）——**沒有佇列、直接跑**，Unity 關著也能用：
+
+```
+senate cmd                                  # 有哪些指令
+senate cmd help --arg name=wake-brief       # 這支要哪些參數
+senate cmd wake-brief --arg persona=Template --arg wake=4
+```
+
+- 參數一律 `--arg 名=值`（可重複）；長內文用 `--arg-file 名=檔案路徑`。
+- **參數名打錯會被擋下並列出它吃哪些參數** —— 不會安靜地當成沒給。
+- 說明是從程式本身產生的，不是另外維護的一張表（所以不會跟實作漂掉）。
+- 細節見 [`Docs/Workflows/SCP_Cmd_System.md`](Docs/Workflows/SCP_Cmd_System.md)。
 
 ---
 

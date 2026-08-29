@@ -77,6 +77,36 @@ public sealed class SenateUiSettings
         => new() { Scale = iStyle.Scale, TextWidth = iStyle.TextWidth };
 }
 
+/// <summary>
+/// 喚醒／登入相關設定 —— **persona 資料在哪台機器的哪個資料夾**。
+/// <para>跟 <see cref="SenateProject"/> 的分工：那邊宣告「Senate 管哪些專案」（cmd 派遣的對象），
+/// 這邊宣告「persona 的信件庫在哪」。今天兩者在同一棵資料樹底下，但**那是巧合不是契約** ——
+/// 信件庫可以被搬走、可以是另一台的網路磁碟，而 cmd 派遣的對象不會跟著動。
+/// ⇒ 顯式一格，不從 projects[] 推導。</para>
+/// </summary>
+public sealed class AwakeningSettings
+{
+    /// <summary>
+    /// persona 信件夾根目錄（絕對路徑），例如
+    /// <c>D:/Unity/Bar/AgentCommands/ChatTavern/baton/letters</c>。空 ＝ 還沒設定。
+    /// </summary>
+    public string LettersRoot { get; set; } = "";
+
+    /// <summary>
+    /// session lock 目錄。<c>"auto"</c> ＝ 從 <see cref="LettersRoot"/> 逐層往上找第一個
+    /// <c>_session</c>（見 <c>PersonaLetters.ResolveSessionDir</c>）。
+    /// <para>⚠ 這一格存在的理由是「信件庫與 lock 不一定同一棵樹」——
+    /// 不是為了讓人有第二個地方可以填錯。預設 auto，填了就逐字採用。</para>
+    /// </summary>
+    public string SessionDir { get; set; } = PersonaLetters.AutoSessionDir;
+
+    /// <summary>本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。</summary>
+    /// <remarks>⚠ [SCP_Ignore]：不進畫面、不進自動序列化（同 <see cref="SenateProject.Extra"/>）。</remarks>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+}
+
 /// <summary>senate.local.json 的根物件。</summary>
 public sealed class SenateConfig
 {
@@ -87,6 +117,13 @@ public sealed class SenateConfig
 
     /// <summary>介面顯示偏好。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。</summary>
     public SenateUiSettings Ui { get; set; } = new();
+
+    /// <summary>
+    /// 喚醒／登入設定（persona 信件庫在哪）。舊設定檔沒有這個區塊 ⇒ 用預設，
+    /// 而預設的 <c>lettersRoot</c> 是空字串 ＝「還沒設定」，**不是**某個猜出來的路徑。
+    /// <para>純新增欄位 ⇒ schemaVersion 不動（1）：舊檔讀得進來、寫回去會多這一段。</para>
+    /// </summary>
+    public AwakeningSettings Awakening { get; set; } = new();
 
     /// <summary>
     /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。

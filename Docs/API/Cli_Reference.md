@@ -205,16 +205,47 @@ AgentCommands 資料根解析到哪、存不存在／Editor 在不在跑）—�
 ./senate.exe ui --click projects/save                        # 儲存（寫回 senate.local.json）
 ```
 
-### `cmd run` / `cmd status`
+### `cmd` —— SCP_CMD（不依賴 Unity）
+
+SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor 沒開照樣跑。
+機制、怎麼寫一支新 Cmd、與 `ucmd` 的分工在
+[`SCP_Cmd_System`](../Workflows/SCP_Cmd_System.md) —— 本節只列旗標與 exit code。
+
+```bash
+./senate.exe cmd                                   # 列出所有指令（＝ cmd help）
+./senate.exe cmd help --arg name=wake-brief        # 單支的參數說明
+./senate.exe cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/brief
+```
+
+| 旗標 | 做什麼 |
+|---|---|
+| `--arg k=v` | 指令參數，可重複。⭐ **沒宣告的參數名會被擋下**，不會靜默取預設值 |
+| `--arg-file k=<路徑>` | 參數值從檔案讀（UTF-8）—— **長內文不經過 shell**，檔案不存在直接擋 |
+
+便利：宣告了 `letters_root` 的 Cmd 沒給該參數時，會用設定檔的 `awakening.lettersRoot`
+並**印出來**（靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」）。
+
+#### exit code
+
+| code | 意思 |
+|---|---|
+| 0 | 成功 |
+| 1 | Cmd 自己回報失敗（例：persona 的信件夾不存在） |
+| 2 | 用法錯：認不得的指令名／沒宣告的參數名／缺必填／值不在可選清單裡 |
+| 70 | Cmd 執行時丟出例外 —— ⚠ 跟 2 分開，否則腳本會把**程式 bug** 當成「我自己打錯」 |
+
+### `ucmd run` / `ucmd status`
 
 把一筆 **AgentCommand** 派給目標 Unity 專案的 Editor（＝ UCL_Core `run_cmd.py` 的 C# 對應）。
+⚠ **2026-08-29 改名**：本指令原本叫 `cmd`，改成 `ucmd`（u＝Unity）；`cmd` 讓給上面那套。
+**舊動詞不保留別名** —— 一個要 Editor、一個不要，打錯時「不會動」比「做了另一件事」安全。
 存在的理由：**沒有 python 的環境（Codex）也要能派 Cmd**。機制、協議與邊界的完整說明
 在 [`AgentCmd_Dispatch`](../Workflows/AgentCmd_Dispatch.md) —— 本節只列旗標與 exit code。
 
 ```bash
-./senate.exe cmd run Task --persona summit --arg op=show --arg index=8
-./senate.exe cmd run Tavern --persona summit --arg op=post --arg room=tavern --arg-file body=D:/tmp/msg.md
-./senate.exe cmd status                       # 唯讀：各 persona queue 的 trigger 狀態與殘量
+./senate.exe ucmd run Task --persona summit --arg op=show --arg index=8
+./senate.exe ucmd run Tavern --persona summit --arg op=post --arg room=tavern --arg-file body=D:/tmp/msg.md
+./senate.exe ucmd status                      # 唯讀：各 persona queue 的 trigger 狀態與殘量
 ```
 
 | 旗標 | 做什麼 |

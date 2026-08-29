@@ -152,7 +152,7 @@ public static class AgentCmdClient
         var aTrigger = new JsonObject
         {
             ["createdAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-            ["submittedBy"] = $"senate cmd run {iCmdType}",
+            ["submittedBy"] = $"senate ucmd run {iCmdType}",
         };
         File.WriteAllText(TriggerPath(iDataRoot, iPersona),
             aTrigger.ToJsonString(s_JsonOpt) + "\n", System.Text.Encoding.UTF8);
