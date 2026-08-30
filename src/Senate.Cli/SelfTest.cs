@@ -9,6 +9,7 @@ using SCP.Core.Gui;
 using SCP.Core.Json;
 using SCP.Core.Paths;
 using SCP.Core.Prefs;
+using SCP.Core.Skills;
 using SCP.Core.Entry;
 using SCP.Core.Letters;
 using SCP.Core.Reflect;
@@ -44,6 +45,7 @@ public static class SelfTest
         aRows.Add(EntryDocBlock());
         aRows.Add(EntryDocDefects());
         aRows.Add(EntryDocInstallIo());
+        aRows.Add(SkillMirror());
         aRows.Add(RowLayout());
         aRows.Add(SourceHint());
         aRows.Add(SourceCapabilityFallback());
@@ -1034,6 +1036,96 @@ public static class SelfTest
         }
         catch (Exception e) { return new CheckRow("入口檔落地", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
         finally { try { Directory.Delete(aDir, true); } catch { } }
+    }
+
+    // 區塊職責：skill 鏡像的三件事 —— 枚舉判準、鏡像同步、**誰裝的**要分得開。
+    // 物理意義: 🩸 最後一項是這一格存在的主要理由：第一版把「帶 .ucl_source 的目錄」
+    //          併進 Orphan，於是頁面第一次跑就給 Bar 底下 26 個 UCL skill 各配一顆刪除鈕。
+    //          那不是顯示錯誤，是**一顆會刪掉別套系統資產的按鈕**。
+    static CheckRow SkillMirror()
+    {
+        string aBase = Path.Combine(Path.GetTempPath(), "senate_selftest_skills");
+        string aSrc = Path.Combine(aBase, "Skills~");
+        string aProj = Path.Combine(aBase, "proj");
+        var aTarget = SCP_SkillTarget.Claude;
+        try
+        {
+            if (Directory.Exists(aBase)) Directory.Delete(aBase, true);
+
+            // 源端：一個算數的、三個不算數的（_ 前綴／~ 結尾／缺 SKILL.md）
+            Directory.CreateDirectory(Path.Combine(aSrc, "good"));
+            File.WriteAllText(Path.Combine(aSrc, "good", "SKILL.md"), "# good\n");
+            File.WriteAllText(Path.Combine(aSrc, "good", "extra.md"), "before\n");
+            Directory.CreateDirectory(Path.Combine(aSrc, "_hidden"));
+            File.WriteAllText(Path.Combine(aSrc, "_hidden", "SKILL.md"), "x");
+            Directory.CreateDirectory(Path.Combine(aSrc, "tilde~"));
+            File.WriteAllText(Path.Combine(aSrc, "tilde~", "SKILL.md"), "x");
+            Directory.CreateDirectory(Path.Combine(aSrc, "noskill"));
+            File.WriteAllText(Path.Combine(aSrc, "noskill", "readme.md"), "x");
+
+            List<string> aFound = SCP_SkillSource.Discover(aSrc);
+            bool aEnum = aFound.Count == 1 && aFound[0] == "good";
+
+            // ① 安裝
+            var r1 = SCP_SkillInstall.Sync(aSrc, aTarget, aProj, "good");
+            string aDst = aTarget.SkillDir(aProj, "good");
+            bool aInstalled = r1.Ok && File.Exists(Path.Combine(aDst, "SKILL.md"))
+                              && File.Exists(Path.Combine(aDst, SCP_SkillSource.MarkerFileName));
+
+            // ② 冪等：再同步一次不寫任何檔
+            var r2 = SCP_SkillInstall.Sync(aSrc, aTarget, aProj, "good");
+            bool aIdem = r2.Ok && r2.Copied == 0 && r2.RemovedOrphanFiles == 0;
+
+            // ③ 源端改一個檔 ⇒ Stale ⇒ 同步後回 Synced；源端刪一個檔 ⇒ 安裝端跟著清
+            File.WriteAllText(Path.Combine(aSrc, "good", "SKILL.md"), "# good v2\n");
+            bool aStale = FindState(SCP_SkillInstall.Status(aSrc, aTarget, aProj), "good") == SCP_SkillState.Stale;
+            File.Delete(Path.Combine(aSrc, "good", "extra.md"));
+            var r3 = SCP_SkillInstall.Sync(aSrc, aTarget, aProj, "good");
+            bool aResynced = r3.Ok && r3.Copied == 1 && r3.RemovedOrphanFiles == 1
+                             && FindState(SCP_SkillInstall.Status(aSrc, aTarget, aProj), "good") == SCP_SkillState.Synced;
+
+            // ④ 誰裝的要分得開：我的殘留／別套裝的／沒人認領
+            MakeInstalled(aTarget, aProj, "mine-orphan", SCP_SkillSource.MarkerFileName);
+            MakeInstalled(aTarget, aProj, "ucl-thing", SCP_SkillInstall.LegacyMarkerFileName);
+            MakeInstalled(aTarget, aProj, "hand-placed", null);
+            List<SCP_SkillStatus> aRows2 = SCP_SkillInstall.Status(aSrc, aTarget, aProj);
+            bool aProvenance = FindState(aRows2, "mine-orphan") == SCP_SkillState.Orphan
+                               && FindState(aRows2, "ucl-thing") == SCP_SkillState.Foreign
+                               && FindState(aRows2, "hand-placed") == SCP_SkillState.Unmanaged;
+
+            // ⑤ 別套裝的 **連顯式放行都不刪**；沒標記的預設不刪
+            var rF = SCP_SkillInstall.Remove(aTarget, aProj, "ucl-thing", iAllowUnmanaged: true);
+            var rU = SCP_SkillInstall.Remove(aTarget, aProj, "hand-placed");
+            bool aRefuse = !rF.Ok && Directory.Exists(aTarget.SkillDir(aProj, "ucl-thing"))
+                           && !rU.Ok && Directory.Exists(aTarget.SkillDir(aProj, "hand-placed"));
+
+            // ⑥ 自己的殘留刪得掉
+            var rO = SCP_SkillInstall.Remove(aTarget, aProj, "mine-orphan");
+            bool aRemoveMine = rO.Ok && !Directory.Exists(aTarget.SkillDir(aProj, "mine-orphan"));
+
+            bool aOk = aEnum && aInstalled && aIdem && aStale && aResynced && aProvenance && aRefuse && aRemoveMine;
+            return new CheckRow("skill 鏡像",
+                $"枚舉判準（4 選 1）={aEnum}／安裝含標記={aInstalled}／再同步不寫檔={aIdem}／改源端=Stale:{aStale}"
+                + $"／同步後回 Synced 且清殘檔={aResynced}／誰裝的分得開（Orphan/Foreign/Unmanaged）={aProvenance}"
+                + $"／別套的連放行都不刪={aRefuse}／自己的殘留刪得掉={aRemoveMine}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow("skill 鏡像", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
+        finally { try { Directory.Delete(aBase, true); } catch { } }
+    }
+
+    static SCP_SkillState FindState(List<SCP_SkillStatus> iRows, string iName)
+    {
+        foreach (SCP_SkillStatus r in iRows) if (r.Name == iName) return r.State;
+        return SCP_SkillState.NotInstalled;
+    }
+
+    static void MakeInstalled(SCP_SkillTarget iTarget, string iProj, string iName, string? iMarker)
+    {
+        string aDir = iTarget.SkillDir(iProj, iName);
+        Directory.CreateDirectory(aDir);
+        File.WriteAllText(Path.Combine(aDir, "SKILL.md"), "x");
+        if (iMarker != null) File.WriteAllText(Path.Combine(aDir, iMarker), "{}");
     }
 
     /// <summary>顯示參數的 round-trip：存進 JSON 再讀回來要是同一份，且缺欄位用預設（不是 0）。</summary>

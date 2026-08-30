@@ -59,8 +59,19 @@ set +e
 code=$?
 set -e
 
-# ── 出廠驗收②：**真的開一次窗**（原生 DLL 的坑就是死在這一格）──
-echo '── 出廠驗收② 開窗（截圖後自動關）──────────────'
+# ── 出廠驗收②：**對 exe 跑自我對拍**（Tim 2026-08-30 拍板）────────
+# 🩸 為什麼加這一格：agent 改完 code 的驗證迴圈是 `dotnet run`（Debug DLL），
+#   而人跑的是這顆 exe（Release / self-contained / single-file）——**兩個不同的二進位檔**。
+#   「Debug 全綠」與「你手上這顆 exe 全綠」是兩本帳，而它們在畫面上長得一模一樣。
+#   ⇒ 把 selftest 綁在 build 上：驗收長在必經路上，不必靠誰記得跑。
+echo '── 出廠驗收② selftest（對 exe，不是對 Debug DLL）──'
+set +e
+"$root/senate.exe" selftest
+selftest=$?
+set -e
+
+# ── 出廠驗收③：**真的開一次窗**（原生 DLL 的坑就是死在這一格）──
+echo '── 出廠驗收③ 開窗（截圖後自動關）──────────────'
 set +e
 "$root/senate.exe" ui --screenshot "$root/build/build_check.png" > "$root/build/build_check.log" 2>&1
 gui=$?
@@ -73,9 +84,10 @@ else
 fi
 
 echo
-if [ "$code" -eq 0 ] && [ "$gui" -eq 0 ]; then
+if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ]; then
   echo '✓ 出廠驗收全過。開 GUI：./senate.exe ui --window（或直接雙擊 senate.exe 會印用法）'
 else
-  echo "⚠ 出廠驗收有項目未過（doctor=$code / gui=$gui）"
+  # 三格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
+  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui）"
 fi
-[ "$code" -eq 0 ] && [ "$gui" -eq 0 ]
+[ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ]

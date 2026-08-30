@@ -62,7 +62,13 @@ Write-Host '-- 出廠驗收(1) doctor -------------------------'
 & (Join-Path $root 'senate.exe') doctor
 $code = $LASTEXITCODE
 
-Write-Host '-- 出廠驗收(2) 開窗（截圖後自動關）------------'
+Write-Host '-- 出廠驗收(2) selftest（對 exe，不是對 Debug DLL）--'
+# 🩸 理由同 build.sh 的同一格：agent 驗的是 Debug DLL、人跑的是這顆 exe，
+#   兩者的「全綠」是兩本帳，而它們在畫面上長得一模一樣。
+& (Join-Path $root 'senate.exe') selftest
+$selftest = $LASTEXITCODE
+
+Write-Host '-- 出廠驗收(3) 開窗（截圖後自動關）------------'
 $shot = Join-Path $root 'build/build_check.png'
 $log = Join-Path $root 'build/build_check.log'
 & (Join-Path $root 'senate.exe') ui --screenshot $shot > $log 2>&1
@@ -74,9 +80,10 @@ else {
 }
 
 Write-Host ''
-if ($code -eq 0 -and $gui -eq 0) {
+if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0) {
     Write-Host '完成 出廠驗收全過。開 GUI：.\senate.exe ui --window'
     exit 0
 }
-Write-Host "警告 出廠驗收有項目未過（doctor=$code / gui=$gui）"
+# 三格分開印 -- 壓成一句「驗收未過」會讓人不知道要去看哪一格
+Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui）"
 exit 1

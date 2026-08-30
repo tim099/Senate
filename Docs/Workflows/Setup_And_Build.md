@@ -1,6 +1,6 @@
 ---
 title: 配置與建置流程
-description: setup / build 兩支腳本的職責邊界、出廠驗收要驗什麼、single-file 的真正判準（實測修正過一次）、產物與版控
+description: setup / build 兩支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收三格、single-file 的真正判準（實測修正過一次）、產物與版控
 last_updated: 2026-08-30
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
@@ -20,15 +20,53 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ---
 
+## ⛔ 改完 code 要驗，就**先 build 再對 exe 跑**（Tim 2026-08-30 拍板）
+
+**判準：你要交付的是 `senate.exe`，那驗收就必須跑在 `senate.exe` 上。**
+
+```bash
+./build.sh          # publish → 放根層 → 出廠驗收（doctor + selftest + 開窗）
+./senate.exe <你要驗的那件事>
+```
+
+### 為什麼這是一條規矩而不是建議
+
+`dotnet run --project src/Senate.Cli` 跑的是 **Debug、framework-dependent 的 DLL**
+（`src/Senate.Cli/bin/Debug/net10.0/`）；根層的 `senate.exe` 是
+**Release、self-contained、single-file**。**兩個不同的二進位檔。**
+
+⇒ 「我改完了、`selftest` 全綠」與「你手上那顆 exe 全綠」是**兩本帳**，
+而它們在畫面上長得**一模一樣**。
+
+> 🩸 **2026-08-30 的現場**：agent 整個下午的驗證迴圈都是 `dotnet run`，
+> 而 Tim 每次要測都得自己先跑一次 `build.sh` —— 他問「目前是如何驗證的」才發現
+> 那兩條路從來沒接起來。當天量到的另一格：published single-file 底下**反射照常運作**
+> （`頁面發現` 那項 exe 上也是 ✓）—— 那是讀數不是保證，所以更要每次都跑。
+
+⚠ `dotnet run` 不是不能用 —— 它是**迭代**用的（秒級）。
+但**收工前的那一次驗收必須是 exe**，而且報告裡要說清楚驗的是哪一個。
+「只驗過 Debug」是完全合法的交付狀態，把它講成「驗過了」才不是。
+
+---
+
 ## 出廠驗收：build 綠燈不算數
 
-`build` 的最後**真的跑兩件事**：
+`build` 的最後**真的跑三件事**（都跑在剛產出的那顆 exe 上）：
 
 1. `senate doctor` —— 證明那顆 exe 起得來、路徑解析對、設定讀得到
-2. `senate ui --screenshot build/build_check.png` —— **真的開一次窗**
+2. `senate selftest` —— 24 項自我對拍。**失敗回 exit 1，會讓整個 build 判未過**
+3. `senate ui --screenshot build/build_check.png` —— **真的開一次窗**
 
-⚠ 第 2 項不是裝飾。self-contained 最常壞的地方在執行期，而**文字模式照常運作**
+⚠ 第 3 項不是裝飾。self-contained 最常壞的地方在執行期，而**文字模式照常運作**
 ⇒ 開窗的錯只有真的去開窗才會現形（見下節血證）。
+
+⚠ 第 2 項是 2026-08-30 才加的。在那之前出廠驗收只有 doctor 與開窗 ——
+**那 24 項自我對拍從來沒有對 exe 跑過**。
+📌 修法選的是「長在必經路上」而不是「文件叫人記得跑」：
+第三階（記得注意）只在前兩階都做不到時才用，而這一格做得到第二階。
+
+三格**分開印**（`doctor=? / selftest=? / gui=?`）—— 壓成一句「驗收未過」
+會讓人不知道要去看哪一格。
 
 ---
 

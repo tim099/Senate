@@ -68,6 +68,36 @@ public sealed class SenateModel : ISCP_GuiAppContext
         typeof(SenateModel).Assembly,       // Senate.Cli
     };
 
+    /// <summary>
+    /// SCP_Core 在這個宿主的位置。Senate 是 `&lt;repo&gt;/SCP_Core`（submodule 掛載點）。
+    /// <para>⚠ 這是**這個宿主**的事實，不是通則 —— Unity 那側會是別的路徑。</para>
+    /// </summary>
+    public string CoreRoot => Path.Combine(m_RepoRoot, "SCP_Core").Replace('\\', '/');
+
+    /// <summary>
+    /// Senate 自己 —— skill 的預設安裝對象（早安流程之後要在**這裡**跑）。
+    /// <para>⚠ EditorRunning 給 null：這不是 Unity 專案，「量不到」比「沒在跑」誠實。</para>
+    /// </summary>
+    public SCP_GuiProjectRef HostProject => new SCP_GuiProjectRef("Senate（本專案）", m_RepoRoot);
+
+    /// <summary>
+    /// 可以被安裝的專案 —— 就是設定檔裡管的那批（走 Probe 的結果，順便帶 Editor 心跳）。
+    /// <para>⚠ 只列狀態 Ok 的：指向不存在磁碟的專案不該出現在「要裝進誰」的下拉裡。</para>
+    /// </summary>
+    public IReadOnlyList<SCP_GuiProjectRef> ManagedProjects
+    {
+        get
+        {
+            var aList = new List<SCP_GuiProjectRef>();
+            foreach (ProjectReading p in Projects)
+            {
+                if (p.State != ProbeState.Ok) continue;
+                aList.Add(new SCP_GuiProjectRef(p.Name, p.Root, p.EditorLikelyRunning));
+            }
+            return aList;
+        }
+    }
+
     public SenateModel(string iRepoRoot)
     {
         m_RepoRoot = iRepoRoot;
