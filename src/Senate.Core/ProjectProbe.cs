@@ -9,6 +9,7 @@
 //           護欄（core.quotepath / GIT_TERMINAL_PROMPT / 逾時 kill / process 登記）只能有一個落點，
 //           而第二份實作漏掉其中一格的症狀全是靜默的。
 using SCP.Core.Git;
+using SCP.Core.Paths;
 
 namespace Senate.Core;
 
@@ -94,20 +95,11 @@ public static class ProjectProbe
     /// </summary>
     public static string? ResolveAgentCommandsRoot(string iProjectRoot, string iSetting)
     {
-        string s = (iSetting ?? "").Trim();
-        if (s.Length > 0 && !s.Equals("auto", StringComparison.OrdinalIgnoreCase))
-            return Path.IsPathRooted(s) ? s.Replace('\\', '/') : Path.Combine(iProjectRoot, s).Replace('\\', '/');
-
-        string aPointer = Path.Combine(iProjectRoot, ".agentcommands_root.local");
-        if (File.Exists(aPointer))
-        {
-            foreach (string raw in File.ReadAllLines(aPointer))
-            {
-                string line = raw.Trim();
-                if (line.Length == 0 || line.StartsWith('#')) continue;
-                return line.Replace('\\', '/').TrimEnd('/');
-            }
-        }
-        return $"{iProjectRoot}/AgentCommands";
+        // ⚠ pointer 檔名與解析規則的唯一落點是 SCP_ProjectPaths（跨語言契約：python
+        //   `_lib/ucl_paths.py` 與 UCL C# `UCL_AgentCommandsPath` 讀同一個檔名）。
+        //   本函式只做「型別轉回字串」給既有呼叫端 —— 不要在這裡重寫規則。
+        if (string.IsNullOrWhiteSpace(iProjectRoot)) return null;
+        var (aRoot, _) = SCP_ProjectPaths.ResolveDataRoot(new SCP_ProjectRoot(iProjectRoot), iSetting);
+        return aRoot.Value;
     }
 }

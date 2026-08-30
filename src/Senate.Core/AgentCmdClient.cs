@@ -11,6 +11,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+using SCP.Core.Paths;
+
 namespace Senate.Core;
 
 /// <summary>一次 Cmd 派遣的等待結果。</summary>
@@ -29,25 +31,23 @@ public static class AgentCmdClient
     public const double DefaultWaitTimeoutSec = 120;
     public const double DefaultPollSec = 1.0;
 
-    /// <summary>沒帶身分時的 queue 資料夾名 —— run_cmd.py 的保留字，不可當 persona 用。</summary>
-    public const string AnonymousQueueId = "anonymous";
+    /// <summary>
+    /// 沒帶身分時的 queue 資料夾名 —— run_cmd.py 的保留字，不可當 persona 用。
+    /// <para>⚠ 值的定義在 <see cref="SCP_DataPaths.AnonymousQueueId"/>（跨端契約的唯一拼字處）；
+    /// 這裡只是既有呼叫端的別名。</para>
+    /// </summary>
+    public const string AnonymousQueueId = SCP_DataPaths.AnonymousQueueId;
 
     // ── 路徑樣板（persona 資料夾制，Tim 2026-08-01 拍板；與 run_cmd.py queue_path() 同形）──
 
     public static string QueueFolder(string iDataRoot, string? iPersona)
-    {
-        string aFolder = string.IsNullOrWhiteSpace(iPersona) ? AnonymousQueueId : iPersona.Trim();
-        // 路徑穿越防護：persona 來自 CLI，不擋的話是一條寫出 queues/ 之外的路。
-        if (aFolder.Contains("..") || aFolder.Contains('/') || aFolder.Contains('\\'))
-            aFolder = AnonymousQueueId;
-        return Path.Combine(iDataRoot, "queues", aFolder);
-    }
+        => SCP_DataPaths.QueueFolder(new SCP_DataRoot(iDataRoot), iPersona);
 
     public static string QueuePath(string iDataRoot, string? iPersona)
-        => Path.Combine(QueueFolder(iDataRoot, iPersona), "queue.json");
+        => SCP_DataPaths.QueueFile(new SCP_DataRoot(iDataRoot), iPersona);
 
     public static string TriggerPath(string iDataRoot, string? iPersona)
-        => Path.Combine(QueueFolder(iDataRoot, iPersona), "pending.trigger");
+        => SCP_DataPaths.TriggerFile(new SCP_DataRoot(iDataRoot), iPersona);
 
     public static string RunningPath(string iDataRoot, string? iPersona)
         => TriggerPath(iDataRoot, iPersona) + ".running";

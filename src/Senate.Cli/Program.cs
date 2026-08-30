@@ -10,6 +10,7 @@ using Senate.Core;
 using SCP.Core.Git;
 using SCP.Core.Gui;
 using SCP.Core.Proc;
+using SCP.Core.Paths;
 using Senate.Desktop;
 
 namespace Senate.Cli;
@@ -626,7 +627,7 @@ public static class Program
         {
             // 唯讀：印 trigger 狀態與 queue 殘量 —— 給「卡住了嗎」這一問一個讀數。
             Console.WriteLine($"· 專案 {aProj.Name}　資料根 {aDataRoot}");
-            string aQueuesDir = Path.Combine(aDataRoot, "queues");
+            string aQueuesDir = SCP_DataPaths.Queues(new SCP_DataRoot(aDataRoot));
             var aFolders = aPersona != null
                 ? new[] { AgentCmdClient.QueueFolder(aDataRoot, aPersona) }
                 : Directory.Exists(aQueuesDir) ? Directory.GetDirectories(aQueuesDir) : Array.Empty<string>();

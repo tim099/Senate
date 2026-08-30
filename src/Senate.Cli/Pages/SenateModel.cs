@@ -7,13 +7,15 @@
 //           而不是一顆按了沒事發生的裝飾。
 // 數值影響：Refresh() 會跑 git status／stat 心跳檔（唯讀）。RefreshCount 是讀數 ——
 //           agent 或人按了之後可以確認「真的重跑了」，而不是靠畫面看起來一樣就以為沒動。
+using System.Reflection;
 using Senate.Core;
 using SCP.Core.Git;
 using SCP.Core.Gui;
+using SCP.Core.Prefs;
 
 namespace Senate.Cli.Pages;
 
-public sealed class SenateModel
+public sealed class SenateModel : ISCP_GuiAppContext
 {
     readonly string m_RepoRoot;
 
@@ -36,11 +38,46 @@ public sealed class SenateModel
     /// <summary>上一次改尺寸的結果（成功或失敗都要有話說；null ＝ 這次還沒人改過）。</summary>
     public string? StyleMessage { get; private set; }
 
+    /// <summary>
+    /// 專案層設定（<c>ISCP_GuiAppContext</c> 的一格）。
+    /// <para>⚠ 這裡是**唯一**決定「prefs 落在哪個檔」的地方 —— 頁面拿到的是介面，
+    /// 它不知道也不該知道檔名。搬進 SCP_Core 的頁面因此不會綁死在 Senate 的檔案佈局上。</para>
+    /// </summary>
+    public ISCP_Prefs Prefs { get; }
+
+    /// <summary>
+    /// 尺寸頁底下那幾句**只在 Senate 為真**的註腳。
+    /// <para>⚠ 它們刻意不寫在 SCP_GuiStylePage 裡：`--scale` 是 CLI 的旗標、
+    /// `senate.local.json` 是這個宿主的檔名 —— Unity 那側讀到會去找一個不存在的東西，
+    /// 而那種假話不報錯。</para>
+    /// </summary>
+    public IReadOnlyList<string> StyleNotes { get; } = new[]
+    {
+        "純文字輸出的寬度不吃這個 scale —— 終端機的一格是字元不是像素（要調用 --width）。",
+        "常設值存在 senate.local.json 的 ui 區塊；--scale / --size 是一次性覆寫，不寫回檔案。",
+    };
+
+    /// <summary>
+    /// 頁面發現要掃的 assembly —— **顯式列出**，不掃「現在載了哪些」。
+    /// <para>SCP_Core（框架頁）＋ Senate.Cli（宿主自己的頁）兩顆。加了新的頁面 assembly 要補在這裡；
+    /// 補漏的代價只是那顆不被檢查，不會壞掉。</para>
+    /// </summary>
+    public IReadOnlyList<Assembly> PageAssemblies { get; } = new[]
+    {
+        typeof(SCP_GuiToolPage).Assembly,   // SCP_Core
+        typeof(SenateModel).Assembly,       // Senate.Cli
+    };
+
     public SenateModel(string iRepoRoot)
     {
         m_RepoRoot = iRepoRoot;
         Env = null!;
         Projects = new List<ProjectReading>();
+        // 「哪個 section 住哪個檔」是**宿主的決定** —— 頁面只看得到 ISCP_Prefs。
+        // awakening 走轉接頭而不是直接寫 senate.local.json：那個檔的寫入端只能有一個
+        //（SenateConfig.Save 有它的 Extra 欄位保留，兩個寫入端會互相吃掉對方的東西）。
+        Prefs = new SCP_RoutedPrefs(new SCP_JsonPrefs(SenatePageStore.DefaultPath(iRepoRoot)))
+            .Route(SenateAwakeningPrefs.SectionName, new SenateAwakeningPrefs(iRepoRoot));
         Style = SenateUiStore.Load(iRepoRoot, w => Console.Error.WriteLine($"⚠ {w}"));
         Refresh();
     }
@@ -56,6 +93,14 @@ public sealed class SenateModel
         var (aOk, aMsg) = SenateUiStore.Save(m_RepoRoot, Style);
         StyleMessage = (aOk ? "✓ " : "⚠ ") + aMsg;
     }
+
+    /// <summary>
+    /// <see cref="ISCP_GuiAppContext.ApplyStyle"/> 的實作 —— 就是 <see cref="ApplySize"/>。
+    /// <para>⚠ 保留兩個名字是**過渡**：介面用 <c>ApplyStyle</c>（框架語彙），
+    /// 既有呼叫端還在用 <c>ApplySize</c>。頁面全部改吃介面之後刪掉 <c>ApplySize</c>，
+    /// 不要讓兩個名字長期並存 —— 兩個入口遲早會有一個漏掉新加的動作。</para>
+    /// </summary>
+    public void ApplyStyle(SCP_GuiSize iSize) { ApplySize(iSize); }
 
     public void Refresh()
     {

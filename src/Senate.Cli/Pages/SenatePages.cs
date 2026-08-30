@@ -15,7 +15,7 @@ namespace Senate.Cli.Pages;
 public static class SenatePages
 {
     /// <summary>根頁的 key —— stack 的第一層永遠是它。</summary>
-    public const string RootKey = HomePage.PageKey;
+    public const string RootKey = SCP_GuiHomePage.PageKey;
 
     /// <summary>
     /// 建這個 app 的頁面目錄。
@@ -28,13 +28,13 @@ public static class SenatePages
         var aCatalog = new SCP_GuiPageCatalog();
         // 入口頁要拿著目錄才畫得出清單 ⇒ 用閉包把 aCatalog 帶進去
         //（它自己 MenuGroup = null，所以不會把自己列進自己的清單 —— 同 UCL 排除 EditorMenuPage 那一格）
-        aCatalog.Register(HomePage.PageKey, () => new HomePage(iModel, aCatalog));
+        aCatalog.Register(SCP_GuiHomePage.PageKey, () => new SCP_GuiHomePage(iModel, aCatalog));
         aCatalog.Register(DoctorPage.PageKey, () => new DoctorPage(iModel));
         aCatalog.Register(SubmoduleSyncPage.PageKey, () => new SubmoduleSyncPage(iModel));
-        aCatalog.Register(StylePage.PageKey, () => new StylePage(iModel));
+        aCatalog.Register(SCP_GuiStylePage.PageKey, () => new SCP_GuiStylePage(iModel));
         aCatalog.Register(SettingsPage.PageKey, () => new SettingsPage(iModel));
         aCatalog.Register(ProjectsPage.PageKey, () => new ProjectsPage(iModel));
-        aCatalog.Register(LoginStatusPage.PageKey, () => new LoginStatusPage(iModel));
+        aCatalog.Register(SCP_GuiLoginStatusPage.PageKey, () => new SCP_GuiLoginStatusPage(iModel));
         return aCatalog;
     }
 

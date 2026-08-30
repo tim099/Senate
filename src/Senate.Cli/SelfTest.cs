@@ -7,7 +7,13 @@
 using Senate.Core;
 using SCP.Core.Gui;
 using SCP.Core.Json;
+using SCP.Core.Paths;
+using SCP.Core.Prefs;
+using SCP.Core.Entry;
+using SCP.Core.Letters;
 using SCP.Core.Reflect;
+
+using Senate.Cli.Pages;
 
 namespace Senate.Cli;
 
@@ -23,6 +29,9 @@ public static class SelfTest
         aRows.Add(MissingSemantics());
         aRows.Add(WriterStability());
         aRows.Add(ConfigRoundTripKeepsUnknownKeys());
+        aRows.Add(PrefsThreeStates());
+        aRows.Add(PrefsKeepsOtherSections());
+        aRows.Add(PathsSingleSource());
         aRows.Add(StyleRoundTrip());
         aRows.Add(PageStack());
         aRows.Add(TypeSchemaShape());
@@ -31,10 +40,15 @@ public static class SelfTest
         aRows.Add(FoldSemantics());
         aRows.Add(DropdownWidget());
         aRows.Add(PageCatalogShape());
+        aRows.Add(PageDiscovery());
+        aRows.Add(EntryDocBlock());
+        aRows.Add(EntryDocDefects());
+        aRows.Add(EntryDocInstallIo());
         aRows.Add(RowLayout());
         aRows.Add(SourceHint());
         aRows.Add(SourceCapabilityFallback());
         aRows.AddRange(RealFileRoundTrip(iProjects));
+        aRows.AddRange(RealPersonaScan(iProjects));
         return aRows;
     }
 
@@ -607,6 +621,7 @@ public static class SelfTest
     }
 
     /// <summary>對拍用：**顯式** <c>: base()</c> 的假頁（用來量 CallerFilePath 有沒有被填）。</summary>
+    [SCP_PageIgnore("自我對拍用的探針頁（驗 [CallerFilePath] 退路），不是給人開的頁")]
     sealed class ProbeSourcePage : SCP_GuiToolPage
     {
         public ProbeSourcePage() : base() { }
@@ -615,6 +630,7 @@ public static class SelfTest
     }
 
     /// <summary>對拍用的假工具頁。</summary>
+    [SCP_PageIgnore("自我對拍用的探針頁，不是給人開的頁")]
     sealed class ProbeToolPage : SCP_GuiToolPage
     {
         readonly string m_Key;
@@ -631,6 +647,7 @@ public static class SelfTest
     }
 
     /// <summary>對拍用的假頁 —— 把生命週期呼叫記成可比對的字串。</summary>
+    [SCP_PageIgnore("自我對拍用的探針頁，不是給人開的頁")]
     sealed class ProbePage : SCP_GuiPage
     {
         readonly string m_Key;
@@ -681,6 +698,342 @@ public static class SelfTest
         }
         catch (Exception e) { return new CheckRow("設定檔 round-trip", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
         finally { try { File.Delete(aPath); } catch { /* 暫存檔刪不掉不影響判定 */ } }
+    }
+
+    // 區塊職責：prefs 的**三態**要真的分得開 —— 這是它跟 PlayerPrefs 的全部差別。
+    // 物理意義：PlayerPrefs 的病是「key 打錯」與「沒設定過」同形，兩者都靜靜回預設值。
+    //          本層要求：沒設定 ⇒ Missing、型別不符 ⇒ ReadError、讀到 ⇒ Present，
+    //          而 Get() 用預設值是**顯式選擇**（呼叫端寫出來的），不是預設行為。
+    // 數值影響：純暫存檔讀寫，跑完刪掉。
+    static CheckRow PrefsThreeStates()
+    {
+        string aPath = Path.Combine(Path.GetTempPath(), "senate_selftest_prefs_states.json");
+        var aKey = SCP_PrefKey.String("awakening", "lettersRoot", "(預設)");
+        var aNum = SCP_PrefKey.Long("awakening", "lettersRoot", 0);   // 同名不同型 ⇒ 要 ReadError
+        try
+        {
+            try { File.Delete(aPath); } catch { /* 本來就不存在是正常的 */ }
+            var aPrefs = new SCP_JsonPrefs(aPath);
+
+            // ① 檔還不存在 ⇒ Missing（不是空字串、不是錯誤）
+            var aBefore = aPrefs.Read(aKey);
+            bool aMissingOk = aBefore.State == SCP_PrefState.Missing;
+            bool aDefaultExplicit = aPrefs.Get(aKey) == "(預設)";
+
+            // ② 寫進去 ⇒ Present，而且值就是寫進去的那個
+            var (aWroteOk, aWroteMsg) = aPrefs.Write(aKey, "D:/Unity/Bar/AgentCommands/ChatTavern/baton/letters");
+            var aAfter = aPrefs.Read(aKey);
+            bool aPresentOk = aAfter.State == SCP_PrefState.Present
+                              && aAfter.Value.EndsWith("baton/letters", StringComparison.Ordinal);
+
+            // ③ 用錯型別讀 ⇒ ReadError（**不是** Missing —— 那會讓人以為補上就好，實際會被舊值蓋掉）
+            var aWrongType = aPrefs.Read(aNum);
+            bool aErrorOk = aWrongType.State == SCP_PrefState.ReadError
+                            && aWrongType.Error != null
+                            && aWrongType.Error.Contains("awakening.lettersRoot", StringComparison.Ordinal);
+
+            bool aOk = aMissingOk && aDefaultExplicit && aPresentOk && aWroteOk && aErrorOk;
+            return new CheckRow("prefs 三態",
+                $"未設定=Missing:{aMissingOk}／顯式 Get 用預設:{aDefaultExplicit}／寫後=Present:{aPresentOk}"
+                + $"／型別不符=ReadError 且訊息帶 key:{aErrorOk}／寫入回報:{(aWroteOk ? "ok" : aWroteMsg)}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow("prefs 三態", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
+        finally { try { File.Delete(aPath); } catch { /* 暫存檔刪不掉不影響判定 */ } }
+    }
+
+    // 區塊職責：寫一個 section **不可以動到別人的 section**，未知欄位也要活著。
+    // 物理意義：🩸 直接 WriteAllText 覆蓋會把別人的區塊一起帶走，而檔案仍然是合法 JSON、
+    //          仍然讀得起來 —— 沒有任何一層會報錯。這一格就是那個失敗的探針。
+    static CheckRow PrefsKeepsOtherSections()
+    {
+        string aPath = Path.Combine(Path.GetTempPath(), "senate_selftest_prefs_sections.json");
+        const string aSrc = """
+            {
+              "//": "手寫註解，不可以被吃掉",
+              "别页": { "keep": "別頁存的東西", "未來欄位": 42 },
+              "awakening": { "lettersRoot": "舊值" }
+            }
+            """;
+        try
+        {
+            File.WriteAllText(aPath, aSrc);
+            var aPrefs = new SCP_JsonPrefs(aPath);
+            var (aOkWrite, aMsg) = aPrefs.Write(SCP_PrefKey.String("awakening", "lettersRoot"), "新值");
+            string aBack = File.ReadAllText(aPath);
+
+            bool aNote = aBack.Contains("手寫註解", StringComparison.Ordinal);
+            bool aOther = aBack.Contains("別頁存的東西", StringComparison.Ordinal);
+            bool aFuture = aBack.Contains("未來欄位", StringComparison.Ordinal);
+            bool aNew = aPrefs.Read(SCP_PrefKey.String("awakening", "lettersRoot")).Value == "新值";
+
+            bool aOk = aOkWrite && aNote && aOther && aFuture && aNew;
+            return new CheckRow("prefs 只動自己那格",
+                $"根層註解保留={aNote}／別的 section 保留={aOther}／未知欄位保留={aFuture}／新值回讀={aNew}"
+                + (aOkWrite ? "" : $"／寫入失敗：{aMsg}"),
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow("prefs 只動自己那格", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
+        finally { try { File.Delete(aPath); } catch { /* 暫存檔刪不掉不影響判定 */ } }
+    }
+
+    // 區塊職責：路徑解析**只有一個落點** —— 這一格就是「兩處各算一次」的探針。
+    // 物理意義：目錄名散在多處拼字時，改一處漏一處**不會報錯**：
+    //          `senate cmd status` 會去掃一個空目錄然後印「沒有東西卡住」，
+    //          而那跟真的沒卡住一模一樣。⇒ 這裡逐條比對「舊呼叫端」與「新解析器」給的答案。
+    // 數值影響：純字串，零 IO（pointer 那格用暫存目錄，跑完刪掉）。
+    static CheckRow PathsSingleSource()
+    {
+        const string aData = "D:/Unity/Bar/AgentCommands";
+        var aRoot = new SCP_DataRoot(aData);
+
+        // ① 舊入口（AgentCmdClient）與新解析器必須逐字同意 —— 不同意就是有人還在自己算
+        bool aQueueAgrees = AgentCmdClient.QueueFolder(aData, "basecamp") == SCP_DataPaths.QueueFolder(aRoot, "basecamp")
+                            && AgentCmdClient.QueuePath(aData, "basecamp") == SCP_DataPaths.QueueFile(aRoot, "basecamp")
+                            && AgentCmdClient.TriggerPath(aData, "basecamp") == SCP_DataPaths.TriggerFile(aRoot, "basecamp");
+
+        // ② status 分支掃的目錄，必須是 QueueFolder 的父層（漏改的那格就是在這裡分岔）
+        bool aQueuesDirAgrees = SCP_DataPaths.QueueFolder(aRoot, "basecamp")
+                                    .StartsWith(SCP_DataPaths.Queues(aRoot) + "/", StringComparison.Ordinal);
+
+        // ③ 路徑穿越：persona 來自 CLI，`..` 一定要被擋回 anonymous
+        bool aTraversalBlocked = SCP_DataPaths.SafeQueueId("../../etc") == SCP_DataPaths.AnonymousQueueId
+                                 && SCP_DataPaths.SafeQueueId("  ") == SCP_DataPaths.AnonymousQueueId
+                                 && SCP_DataPaths.SafeQueueId("basecamp") == "basecamp";
+
+        // ④ 根正規化：反斜線與尾斜線不可以生出第二種寫法
+        bool aNormalised = new SCP_DataRoot(@"D:\Unity\Bar\AgentCommands\").Value == aData
+                           && new SCP_DataRoot("D:/Unity/Bar/AgentCommands/").Value == aData;
+
+        // ⑤ 舊的 letters 入口與新解析器同意（SCP_WakeLetters 已退化成外殼）
+        var aLetters = SCP_DataPaths.Letters(aRoot);
+        bool aLettersAgrees = SCP_WakeLetters.ConstitutionPath(aLetters.Value, "basecamp")
+                              == SCP_LettersPaths.ConstitutionPath(aLetters, "basecamp");
+
+        // ⑥ 資料根三種來源不得同形（Configured / Pointer / Convention）
+        string aTmpProj = Path.Combine(Path.GetTempPath(), "senate_selftest_proj");
+        bool aOriginOk;
+        try
+        {
+            Directory.CreateDirectory(aTmpProj);
+            var aProj = new SCP_ProjectRoot(aTmpProj);
+            var aConv = SCP_ProjectPaths.ResolveDataRoot(aProj, "auto");
+            File.WriteAllText(SCP_ProjectPaths.DataRootPointer(aProj),
+                "# 註解行（pointer 檔允許註解與空行，解析要跳過）\n\nD:/別的地方/AgentCommands\n");
+            var aPtr = SCP_ProjectPaths.ResolveDataRoot(aProj, "auto");
+            var aCfg = SCP_ProjectPaths.ResolveDataRoot(aProj, "D:/顯式指定");
+            aOriginOk = aConv.Origin == SCP_ProjectPaths.DataRootOrigin.Convention
+                        && aPtr.Origin == SCP_ProjectPaths.DataRootOrigin.Pointer
+                        && aPtr.Root.Value == "D:/別的地方/AgentCommands"
+                        && aCfg.Origin == SCP_ProjectPaths.DataRootOrigin.Configured;
+        }
+        catch (Exception e) { return new CheckRow("路徑單一落點", $"pointer 那格例外：{e.Message}", CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmpProj, true); } catch { /* 暫存目錄刪不掉不影響判定 */ } }
+
+        bool aOk = aQueueAgrees && aQueuesDirAgrees && aTraversalBlocked && aNormalised && aLettersAgrees && aOriginOk;
+        return new CheckRow("路徑單一落點",
+            $"queue 舊新一致={aQueueAgrees}／status 掃的是父層={aQueuesDirAgrees}／穿越擋回 anonymous={aTraversalBlocked}"
+            + $"／根正規化={aNormalised}／letters 舊新一致={aLettersAgrees}／資料根三來源可分={aOriginOk}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：反射發現**真的會叫** —— 而且常態下不叫。
+    // 物理意義: 🩸 這一格存在的理由：「畫面上沒有紅字」有兩種成因 ——
+    //          真的沒漏登記，或**這支檢查根本沒在跑**。兩者在畫面上一模一樣。
+    //          ⇒ 一定要有一次「故意漏掉」的讀數，證明它會叫。
+    // 數值影響: 純反射，零 IO。
+    static CheckRow PageDiscovery()
+    {
+        var aAsms = new[] { typeof(SCP_GuiToolPage).Assembly, typeof(SenateModel).Assembly };
+
+        // ① 完整目錄 ⇒ 零筆（探針頁靠 [SCP_PageIgnore] 排除，不是靠命名）
+        var aModel = new SenateModel(SenateRepoRoot());
+        var aFull = SenatePages.BuildCatalog(aModel);
+        List<string> aQuiet = aFull.Discover(aAsms);
+
+        // ② 故意漏登記一頁 ⇒ 必須點名它（含 key），而不是靜靜通過
+        var aPartial = new SCP_GuiPageCatalog();
+        aPartial.Register(SCP_GuiHomePage.PageKey, () => new SCP_GuiHomePage(aModel, aPartial));
+        List<string> aLoud = aPartial.Discover(aAsms);
+        bool aNamesIt = false;
+        foreach (string d in aLoud)
+            if (d.Contains(SCP_GuiLoginStatusPage.PageKey, StringComparison.Ordinal)
+                && d.Contains("沒有登記", StringComparison.Ordinal)) { aNamesIt = true; break; }
+
+        // ③ [SCP_PageIgnore] 真的有排除（探針頁在同一顆 assembly 裡）
+        bool aIgnoreWorks = true;
+        foreach (string d in aLoud)
+            if (d.Contains("ProbeToolPage", StringComparison.Ordinal)) { aIgnoreWorks = false; break; }
+
+        bool aOk = aQuiet.Count == 0 && aNamesIt && aIgnoreWorks;
+        return new CheckRow("頁面發現（反射）",
+            $"完整目錄零噪音={aQuiet.Count == 0}（{aQuiet.Count} 筆）／故意漏一頁會點名它={aNamesIt}"
+            + $"（漏掉時報 {aLoud.Count} 筆）／[SCP_PageIgnore] 有排除探針={aIgnoreWorks}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>Senate repo 根 —— selftest 自己要建 model 時用（走執行檔位置往上找 senate.slnx）。</summary>
+    static string SenateRepoRoot()
+    {
+        var aDir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (DirectoryInfo? d = aDir; d != null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "Senate.slnx"))) return d.FullName;
+        return AppContext.BaseDirectory;   // 找不到就用執行目錄（Discover 不吃這個值，只有 model 建構要）
+    }
+
+    // 區塊職責：入口檔受管區塊的**七種狀態**要真的分得開，而且使用者的字一個都不能掉。
+    // 物理意義: 這一層動的是**使用者的檔**（CLAUDE.md），源端沒有副本 —— 寫壞只能靠 git，
+    //          而消費端不一定有 git。⇒ 每一條規則都要有自己的讀數。
+    static CheckRow EntryDocBlock()
+    {
+        const string aBody1 = "## SCP_Core 共用規則\n\n請先讀 <SCP_Core>/Docs~/Coding_Standards.md。";
+        const string aBody2 = "## SCP_Core 共用規則\n\n（第二版：多了一行）";
+
+        // ① 檔不存在 ⇒ 新建，檔頭就是 BEGIN（使用者區為空）
+        string aFresh = SCP_EntryDoc.Apply(null, aBody1, "claude", "ClaudeTemplate/CLAUDE.md");
+        bool aHeadIsBegin = aFresh.StartsWith(SCP_EntryDoc.BeginToken, StringComparison.Ordinal);
+
+        // ② 既有使用者內容 ⇒ append 在後面，前面一個字都不動
+        const string aUser = "# 我自己的規則\n\nAAAA";
+        string aAppended = SCP_EntryDoc.Apply(aUser, aBody1, "claude", "t");
+        bool aUserKept = aAppended.StartsWith("# 我自己的規則\n\nAAAA\n\n", StringComparison.Ordinal);
+        bool aSynced = SCP_EntryDoc.Parse(aAppended, aBody1).State == SCP_EntryState.Synced;
+
+        // ③ END 之後使用者又補了東西 ⇒ 更新受管區塊，**那段要活著**（Tim 拍板：保留）
+        string aWithTail = aAppended.TrimEnd('\n') + "\n\n## 我後來加的\n\nZZZZ\n";
+        string aUpdated = SCP_EntryDoc.Apply(aWithTail, aBody2, "claude", "t");
+        bool aTailKept = aUpdated.Contains("ZZZZ", StringComparison.Ordinal)
+                         && aUpdated.Contains("AAAA", StringComparison.Ordinal)
+                         && !aUpdated.Contains("第二版", StringComparison.Ordinal) == false;
+        bool aOnlyOneBlock = CountSub(aUpdated, SCP_EntryDoc.BeginToken) == 1;
+
+        // ④ 冪等：同樣的內容套兩次要逐字相同（不然每次同步都產生假 diff）
+        string aTwice = SCP_EntryDoc.Apply(aUpdated, aBody2, "claude", "t");
+        bool aIdempotent = aTwice == aUpdated;
+
+        // ⑤ 移除：受管區塊切掉，前後的使用者內容都在
+        string aRemoved = SCP_EntryDoc.Remove(aUpdated);
+        bool aRemoveOk = !aRemoved.Contains(SCP_EntryDoc.BeginToken, StringComparison.Ordinal)
+                         && aRemoved.Contains("AAAA", StringComparison.Ordinal)
+                         && aRemoved.Contains("ZZZZ", StringComparison.Ordinal);
+
+        // ⑥ CRLF 進來也要判得出 Synced（autocrlf 不可以造成幻影 Stale）
+        bool aCrlfOk = SCP_EntryDoc.Parse(aAppended.Replace("\n", "\n"), aBody1).State == SCP_EntryState.Synced;
+
+        bool aOk = aHeadIsBegin && aUserKept && aSynced && aTailKept && aOnlyOneBlock
+                   && aIdempotent && aRemoveOk && aCrlfOk;
+        return new CheckRow("入口檔區塊",
+            $"新檔檔頭是 BEGIN={aHeadIsBegin}／既有內容不動={aUserKept}／判 Synced={aSynced}"
+            + $"／END 後的字活著={aTailKept}／只有一個區塊={aOnlyOneBlock}／套兩次逐字相同={aIdempotent}"
+            + $"／移除後前後都在={aRemoveOk}／CRLF 不造成幻影 Stale={aCrlfOk}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：**壞掉的形狀要停手**，而且七態不得同形。
+    // 物理意義: 「挑第一個修」「猜他想放哪」這兩種好心，會留下另一個還在生效的區塊
+    //          而畫面顯示綠燈 —— 那是這一層最貴的錯法。
+    static CheckRow EntryDocDefects()
+    {
+        const string aBody = "## 受管內容";
+        string aGood = SCP_EntryDoc.Apply(null, aBody, "claude", "t");
+
+        // ① 兩個區塊 ⇒ Duplicated（停手）
+        bool aDup = SCP_EntryDoc.Parse(aGood + "\n" + aGood, aBody).State == SCP_EntryState.Duplicated;
+
+        // ② 只有 BEGIN 沒有 END ⇒ MarkerBroken
+        string aNoEnd = aGood.Replace(SCP_EntryDoc.EndToken, "");
+        bool aBroken = SCP_EntryDoc.Parse(aNoEnd, aBody).State == SCP_EntryState.MarkerBroken;
+
+        // ③ 區塊被手改 ⇒ LocalEdit（**不是** Stale：Stale 覆寫安全，這個會吃掉人寫的字）
+        string aEdited = aGood.Replace("## 受管內容", "## 受管內容（我加了一句）");
+        SCP_EntryParse aE = SCP_EntryDoc.Parse(aEdited, aBody);
+        bool aLocalEdit = aE.State == SCP_EntryState.LocalEdit && aE.Detail.Contains("sha", StringComparison.Ordinal);
+
+        // ④ 來源更新 ⇒ Stale（可安全覆寫）
+        bool aStale = SCP_EntryDoc.Parse(aGood, aBody + "\n\n多一行").State == SCP_EntryState.Stale;
+
+        // ⑤ 🩸 遷移：整份就是舊版整檔安裝 ⇒ NeedsMigration，而 Apply **不會**變成兩份
+        //    （本 repo 的 CLAUDE.md 實測就是這個形狀 —— 2026-08-30 與 template 逐字相同）
+        string aLegacy = "# 專案規則\n\n這是舊版整檔安裝的內容。";
+        bool aMigrate = SCP_EntryDoc.Parse(aLegacy, aLegacy).State == SCP_EntryState.NeedsMigration;
+        string aMigrated = SCP_EntryDoc.Apply(aLegacy, aLegacy, "claude", "t");
+        bool aNoDouble = CountSub(aMigrated, "這是舊版整檔安裝的內容") == 1;
+
+        // ⑥ 有內容但不是舊版安裝 ⇒ NotInstalled（會 append，不會遷移）
+        bool aPlain = SCP_EntryDoc.Parse("# 使用者自己寫的\n", aBody).State == SCP_EntryState.NotInstalled;
+
+        bool aOk = aDup && aBroken && aLocalEdit && aStale && aMigrate && aNoDouble && aPlain;
+        return new CheckRow("入口檔異常形狀",
+            $"兩個區塊=Duplicated:{aDup}／缺 END=MarkerBroken:{aBroken}／手改=LocalEdit:{aLocalEdit}"
+            + $"／來源更新=Stale:{aStale}／舊版整檔=NeedsMigration:{aMigrate}（遷移後不重複:{aNoDouble}）"
+            + $"／一般檔=NotInstalled:{aPlain}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    static int CountSub(string iText, string iSub)
+    {
+        int n = 0, i = 0;
+        while ((i = iText.IndexOf(iSub, i, StringComparison.Ordinal)) >= 0) { n++; i += iSub.Length; }
+        return n;
+    }
+
+    // 區塊職責：真的寫一次檔 —— 純函式對了不代表落地對（三本帳的第三本）。
+    // 物理意義: 這是唯一會動使用者手寫檔的地方，所以要驗的是「不敢寫的時候真的沒寫」。
+    static CheckRow EntryDocInstallIo()
+    {
+        string aDir = Path.Combine(Path.GetTempPath(), "senate_selftest_entry");
+        string aPath = Path.Combine(aDir, "CLAUDE.md");
+        const string aBody = "## SCP_Core 共用規則\n\n指路：<SCP_Core>/Docs~/Coding_Standards.md";
+        try
+        {
+            Directory.CreateDirectory(aDir);
+            foreach (string f in Directory.GetFiles(aDir)) File.Delete(f);
+
+            // ① 新檔
+            var r1 = SCP_EntryDocInstaller.Install(aPath, aBody, "claude", "t");
+            bool aCreated = r1.Ok && r1.Changed && File.Exists(aPath) && r1.BackupPath == null;
+
+            // ② 冪等：再跑一次不動檔（不製造假 diff）
+            var r2 = SCP_EntryDocInstaller.Install(aPath, aBody, "claude", "t");
+            bool aIdem = r2.Ok && !r2.Changed;
+
+            // ③ 使用者在前後各加東西 ⇒ 更新只動中間那段，而且**第一次改動前有備份**
+            string aUserEdited = "# 我的規則\n\nAAAA\n\n" + File.ReadAllText(aPath).TrimEnd() + "\n\n## 尾巴\n\nZZZZ\n";
+            File.WriteAllText(aPath, aUserEdited);
+            var r3 = SCP_EntryDocInstaller.Install(aPath, aBody + "\n\n（新版）", "claude", "t");
+            string aAfter = File.ReadAllText(aPath);
+            bool aKeptBoth = r3.Ok && r3.Changed
+                             && aAfter.Contains("AAAA", StringComparison.Ordinal)
+                             && aAfter.Contains("ZZZZ", StringComparison.Ordinal)
+                             && aAfter.Contains("（新版）", StringComparison.Ordinal);
+            bool aBackedUp = r3.BackupPath != null && File.Exists(r3.BackupPath!);
+
+            // ④ 手改受管區塊 ⇒ **不敢寫**，而且檔案真的沒被動過
+            string aTampered = aAfter.Replace("（新版）", "（我手改的）");
+            File.WriteAllText(aPath, aTampered);
+            var r4 = SCP_EntryDocInstaller.Install(aPath, aBody, "claude", "t");
+            bool aRefused = !r4.Ok && r4.StateBefore == SCP_EntryState.LocalEdit
+                            && File.ReadAllText(aPath) == aTampered;
+
+            // ⑤ force ⇒ 才動
+            var r5 = SCP_EntryDocInstaller.Install(aPath, aBody, "claude", "t", iForce: true);
+            bool aForced = r5.Ok && r5.Changed;
+
+            // ⑥ 移除 ⇒ 使用者的字全在
+            var r6 = SCP_EntryDocInstaller.Uninstall(aPath, aBody);
+            string aRemoved = File.ReadAllText(aPath);
+            bool aClean = r6.Ok && aRemoved.Contains("AAAA", StringComparison.Ordinal)
+                          && aRemoved.Contains("ZZZZ", StringComparison.Ordinal)
+                          && !aRemoved.Contains(SCP_EntryDoc.BeginToken, StringComparison.Ordinal);
+
+            bool aOk = aCreated && aIdem && aKeptBoth && aBackedUp && aRefused && aForced && aClean;
+            return new CheckRow("入口檔落地",
+                $"新建={aCreated}／再跑不動檔={aIdem}／前後使用者內容都活著={aKeptBoth}／有備份={aBackedUp}"
+                + $"／手改時拒寫且檔案沒動={aRefused}／force 才動={aForced}／移除後使用者的字全在={aClean}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow("入口檔落地", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
+        finally { try { Directory.Delete(aDir, true); } catch { } }
     }
 
     /// <summary>顯示參數的 round-trip：存進 JSON 再讀回來要是同一份，且缺欄位用預設（不是 0）。</summary>
@@ -748,6 +1101,43 @@ public static class SelfTest
         if (!aAny)
             yield return new CheckRow("讀真檔",
                 "找不到樣本（沒有可用專案或該專案沒有 commands_schema.json）—— **這是跳過，不是通過**",
+                CheckResult.Skipped);
+    }
+
+    // 區塊職責：拿**真的信件庫**掃一次 —— 移植（System.Text.Json → SCP_Json）之後最重要的一格。
+    // 物理意義：共用層的第一個責任是「讀得懂既有資料」，而那些 lock json 是 awakening 端寫的。
+    //          ⇒ 驗收方式是拿真檔案跑，不是自己造樣本（同 SCP_Json 當初的驗收）。
+    // ⚠ 找不到樣本回 Skipped **不是 Pass** —— 「沒測」與「測過而且對」同形是這裡最貴的錯。
+    // 📌 三態那條也在這裡驗：掃到 0 個人 ⇒ Fail（信件庫應該有人），
+    //    而「量不到」要能從 Problems 看出來，不可以靜靜變成「全體離線」。
+    static IEnumerable<CheckRow> RealPersonaScan(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            var aLetters = SCP_DataPaths.Letters(new SCP_DataRoot(p.AgentCommandsRoot));
+            if (!Directory.Exists(aLetters.Value)) continue;
+            aAny = true;
+
+            SCP_PersonaScan aScan = SCP_PersonaLetters.Scan(aLetters.Value, SCP_PersonaLetters.AutoSessionDir);
+
+            // 「量不到」必須看得出來：Unknown 只可能來自 Problems 有話說
+            bool aThreeStateHonest = aScan.UnknownCount == 0 || aScan.Problems.Count > 0;
+            bool aFound = aScan.Enumerated && aScan.Personas.Count > 0;
+            string aProblems = aScan.Problems.Count == 0 ? "無" : string.Join("；", aScan.Problems);
+
+            yield return new CheckRow(
+                $"真信件庫掃描（{p.Name}）",
+                $"persona={aScan.Personas.Count}（線上 {aScan.OnlineCount}／離線 {aScan.OfflineCount}／未知 {aScan.UnknownCount}）"
+                + $"／_session={(aScan.SessionDirDerived ? "推導" : "指定")} {aScan.SessionDir}"
+                + $"／Unknown 有交代={aThreeStateHonest}／problems：{aProblems}",
+                aFound && aThreeStateHonest ? CheckResult.Pass : CheckResult.Fail);
+        }
+
+        if (!aAny)
+            yield return new CheckRow("真信件庫掃描",
+                "找不到樣本（沒有可用專案或該專案沒有 letters 目錄）—— **這是跳過，不是通過**",
                 CheckResult.Skipped);
     }
 

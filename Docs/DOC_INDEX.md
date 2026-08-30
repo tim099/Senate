@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-08-28
+last_updated: 2026-08-30
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -24,7 +24,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | 文件 | 用途 |
 |---|---|
-| [Setup_And_Build](Workflows/Setup_And_Build.md) | 一鍵配置與一鍵 build 的流程、**為什麼不用 PublishSingleFile**、出廠驗收要驗什麼 |
+| [Setup_And_Build](Workflows/Setup_And_Build.md) | 一鍵配置與一鍵 build 的流程、**single-file 的真正判準**、出廠驗收要驗什麼 |
 | [SCP_Cmd_System](Workflows/SCP_Cmd_System.md) | `senate cmd`：SCP_Core 內建的指令系統（**沒有 queue、不需要 Unity**）、參數規格與四種 exit code、怎麼寫一支新 Cmd |
 | [AgentCmd_Dispatch](Workflows/AgentCmd_Dispatch.md) | `senate ucmd`：把 AgentCommand 派給目標 Unity 專案的 Editor（run_cmd.py 的 C# client）、專案設定、判定語意、**與 python 版的差距清單** |
 
@@ -34,6 +34,13 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 |---|---|
 | [Cli_Reference](API/Cli_Reference.md) | 所有指令、旗標、exit code 語意 |
 | [Config_Schema](API/Config_Schema.md) | `senate.local.json` 欄位規格與路徑解析規則 |
+
+## 撰寫規範 — 動 code 前先讀
+
+| 文件 | 用途 |
+|---|---|
+| [Agent 入口檔的受管區塊](../SCP_Core/Docs~/Entry_Doc_Blocks.md) | CLAUDE.md / AGENTS.md 的**附加式**安裝：marker 格式（成對 BEGIN/END）、七種狀態、舊版整檔安裝的遷移、備份與回讀 |
+| [SCP 專案撰寫規範](../SCP_Core/Docs~/Coding_Standards.md) | 住在 **SCP_Core submodule** 裡（規則跟著共用碼走，Unity 那側才讀得到同一份）：方言限制、**JSON 一律走 `SCP_Json`**、**設定一律走專案層 prefs**、純函式邊界、血證登記處 |
 
 ## Logs — 決策紀錄
 

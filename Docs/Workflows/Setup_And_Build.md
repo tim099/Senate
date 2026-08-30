@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
-description: setup / build 兩支腳本的職責邊界、出廠驗收要驗什麼、為什麼不用 PublishSingleFile（兩個實測的坑）、產物與版控
-last_updated: 2026-08-28
+description: setup / build 兩支腳本的職責邊界、出廠驗收要驗什麼、single-file 的真正判準（實測修正過一次）、產物與版控
+last_updated: 2026-08-30
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
