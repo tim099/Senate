@@ -164,8 +164,15 @@ public static class AgentCmdClient
     /// <para>權威判定來源是 <c>_cmd_results/&lt;id&gt;.json</c>（Editor Runner 出隊前寫）——
     /// 「從 queue 消失」只代表結束，不代表成功。找不到 result 檔才退回舊推論並明講。</para>
     /// </summary>
+    /// <param name="iPrintOutputs">
+    /// 是否順手印 result 檔的 outputs／values。
+    /// <para>⚠ 走 <see cref="ResultReport"/> 自己組報告的宿主要傳 <c>false</c>，否則同一個回傳檔
+    /// 會被印兩次 —— 而**兩次裡只有一次帶著定語（mtime）**，讀的人有一半機率引用到沒有定語的那行。
+    /// （2026-08-31 實測：委派基底第一次跑就印了三份。）</para>
+    /// </param>
     public static AgentCmdWaitResult Wait(string iDataRoot, string? iPersona, string iCmdId,
-        double iTimeoutSec, double iPollSec, Action<string> iOut, Action<string> iErr)
+        double iTimeoutSec, double iPollSec, Action<string> iOut, Action<string> iErr,
+        bool iPrintOutputs = true)
     {
         iOut($"Waiting for {iCmdId}...");
         iOut($"  Timeout: {iTimeoutSec:0}s   Poll: every {iPollSec:0.0}s");
@@ -193,12 +200,12 @@ public static class AgentCmdClient
                         {
                             string aErrMsg = (string?)aVerdict["error"] ?? "(no error message)";
                             FailVerdict(iOut, iErr, $"  ✗ Cmd failed（Editor 已自動出隊）: {aErrMsg}");
-                            PrintOutputs(aVerdict, iOut);   // blocked 也會先落 payload —— 出口清單在那個檔裡
+                            if (iPrintOutputs) PrintOutputs(aVerdict, iOut);   // blocked 也會先落 payload —— 出口清單在那個檔裡
                             PrintErrorReport(iDataRoot, iCmdId, iOut);
                             return AgentCmdWaitResult.Failed;
                         }
                         iOut("  ✓ Cmd completed → Success（result 檔判定，非推論）");
-                        PrintOutputs(aVerdict, iOut);
+                        if (iPrintOutputs) PrintOutputs(aVerdict, iOut);
                         return AgentCmdWaitResult.Success;
                     }
                     // fallback：無 result 檔（舊版 Editor / 落檔失敗）—— 明講這是推論。
@@ -211,7 +218,7 @@ public static class AgentCmdClient
                 {
                     iOut($"  ✓ Repeatable cmd ran successfully (RunCount={(int?)aCmd["RunCount"] ?? 0})");
                     JsonObject? aVerdict2 = ReadCmdResult(iDataRoot, iCmdId);
-                    if (aVerdict2 != null) PrintOutputs(aVerdict2, iOut);
+                    if (iPrintOutputs && aVerdict2 != null) PrintOutputs(aVerdict2, iOut);
                     return AgentCmdWaitResult.Success;
                 }
                 if (aResult == "Failed")
@@ -318,6 +325,34 @@ public static class AgentCmdClient
             return JsonNode.Parse(File.ReadAllText(aPath, System.Text.Encoding.UTF8)) as JsonObject;
         }
         catch { return null; }   // 壞檔當沒有 —— fallback 舊推論，不擋判定
+    }
+
+    /// <summary>
+    /// result 檔裡的回傳檔路徑與純量回報 —— 給**不走 stdout** 的宿主用（例：委派型 SCP_Cmd
+    /// 要把這些併進自己的 <c>SCP_CmdResult</c>）。
+    /// <para>⛔ **只在判定成功之後才准呼叫。** 逾時的時候 result 檔沒有被更新，
+    /// 這時讀到的是**上一輪**的路徑 —— 而順著那個路徑開出來的檔案格式完整、數字合理
+    /// （UCL 2026-08-16 血證）。這支不自己擋，因為它拿不到判定；擋的責任在呼叫端。</para>
+    /// <para>回 <c>Found=false</c> ＝ 沒有 result 檔（舊版 Editor／落檔失敗）——
+    /// 那跟「有 result 檔但沒有 outputs」是兩件事，不可同形。</para>
+    /// </summary>
+    public static (bool Found, List<string> Outputs, List<KeyValuePair<string, string>> Values)
+        ResultReport(string iDataRoot, string iCmdId)
+    {
+        var aOutputs = new List<string>();
+        var aValues = new List<KeyValuePair<string, string>>();
+        JsonObject? aVerdict = ReadCmdResult(iDataRoot, iCmdId);
+        if (aVerdict == null) return (false, aOutputs, aValues);
+
+        if (aVerdict["outputs"] is JsonArray aOuts)
+            foreach (var o in aOuts)
+                if (o is JsonValue && (string?)o is { Length: > 0 } aPath)
+                    aOutputs.Add(aPath);
+        if (aVerdict["values"] is JsonArray aVals)
+            foreach (var v in aVals)
+                if (v is JsonObject aKv && (string?)aKv["key"] is { Length: > 0 } aKey)
+                    aValues.Add(new KeyValuePair<string, string>(aKey, (string?)aKv["value"] ?? ""));
+        return (true, aOutputs, aValues);
     }
 
     /// <summary>印 result 檔的 outputs（回傳檔路徑）與 values（純量回報）—— 兩欄分開印，混了名字比事實大。</summary>

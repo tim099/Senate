@@ -62,6 +62,14 @@ public static class Program
         //   而那不會編譯失敗、不會有人回報，只會讓照著訊息打的人以為自己打錯。
         SCP.Core.Cmd.SCP_CmdRegistry.InvocationHint = "senate cmd";
 
+        // 宿主能力②：委派型 Cmd 要知道「派給哪個專案」，而共用層與 Cmd 本身都**不推導路徑**。
+        // ⇒ 設定來源由這裡裝上（同上一條的形狀：能力由宿主宣告，不由下層去找）。
+        UnityDelegateCmd.ConfigProvider = () =>
+        {
+            string aCfgPath = SenateConfig.DefaultPath(aRepoRoot);
+            return (SenateConfig.Load(aCfgPath), aCfgPath);
+        };
+
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
         //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
@@ -587,46 +595,23 @@ public static class Program
                 "senate ucmd run <CmdType> [--project <名>] [--persona <p>] [--arg k=v]… [--arg-file k=<路徑>]…");
 
         // ── 對象專案解析：--project 名字 ＞ 唯一啟用專案自動選（會說出來）＞ 擋下 ──
-        string? aProjName = ArgValue(iArgs, "--project");
+        // ⚠ 解析本體在 UnityTargetResolver（Senate.Core）—— 委派型 SCP_Cmd 問的是同一個問題，
+        //   而**兩份實作會在「多專案時該不該猜」上給出不同答案**，猜錯那次 Cmd 會在別人的
+        //   Editor 上真的執行。這裡只負責把結果轉成 CLI 的輸出形狀。
         string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
-        SenateConfig? aCfg = SenateConfig.Load(aCfgPath);
-        if (aCfg == null)
-            return AgentUsageError($"還沒有設定檔（{aCfgPath}）", "先跑 senate init，把目標 Unity 專案寫進 projects[]");
-        var aEnabled = aCfg.Projects.Where(p => p.Enabled && !string.IsNullOrWhiteSpace(p.Root)).ToList();
-        SenateProject? aProj;
-        if (aProjName != null)
-        {
-            aProj = aCfg.Projects.FirstOrDefault(p =>
-                string.Equals(p.Name, aProjName, StringComparison.OrdinalIgnoreCase));
-            if (aProj == null)
-                return AgentUsageError($"設定檔裡沒有名叫 '{aProjName}' 的專案",
-                    $"現有：{string.Join(" / ", aCfg.Projects.Select(p => p.Name))}");
-            if (!aProj.Enabled)
-                return AgentUsageError($"專案 '{aProj.Name}' 在設定檔裡是停用的（enabled=false）", "");
-        }
-        else if (aEnabled.Count == 1)
-        {
-            aProj = aEnabled[0];
-            Console.WriteLine($"· 未給 --project ⇒ 用唯一啟用的專案 '{aProj.Name}'（{aProj.Root}）");
-        }
-        else
-        {
-            // 多專案不猜 —— 派錯專案的 Cmd 會在別人的 Editor 上真的執行。
-            return AgentUsageError(
-                aEnabled.Count == 0 ? "設定檔裡沒有任何啟用中的專案" : "有多個啟用中的專案，不猜",
-                $"加 --project <名>；現有啟用：{string.Join(" / ", aEnabled.Select(p => p.Name))}");
-        }
-        string? aDataRoot = ProjectProbe.ResolveAgentCommandsRoot(aProj.Root, aProj.AgentCommandsRoot);
-        if (aDataRoot == null || !Directory.Exists(aDataRoot))
-            return AgentUsageError($"AgentCommands 資料根不存在：{aDataRoot ?? "(解析失敗)"}",
-                $"檢查 senate.local.json 專案 '{aProj.Name}' 的 root / agentCommandsRoot");
+        UnityTargetResolution aResolved = UnityTargetResolver.Resolve(
+            SenateConfig.Load(aCfgPath), aCfgPath, ArgValue(iArgs, "--project"));
+        if (!aResolved.Ok) return AgentUsageError(aResolved.Error, aResolved.Hint);
+        UnityTarget aTarget = aResolved.Target!;
+        if (aTarget.SelectionNote.Length > 0) Console.WriteLine("· " + aTarget.SelectionNote);
+        string aDataRoot = aTarget.DataRoot;
 
         string? aPersona = ArgValue(iArgs, "--persona");
 
         if (aSub == "status")
         {
             // 唯讀：印 trigger 狀態與 queue 殘量 —— 給「卡住了嗎」這一問一個讀數。
-            Console.WriteLine($"· 專案 {aProj.Name}　資料根 {aDataRoot}");
+            Console.WriteLine($"· 專案 {aTarget.ProjectName}　資料根 {aDataRoot}");
             string aQueuesDir = SCP_DataPaths.Queues(new SCP_DataRoot(aDataRoot));
             var aFolders = aPersona != null
                 ? new[] { AgentCmdClient.QueueFolder(aDataRoot, aPersona) }
@@ -681,7 +666,7 @@ public static class Program
         }
         string aCmdId = AgentCmdClient.Submit(aDataRoot, aPersona, aCmdType, aCmdArgs, Console.WriteLine);
         Console.WriteLine($"Submitted: {aCmdId}");
-        Console.WriteLine($"  Type={aCmdType}, Mode=OneShot → {aProj.Name}:{(string.IsNullOrWhiteSpace(aPersona) ? AgentCmdClient.AnonymousQueueId : aPersona)}");
+        Console.WriteLine($"  Type={aCmdType}, Mode=OneShot → {aTarget.ProjectName}:{(string.IsNullOrWhiteSpace(aPersona) ? AgentCmdClient.AnonymousQueueId : aPersona)}");
         Console.WriteLine("  Trigger written → pending.trigger（Editor 的 Auto-Watcher ~1s 內接手；沒動靜就檢查 Editor 開著沒）");
         if (aNoWait) return 0;
         return (int)AgentCmdClient.Wait(aDataRoot, aPersona, aCmdId, aTimeout,
