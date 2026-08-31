@@ -38,6 +38,13 @@ public static class AgentCmdClient
     /// </summary>
     public const string AnonymousQueueId = SCP_DataPaths.AnonymousQueueId;
 
+    /// <summary>
+    /// 這個 client 的名字，寫進 `_caller_client` ⇒ 落在判定檔的 `client` 欄。
+    /// <para>⚠ 跟 <see cref="DetectEnvMarker"/> 是**兩件事**：那個答「在什麼環境跑」，
+    /// 這個答「誰送的」。兩個 client 可以在同一個環境裡，而它們就是分不出來的那一格。</para>
+    /// </summary>
+    public const string ClientId = "senate-cli";
+
     // ── 路徑樣板（persona 資料夾制，Tim 2026-08-01 拍板；與 run_cmd.py queue_path() 同形）──
 
     public static string QueueFolder(string iDataRoot, string? iPersona)
@@ -116,6 +123,13 @@ public static class AgentCmdClient
         // caller-side env marker 注入（Treasury 審計欄；已顯式給的不覆寫 —— 測試 override 用）
         if (!iArgs.ContainsKey("_caller_env_marker"))
             iArgs["_caller_env_marker"] = DetectEnvMarker();
+        // caller-side **client** 標記（basecamp 2026-08-31）。
+        // 🩸 env marker 分得出**環境**卻分不出**哪個 client** —— 兩個 client 在 Claude Code
+        //   底下都回 `claude-code`，於是「某人今天走了新入口」這件事系統本身答不出來，
+        //   只能去問本人（2026-08-31 實測：早安切 CLI 當天就撞到）。
+        //   ⇒ Editor 端 WriteCmdResult 把它寫進 `_cmd_results/<id>.json` 的 `client` 欄。
+        if (!iArgs.ContainsKey("_caller_client"))
+            iArgs["_caller_client"] = ClientId;
         // 顯式 --persona 戳進 args（與 run_cmd.py 同律：只在缺席時填；兩者不同 → 出聲照 --arg 走）
         if (!string.IsNullOrWhiteSpace(iPersona))
         {
