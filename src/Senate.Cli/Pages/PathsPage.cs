@@ -30,9 +30,6 @@ public sealed class PathsPage : SCP_GuiToolPage
     bool m_Dirty;
     string? m_Message;
 
-    /// <summary>看哪個專案的每專案路徑。-1 ＝ 沒有專案可看。</summary>
-    int m_ProjectIndex;
-
     public PathsPage(SenateModel iModel) : base()
     {
         m_Model = iModel;
@@ -61,44 +58,22 @@ public sealed class PathsPage : SCP_GuiToolPage
             m_Draft = null;
             m_LoadError = $"設定檔讀不了，本頁不提供編輯（檔案沒有被動過）：{e.Message}";
         }
-        if (m_Draft != null && m_ProjectIndex >= m_Draft.Projects.Count) m_ProjectIndex = 0;
     }
-
-    /// <summary>目前選中的專案（沒有專案回 null —— 那時每專案那幾格解不出來，而畫面要說出來）。</summary>
-    SenateProject? CurrentProject()
-        => m_Draft != null && m_ProjectIndex >= 0 && m_ProjectIndex < m_Draft.Projects.Count
-            ? m_Draft.Projects[m_ProjectIndex]
-            : null;
 
     /// <summary>
-    /// 描述表要的「這個 Id 存起來的原始值」。
-    /// <para>⚠ 這是**唯一**一處把 `SCP_PathId` 對映到設定檔欄位的地方 ——
-    /// 描述表本身刻意不知道值住在哪個檔（那是呼叫端的事）。</para>
+    /// 這個 Id 存起來的原始值。**對映表在 `SenatePathBinding`（唯一一處）** ——
+    /// 頁面與 `senate cmd paths` 走同一支，兩邊不可能對同一格給出不同的值。
     /// </summary>
-    string StoredOf(SCP_PathId iId)
-    {
-        SenateProject? aProj = CurrentProject();
-        return iId switch
-        {
-            SCP_PathId.ProjectRoot => aProj?.Root ?? "",
-            SCP_PathId.AgentCommandsRoot => aProj?.AgentCommandsRoot ?? "",
-            SCP_PathId.LettersRoot => m_Draft?.Awakening.LettersRoot ?? "",
-            // Derived 的格子不會走到這裡；真的走到＝描述表與本對映表不同步，要大聲。
-            _ => "",
-        };
-    }
+    SCP_PathStoredValue StoredOf(SCP_PathId iId)
+        => m_Draft == null
+            ? SCP_PathStoredValue.Unavailable("設定檔沒讀進來")
+            : SenatePathBinding.StoredOf(m_Draft, iId);
 
     void SetStored(SCP_PathId iId, string iValue)
     {
-        SenateProject? aProj = CurrentProject();
-        switch (iId)
-        {
-            case SCP_PathId.ProjectRoot: if (aProj != null) aProj.Root = iValue; break;
-            case SCP_PathId.AgentCommandsRoot: if (aProj != null) aProj.AgentCommandsRoot = iValue; break;
-            case SCP_PathId.LettersRoot: if (m_Draft != null) m_Draft.Awakening.LettersRoot = iValue; break;
-            default: return;
-        }
-        m_Dirty = true;
+        if (m_Draft == null) return;
+        if (SenatePathBinding.SetStored(m_Draft, iId, iValue, out string? aErr)) m_Dirty = true;
+        else m_Message = "✗ " + aErr;
     }
 
     protected override void DrawContent(SCP_Ui g)
@@ -114,22 +89,17 @@ public sealed class PathsPage : SCP_GuiToolPage
                + "**加一條路徑＝加一個 enum 成員 ＋ 一筆 descriptor，本頁不用改**。"
                + $"寫的是 `{Path.GetFileName(m_ConfigPath)}`（與「設定」／「專案關聯」頁同一份檔），按「儲存」才寫回。");
 
-        // ── 每專案那幾格要先知道是哪個專案 ─────────────────────────
-        if (m_Draft.Projects.Count == 0)
-            g.Note("⚠ 還沒有任何專案 ⇒ 每專案的路徑**解不出來**（不是空的，是沒有起點）。先去「專案關聯」頁加一個。");
-        else
+        // ── 資料根只有一組 ⇒ 這裡不是「選專案」，是報「那個唯一的專案是誰」──────
+        SenateProject? aSingle = SenatePathBinding.SingleProject(m_Draft, out string? aSingleErr);
+        using (g.Box("唯一的專案"))
         {
-            using (g.Box("每專案路徑的對象"))
-            {
-                for (int i = 0; i < m_Draft.Projects.Count; i++)
-                {
-                    SenateProject p = m_Draft.Projects[i];
-                    string aLabel = (p.Name.Length > 0 ? p.Name : "（未命名）")
-                                    + (p.Enabled ? "" : "　（停用）");
-                    if (g.Button((i == m_ProjectIndex ? "● " : "○ ") + aLabel, $"paths/proj/{i}"))
-                        m_ProjectIndex = i;
-                }
-            }
+            if (aSingle != null)
+                g.Note($"● {(aSingle.Name.Length > 0 ? aSingle.Name : "（未命名）")}　`{aSingle.Root}`");
+            else
+                g.Note("⚠ " + aSingleErr);
+            g.Note("⚠ **資料根只有一組**（Tim 2026-08-31）：酒館 seq／任務單號／session lock"
+                   + " 全都假設只有一棵資料樹 —— 兩棵就是兩份序號、兩份計數，而沒有任何一層會喊。"
+                   + " 要換專案去「專案關聯」頁停用其餘的。");
         }
 
         // ── 描述表逐條 ─────────────────────────────────────────────
@@ -137,14 +107,14 @@ public sealed class PathsPage : SCP_GuiToolPage
         {
             string aId = "paths/" + aD.Id;
             SCP_PathResolution aRes = SCP_PathRegistry.Resolve(aD.Id, StoredOf);
-            string aScope = aD.Scope == SCP_PathScope.Global ? "全域" : "每專案";
+            string aScope = aD.Scope == SCP_PathScope.Global ? "全域" : "專案";
             string aKind = aD.Kind == SCP_PathKind.Stored ? "可設定" : "推導（唯讀）";
 
             using (g.Box($"{aD.Label}　[{aScope}／{aKind}]"))
             {
                 if (aD.Kind == SCP_PathKind.Stored)
                 {
-                    string aRaw = StoredOf(aD.Id);
+                    string aRaw = StoredOf(aD.Id).Raw;
                     string aNew = g.TextField(
                         aD.SupportsAuto ? $"值（`{SCP_PathRegistry.AutoLiteral}` ＝ 交給上游推導）" : "值",
                         aRaw, aId + "/value");

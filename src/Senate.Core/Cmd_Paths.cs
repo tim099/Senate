@@ -30,12 +30,10 @@ public sealed class Cmd_Paths : SCP_Cmd
         + "⛔ **本 Cmd 不寫任何設定** —— 要改走後台「路徑管理」頁（`senate ui --page paths`）。\n"
         + "⚠ `Derived` 的格子**不儲存**：能被推導的路徑存起來就是給漂移一個住的地方。";
 
-    public override string Example => SCP_CmdRegistry.Invoke("paths --arg project=LY");
+    public override string Example => SCP_CmdRegistry.Invoke("paths --arg id=LettersRoot");
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
-        new SCP_CmdArgSpec("project",
-            "每專案路徑要用哪個專案（senate.local.json 的 projects[].name）。只有一個啟用專案時可省略"),
         new SCP_CmdArgSpec("id", "只看某一條（enum 成員名，如 LettersRoot）"),
         new SCP_CmdArgSpec("out_json", "把完整清單落成 JSON 的路徑（巢狀資料走檔案，不進 values）"),
     };
@@ -53,46 +51,14 @@ public sealed class Cmd_Paths : SCP_Cmd
         if (aConfig == null)
             return SCP_CmdResult.Fail(2, "✗ 讀不到設定檔：" + aConfigPath, "  先跑 `senate init`");
 
-        // ── 挑專案：規則與 `senate cmd` 的 --project 同形（未給 ⇒ 唯一啟用的那個）──
-        string aWantName = iArgs.Get("project");
-        SenateProject? aProj = null;
-        string aProjNote;
-        var aEnabled = new List<SenateProject>();
-        foreach (SenateProject p in aConfig.Projects) if (p.Enabled) aEnabled.Add(p);
-        if (aWantName.Length > 0)
-        {
-            foreach (SenateProject p in aConfig.Projects)
-                if (string.Equals(p.Name, aWantName, StringComparison.OrdinalIgnoreCase)) { aProj = p; break; }
-            if (aProj == null)
-            {
-                var aNames = new List<string>();
-                foreach (SenateProject p in aConfig.Projects) aNames.Add(p.Name);
-                return SCP_CmdResult.Fail(2, "✗ 找不到專案 '" + aWantName + "'",
-                    "  清單：" + (aNames.Count == 0 ? "（一個都沒有）" : string.Join("、", aNames.ToArray())));
-            }
-            aProjNote = "顯式指定 --project " + aProj.Name;
-        }
-        else if (aEnabled.Count == 1)
-        {
-            aProj = aEnabled[0];
-            aProjNote = "未給 --project ⇒ 用唯一啟用的專案 '" + aProj.Name + "'";
-        }
-        else
-        {
-            // ⚠ 多個啟用時**不挑一個** —— 靜默挑一個的症狀是「路徑全對，只是屬於別的專案」。
-            aProj = null;
-            aProjNote = aEnabled.Count == 0
-                ? "沒有啟用的專案 ⇒ 每專案那幾格解不出來"
-                : "有 " + aEnabled.Count + " 個啟用的專案 ⇒ **不替你挑**，每專案那幾格請帶 --project";
-        }
+        // ── 資料根只有一組 ⇒ 這裡不挑專案，只報「那個唯一的是誰」──────────────
+        // ⚠ 有兩個啟用專案時**不替人挑**：靜默挑一個的症狀是「路徑全對，只是屬於別的專案」。
+        SenateProject? aProj = SenatePathBinding.SingleProject(aConfig, out string? aSingleErr);
+        string aProjNote = aProj != null
+            ? "唯一啟用的專案：'" + aProj.Name + "'　`" + aProj.Root + "`"
+            : "⚠ " + aSingleErr;
 
-        string StoredOf(SCP_PathId iId) => iId switch
-        {
-            SCP_PathId.ProjectRoot => aProj?.Root ?? "",
-            SCP_PathId.AgentCommandsRoot => aProj?.AgentCommandsRoot ?? "",
-            SCP_PathId.LettersRoot => aConfig.Awakening.LettersRoot ?? "",
-            _ => "",
-        };
+        SCP_PathStoredValue StoredOf(SCP_PathId iId) => SenatePathBinding.StoredOf(aConfig, iId);
 
         string aIdArg = iArgs.Get("id");
         var aWanted = new List<SCP_PathDescriptor>();
@@ -122,12 +88,12 @@ public sealed class Cmd_Paths : SCP_Cmd
         foreach (SCP_PathDescriptor d in aWanted)
         {
             SCP_PathResolution aRes = SCP_PathRegistry.Resolve(d.Id, StoredOf);
-            string aScope = d.Scope == SCP_PathScope.Global ? "全域" : "每專案";
+            string aScope = d.Scope == SCP_PathScope.Global ? "全域" : "專案";
             string aKind = d.Kind == SCP_PathKind.Stored ? "可設定" : "推導";
             aResult.Lines.Add("## " + d.Id + "　" + d.Label + "　[" + aScope + "／" + aKind + "]");
             if (d.Kind == SCP_PathKind.Stored)
                 aResult.Lines.Add("- 儲存鍵：`" + d.JsonKey + "`　現值：`"
-                                  + (StoredOf(d.Id).Length == 0 ? "（未設定）" : StoredOf(d.Id)) + "`");
+                                  + (StoredOf(d.Id).Raw.Length == 0 ? "（未設定）" : StoredOf(d.Id).Raw) + "`");
             aResult.Lines.Add("- 算式：" + SCP_PathRegistry.Formula(d.Id));
             if (aRes.Error != null)
             {
@@ -164,7 +130,7 @@ public sealed class Cmd_Paths : SCP_Cmd
     }
 
     static void EmitJson(SCP_CmdResult oResult, SCP_CmdArgs iArgs,
-                         List<SCP_PathDescriptor> iRows, Func<SCP_PathId, string> iStored)
+                         List<SCP_PathDescriptor> iRows, Func<SCP_PathId, SCP_PathStoredValue> iStored)
     {
         string aOut = iArgs.Get("out_json");
         if (aOut.Length == 0) return;
@@ -181,7 +147,7 @@ public sealed class Cmd_Paths : SCP_Cmd
             J(sb, "kind", d.Kind.ToString()); sb.Append(',');
             J(sb, "scope", d.Scope.ToString()); sb.Append(',');
             J(sb, "json_key", d.JsonKey); sb.Append(',');
-            J(sb, "stored_raw", d.Kind == SCP_PathKind.Stored ? iStored(d.Id) : ""); sb.Append(',');
+            J(sb, "stored_raw", d.Kind == SCP_PathKind.Stored ? iStored(d.Id).Raw : ""); sb.Append(',');
             J(sb, "formula", SCP_PathRegistry.Formula(d.Id)); sb.Append(',');
             J(sb, "value", r.Value); sb.Append(',');
             J(sb, "origin", r.Origin); sb.Append(',');

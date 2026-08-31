@@ -33,6 +33,7 @@ public static class SelfTest
         aRows.Add(PrefsThreeStates());
         aRows.Add(PrefsKeepsOtherSections());
         aRows.Add(PathsSingleSource());
+        aRows.Add(PathRegistryShape());
         aRows.Add(StyleRoundTrip());
         aRows.Add(PageStack());
         aRows.Add(TypeSchemaShape());
@@ -1258,5 +1259,26 @@ public static class SelfTest
             default:
                 return iA.ToJson(false) == iB.ToJson(false);
         }
+    }
+
+    // 區塊職責：路徑描述表自身的合法性 —— **「漏掛 attribute」要在出廠驗收擋下**，
+    //          不是執行到那一格才炸（那時症狀是頁面打不開／CLI 少一列）。
+    static CheckRow PathRegistryShape()
+    {
+        var aReadings = new List<string>();
+        List<string> aProblems;
+        try { aProblems = SCP.Core.Paths.SCP_PathRegistry.Validate(); }
+        catch (Exception e)
+        { return new CheckRow("路徑描述表", "Validate 自己炸了：" + e.Message, CheckResult.Fail); }
+
+        int aCount = SCP.Core.Paths.SCP_PathRegistry.All.Count;
+        aReadings.Add($"共 {aCount} 條");
+        int aStored = 0, aDerived = 0;
+        foreach (var d in SCP.Core.Paths.SCP_PathRegistry.All)
+            if (d.Kind == SCP.Core.Paths.SCP_PathKind.Stored) aStored++; else aDerived++;
+        aReadings.Add($"Stored {aStored}／Derived {aDerived}");
+        aReadings.Add(aProblems.Count == 0 ? "問題 0" : $"問題 {aProblems.Count}：{string.Join("；", aProblems)}");
+        return new CheckRow("路徑描述表", string.Join("／", aReadings),
+            aProblems.Count == 0 && aCount > 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 }
