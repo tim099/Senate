@@ -33,7 +33,8 @@ public static class SenatePages
         aCatalog.Register(SubmoduleSyncPage.PageKey, () => new SubmoduleSyncPage(iModel));
         aCatalog.Register(SCP_GuiStylePage.PageKey, () => new SCP_GuiStylePage(iModel));
         aCatalog.Register(SettingsPage.PageKey, () => new SettingsPage(iModel));
-        aCatalog.Register(ProjectsPage.PageKey, () => new ProjectsPage(iModel));
+        aCatalog.Register(ProjectsPage.PageKey, () => new ProjectsPage(iModel));
+        aCatalog.Register(PathsPage.PageKey, () => new PathsPage(iModel));
         aCatalog.Register(SCP_GuiLoginStatusPage.PageKey, () => new SCP_GuiLoginStatusPage(iModel));
         aCatalog.Register(SCP_GuiSkillManagerPage.PageKey, () => new SCP_GuiSkillManagerPage(iModel));
         return aCatalog;
