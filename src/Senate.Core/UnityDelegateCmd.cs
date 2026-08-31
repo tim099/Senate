@@ -161,14 +161,36 @@ public abstract class UnityDelegateCmd : SCP_Cmd
             aResult.ExitCode = 1;
             aResult.AddValue("delegate_failure", "cmd_failed");
             AppendReport(aResult, aWhere.DataRoot, aCmdId);
+            // blocked 的出口清單在回傳檔裡，而那份清單是 Editor 寫的 ⇒ 一律 python 形。
+            // ⚠ 這裡**不去對映**那些出口成 CLI 指令：那份清單是動態的（隨守衛列出），
+            //   憑猜寫一份對照表，錯的那條印出來跟對的一模一樣。
+            //   ⇒ 只說「它是哪一種形狀、去哪裡查本入口的等價物」，不代它翻譯。
+            aResult.Lines.Add("⚠ 回傳檔裡的出口清單是 Editor 寫的、寫成 `run_cmd.py`／`awakening.py` 形 ——"
+                              + " 本入口的等價指令查 `senate cmd`（本 CLI 不猜對映）。");
             return aResult;
         }
 
         AppendReport(aResult, aWhere.DataRoot, aCmdId);
+        // ── 下一步：**由本 CLI 自己講，而且講的是 CLI 的指令** ─────────────
+        // 物理意義：走 `senate cmd` 的人，指路牌就該是 `senate cmd`。
+        //          Tim 2026-08-31 拍板：「Senate CLI 內的 Cmd 回傳值必須給 CLI 的指令，
+        //          而非指向 .py 或 Unity Cmd。」
+        // ⚠ 為什麼不是「改寫回傳檔」：那份檔是 Editor 的產出，改寫它就沒有人知道
+        //   那份檔**真正**說了什麼（而它是所有 client 共用的）。⇒ 這裡是**覆蓋指路權**，不是改稿。
+        // ⚠ 為什麼措辭從「對照」改成「這就是下一步」：舊版寫
+        //   「回傳檔教的是 run_cmd.py 那條路／走 CLI 的對應下一步：…」——
+        //   那把 Editor 那段擺成正文、把 CLI 擺成註腳，而讀的人照正文走。
+        //   🩸 現場：calli 2026-08-31（酒館 seq 15143）照 brief §9 與 wake 回傳檔的
+        //   `## next` 跑 `awakening.py consolidate`，撞 registry 退場守衛 exit 1 ——
+        //   **而 digest 其實已經寫進磁碟**。那份清單沒有壞，它只是在回答一個舊問題。
+        //   ⇒ 主從關係要顛倒過來：CLI 的下一步是正文，回傳檔那段標明「不適用於本入口」。
         if (CliNextHint.Length > 0)
         {
-            aResult.Lines.Add("⚠ 回傳檔裡的 `## next` 是 Editor 端寫的，教的是 run_cmd.py 那條路。");
-            aResult.Lines.Add("   走 CLI 的對應下一步：" + CliNextHint);
+            aResult.Lines.Add("## next（本入口＝`senate cmd`，照這行走）");
+            aResult.Lines.Add("   " + CliNextHint);
+            aResult.Lines.Add("⚠ 回傳檔裡的 `## next` 是 Editor 端寫的、只認 `run_cmd.py`／`awakening.py`"
+                              + " —— **那一段對本入口不適用**，別照它打。");
+            aResult.Lines.Add("   回傳檔的其餘內容（讀數／守衛／出口清單）照讀，那些與 client 無關。");
         }
         return aResult;
     }
