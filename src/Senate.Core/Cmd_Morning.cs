@@ -91,16 +91,16 @@ public sealed class Cmd_MorningBrief : MorningDelegateCmd
 {
     public override string Name => "morning-brief";
 
-    public override string Summary => "早安②生成 wake brief（全量，走 python）—— 由 Unity Editor 執行";
+    public override string Summary => "早安②生成 wake brief（全量，Editor 就地跑 SCP_WakeBrief）—— 由 Unity Editor 執行";
 
     public override string Details =>
-        "Editor 端 spawn python `wake_brief.py`，組**全量** brief：\n"
+        "Editor 端**就地**跑 `SCP_WakeBrief`（2026-09-01 起不再 spawn python），組全量 brief：\n"
         + "憲法／見根／見叢／見森／見林／見樹／回憶／記憶維護狀態／見人／見書／今日動作清單。\n"
-        + "⚠ 與本地那支 `wake-brief` **不是同一份東西**：後者只有信件層（少六段），\n"
-        + "   不需要 Editor。要哪一份自己選，但**不要拿其中一份當另一份的驗收**。";
+        + "⚠ 與本地那支 `wake-brief` 現在是**同一支邏輯**，差別只有兩格：本步會帶資料根\n"
+        + "   （⇒ 缺陷單張數印得出來），而且 wake 編號由 Editor 推導（信數 + 1），不必自己給。";
 
     public override string PortNote =>
-        "見根／回憶（語意檢索）／記憶維護狀態／見人／見書／今日動作清單六段仍在 python，未移植";
+        "已全量移植（2026-09-01）；Editor 依賴仍在 —— 這一步要的是資料根與 wake 推導，不是 python";
 
     public override string Example => SCP_CmdRegistry.Invoke("morning-brief --arg persona=Template");
 
