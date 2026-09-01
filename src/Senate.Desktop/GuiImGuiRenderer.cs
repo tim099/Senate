@@ -84,7 +84,14 @@ public sealed class GuiImGuiRenderer
 
             case SCP_GuiNodeKind.Note:
                 // 附註畫暗一點 —— 文字 renderer 用「· 」前綴表達同一件事。色值來自 style，不寫死。
+                // ⭐ 換行位置 0 ＝ 視窗內容區的右緣。ImGui 的 Text* 系列**預設不換行**，
+                //   超出去的字直接被裁掉 —— 而**裁掉的字不會有任何一層喊**。
+                // 🩸 2026-08-28 讀數：submodule 頁「目標 branch 解析順序」那條註記有四層規則，
+                //   最後一層「不會拿『目前所在』頂替」在 1280px 寬的視窗裡整段落在畫面外。
+                //   ⚠ 那一格最貴的不是看不到，是**看不到跟沒寫同形** —— 讀的人不知道自己少讀了一層。
+                ImGui.PushTextWrapPos(0f);
                 ImGui.TextColored(Vec4(m_Style.NoteColor), "· " + iNode.Text);
+                ImGui.PopTextWrapPos();
                 break;
 
             case SCP_GuiNodeKind.Separator:
@@ -109,9 +116,16 @@ public sealed class GuiImGuiRenderer
             case SCP_GuiNodeKind.Toggle:
             {
                 bool aOn = Toggles.TryGetValue(iNode.Id, out bool v) ? v : iNode.On;
-                // 標籤畫在**左邊**：ImGui 原生把 label 放右邊，一排欄位下來眼睛要左右跳
-                LabelLeft(iNode.Text);
-                if (ImGui.Checkbox("##" + iNode.Id, ref aOn)) Toggles[iNode.Id] = aOn;
+                // ⭐ 勾選框畫在**左邊**、標籤跟在框右邊（＝ ImGui 原生 Checkbox 的版位，
+                //   也是 UCL 那側的形狀）：框的 X 與標籤長度無關 ⇒ 一疊勾選由上往下有一條直線可掃。
+                // 🩸 2026-09-01 讀數（scale=1，submodule 頁三顆）：舊版走 LabelLeft(標籤) 再畫
+                //   "##id" 的無名框，把框推到文字右邊。而 LabelLeft 只在「標籤寬 < LabelWidth」
+                //   （150px）時才對齊到欄位線，否則退回 SameLine() 緊貼排 ——
+                //   那三顆的標籤是整句話，三顆全部退回緊貼 ⇒ 框停在 x≈460 / 231 / 383。
+                //   ⚠ 那不是「沒對齊」，是**對齊欄根本沒生效**，而它跟「有對齊但排版醜」同形。
+                //   ⇒ 修法是換版位（第一階：讓標籤長度不可能影響框的位置），
+                //     不是把 LabelWidth 調大（第三階：只把門檻推高，下一句更長的照樣掉出去）。
+                if (ImGui.Checkbox(iNode.Text + "##" + iNode.Id, ref aOn)) Toggles[iNode.Id] = aOn;
                 break;
             }
 
