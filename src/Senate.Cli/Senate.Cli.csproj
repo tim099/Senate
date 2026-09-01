@@ -7,6 +7,14 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+
+    <!-- 產物檔名 ＝ 使用者要打的指令名。
+         ⚠ 它只換「編出來的檔案叫什麼」——不動 namespace（那是 RootNamespace）、不動類別名、
+           不動 `dotnet run` 指定專案的那條路、不動 VS 裡的專案名。
+         🩸 不設它的話產物叫 Senate.Cli.exe，而指令要叫 senate ⇒ build 只好複製一份改名丟根層。
+           那份複本是 78 MB 的第二顆檔案，而且會過期、會撞「exe 正在執行中所以複製失敗」。
+           實測 2026-09-01：這台當時有五顆可執行產物、三種年份。⇒ 讓 publish 直接產出對的名字。 -->
+    <AssemblyName>senate</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

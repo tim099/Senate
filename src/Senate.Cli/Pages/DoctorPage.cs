@@ -57,7 +57,7 @@ public sealed class DoctorPage : SCP_GuiToolPage
                 g.TableRow("設定檔", m_Env.ConfigPath, m_Env.ConfigExists ? "✓" : "尚未 init");
             }
             if (!m_Env.ConfigExists)
-                g.Note("還沒有 senate.local.json —— 跑 `senate init` 會從 config/senate.local.example.json 生一份（不覆寫既有檔）");
+                g.Note("還沒有 SenateData/config/senate.local.json —— 跑 `senate init` 會從同目錄的 senate.local.example.json 生一份（不覆寫既有檔）");
         }
 
         g.Space();
@@ -65,7 +65,7 @@ public sealed class DoctorPage : SCP_GuiToolPage
 
         if (m_Projects.Count == 0)
         {
-            g.Note("設定檔裡沒有任何專案。編輯 senate.local.json 的 projects[] 加上專案根目錄。");
+            g.Note("設定檔裡沒有任何專案。編輯 SenateData/config/senate.local.json 的 projects[] 加上專案根目錄。");
             g.Note("⚠ 「沒設定」與「設定了但路徑不存在」是兩件事 —— 後者會在下面列成 Missing，不會靜默消失。");
             return;
         }

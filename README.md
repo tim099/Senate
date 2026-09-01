@@ -18,13 +18,13 @@
 裝好之後，在 Senate 這個資料夾裡執行：
 
 ```powershell
-.\setup.ps1
+.\install.ps1
 ```
 
-它會自己檢查東西齊不齊、編譯一次，然後幫你建立設定檔。**畫面最後會印一張表**，
-每一列後面有 `✓` 就是那一項沒問題。
+它會自己檢查東西齊不齊、編譯一次、幫你建立設定檔，最後把 Senate 加進**你自己的 PATH**
+（不碰系統 PATH、不用系統管理員）。**畫面最後會印一張表**，每一列後面有 `✓` 就是那一項沒問題。
 
-> 用 Git Bash 的話跑 `./setup.sh`，效果一樣。
+> 用 Git Bash 的話跑 `./install.sh`，效果一樣。
 
 ---
 
@@ -41,16 +41,10 @@ build 的最後會**自己試跑一次、也自己開一次視窗**確認真的�
 
 ---
 
-## 全域安裝（選用 —— 讓 `senate` 在任何地方直接打）
+## 裝完之後：`senate` 在哪都能打
 
-```powershell
-.\install.ps1
-```
-
-> Git Bash 的話跑 `./install.sh`，效果一樣。
-
-它把 Senate 資料夾加進**你自己的 PATH**（不碰系統 PATH、不用系統管理員），
-之後**新開的** CMD / PowerShell / Git Bash 裡直接打 `senate` 就能用 —— 跟 python 一樣：
+上一步已經把 `publish` 資料夾（執行檔住那裡）加進你自己的 PATH，
+所以**新開的** CMD / PowerShell / Git Bash 裡直接打 `senate` 就能用 —— 跟 python 一樣：
 
 ```
 senate ucmd status
@@ -58,7 +52,20 @@ senate doctor
 ```
 
 ⚠ 已經開著的終端機不會自動生效（PATH 是視窗開起來那一刻複製的）—— 開新的。
-要移除：`.\install.ps1 -Uninstall`（或 `./install.sh --uninstall`）。
+### 要移除
+
+```powershell
+.\install.ps1 -Uninstall
+```
+
+拿掉 PATH，並清掉編譯產生的東西（`senate.exe`、原生 DLL、`publish/`、`build/`、各專案的 `bin` `obj`）。
+
+**你設定過的東西會留著**（`SenateData/` —— 專案清單、頁面偏好），因為那些掉了要重設。
+真的要一併清掉：`.\install.ps1 -Uninstall -Purge`。
+
+⚠ 兩種都**不會動原始碼**。要徹底移除，自己把 Senate 這個資料夾刪掉就好。
+
+> Git Bash：`./install.sh --uninstall`（`--purge` 同理）。
 
 ---
 
@@ -159,7 +166,7 @@ senate cmd wake-brief --arg persona=Template --arg wake=4
 
 > 探測讀數是快取的 —— 改了路徑或想看 Unity 現在開著沒，按「🔄 重新探測全部」。
 
-不想開視窗的話，直接編輯 Senate 資料夾裡的 **`senate.local.json`**（`setup` 會幫你建好一份範本）：
+不想開視窗的話，直接編輯 **`SenateData/config/senate.local.json`**（`setup` 會幫你建好一份範本）：
 
 ```jsonc
 {
@@ -177,7 +184,7 @@ senate cmd wake-brief --arg persona=Template --arg wake=4
 | `agentCommandsRoot` | 填 `"auto"` 就好，它會自己找 |
 | `enabled` | `false` ＝ 暫時不管這個專案（**還是會列出來，標成「停用」**） |
 
-> 這個檔案裡有你電腦的路徑，所以**不會**被上傳到 GitHub。要分享設定請改 `config/senate.local.example.json`。
+> 這個檔案裡有你電腦的路徑，所以**不會**被上傳到 GitHub。要分享設定請改 `SenateData/config/senate.local.example.json`。
 
 ---
 

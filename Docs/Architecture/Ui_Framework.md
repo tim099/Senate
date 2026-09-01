@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
 description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、非 UI 操控介面與 session 狀態
-last_updated: 2026-08-28
+last_updated: 2026-09-01
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -122,7 +122,7 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
 - `SCP_GuiQuery.Find(tree, id)` → 呼叫端**必須**檢查；對不存在的 id 靜默成功會讓
   「我按了但沒反應」與「我按錯了」同形
 - `SCP_GuiState` → 跨次要記住的欄位值與勾選（**點擊是事件，不進狀態**），序列化走 `SCP_JsonData`
-- 檔案 IO 不在共用層：session 落在 `build/ui_session.json`，由 `Senate.Cli/UiDriver` 負責讀寫
+- 檔案 IO 不在共用層：session 落在 `SenateData/runtime/ui_session.json`，由 `Senate.Cli/UiDriver` 負責讀寫
 
 指令清單見 [../API/Cli_Reference](../API/Cli_Reference.md)。
 
@@ -143,7 +143,7 @@ UCL 那側的 `UCL_GUILayout.PopupSearch` 把自己的內部狀態（開闔 `_Sh
 
 | | UCL：`UCL_ObjectDictionary` | 這裡：`SCP_GuiInput` / `SCP_GuiState` |
 |---|---|---|
-| 誰持有 | **頁面自己**的欄位（`readonly UCL_ObjectDictionary m_Dic`） | **驅動端**：renderer 的三個字典，或 `build/ui_session.json` |
+| 誰持有 | **頁面自己**的欄位（`readonly UCL_ObjectDictionary m_Dic`） | **驅動端**：renderer 的三個字典，或 `SenateData/runtime/ui_session.json` |
 | 命名 | 呼叫端自己給的 dict ＋ 字串 key（＋ `GetSubDic` 巢狀） | **全域 id 命名空間** —— 跟 `--click` / `--set` / `--fold` 是同一組字 |
 | 型別 | 任意 `object` | 只有 `string`（Fields）與 `bool`（Toggles / Folds） |
 | 活多久 | 頁面物件活著的期間（記憶體） | 跨 process（存進 session 檔） |

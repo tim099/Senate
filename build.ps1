@@ -1,4 +1,4 @@
-﻿# 一鍵 build（Windows / PowerShell）-- 產出 repo 根的 senate.exe（可直接雙擊）。
+﻿# 一鍵 build（Windows / PowerShell）-- 產出 publish/senate.exe，並在 repo 根放捷徑 senate.lnk。
 #
 # 區塊職責：publish → 把執行檔與原生 DLL 放到 repo 根 → **真的跑一次＋真的開一次窗**。
 # 物理意義：最後那兩步才是重點。「build succeeded」只證明編譯器沒抱怨，
@@ -24,7 +24,7 @@ Set-Location $root
 
 Write-Host '-- Senate 一鍵 build ---------------------------'
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    Write-Error '找不到 dotnet -- 先跑 .\setup.ps1'; exit 1
+    Write-Error '找不到 dotnet -- 先跑 .\install.ps1'; exit 1
 }
 
 & dotnet publish (Join-Path $root 'src/Senate.Cli') -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o (Join-Path $root 'publish') --nologo -v minimal
@@ -46,32 +46,49 @@ function Copy-WithRetry($src, $dst) {
         }
     }
 }
-Copy-WithRetry (Join-Path $root 'publish/Senate.Cli.exe') (Join-Path $root 'senate.exe')
-# 原生 DLL 必須跟 exe 同層（見下方註解）-- 少一顆的症狀是「文字模式好、開窗掛」
+# 執行檔就住在 publish/ -- **不複製到根層**（Tim 2026-09-01 拍板，理由見 build.sh 同一段）。
+$exe = Join-Path $root 'publish/senate.exe'
+if (-not (Test-Path $exe)) { Write-Error '失敗 publish/senate.exe 不存在 -- publish 沒成功？'; exit 1 }
+
+# 原生 DLL 必須跟 exe 同層 -- publish 會自己放進 publish/，這裡只驗不搬。
 foreach ($dll in @('cimgui.dll', 'glfw3.dll')) {
-    $src = Join-Path $root "publish/$dll"
-    if (Test-Path $src) { Copy-WithRetry $src (Join-Path $root $dll) }
-    else { Write-Host "警告 publish/$dll 不存在 -- 開窗可能會失敗（Silk.NET 找不到原生層）" }
+    if (-not (Test-Path (Join-Path $root "publish/$dll"))) {
+        Write-Host "警告 publish/$dll 不存在 -- 開窗可能會失敗（Silk.NET 找不到原生層）"
+    }
 }
 
-$mb = [math]::Round((Get-Item (Join-Path $root 'senate.exe')).Length / 1MB, 1)
+# 根層捷徑：**只服務滑鼠**，完全不參與 PATH。
+try {
+    $aSc = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $root 'senate.lnk'))
+    $aSc.TargetPath = $exe
+    $aSc.WorkingDirectory = (Join-Path $root 'publish')
+    $aSc.Save()
+    Write-Host '完成 根層捷徑：senate.lnk -> publish/senate.exe（雙擊用）'
+}
+catch { Write-Host '警告 捷徑沒建成 -- 不影響指令，publish/senate.exe 照樣能跑' }
+
+$mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host ''
-Write-Host ("完成 產物：" + (Join-Path $root 'senate.exe') + " ($mb MB) 加 cimgui.dll / glfw3.dll")
+Write-Host ("完成 產物：" + $exe + " ($mb MB) 加同層的 cimgui.dll / glfw3.dll")
 
 Write-Host '-- 出廠驗收(1) doctor -------------------------'
-& (Join-Path $root 'senate.exe') doctor
+& $exe doctor
 $code = $LASTEXITCODE
 
 Write-Host '-- 出廠驗收(2) selftest（對 exe，不是對 Debug DLL）--'
 # 🩸 理由同 build.sh 的同一格：agent 驗的是 Debug DLL、人跑的是這顆 exe，
 #   兩者的「全綠」是兩本帳，而它們在畫面上長得一模一樣。
-& (Join-Path $root 'senate.exe') selftest
+& $exe selftest
 $selftest = $LASTEXITCODE
 
 Write-Host '-- 出廠驗收(3) 開窗（截圖後自動關）------------'
+# ⚠ build/ 一定要先建出來 —— 截圖與 log 寫在那裡，而**沒有別人會建它**。
+# 🩸 2026-09-01：runtime 狀態搬進 SenateData/ 之後 build/ 就沒有產生者了；
+#   在此之前它是 doctor 順手建出來的副作用 ⇒ 相依一直成立但從來沒有人宣告過，fresh clone 會直接撞。
+New-Item -ItemType Directory -Force -Path (Join-Path $root 'build') | Out-Null
 $shot = Join-Path $root 'build/build_check.png'
 $log = Join-Path $root 'build/build_check.log'
-& (Join-Path $root 'senate.exe') ui --screenshot $shot > $log 2>&1
+& $exe ui --screenshot $shot > $log 2>&1
 $gui = $LASTEXITCODE
 if ($gui -eq 0) { Write-Host '完成 開窗成功，截圖：build/build_check.png' }
 else {

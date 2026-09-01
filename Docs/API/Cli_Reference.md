@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-08-28
+last_updated: 2026-09-01
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -23,7 +23,7 @@ dotnet run --project src/Senate.Cli -- <command>      # 開發中直接跑
 
 ### `init`
 
-從 `config/senate.local.example.json` 建立 `senate.local.json`，**已存在則不覆寫**（會印「已存在，未覆寫」），
+從 `SenateData/config/senate.local.example.json` 建立 `senate.local.json`，**已存在則不覆寫**（會印「已存在，未覆寫」），
 接著跑一次 `doctor`。
 
 ### `doctor`
@@ -141,7 +141,7 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 ⚠ 頁面上**打字的兩格（repo 路徑、全域預設 branch）是草稿**，要按「✓ 套用並重新掃描」才生效
 （勾選與下拉是立即生效）。理由：在視窗裡打字是逐字元的，值一變就重掃等於打一個路徑跑 N 輪 git。
 生效值住 session，所以跨指令記得住 —— 但**視窗每次開都是新 session**。
-⇒ 值得留的設定按「💾 儲存本頁設定」落檔（`senate.pages.local.json`，SCP_Core JSON；
+⇒ 值得留的設定按「💾 儲存本頁設定」落檔（`SenateData/prefs/senate.pages.local.json`，SCP_Core JSON；
 存的是**生效值**不是草稿）。存檔值之後當各欄位的**預設值**用：
 優先序 ＝ session（這一輪動過的）＞ 存檔值 ＞ 硬預設。
 ⚠ 存過 `fetch=true` 的話，下次開頁第一輪就會走網路 —— 那是存下來的意圖，不是副作用。
@@ -392,7 +392,7 @@ Senate 只負責 client 半邊。⚠ v1 與 `run_cmd.py` 的已知差距（刻�
 只畫一趟會顯示按下**前**的狀態，看起來像沒反應。
 
 **session**：欄位、勾選、**現在停在哪一疊頁面**（`nav`，內容是 page key）存在
-`build/ui_session.json`。每次 CLI 都是新 process ⇒ 不存檔的話多步操作不可能成立
+`SenateData/runtime/ui_session.json`。每次 CLI 都是新 process ⇒ 不存檔的話多步操作不可能成立
 （症狀會是「我按了進去，下一道指令卻回到首頁」，看起來像按鈕失效）。
 **點擊不進 session**（它是事件不是狀態）。
 

@@ -2,7 +2,7 @@
 // 物理意義：Senate 是**專案外部**的獨立 repo（不住在任何 Unity 專案裡），
 //           所以「要管誰」必須是資料，不能是寫死的路徑。
 //           ⇒ 設定檔分兩份，職責不同：
-//             · config/senate.local.example.json —— **入版控**的樣板（沒有機器路徑）
+//             · SenateData/config/senate.local.example.json —— **入版控**的樣板（沒有機器路徑）
 //             · senate.local.json               —— **不入版控**的實際設定（有絕對路徑）
 //           🩸 為什麼一定要分開：機器路徑一旦進了版控，下一台機器 clone 下來會拿到
 //             「看起來設定好了、但指向不存在的磁碟」的狀態 —— 那跟「還沒設定」不同形卻同樣安靜。
@@ -154,12 +154,11 @@ public sealed class SenateConfig
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    /// <summary>本機設定檔的預設位置：repo 根的 senate.local.json。</summary>
-    public static string DefaultPath(string iRepoRoot) => Path.Combine(iRepoRoot, "senate.local.json");
+    /// <summary>本機設定檔的預設位置。⚠ 版面的決定點是 <see cref="SenatePaths"/>，本處只是轉呼叫。</summary>
+    public static string DefaultPath(string iRepoRoot) => SenatePaths.LocalConfig(iRepoRoot);
 
-    /// <summary>入版控的樣板位置。</summary>
-    public static string ExamplePath(string iRepoRoot)
-        => Path.Combine(iRepoRoot, "config", "senate.local.example.json");
+    /// <summary>入版控的樣板位置。⚠ 同上，版面在 <see cref="SenatePaths"/>。</summary>
+    public static string ExamplePath(string iRepoRoot) => SenatePaths.ExampleConfig(iRepoRoot);
 
     /// <summary>
     /// 讀設定。**檔案不存在 → 回 null**（那是「還沒 init」，不是錯誤）；

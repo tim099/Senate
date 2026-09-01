@@ -50,6 +50,7 @@ public static class SelfTest
         aRows.Add(RowLayout());
         aRows.Add(SourceHint());
         aRows.Add(SourceCapabilityFallback());
+        aRows.Add(SourceMessageLifecycle());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         return aRows;
@@ -560,6 +561,65 @@ public static class SelfTest
     /// **不碰真的剪貼簿**：selftest 把使用者的剪貼簿蓋掉是一個誰都不會預期的副作用。
     /// ⇒ 代價要說：真的 <c>clip.exe</c> 寫得進去這件事，這一項**沒有**驗到。</para>
     /// </summary>
+    /// <summary>
+    /// 「原始碼」訊息的**生命週期**：成功不留字、失敗留字且關得掉。
+    /// <para>🩸 這一格存在的理由是一隻活過驗收的 bug（2026-09-01）：宿主改成成功回空字串，
+    /// 而顯示條件寫的是 <c>!= null</c> ⇒ 空字串照樣過關，畫面多一條**內容為空的 Note**。
+    /// 「沒有話要說」與「有一句空話」在型別上不同形，在畫面上卻同形 —— 沒有讀數就抓不到。</para>
+    /// <para>⚠ 用**同一個 page 實例**連續繪製：訊息是頁面的狀態，每次 new 一個新頁就永遠測不到
+    /// 「按了關閉之後它真的不見了」。</para>
+    /// </summary>
+    static CheckRow SourceMessageLifecycle()
+    {
+        var aSavedReveal = SCP_GuiHost.RevealInFileManager;
+        var aSavedCopy = SCP_GuiHost.CopyToClipboard;
+        try
+        {
+            // ⓐ 成功（宿主回空字串＝不說話）⇒ 訊息區整塊不該存在
+            SCP_GuiHost.RevealInFileManager = _ => string.Empty;
+            SCP_GuiHost.CopyToClipboard = _ => "✓ 假裝複製了";
+            var aPageA = new ProbeSourcePage();
+            Ids(DrawWith(aPageA, SCP_GuiToolPage.SourceButtonId));      // 按下去
+            var aAfterA = Ids(DrawWith(aPageA, null));                  // 下一幀
+            bool aOkA = !aAfterA.Contains(SCP_GuiToolPage.DismissMessageButtonId);
+
+            // ⓑ 失敗 ⇒ 訊息在，而且關得掉（關閉鈕要畫得出來）
+            SCP_GuiHost.RevealInFileManager = _ => "⚠ 假裝開不起來";
+            var aPageB = new ProbeSourcePage();
+            Ids(DrawWith(aPageB, SCP_GuiToolPage.SourceButtonId));
+            var aUiB = DrawWith(aPageB, null);
+            bool aOkB = Ids(aUiB).Contains(SCP_GuiToolPage.DismissMessageButtonId)
+                        && SCP_GuiTextRenderer.Render(aUiB.Root, 200)
+                            .Contains("假裝開不起來", StringComparison.Ordinal);
+
+            // ⓒ 按下關閉 ⇒ 再畫一次就不見了（這是「真的關掉」與「只是這一幀沒畫」的分界）
+            DrawWith(aPageB, SCP_GuiToolPage.DismissMessageButtonId);
+            var aUiC = DrawWith(aPageB, null);
+            bool aOkC = !Ids(aUiC).Contains(SCP_GuiToolPage.DismissMessageButtonId)
+                        && !SCP_GuiTextRenderer.Render(aUiC.Root, 200)
+                            .Contains("假裝開不起來", StringComparison.Ordinal);
+
+            bool aOk = aOkA && aOkB && aOkC;
+            return new CheckRow("原始碼訊息生命週期",
+                $"成功⇒完全不留字（含空行）={aOkA}／失敗⇒留字且有關閉鈕={aOkB}"
+                + $"／按關閉⇒下一幀真的不見={aOkC}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally
+        {
+            SCP_GuiHost.RevealInFileManager = aSavedReveal;
+            SCP_GuiHost.CopyToClipboard = aSavedCopy;
+        }
+    }
+
+    /// <summary>拿**既有的**頁面實例畫一幀（狀態要跨幀存活時用它，不要每次 new）。</summary>
+    static SCP_Ui DrawWith(SCP_GuiPage iPage, string? iClickId)
+    {
+        var aUi = new SCP_Ui(new SCP_GuiInput { ClickedId = iClickId });
+        iPage.Draw(aUi);
+        return aUi;
+    }
+
     static CheckRow SourceCapabilityFallback()
     {
         var aSavedReveal = SCP_GuiHost.RevealInFileManager;

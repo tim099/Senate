@@ -22,6 +22,27 @@ public static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         string aRepoRoot = RepoRoot();
 
+        // 資料根版面（`SenateData/`）與舊版面搬遷 —— **必須在任何讀設定的動作之前**。
+        // 順序不是風格問題：晚一步跑，前面那些讀取端就會在空的新位置讀到「沒設定過」，
+        // 而那個狀態看起來完全正常（三態同形）。搬完一定印出來，⛔ 不做靜默搬檔。
+        SenatePaths.EnsureDirectories(aRepoRoot);
+        var aMigration = SenateDataMigration.Run(aRepoRoot);
+        if (SenateDataMigration.NeedsAttention(aMigration))
+        {
+            Console.Error.WriteLine($"[SenateData] 舊版面搬遷（→ {SenatePaths.DataRoot(aRepoRoot)}）：");
+            foreach (var aStep in aMigration)
+            {
+                string aMark = aStep.Outcome switch
+                {
+                    SenateMigrationOutcome.Moved => "✓ 已搬",
+                    SenateMigrationOutcome.Conflict => "⚠ 衝突",
+                    SenateMigrationOutcome.Failed => "✗ 失敗",
+                    _ => "",
+                };
+                if (aMark.Length > 0) Console.Error.WriteLine($"  {aMark}  {aStep.What}　{aStep.Detail}");
+            }
+        }
+
         // 宿主能力：共用層想要「開啟原始碼所在位置」那顆鈕，但它不准碰 OS ⇒ 由這裡掛實作。
         // ⚠ 沒掛的話那顆鈕**根本不會畫**（不是畫一顆按了沒事的鈕）—— 見 SCP_GuiHost。
         SCP_GuiHost.RevealInFileManager = SenateShell.MakeRevealer(aRepoRoot);
@@ -29,8 +50,8 @@ public static class Program
         // 宿主能力：child process 的登記中心。共用層不知道狀態該落在哪 ⇒ 由這裡指定。
         // ⚠ 沒 Configure 的話整個服務停用（每顆 process 都沒人接管得到），所以掛在最前面、
         //   不掛在「會用到它的那個指令」裡 —— 漏掛的症狀是孤兒 process，而那不會當場叫。
-        // 落點在 build/ 底下（.gitignore 已擋）：這是 runtime 狀態，不是設定。
-        SCP_ProcessRegistry.Configure(Path.Combine(aRepoRoot, "build", "_process_registry"));
+        // 落點在 SenateData/runtime/：這是 runtime 狀態不是設定 —— 可隨時刪，且應該被清。
+        SCP_ProcessRegistry.Configure(SenatePaths.ProcessRegistry(aRepoRoot));
         SCP_ProcessRegistry.Warn = iMessage => Console.Error.WriteLine($"⚠ {iMessage}");
         // CLI 是「一次呼叫一顆 process」⇒ 每次啟動就是一個**一定會經過**的時機。
         // 不清的話殘檔會無聲累積，而堆積出來的畫面跟屍潮長得一樣，一樣會訓練人忽略那張表。
@@ -290,6 +311,10 @@ public static class Program
             aCtrl.Draw(aUi);
             return aUi;   // ⚠ 回整個 SCP_Ui 不是只回 Root —— 頁面要求的欄位寫入掛在它身上
         }, aStyle);
+
+        // ImGui 版面檔的落點由宿主指定 —— 不指定的話 ImGui 寫的是**相對 cwd** 的 imgui.ini，
+        // 於是同一顆 exe 從不同目錄啟動會讀寫不同份版面，而症狀只是「版面有時候會不見」。
+        aWin.IniPath = SenatePaths.ImGuiIni(iRepoRoot);
 
         // 🩸 視窗**預設不接續** CLI session。
         //    第一版是無條件接續，於是我在終端機測試時點開的下拉，變成 Tim 開窗時「預設就是展開的」——
@@ -954,12 +979,12 @@ public static class Program
             senate <command>
               （不給指令 ＝ doctor；**從檔案總管雙擊 ＝ 直接開 GUI 視窗**）
 
-              init                建立 senate.local.json（樣板：config/senate.local.example.json；已存在則不覆寫）
+              init                建立 SenateData/config/senate.local.json（樣板：同目錄的 senate.local.example.json；已存在則不覆寫）
               doctor              印出環境與各專案的讀數（唯讀）。exit 1 ＝ 有項目不通過
               ui                  把後台頁面輸出成純文字
                 --list            列出畫面上所有可互動元件（id / 類型 / 現值 / 怎麼操作）
                 --click <id>      按下某顆鈕（會實際跑該頁的 handler）
-                --set <id>=<值>   填欄位（跨次記住，存在 build/ui_session.json）
+                --set <id>=<值>   填欄位（跨次記住，存在 SenateData/runtime/ui_session.json）
                 --toggle <id>     切換勾選
                 --fold <id>       摺疊／展開一個區塊（收合時內容不會被建出來）
                 --reset           清空 session

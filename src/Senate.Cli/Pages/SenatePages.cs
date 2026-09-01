@@ -1,6 +1,6 @@
 // 區塊職責：**頁面目錄的組裝點** —— 這個 app 有哪些頁、根頁是誰。
 // 物理意義：CLI 的每一次呼叫都是新 process ⇒ 「我現在停在哪一頁」必須存成資料
-//           （`build/ui_session.json` 的 `nav`，內容是 page key）。
+//           （`SenateData/runtime/ui_session.json` 的 `nav`，內容是 page key）。
 //           要從 key 變回頁面，就得有一個地方知道 key 對應誰 —— 就是這裡。
 //           ⇒ **page key 是契約**：它進了 session、進了 agent 的指令，跟顯式 id key 同一個道理。
 // 數值影響：純建構，零 IO。⚠ 但目錄為了讀「標題／分組」會把每一頁**建一次再丟掉**

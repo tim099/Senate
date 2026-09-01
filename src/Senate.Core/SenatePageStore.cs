@@ -1,5 +1,5 @@
 // 區塊職責：**頁面設定的持久化層** —— senate.pages.local.json（repo 根、不入版控）。
-// 物理意義：頁面的操作狀態原本只住驅動端 session（build/ui_session.json）——
+// 物理意義：頁面的操作狀態原本只住驅動端 session（SenateData/runtime/ui_session.json）——
 //           CLI 跨呼叫記得住，但**視窗每次開都是新 session** ⇒「我上次調好的範圍」全部蒸發，
 //           而蒸發之後的畫面跟「我沒調過」一模一樣（Tim 2026-08-28 點名的坑）。
 //           ⇒ 值得留的設定要有一個**顯式儲存**的落點；本類別是那一格。
@@ -27,7 +27,7 @@ public static class SenatePageStore
     /// <para>⚠ SCP_Core 的 prefs 層不推導路徑（路徑不該被推導，該被傳遞）；
     /// 它由這裡拿到絕對路徑，所以換宿主時只有這一行要動。</para>
     /// </summary>
-    public static string DefaultPath(string iRepoRoot) => Path.Combine(iRepoRoot, "senate.pages.local.json");
+    public static string DefaultPath(string iRepoRoot) => SenatePaths.PageStore(iRepoRoot);
 
     /// <summary>本 repo 的 prefs 實例。⚠ 各呼叫端**不要自己 new** —— 檔名只能有一個決定點。</summary>
     public static ISCP_Prefs For(string iRepoRoot) => new SCP_JsonPrefs(DefaultPath(iRepoRoot));

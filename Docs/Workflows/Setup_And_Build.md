@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
 description: setup / build 兩支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收三格、single-file 的真正判準（實測修正過一次）、產物與版控
-last_updated: 2026-08-30
+last_updated: 2026-09-01
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -11,8 +11,15 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | 腳本 | 做什麼 |
 |---|---|
-| `setup.ps1` / `setup.sh` | 檢查前置 → `dotnet build` → `senate init`（建本機設定，已存在則不覆寫）→ doctor |
-| `build.ps1` / `build.sh` | `dotnet publish`（self-contained）→ 放根層啟動器 → **出廠驗收** |
+| `install.ps1` / `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
+| `build.ps1` / `build.sh` | `dotnet publish`（self-contained，直接產出 `publish/senate.exe`）→ 在根層放雙擊用的 `senate.lnk` → **出廠驗收** |
+
+> ⛔ **build 只有一個入口。** install 不准自己另寫一條 `dotnet build`。
+> 🩸 2026-09-01 實測：這台當時有 **五顆可執行產物、三種年份** ——
+> 舊的 `setup.*` 跑 `dotnet build Senate.slnx -c Release`（framework-dependent DLL），
+> `build.*` 跑 publish（self-contained single-file exe），兩顆**跑起來長得一模一樣**，
+> 而 setup 那顆落後整整一天。⇒ 「我測過了」測的是哪一顆沒有人答得出來。
+> 第二條 build 路徑不是備援，是分岔。
 
 **規矩**：腳本只做編排，**所有判斷都在 C# 裡**（`senate doctor`）。
 🩸 理由：檢查邏輯寫進腳本 = PowerShell 版與 sh 版兩份會漂的實作，
@@ -96,8 +103,19 @@ glfw3.dll      ↙ 少一顆的症狀是「文字模式好、開窗掛」
 Windows PowerShell **5.1** 沒有 BOM 就用 ANSI(cp950) 讀 `.ps1`
 ⇒ 中文變亂碼、字串終止符被吃掉、**整支腳本 parse error**。
 
-🩸 實撞（Tim 回報）：`build.ps1` 跑完「沒看到執行檔」——
-真因不是產物路徑，是腳本根本沒跑到 publish 那行。`setup.ps1` 同樣中彈。
+🩸 實撞①（Tim 回報）：`build.ps1` 跑完「沒看到執行檔」——
+真因不是產物路徑，是腳本根本沒跑到 publish 那行。當時另一支腳本同樣中彈。
+
+🩸 實撞②（2026-09-01，agent 自摔）：改寫 `install.ps1` 時**用不帶 BOM 的方式寫回檔案**，
+下一步 parse-check 就吐出一整片亂碼與 `缺少 '}'`。
+⚠ 值得記的不是「又撞了一次」，是**這條規矩就寫在本節、而我動手前沒有讀它** ——
+同族的修法不是「記得加 BOM」（第三階），是**改完 `.ps1` 一律 parse-check**（第二階，長在必經路上）：
+
+```bash
+powershell -NoProfile -Command "\$e=\$null; [void][System.Management.Automation.Language.Parser]::ParseFile('<abs>.ps1',[ref]\$null,[ref]\$e); if(\$e.Count){\$e|%{\$_.Message}}else{'OK'}"
+```
+
+位元組層的快篩（`cmp` 家族，不用眼睛看）：`head -c 3 <檔> | xxd` 應該是 `efbb bf`。
 
 修法：存 UTF-8 with BOM ＋ 檔頭加 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`
 ＋ 不用 backtick 續行。
@@ -105,12 +123,20 @@ Windows PowerShell **5.1** 沒有 BOM 就用 ANSI(cp950) 讀 `.ps1`
 ⚠ 而這隻**只有在 PowerShell 跑才會現形** —— 我全程用 Git Bash 測 `build.sh`，
 所以「兩支腳本等價」當時是推論不是讀數。**等價的東西也要各跑一次。**
 
-## 覆寫 exe 會撞鎖
+## 執行檔只有一顆，住在 `publish/`
 
-`senate.exe` 正在執行中（Windows 不准覆寫）或防毒正在掃剛寫完的 74 MB 檔
-⇒ 兩支腳本都重試三次，仍失敗就明說是哪一種原因（不要只丟 `IOException`）。
+`<AssemblyName>senate</AssemblyName>` 讓 publish 直接產出 `publish/senate.exe` ——
+**不再複製一份到根層**。PATH 掛的是 `publish/`；根層只留 `senate.lnk`（Windows 捷徑，只服務滑鼠）。
 
-## 全域安裝（install.sh / install.ps1）
+🩸 為什麼不是捷徑或連結（2026-09-01 實測，兩種都量過）：
+- **symlink**：這台建不出來（權限不足，開發者模式沒開）⇒ 它是**每台機器的前置條件**。
+- **hardlink**：建得出來，但 publish 會打斷它（link 數 2→1、inode 分岔），
+  外層會**靜默停在舊版**。⚠ 那次 `cmp` 還回報 byte-identical（來源只 touch 過 mtime）——
+  **內容比對在這一格給假綠燈，真正的證人是 link count**。
+
+⇒ 連帶消失的還有「覆寫 exe 撞鎖」那個老問題：沒有複製動作，就沒有覆寫。
+
+## 安裝與移除（install.sh / install.ps1）
 
 「像 python 一樣全域」＝ **PATH 找得到**，所以安裝工具只做一件事：把 repo 根
 （senate.exe 與原生 DLL 的所在）寫進**使用者 PATH**（HKCU，不碰系統 PATH、免管理員）。
@@ -123,12 +149,28 @@ PATH 上還是舊的，而兩顆 exe 印一樣的 usage）。
 - 冪等（已在 PATH 不重複加）；`--uninstall` / `-Uninstall` 逐段比對移除
   （**逐段**不是子字串 —— 子字串會把 `D:\Unity\Senate2` 誤判成同一條）。
 - 出廠驗收：用「系統＋使用者 PATH 重組」模擬新視窗，從 `%TEMP%` 解析並跑一次
+- **build 沒過就不掛 PATH** —— 裝一條指向壞產物的 PATH，之後每個錯都會被怪到 PATH 上。
+  開窗那格在遠端桌面／無 GPU 會失敗 ⇒ 出口是 `--skip-build` / `-SkipBuild`（沿用現有產物）。
+
+### 移除做到哪一層（判準：**這個東西掉了，使用者要不要重做工？**）
+
+| 層 | `--uninstall` | `--uninstall --purge` |
+|---|---|---|
+| 使用者 PATH | ✅ 移除（可逆、零資料損失） | ✅ |
+| build 產物（`senate.exe` / 原生 DLL / `publish/` / `build/` / 各專案 `bin` `obj`） | ✅ 移除（可重建） | ✅ |
+| `SenateData/`（人編輯過的設定與偏好） | ⛔ **保留**，並印出怎麼刪 | ✅ 移除 |
+| 原始碼與 git 歷史 | ⛔ 一個字都不動 | ⛔ 一個字都不動 |
+
+⚠ 移除清單在 `install.sh` 與 `install.ps1` **各有一份**，改一邊要同時改另一邊 ——
+漂掉的症狀是「用 .sh 裝、用 .ps1 移除，結果少刪兩樣」，而那不會有人喊。
   `senate --help` —— 寫進 registry 不算數，解析得到才算。
 - ⚠ 已開著的終端機不會生效：PATH 是 process 啟動時複製的，開新視窗。
 
 ## 產物與版控
 
-一律不入版控：`bin/` `obj/` `build/` `publish/` `senate.cmd` `senate` `senate.local.json` `imgui.ini`
+一律不入版控：`bin/` `obj/` `build/` `publish/` `senate.cmd` `senate` 與整個 `SenateData/`
+（只放行樣板 `SenateData/config/senate.local.example.json`；版面與判準見
+[`Data_Layout`](../Architecture/Data_Layout.md)）
 
 其中 `obj/project.assets.json` 與 `*.nuget.g.props` 帶有
 `packageFolders = C:\Users\<你>\.nuget\packages\` —— 那是**這台機器**的 NuGet 快取位置。

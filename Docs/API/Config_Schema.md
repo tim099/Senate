@@ -1,7 +1,7 @@
 ---
 title: senate.local.json 規格
 description: 本機設定檔的欄位、schemaVersion 的處置、AgentCommands 資料根的解析規則、三態不得同形的驗證原則
-last_updated: 2026-08-28
+last_updated: 2026-09-01
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -11,8 +11,11 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | 檔案 | 入版控 | 內容 |
 |---|---|---|
-| `config/senate.local.example.json` | ✅ | 樣板 —— **不含任何機器絕對路徑** |
-| `senate.local.json` | ❌（`.gitignore`） | 實際設定 —— 有絕對路徑 |
+| `SenateData/config/senate.local.example.json` | ✅ | 樣板 —— **不含任何機器絕對路徑** |
+| `SenateData/config/senate.local.json` | ❌（`.gitignore`） | 實際設定 —— 有絕對路徑 |
+
+> 📂 兩份都住 `SenateData/config/`。整個資料根的版面與「新東西該往哪放」的判準見
+> [`Data_Layout`](../Architecture/Data_Layout.md) —— 路徑只在 `SenatePaths` 決定一次。
 
 🩸 為什麼一定要分開：機器路徑進了版控，下一台機器 clone 下來會拿到
 「看起來設定好了、但指向不存在的磁碟」的狀態 —— 那跟「還沒設定」**不同形卻同樣安靜**。
@@ -112,7 +115,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ---
 
-## 第二個本機檔：`senate.pages.local.json`（頁面設定）
+## 第二個本機檔：`SenateData/prefs/senate.pages.local.json`（頁面設定）
 
 與 `senate.local.json` 刻意分開的另一份本機檔（同樣不入版控）：
 **各頁面「儲存本頁設定」的落點**（目前：`submodule` 區塊）。分開的理由 ——

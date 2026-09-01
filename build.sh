@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# 一鍵 build —— 產出 repo 根的 senate.exe（可直接雙擊）。
+# 一鍵 build —— 產出 publish/senate.exe，並在 repo 根放一個給人雙擊的捷徑 senate.lnk。
 #
 # 區塊職責：publish → 把執行檔與原生 DLL 放到 repo 根 → **真的跑一次＋真的開一次窗**。
 # 物理意義：⭐ 最後那兩步才是重點。「build succeeded」只證明編譯器沒抱怨，
@@ -19,7 +19,7 @@ root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 
 echo '── Senate 一鍵 build ───────────────────────────'
-command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 ./setup.sh' >&2; exit 1; }
+command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 ./install.sh' >&2; exit 1; }
 
 dotnet publish src/Senate.Cli \
   -c Release \
@@ -29,33 +29,41 @@ dotnet publish src/Senate.Cli \
   -o publish \
   --nologo -v minimal
 
-# 覆寫剛 publish 出來的 exe 會撞兩種鎖：① exe 正在執行中（Windows 不准覆寫）
-# ② 防毒正在掃描剛寫完的 74MB 檔。兩者都是暫時的 ⇒ 重試三次，仍失敗就講清楚是哪一種。
-copy_retry() {
-  i=1
-  while [ $i -le 3 ]; do
-    if cp -f "$1" "$2" 2>/dev/null; then return 0; fi
-    i=$((i+1)); sleep 1
-  done
-  echo "✗ 無法寫入 $2"
-  echo "  可能原因：senate.exe 正在執行中（關掉 GUI 視窗再試），或防毒正在掃描。"
-  return 1
-}
-copy_retry publish/Senate.Cli.exe "$root/senate.exe"
-# 原生 DLL 必須跟 exe 同層（見檔頭）—— 少一顆的症狀是「文字模式好、開窗掛」
+# 執行檔就住在 publish/ —— **不複製到根層**（Tim 2026-09-01 拍板）。
+# 🩸 舊版把 publish/Senate.Cli.exe 複製成根層 senate.exe，理由只是「指令要叫 senate」。
+#   代價是 78 MB 的第二顆檔案、會過期、而且複製本身會撞「exe 正在執行中」的鎖。
+#   ⇒ 改由 csproj 的 <AssemblyName>senate</AssemblyName> 直接產出對的檔名，
+#     PATH 指向 publish/（install.sh 負責），根層只留一個給人雙擊的捷徑。
+exe="$root/publish/senate.exe"
+[ -f "$exe" ] || { echo "✗ publish/senate.exe 不存在 —— publish 沒成功？" >&2; exit 1; }
+
+# 原生 DLL 必須跟 exe 同層 —— 少一顆的症狀是「文字模式好、開窗掛」。
+# publish 會自己把它們放進 publish/，所以這裡只驗不搬（搬就是又一份會過期的複本）。
 for dll in cimgui.dll glfw3.dll; do
-  if [ -f "publish/$dll" ]; then copy_retry "publish/$dll" "$root/$dll"; else
-    echo "⚠ publish/$dll 不存在 —— 開窗可能會失敗（Silk.NET 找不到原生層）"; fi
+  [ -f "$root/publish/$dll" ] || echo "⚠ publish/$dll 不存在 —— 開窗可能會失敗（Silk.NET 找不到原生層）"
 done
 
-mb=$(( $(stat -c %s "$root/senate.exe" 2>/dev/null || stat -f %z "$root/senate.exe") / 1048576 ))
+# 根層捷徑：**只服務滑鼠**，完全不參與 PATH（PATH 指的是 publish/）。
+# ⚠ 這是 Windows .lnk，不是 symlink —— symlink 需要 admin／開發者模式（這台實測建不出來），
+#   hardlink 則會被下一次 publish 打斷（實測 link 數 2→1，而外層會靜默停在舊版）。
+if command -v powershell.exe >/dev/null 2>&1; then
+  winexe="$(cygpath -w "$exe" 2>/dev/null || echo "$exe")"
+  winlnk="$(cygpath -w "$root/senate.lnk" 2>/dev/null || echo "$root/senate.lnk")"
+  windir="$(cygpath -w "$root/publish" 2>/dev/null || echo "$root/publish")"
+  powershell.exe -NoProfile -NonInteractive -Command \
+    "\$s=(New-Object -ComObject WScript.Shell).CreateShortcut('$winlnk'); \$s.TargetPath='$winexe'; \$s.WorkingDirectory='$windir'; \$s.Save()" >/dev/null 2>&1 \
+    && echo "✓ 根層捷徑：senate.lnk → publish/senate.exe（雙擊用）" \
+    || echo "⚠ 捷徑沒建成 —— 不影響指令，publish/senate.exe 照樣能跑"
+fi
+
+mb=$(( $(stat -c %s "$exe" 2>/dev/null || stat -f %z "$exe") / 1048576 ))
 echo
-echo "✓ 產物：$root/senate.exe（${mb} MB）＋ cimgui.dll / glfw3.dll"
+echo "✓ 產物：$exe（${mb} MB）＋ 同層的 cimgui.dll / glfw3.dll"
 
 # ── 出廠驗收①：跑真的 exe（不是看 build 綠燈）──────
 echo '── 出廠驗收① doctor ───────────────────────────'
 set +e
-"$root/senate.exe" doctor
+"$exe" doctor
 code=$?
 set -e
 
@@ -66,14 +74,19 @@ set -e
 #   ⇒ 把 selftest 綁在 build 上：驗收長在必經路上，不必靠誰記得跑。
 echo '── 出廠驗收② selftest（對 exe，不是對 Debug DLL）──'
 set +e
-"$root/senate.exe" selftest
+"$exe" selftest
 selftest=$?
 set -e
 
 # ── 出廠驗收③：**真的開一次窗**（原生 DLL 的坑就是死在這一格）──
+# ⚠ build/ 一定要先建出來 —— 截圖與 log 寫在那裡，而**沒有別人會建它**。
+# 🩸 2026-09-01：runtime 狀態（_process_registry / ui_session.json）搬進 SenateData/ 之後，
+#   build/ 就沒有任何產生者了。在此之前它是 doctor 順手建出來的副作用，
+#   於是這一格的相依「一直成立但從來沒有人宣告過」—— fresh clone 會直接撞。
+mkdir -p "$root/build"
 echo '── 出廠驗收③ 開窗（截圖後自動關）──────────────'
 set +e
-"$root/senate.exe" ui --screenshot "$root/build/build_check.png" > "$root/build/build_check.log" 2>&1
+"$exe" ui --screenshot "$root/build/build_check.png" > "$root/build/build_check.log" 2>&1
 gui=$?
 set -e
 if [ "$gui" -eq 0 ]; then

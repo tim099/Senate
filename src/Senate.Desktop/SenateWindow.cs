@@ -6,6 +6,8 @@
 //           太早截圖會拍到空白或錯位的畫面）。互動模式則常駐直到使用者關窗。
 // ⚠ 中文字型必須顯式載入。不載的話 ImGui 內建字型只有 ASCII ⇒ 中文全是方塊，
 //   而那不會報錯，只會「看起來壞掉」。
+using System.Runtime.InteropServices;
+using System.Text;
 using SCP.Core.Gui;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -39,6 +41,20 @@ public sealed class SenateWindow : IDisposable
     string? m_ScreenshotPath;
     int m_ScreenshotAtFrame;
     int m_Frame;
+
+    /// <summary>
+    /// ImGui 版面檔（`imgui.ini`）要寫到哪。null ＝ 用 ImGui 預設。
+    /// <para>⚠ ImGui 的預設是**相對 cwd 的 `imgui.ini`** —— 不是相對執行檔、也不是相對 repo。
+    /// ⇒ 同一顆 exe 從不同目錄啟動會讀寫不同的版面檔，而使用者只會覺得
+    /// 「我拖好的版面有時候會不見」。落點必須由宿主顯式指定。</para>
+    /// </summary>
+    public string? IniPath { get; set; }
+
+    /// <summary>
+    /// `IniFilename` 的非託管字串。⚠ **必須活到 context 銷毀** ——
+    /// ImGui 只存指標不複製內容，buffer 被 GC 掉之後它會讀到已釋放的記憶體。
+    /// </summary>
+    IntPtr m_IniPathUtf8 = IntPtr.Zero;
 
     public SenateWindow(string iTitle, DrawPage iDraw, SCP_GuiStyle? iStyle = null)
     {
@@ -171,6 +187,8 @@ public sealed class SenateWindow : IDisposable
                 aFonts = SenateFonts.Configure(ImGui.GetIO(), FontPath, m_Style);
                 LoadedFonts = aFonts.Description;
             });
+
+        ApplyIniPath();
 
         // 剪貼簿 —— 必須在 controller 建好之後（那時 io 才存在）。
         // 🩸 這條線原本從來沒接上 ⇒ 視窗裡每一個輸入框都貼不上，而且不報錯。
@@ -332,11 +350,58 @@ public sealed class SenateWindow : IDisposable
         }
     }
 
+    /// <summary>
+    /// 把 <see cref="IniPath"/> 接到 ImGui 的 <c>io.IniFilename</c>。
+    /// <para>⚠ 三件事漏掉任何一件都是**靜默**的（版面不存、下次開窗回預設，
+    /// 而那跟「使用者沒調過版面」同形）：</para>
+    /// <list type="number">
+    /// <item>目錄要先建 —— ImGui 存 ini 時不會替你建目錄。</item>
+    /// <item>字串要 UTF-8 —— repo 可能住在含中日文的路徑下，ANSI 會編出另一串位元組。</item>
+    /// <item>buffer 要活到 context 銷毀 —— ImGui 只存指標，不複製內容。</item>
+    /// </list>
+    /// </summary>
+    void ApplyIniPath()
+    {
+        string? aPath = IniPath;
+        if (string.IsNullOrWhiteSpace(aPath)) return;   // 沒指定 ⇒ 保持 ImGui 預設，不假裝設過
+
+        string? aDir = Path.GetDirectoryName(aPath);
+        if (!string.IsNullOrEmpty(aDir)) Directory.CreateDirectory(aDir);
+
+        byte[] aBytes = Encoding.UTF8.GetBytes(aPath);
+        IntPtr aBuf = Marshal.AllocHGlobal(aBytes.Length + 1);
+        Marshal.Copy(aBytes, 0, aBuf, aBytes.Length);
+        Marshal.WriteByte(aBuf, aBytes.Length, 0);      // 結尾的 NUL，C 端靠它判長度
+
+        unsafe { ImGui.GetIO().NativePtr->IniFilename = (byte*)aBuf; }
+
+        // 舊的先換掉再釋放，避免重入時把還在用的那塊放掉。
+        IntPtr aOld = m_IniPathUtf8;
+        m_IniPathUtf8 = aBuf;
+        if (aOld != IntPtr.Zero) Marshal.FreeHGlobal(aOld);
+    }
+
     void OnClosing()
     {
+        // ⚠ 順序：先讓 ImGui 把版面存下來，再把 context 拆掉。
+        //    controller 先 Dispose 的話，ImGui 還沒 flush 的 ini 就永遠寫不出去了 ——
+        //    而使用者看到的是「我這次調的版面沒被記住」，沒有任何錯誤訊息。
+        if (m_IniPathUtf8 != IntPtr.Zero)
+        {
+            try { ImGui.SaveIniSettingsToDisk(IniPath!); }
+            catch (Exception e) { Console.Error.WriteLine($"⚠ ImGui 版面存檔失敗：{e.Message}"); }
+        }
+
         m_Controller?.Dispose();
         m_Input?.Dispose();
         m_Gl?.Dispose();
+
+        // context 沒了之後那個指標才可以放掉（ImGui 存的是指標不是複本）。
+        if (m_IniPathUtf8 != IntPtr.Zero)
+        {
+            Marshal.FreeHGlobal(m_IniPathUtf8);
+            m_IniPathUtf8 = IntPtr.Zero;
+        }
     }
 
     public void Dispose() { m_Window?.Dispose(); }

@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-08-30
+last_updated: 2026-09-01
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -18,6 +18,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 文件 | 用途 |
 |---|---|
 | [Overview](Architecture/Overview.md) | 分層（SCP_Core / Core / Desktop / Cli）、共用碼的邊界與**方言限制**、單一寫入者原則 |
+| [Data_Layout](Architecture/Data_Layout.md) | **`SenateData/` 資料根**：三層分類判準（config / prefs / runtime）、新東西該往哪放、路徑唯一決定點、⛔ 改路徑必須同時做 migration |
 | [Ui_Framework](Architecture/Ui_Framework.md) | UI 中間層：節點樹、撰寫 API、四種 renderer／驅動方式、**id 規則**、慢一幀的事件語意 |
 
 ## Workflows — 怎麼做事

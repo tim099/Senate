@@ -3,12 +3,13 @@
 //           而它跟人用的 ImGui 視窗**共用同一份頁面碼**。
 //           ⇒ 一頁後台從此有三種驅動方式，任兩種可以互為證人：
 //             人點視窗 ／ 文字看畫面 ／ 指令操作
-// 數值影響：狀態（欄位值、勾選）落在 build/ui_session.json ——
+// 數值影響：狀態（欄位值、勾選）落在 SenateData/runtime/ui_session.json（版面見 SenatePaths）——
 //           因為每次 CLI 呼叫都是新 process，不存檔的話「上一步做過什麼」會消失，
 //           而那會讓多步操作變成不可能。點擊**不進狀態**（它是事件，不是狀態）。
 // ⚠ 兩趟繪製：第一趟帶著 click 讓頁面的 handler 真的執行，第二趟才是要給人看的畫面。
 //   只畫一趟的話，畫面顯示的是**按下前**的狀態 —— 看起來就像「按了沒反應」。
 using Senate.Cli.Pages;
+using Senate.Core;
 using SCP.Core.Gui;
 using SCP.Core.Json;
 
@@ -17,7 +18,7 @@ namespace Senate.Cli;
 public static class UiDriver
 {
     public static string SessionPath(string iRepoRoot)
-        => Path.Combine(iRepoRoot, "build", "ui_session.json");
+        => SenatePaths.UiSession(iRepoRoot);
 
     public static SCP_GuiState Load(string iRepoRoot)
     {
