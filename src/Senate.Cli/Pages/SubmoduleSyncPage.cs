@@ -449,11 +449,26 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
             {
                 if (g.Button("✓ 套用並重新掃描", "submodule/apply"))
                 {
-                    g.SetField(RootAppliedId, aRootDraft);
-                    g.SetField(BranchAppliedId, aBranchDraft);
-                    aAppliedRoot = aRootDraft;
-                    aAppliedBranch = aBranchDraft;
-                    aPending = false;
+                    // ⛔ 路徑不存在就**不套用** —— 寫進去的話 prefs 會留下一個指向空氣的根，
+                    //    而症狀是「掃不到任何 submodule」，跟「這個 repo 真的沒有」同形。
+                    //    ⚠ 擋下時**草稿留著**（不要順手清空）：多半只是打錯一個字，
+                    //      幫他清掉等於要他整條重打。
+                    string aClean = CleanPath(aRootDraft);
+                    if (aClean.Length == 0 || !System.IO.Directory.Exists(aClean))
+                    {
+                        m_RootRejected = aClean.Length == 0
+                            ? "路徑是空的 —— 沒有套用。"
+                            : $"這個路徑不存在，沒有套用：{aClean}";
+                    }
+                    else
+                    {
+                        m_RootRejected = null;
+                        g.SetField(RootAppliedId, aClean);
+                        g.SetField(BranchAppliedId, aBranchDraft);
+                        aAppliedRoot = aClean;
+                        aAppliedBranch = aBranchDraft;
+                        aPending = false;
+                    }
                 }
                 if (g.Button("✗ 放棄改動", "submodule/discard"))
                 {
@@ -740,6 +755,19 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     string? m_PasteMessage;
 
     /// <summary>
+    /// 上一次「套用」被擋下的理由（null ＝ 沒被擋過）。
+    /// <para>🩸 為什麼需要它：套用原本**完全不驗路徑**，於是一個不存在的目錄會被靜默寫進
+    /// prefs，而下一次開頁只看得到「掃不到任何 submodule」——
+    /// 那跟「這個 repo 真的沒有 submodule」在畫面上同形。</para>
+    /// <para>實例（2026-09-01 在 senate.pages.local.json 撈到）：兩個路徑黏成一串
+    /// （<c>…LY</c> 後面直接再接一次同樣的路徑）。三個寫入端我逐一讀過，**全是替換不是相加**，
+    /// renderer 也是替換 ⇒ 最可能是往預填的欄位裡 Ctrl+V（ImGui 的 InputText 貼上是
+    /// **插入**不是取代）。⚠ 這條成因我沒有實際重現（要 GUI 互動），所以不寫成結論；
+    /// 但無論成因是什麼，**沒有人擋**這件事是確定的，而這一格擋的就是那個。</para>
+    /// </summary>
+    string? m_RootRejected;
+
+    /// <summary>
     /// 把貼進來的路徑洗乾淨。
     /// <para>Windows 檔案總管的「複製路徑」給的是**帶雙引號**的字串
     /// （<c>"D:/Unity/LY"</c>）—— 直接送進 <c>Directory.Exists</c> 一定是 false，
@@ -836,6 +864,8 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         }
 
         if (m_PasteMessage != null) g.Note($"　{m_PasteMessage}");
+        // 被擋下的套用一定要說出來 —— 靜默不套用比套用一個壞值更難查（畫面完全沒變化）。
+        if (m_RootRejected != null) g.Note($"　⚠ {m_RootRejected}");
 
         if (!SameRepo(iAppliedRoot, m_Model.RepoRoot))
         {
