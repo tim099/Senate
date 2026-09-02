@@ -290,7 +290,7 @@ Senate 只負責 client 半邊。⚠ v1 與 `run_cmd.py` 的已知差距（刻�
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |
 | `--seed-session` | （視窗模式）開窗時接續 CLI session 的欄位／勾選／摺疊（**截圖模式自動開**）。不帶的話視窗從乾淨狀態開始 —— 下拉一律是收合的 |
 | `--keydebug` | （視窗模式）畫面底部多一行**鍵盤／剪貼簿讀數** —— 見下方「Ctrl+V 沒反應時怎麼查」 |
-| `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `submodule` / `style` / `settings` / `projects`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
+| `--page <key>` | （視窗模式）開窗直接停在某一頁：`home` / `doctor` / `submodule` / `style` / `settings` / `projects` / `paths` / `login` / `skills` / `process`。認不得的 key **exit 2** 並印出現有清單（清單由頁面目錄產生，不是寫死的） |
 
 **入口頁（根頁，key `home`）**：只有兩件事 —— 調介面尺寸、進到別的頁。
 

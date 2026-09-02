@@ -37,6 +37,7 @@ public static class SenatePages
         aCatalog.Register(PathsPage.PageKey, () => new PathsPage(iModel));
         aCatalog.Register(SCP_GuiLoginStatusPage.PageKey, () => new SCP_GuiLoginStatusPage(iModel));
         aCatalog.Register(SCP_GuiSkillManagerPage.PageKey, () => new SCP_GuiSkillManagerPage(iModel));
+        aCatalog.Register(SCP_GuiProcessAdminPage.PageKey, () => new SCP_GuiProcessAdminPage());
         return aCatalog;
     }
 
