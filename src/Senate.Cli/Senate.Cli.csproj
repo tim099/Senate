@@ -15,6 +15,16 @@
            那份複本是 78 MB 的第二顆檔案，而且會過期、會撞「exe 正在執行中所以複製失敗」。
            實測 2026-09-01：這台當時有五顆可執行產物、三種年份。⇒ 讓 publish 直接產出對的名字。 -->
     <AssemblyName>senate</AssemblyName>
+
+    <!-- 執行檔的檔案圖示（Win32 ICON 資源，由 apphost 埋進 senate.exe）。
+         ⚠ 只吃 .ico —— 餵 .png 是建置期失敗，不是靜默無圖示。
+         ⚠ 圖檔源刻意放這裡而**不是 publish/**：publish/ 被 .gitignore 擋掉且是產物目錄，
+           放那裡的話 clean clone 建不出帶圖示的 exe。
+         🩸 而「有沒有埋進去」的收據不是建置 exit 0，是 senate.exe 的 .rsrc 裡出現
+           GROUP_ICON/ICON 兩型（2026-09-02 之前只有 RCDATA/VERSION/MANIFEST 三型）。
+         來源：AgentCommands/ArtGallery/RawImages/plurk_shared_avatar.png（1024²，圓外已轉透明）。 -->
+    <ApplicationIcon>senate.ico</ApplicationIcon>
+
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
