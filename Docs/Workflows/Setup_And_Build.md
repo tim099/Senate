@@ -58,11 +58,14 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ## 出廠驗收：build 綠燈不算數
 
-`build` 的最後**真的跑三件事**（都跑在剛產出的那顆 exe 上）：
+`build` 的最後**真的跑四件事**（都跑在剛產出的那顆 exe 上）：
 
 1. `senate doctor` —— 證明那顆 exe 起得來、路徑解析對、設定讀得到
 2. `senate selftest` —— 24 項自我對拍。**失敗回 exit 1，會讓整個 build 判未過**
 3. `senate ui --screenshot build/build_check.png` —— **真的開一次窗**
+4. **Server round-trip**（TASK-0100）—— 起一顆臨時 `senate server start`（背景）、`senate cmd server-ping --arg echo=build-check`、
+   `server stop` 收掉。selftest 對拍的是 result 檔的 schema，這一格驗的是「一顆 CLI 送、一顆 Server 接、result 回來」那條路本身。
+   ⚠ 它起的 Server 是驗收用的臨時 process，log 在 `build/build_server.log`／`build/build_ping.log`；publish 前的 `server stop` 保證沒有別顆在跑。
 
 ⚠ 第 3 項不是裝飾。self-contained 最常壞的地方在執行期，而**文字模式照常運作**
 ⇒ 開窗的錯只有真的去開窗才會現形（見下節血證）。
@@ -72,7 +75,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 📌 修法選的是「長在必經路上」而不是「文件叫人記得跑」：
 第三階（記得注意）只在前兩階都做不到時才用，而這一格做得到第二階。
 
-三格**分開印**（`doctor=? / selftest=? / gui=?`）—— 壓成一句「驗收未過」
+四格**分開印**（`doctor=? / selftest=? / gui=? / server=?`）—— 壓成一句「驗收未過」
 會讓人不知道要去看哪一格。
 
 ---

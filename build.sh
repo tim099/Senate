@@ -111,11 +111,37 @@ else
   tail -3 "$root/build/build_check.log"
 fi
 
+# ── 出廠驗收④：**Server round-trip**（TASK-0100 主單那格）──────────────
+# 物理意義：selftest 對拍的是 result 檔的 schema，不是「一顆 CLI 送、一顆 Server 接、result 回來」這條路。
+#   那條路只有真的起一顆 Server 才有讀數 —— 所以在這裡起一顆、ping 一次、收掉。
+# ⚠ 這顆 Server 是**驗收用的臨時 process**，起在背景、收在這一段結束前；publish 前的 `server stop` 已保證沒有別顆在跑。
+#   ping 失敗不代表 exe 壞，可能是 Server 沒在 3 秒內起來 —— 所以印 Server 自己的 log 尾巴，不猜。
+echo '── 出廠驗收④ Server round-trip（起一顆臨時 Server → server-ping → 收掉）──'
+set +e
+"$exe" server start > "$root/build/build_server.log" 2>&1 &
+server_pid=$!
+for _ in 1 2 3 4 5 6; do
+  "$exe" server status > /dev/null 2>&1 && break
+  sleep 0.5
+done
+"$exe" cmd server-ping --arg echo=build-check > "$root/build/build_ping.log" 2>&1
+server=$?
+"$exe" server stop > /dev/null 2>&1
+wait "$server_pid" 2>/dev/null
+set -e
+if [ "$server" -eq 0 ] && grep -q "echo = build-check" "$root/build/build_ping.log"; then
+  echo "✓ Server round-trip 通（$(grep -o 'server_pid = [0-9]*' "$root/build/build_ping.log" | head -1)）"
+else
+  server=1
+  echo "✗ Server round-trip 失敗（ping exit $server）—— build/build_ping.log 與 build/build_server.log："
+  tail -3 "$root/build/build_ping.log"; tail -3 "$root/build/build_server.log"
+fi
+
 echo
-if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ]; then
+if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$server" -eq 0 ]; then
   echo '✓ 出廠驗收全過。開 GUI：./senate.exe ui --window（或直接雙擊 senate.exe 會印用法）'
 else
-  # 三格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
-  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui）"
+  # 四格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
+  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / server=$server）"
 fi
 [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ]

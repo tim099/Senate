@@ -109,11 +109,34 @@ else {
     Get-Content $log -Tail 3
 }
 
+# -- 出廠驗收(4) Server round-trip（TASK-0100 主單那格）-- 理由見 build.sh 同一段
+Write-Host '-- 出廠驗收(4) Server round-trip（起一顆臨時 Server -> server-ping -> 收掉）--'
+$serverLog = Join-Path $root 'build/build_server.log'
+$pingLog = Join-Path $root 'build/build_ping.log'
+$serverProc = Start-Process -FilePath $exe -ArgumentList 'server','start' -RedirectStandardOutput $serverLog -RedirectStandardError (Join-Path $root 'build/build_server.err.log') -PassThru -WindowStyle Hidden
+$server = 1
+for ($i = 0; $i -lt 6; $i++) {
+    & $exe server status > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { break }
+    Start-Sleep -Milliseconds 500
+}
+& $exe cmd server-ping --arg echo=build-check > $pingLog 2>&1
+$server = $LASTEXITCODE
+& $exe server stop > $null 2>&1
+try { $serverProc.WaitForExit(8000) | Out-Null } catch {}
+if ($server -eq 0 -and (Select-String -Path $pingLog -Pattern 'echo = build-check' -Quiet)) {
+    Write-Host '完成 Server round-trip 通'
+} else {
+    $server = 1
+    Write-Host "失敗 Server round-trip 失敗 -- 詳見 build/build_ping.log 與 build/build_server.log"
+    Get-Content $pingLog -Tail 3
+}
+
 Write-Host ''
-if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0) {
+if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0 -and $server -eq 0) {
     Write-Host '完成 出廠驗收全過。開 GUI：.\senate.exe ui --window'
     exit 0
 }
-# 三格分開印 -- 壓成一句「驗收未過」會讓人不知道要去看哪一格
-Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui）"
+# 四格分開印 -- 壓成一句「驗收未過」會讓人不知道要去看哪一格
+Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / server=$server）"
 exit 1
