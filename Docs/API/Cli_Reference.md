@@ -234,6 +234,23 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 | 2 | 用法錯：認不得的指令名／沒宣告的參數名／缺必填／值不在可選清單裡 |
 | 70 | Cmd 執行時丟出例外 —— ⚠ 跟 2 分開，否則腳本會把**程式 bug** 當成「我自己打錯」 |
 
+#### 執行位置第四態：`⤷Server`
+
+`help` 清單行尾多一種標記，統計行變成「本地 ／ ⤷Unity ／ ⤷Server ／ ⛔未實作」。
+`⤷Server` 的 Cmd 走 `ServerDelegateCmd`：**同一個類別兩條路** —— 在 Server process 裡被派到就跑本體，
+在 CLI 裡被打到就派給 Server 等結果；路由由 process 旗標決定，不由呼叫端記得。
+
+CLI 那側撞到的四種「沒有結果」都是 exit 3，細分在 `🔢 delegate_failure`：
+
+| 值 | 意思 | 出口 |
+|---|---|---|
+| `not_running` | Server 沒在跑，**這一筆沒送出**，⛔ 不降級成本地跑 | 開一個終端機 `senate server start` |
+| `build_mismatch` | Server 跟本 CLI 不是同一顆 exe，沒送出 | `senate server stop` 再 `start` |
+| `queue_busy` | 該 lane 前一筆還沒收 | `senate server status` 看分道；Server 活著卻不收 ⇒ 看它的終端機 |
+| `timeout` | 送了但沒在時限內拿到 result；**不讀回傳檔** | 看 Server 終端機 |
+
+Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 說的話（result 檔 `lines`）原樣印回來。
+
 ### `ucmd run` / `ucmd status`
 
 把一筆 **AgentCommand** 派給目標 Unity 專案的 Editor（＝ UCL_Core `run_cmd.py` 的 C# 對應）。
@@ -282,10 +299,17 @@ Tim 2026-09-02 拍板三格：**前景**（掛在終端機，Ctrl+C 停，log �
 |---|---|---|
 | `start` | 前景常駐。自我登記進 `SCP_ProcessRegistry`（tag `senate_server`），每 0.5 秒覆寫心跳檔。**已有一顆 Alive 就拒絕**（兩顆 Server ＝ 兩個寫入者），身分驗不出來的也拒絕 | 0 正常退出／1 已有或驗不出／70 登記不了 |
 | `stop` | 寫停止請求檔請它自退；5 秒等不到才 `KillRegistered`（身分複驗過才 kill）。**沒在跑也 exit 0**（冪等，build 腳本每次都先呼叫它） | 0／1 停不掉 |
-| `status` | 三格分開印：registry 身分、心跳新鮮度、**build id 對不對** | 0 活著／3 沒在跑或心跳停了 |
+| `status` | 三格分開印：registry 身分、心跳新鮮度、**build id 對不對**；活著時再列 Server 根底下每條 lane 的 trigger 狀態與殘量 | 0 活著／3 沒在跑或心跳停了 |
 
 `status` 的 `🔢 server_state` 五態：`not_running` / `alive_no_heartbeat` / `stale_heartbeat` /
 `running_build_mismatch` / `running`。⚠ 前三個都回 exit 3，腳本要分要看那個字不要看 exit code。
+
+**執行器（TASK-0103）**：Server 是 Senate **自己那棵資料根**（`SenateData/runtime/server/`）的 Watcher，
+版面跟 AgentCommands 一樣（`queues/<lane>/queue.json`＋`pending.trigger`、`_cmd_results/<id>.json`），
+client 半邊直接重用 `AgentCmdClient`。**同 lane 串行、跨 lane 並行**（照 Editor Runner）；OneShot 成功與失敗都出隊，
+verdict 在 result 檔。啟動時把上一顆留下的 `.running` 翻回 pending 續跑（孤兒鎖自救）。
+⚠ 它**只接 `⤷Server` 的 Cmd**（`ServerDelegateCmd`）；別的型別送進來會 Failed 並說「直接 `senate cmd` 跑」。
+探針：`senate cmd server-ping --arg echo=hi`（回 Server 的 pid／build／thread）。
 
 **build id**：`build.sh`／`build.ps1` publish 時把 `<git short sha>[-dirty].<UTC 時間>` 塞進
 `AssemblyInformationalVersion`；Server 把它寫進心跳，CLI 拿自己的比。`dotnet run`（Debug DLL）沒有那個屬性

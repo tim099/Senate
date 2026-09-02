@@ -117,8 +117,13 @@ public static class AgentCmdClient
     /// <para>⚠ queue.json 用 JsonNode 讀改寫 —— 既有指令（含本版不認得的欄位）**原樣保留**，
     /// 反序列化丟掉的東西序列化就再也寫不回來（senate.local.json 的 Extra 同一課）。</para>
     /// </summary>
+    /// <param name="iInjectPersona">
+    /// 要不要把 <paramref name="iPersona"/> 戳進 args 的 <c>persona</c>。預設 true（run_cmd.py 同律）。
+    /// <para>⚠ Senate Server 的公用分道 <c>server</c> 是 lane 不是身分 —— 帶著它送的 Cmd 沒有 persona，
+    /// 戳進去會讓 Server 端看到一個叫 "server" 的 persona（2026-09-02 第一輪驗收撞到的前一格）。</para>
+    /// </param>
     public static string Submit(string iDataRoot, string? iPersona, string iCmdType,
-        Dictionary<string, string> iArgs, Action<string> iLog)
+        Dictionary<string, string> iArgs, Action<string> iLog, bool iInjectPersona = true)
     {
         // caller-side env marker 注入（Treasury 審計欄；已顯式給的不覆寫 —— 測試 override 用）
         if (!iArgs.ContainsKey("_caller_env_marker"))
@@ -131,7 +136,7 @@ public static class AgentCmdClient
         if (!iArgs.ContainsKey("_caller_client"))
             iArgs["_caller_client"] = ClientId;
         // 顯式 --persona 戳進 args（與 run_cmd.py 同律：只在缺席時填；兩者不同 → 出聲照 --arg 走）
-        if (!string.IsNullOrWhiteSpace(iPersona))
+        if (iInjectPersona && !string.IsNullOrWhiteSpace(iPersona))
         {
             string aArgPersona = iArgs.TryGetValue("persona", out var p) ? p.Trim() : "";
             if (aArgPersona.Length == 0)
@@ -186,7 +191,7 @@ public static class AgentCmdClient
     /// </param>
     public static AgentCmdWaitResult Wait(string iDataRoot, string? iPersona, string iCmdId,
         double iTimeoutSec, double iPollSec, Action<string> iOut, Action<string> iErr,
-        bool iPrintOutputs = true)
+        bool iPrintOutputs = true, string iHostLabel = "Editor")
     {
         iOut($"Waiting for {iCmdId}...");
         iOut($"  Timeout: {iTimeoutSec:0}s   Poll: every {iPollSec:0.0}s");
@@ -199,7 +204,7 @@ public static class AgentCmdClient
             if (aState == "running" && !aSawRunning)
             {
                 aSawRunning = true;
-                iOut("  ... Editor picked up the trigger (now running)");
+                iOut($"  ... {iHostLabel} picked up the trigger (now running)");
             }
             if (aState == "idle")
             {
@@ -247,7 +252,9 @@ public static class AgentCmdClient
             Thread.Sleep(TimeSpan.FromSeconds(iPollSec));
         }
         FailVerdict(iOut, iErr,
-            $"  ✗ Timeout after {iTimeoutSec:0}s — Editor not running, or UCL_AgentCommandWatcher disabled?");
+            iHostLabel == "Editor"
+                ? $"  ✗ Timeout after {iTimeoutSec:0}s — Editor not running, or UCL_AgentCommandWatcher disabled?"
+                : $"  ✗ Timeout after {iTimeoutSec:0}s — {iHostLabel} 接了但沒在時限內寫 result（看它的終端機）");
         iErr("  ⚠ 本筆未完成 ⇒ **回傳檔沒有被更新**。若下一步要讀它，先確認檔頭時間戳。");
         return AgentCmdWaitResult.Timeout;
     }
@@ -367,6 +374,20 @@ public static class AgentCmdClient
                 if (v is JsonObject aKv && (string?)aKv["key"] is { Length: > 0 } aKey)
                     aValues.Add(new KeyValuePair<string, string>(aKey, (string?)aKv["value"] ?? ""));
         return (true, aOutputs, aValues);
+    }
+
+    /// <summary>
+    /// result 檔裡執行端留下的人可讀行（`lines`）—— Senate Server 會寫，Editor 端不寫（回空清單，不是錯）。
+    /// <para>⛔ 同 <see cref="ResultReport"/>：只在判定成功之後才准呼叫。</para>
+    /// </summary>
+    public static List<string> ResultLines(string iDataRoot, string iCmdId)
+    {
+        var aLines = new List<string>();
+        JsonObject? aVerdict = ReadCmdResult(iDataRoot, iCmdId);
+        if (aVerdict?["lines"] is JsonArray aArr)
+            foreach (var l in aArr)
+                if (l is JsonValue && (string?)l is { } aText) aLines.Add(aText);
+        return aLines;
     }
 
     /// <summary>印 result 檔的 outputs（回傳檔路徑）與 values（純量回報）—— 兩欄分開印，混了名字比事實大。</summary>

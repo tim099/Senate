@@ -1,7 +1,7 @@
 ---
 title: SCP_CMD（`senate cmd`）—— 不依賴 Unity 的指令系統
 description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生；與 Unity 那套（senate ucmd）的分工
-last_updated: 2026-08-29
+last_updated: 2026-09-02
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -26,7 +26,12 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 > `cmd` 讓給本系統。舊指令**不保留別名** —— 留著會讓「打了不會動」變成
 > 「打了做了另一件事」，而後者的代價高得多（一個要 Editor、一個不要）。
 
-## 為什麼沒有 queue
+## 為什麼沒有 queue（⚠ 2026-09-02 起只對 `Native` 成立）
+
+> ⚠ **前提已變**（Senate D20 / TASK-0103）：`⤷Server` 那一類 Cmd 的呼叫端與執行端**又是兩個 process** ——
+> CLI 是呼叫端、`senate server` 是執行端，中間走的正是下面說「不需要」的那套 queue／trigger／result 檔協議
+> （根是 Senate 自己的 `SenateData/runtime/server/`）。本節保留原文不改寫：它對 `Native` 仍然成立，
+> 而且它列出的那些坑（`.running` 殘留、「消失＝結束」）正是 Server 執行器要照 Editor 的修法重做一次的清單。
 
 queue 的存在理由是「呼叫端與執行端是兩個 process」。CLI 直接串到 C# 之後那個前提消失了，
 於是連帶不存在的還有：trigger 檔、Watcher 輪詢、`.running` 殘留、
@@ -113,9 +118,14 @@ SCP_CmdRegistry.InvocationHint = "senate cmd";
 
 ## 現有指令
 
+`PortStatus` 四態：`Native`（本地跑）／`DelegatedToUnity`（Editor 沒開就跑不完）／
+`DelegatedToServer`（`senate server start` 沒跑就跑不完，**且不降級成本地跑**）／`NotPorted`（登記在案的缺口）。
+`help` 清單行尾標 `⤷Unity`／`⤷Server`／`⛔未實作`，統計行四欄分開印。
+
 | 名字 | 做什麼 |
 |---|---|
 | `help` | 列出所有 Cmd／單支參數說明。**內容全部由 ArgSpecs 產生**，沒有一份手寫清單會漂 |
+| `server-ping` | `⤷Server` 探針：回 Server 的 pid／build／thread —— 驗執行器與協議通不通（TASK-0103） |
 | `wake-brief` | 讀 persona 信件庫組一份 wake brief（憲法／見叢／見森／見林／見樹） |
 
 `wake-brief` 的射程：**只含信件讀取層**。python `wake_brief.py` 還有見根／回憶／記憶維護狀態／

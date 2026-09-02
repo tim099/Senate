@@ -51,9 +51,39 @@ public static class SelfTest
         aRows.Add(SourceHint());
         aRows.Add(SourceCapabilityFallback());
         aRows.Add(SourceMessageLifecycle());
+        aRows.Add(ServerResultRoundTrip());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         return aRows;
+    }
+
+    // 區塊職責：Server 端寫的 result 檔，CLI 端（AgentCmdClient）讀得回同樣的東西 —— 協議第四端的對拍。
+    // 物理意義：兩端各自實作 schema，漂掉的症狀是「Server 說成功、CLI 印不出 values」而兩邊都不紅。
+    //          這裡不需要真的 Server：WriteResult 是 public static，直接對一個暫存根寫再讀。
+    static CheckRow ServerResultRoundTrip()
+    {
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_server_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aRes = SCP.Core.Cmd.SCP_CmdResult.Success("第一行", "第二行（中文不轉義）");
+            aRes.AddOutput("D:/x/回傳.md").AddValue("seq", "17").AddValue("seq", "18");
+            var aArgs = new Dictionary<string, string> { ["_caller_client"] = "selftest", ["echo"] = "hi" };
+            ServerExecutor.WriteResult(aRoot, "id-1", "server-ping", "OneShot", aArgs, aRes);
+            var (aFound, aOuts, aVals) = AgentCmdClient.ResultReport(aRoot, "id-1");
+            List<string> aLines = AgentCmdClient.ResultLines(aRoot, "id-1");
+            bool aOutOk = aFound && aOuts.Count == 1 && aOuts[0] == "D:/x/回傳.md";
+            bool aValOk = aVals.Count == 2 && aVals[0].Key == "seq" && aVals[1].Value == "18";   // 同 key 兩筆都要活著
+            bool aLineOk = aLines.Count == 2 && aLines[1].Contains("中文", StringComparison.Ordinal);
+            bool aClientOk = File.ReadAllText(Path.Combine(aRoot, "_cmd_results", "id-1.json")).Contains("\"client\": \"selftest\"", StringComparison.Ordinal);
+            var aFail = SCP.Core.Cmd.SCP_CmdResult.Fail(1, "✗ 壞了");
+            ServerExecutor.WriteResult(aRoot, "id-2", "server-ping", "OneShot", aArgs, aFail);
+            bool aFailOk = File.ReadAllText(Path.Combine(aRoot, "_cmd_results", "id-2.json")).Contains("\"result\": \"Failed\"", StringComparison.Ordinal);
+            bool aOk = aOutOk && aValOk && aLineOk && aClientOk && aFailOk;
+            return new CheckRow("Server result 檔 round-trip",
+                $"outputs 讀回={aOutOk}／同 key 兩筆 values 都在={aValOk}／lines 讀回={aLineOk}／client 欄={aClientOk}／Failed 落檔={aFailOk}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
     }
 
     /// <summary>「不存在」不可以長得像「空值」—— 讀 Missing 必須丟例外。</summary>

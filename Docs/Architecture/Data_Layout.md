@@ -39,7 +39,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
     ├─ _process_registry/          ❌ 外部進程登記中心
     ├─ ui_session.json             ❌ CLI 跨呼叫的 UI session
     ├─ _server_heartbeat.json      ❌ 常駐 Server 的心跳（pid／build id／時間戳，每 0.5 秒覆寫）
-    └─ _server_stop.request        ❌ `senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉）
+    ├─ _server_stop.request        ❌ `senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉）
+    └─ server/                     ❌ Server 自己的資料根（版面同 AgentCommands：queues/<lane>/、_cmd_results/、_cmd_errors/）
 ```
 
 ## ⭐ 新東西該放哪 —— 判準只有一句
@@ -67,6 +68,7 @@ SenatePaths.ProcessRegistry(iRepoRoot)   // SenateData/runtime/_process_registry
 SenatePaths.UiSession(iRepoRoot)         // SenateData/runtime/ui_session.json
 SenatePaths.ServerHeartbeat(iRepoRoot)   // SenateData/runtime/_server_heartbeat.json
 SenatePaths.ServerStopRequest(iRepoRoot) // SenateData/runtime/_server_stop.request
+SenatePaths.ServerRoot(iRepoRoot)        // SenateData/runtime/server/（底下走 SCP_DataPaths）
 ```
 
 ⛔ **呼叫端不要自己 `Path.Combine(repoRoot, "SenateData", ...)`** —— 那就是第二個決定點，

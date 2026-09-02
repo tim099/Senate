@@ -197,6 +197,17 @@ public static class ServerHost
             StartedAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
         };
 
+        // 身分旗標：從這一行起，本 process 裡的 ServerDelegateCmd 走「本體」那條路。
+        ServerContext.InServer = true;
+        ServerContext.Pid = aSelf.Id;
+        ServerContext.BuildId = aBuild;
+        string aServerRoot = SenatePaths.ServerRoot(iRepoRoot);
+        Directory.CreateDirectory(aServerRoot);
+        var aExecutor = new ServerExecutor(aServerRoot, iOut, iErr);
+        // 先把 Cmd 目錄掃好再開 lane：Discover 有鎖（正解），這一行是讓第一筆 Cmd 不必付反射那幾百毫秒。
+        SCP.Core.Cmd.SCP_CmdRegistry.Discover();
+        int aOrphans = aExecutor.RecoverOrphans();
+
         bool aCancel = false;
         ConsoleCancelEventHandler aOnCancel = (_, e) => { e.Cancel = true; aCancel = true; };
         Console.CancelKeyPress += aOnCancel;
@@ -205,7 +216,8 @@ public static class ServerHost
         iOut($"· 心跳：{aHbPath}（每 {HeartbeatIntervalMs} ms）　停止：Ctrl+C 或 `senate server stop`");
         if (aBuild == "unversioned")
             iOut("⚠ build=unversioned ⇒ 這是 `dotnet run`（Debug DLL），不是 publish 出來的 exe。CLI 那側會判成版本不符。");
-        iOut("· 執行器尚未接上（TASK-0103）—— 目前只跳心跳。");
+        iOut($"· 執行器：{aServerRoot}（queues/<lane>/ 同 lane 串行、跨 lane 並行）"
+             + (aOrphans > 0 ? $"　⚠ 翻回 {aOrphans} 條孤兒 lane" : ""));
 
         string aExitWhy;
         try
@@ -216,12 +228,17 @@ public static class ServerHost
                 WriteAtomic(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
                 if (aCancel) { aExitWhy = "Ctrl+C"; break; }
                 if (File.Exists(aStopReq)) { aExitWhy = "收到 `senate server stop` 的請求"; break; }
+                aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);
             }
         }
         finally
         {
             Console.CancelKeyPress -= aOnCancel;
+            // 先讓正在跑的 lane 收尾再收遺物 —— 心跳先消失的話，等它的 CLI 會在 lane 還沒寫 result 時就判逾時。
+            int aLeft = aExecutor.Drain(TimeSpan.FromSeconds(10));
+            if (aLeft == 0 && aExecutor.Completed > 0) iOut($"· 執行器收尾：本次共跑 {aExecutor.Completed} 筆");
+            ServerContext.InServer = false;
             // 三件遺物一起收；任何一件收不掉都要說 —— 留下來的心跳檔會讓下一次 status 讀到一個「剛剛還在跳」的假象。
             TryDelete(aHbPath, iErr);
             TryDelete(aStopReq, iErr);

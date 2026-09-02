@@ -85,6 +85,9 @@ public static class Program
 
         // 宿主能力②：委派型 Cmd 要知道「派給哪個專案」，而共用層與 Cmd 本身都**不推導路徑**。
         // ⇒ 設定來源由這裡裝上（同上一條的形狀：能力由宿主宣告，不由下層去找）。
+        // Server 委派也一樣：Cmd 不知道 Server 根在哪，由宿主給 repo 根（ServerDelegateCmd.RepoRootProvider）。
+        // 沒裝的症狀跟上面那格同形：委派 Cmd 回 70 並說「宿主沒裝上」—— 不會靜默猜一個根。
+        ServerDelegateCmd.RepoRootProvider = () => aRepoRoot;
         UnityDelegateCmd.ConfigProvider = () =>
         {
             string aCfgPath = SenateConfig.DefaultPath(aRepoRoot);

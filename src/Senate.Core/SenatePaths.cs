@@ -74,6 +74,14 @@ public static class SenatePaths
     public static string ServerStopRequest(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop.request");
 
     /// <summary>
+    /// 常駐 Server 自己的**資料根**（版面同 AgentCommands：`queues/&lt;lane&gt;/`、`_cmd_results/`、`_cmd_errors/`），
+    /// 由 <c>SCP_DataPaths</c> 解析底下的路徑 —— 這裡只決定根在哪。
+    /// <para>⚠ 它是 Senate 自己的，跟任何 Unity 專案的 AgentCommands 根**沒有關係**：
+    /// 兩邊各自有 Watcher，同一棵樹兩個 Watcher 會互搶 trigger。</para>
+    /// </summary>
+    public static string ServerRoot(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "server");
+
+    /// <summary>
     /// 把三層目錄建出來。**只建目錄、不寫任何檔**，重複呼叫無副作用。
     /// <para>⚠ 存在的理由是 ImGui：它存 ini 時**不會替你建目錄**，
     /// 目錄不在就靜默不存 —— 而「沒存成功」跟「使用者沒調過版面」在畫面上同形。</para>

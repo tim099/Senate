@@ -1,7 +1,7 @@
 ---
 title: AgentCommand 派遣（senate ucmd）
 description: 用 senate.exe 把 AgentCommand 派給目標 Unity 專案的 Editor —— 檔案協議的 C# client 半邊、專案設定方式、判定與失敗語意、與 run_cmd.py 的差距清單
-last_updated: 2026-08-28
+last_updated: 2026-09-02
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -82,11 +82,13 @@ Editor 端零改動。所以：
 差一格 —— python 的 fallback 是 `unknown`，senate 是 **`senate-cli`**，讓 Treasury 帳上分得出
 走哪條 client 進來的。
 
-## 協議三端同步警告
+## 協議四端同步警告
 
-queue 路徑樣板、queue entry 欄位、trigger 內容、result 檔判定，現在有**三個端**共用：
+queue 路徑樣板、queue entry 欄位、trigger 內容、result 檔判定，現在有**四個端**共用：
 `run_cmd.py`（python client）／`AgentCmdClient.cs`（本 repo client）／
-`UCL_AgentCommandQueue.cs`（Editor 端）。**任一端改樣板，三端要一起改** ——
+`UCL_AgentCommandQueue.cs`（Editor 端）／**`Senate.Core/ServerExecutor.cs`（Senate Server 端，2026-09-02 起）**。
+⚠ Server 端的路徑常數**全部走 `SCP_DataPaths`／`AgentCmdClient`**，沒有自己拼一份 —— 它是第四個端，
+不是第四份樣板。**任一端改樣板，四端要一起改** ——
 落後那端的症狀是 trigger 寫在對方沒在看的地方，**靜默 pending 到 timeout**，沒有任何一格會紅。
 
 ## 驗收讀數（2026-08-28 首發，LY 活 Editor 實測）

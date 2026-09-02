@@ -200,7 +200,8 @@ public abstract class UnityDelegateCmd : SCP_Cmd
     /// <para>⚠ mtime 回答的是「這個檔何時被寫」，不是「內容何時產生」（2026-08-27 血證：
     /// checkout 落地時間被我讀成重出）。但在「這份是不是這一輪的」這一問上，它夠用。</para>
     /// </summary>
-    static void AppendReport(SCP_CmdResult oResult, string iDataRoot, string iCmdId)
+    /// <remarks>internal：<see cref="ServerDelegateCmd"/> 共用同一個回報形狀（回傳檔帶 mtime）—— 兩個委派宿主印法不同的話，讀的人會以為是兩套協議。</remarks>
+    internal static void AppendReport(SCP_CmdResult oResult, string iDataRoot, string iCmdId)
     {
         (bool aFound, List<string> aOutputs, List<KeyValuePair<string, string>> aValues) =
             AgentCmdClient.ResultReport(iDataRoot, iCmdId);
@@ -221,7 +222,7 @@ public abstract class UnityDelegateCmd : SCP_Cmd
     }
 
     /// <summary>回傳檔的時間戳註記；檔案不在就直說 —— 印不出時間跟「時間很舊」是兩件事。</summary>
-    static string DescribeStamp(string iPath)
+    internal static string DescribeStamp(string iPath)
     {
         try
         {

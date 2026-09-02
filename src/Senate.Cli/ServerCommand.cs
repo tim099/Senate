@@ -69,8 +69,33 @@ static class ServerCommand
             Console.WriteLine("🔢 server_state = running_build_mismatch");
             return 0;
         }
+        PrintLanes(iRepoRoot);
         Console.WriteLine("🔢 server_state = running");
         return 0;
+    }
+
+    /// <summary>Server 根底下每條 lane 的 trigger 狀態（idle／pending／running）與殘量 —— 對應 `ucmd status` 那張表。</summary>
+    static void PrintLanes(string iRepoRoot)
+    {
+        string aServerRoot = SenatePaths.ServerRoot(iRepoRoot);
+        string aQueues = SCP.Core.Paths.SCP_DataPaths.Queues(new SCP.Core.Paths.SCP_DataRoot(aServerRoot));
+        if (!Directory.Exists(aQueues)) { Console.WriteLine($"· 分道：（還沒有任何 lane）　根={aServerRoot}"); return; }
+        string[] aDirs = Directory.GetDirectories(aQueues);
+        Console.WriteLine($"· 分道 {aDirs.Length} 條　根={aServerRoot}");
+        foreach (string aDir in aDirs)
+        {
+            string aLane = Path.GetFileName(aDir);
+            string aState = AgentCmdClient.TriggerState(aServerRoot, aLane);
+            int aCount = 0;
+            try
+            {
+                string aQ = AgentCmdClient.QueuePath(aServerRoot, aLane);
+                if (File.Exists(aQ) && System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(aQ)) is System.Text.Json.Nodes.JsonObject aObj
+                    && aObj["Commands"] is System.Text.Json.Nodes.JsonArray aArr) aCount = aArr.Count;
+            }
+            catch { aCount = -1; }   // 壞檔：印 -1 不印 0 —— 「讀不了」跟「空的」不可同形
+            Console.WriteLine($"    {aLane,-16} {aState,-8} 殘量 {(aCount < 0 ? "讀不了" : aCount.ToString())}");
+        }
     }
 
     static string DescribeAge(ServerStatus s)
