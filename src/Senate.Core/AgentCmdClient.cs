@@ -125,25 +125,12 @@ public static class AgentCmdClient
     public static string Submit(string iDataRoot, string? iPersona, string iCmdType,
         Dictionary<string, string> iArgs, Action<string> iLog, bool iInjectPersona = true)
     {
-        // ── queue 路由 auto-route（TASK-0107，Tim 2026-09-02 拍板；與 run_cmd.py
-        //    `AUTO_ROUTE_BY_ARG_PERSONA` 同律）────────────────────────────────────
-        // 為什麼要有這格：`--arg persona=` 是**身分**、`--persona` 是**路由**，而幾乎所有既有指路
-        // 字串只帶前者（Cmd 回傳檔印的那一行就是）。兩個 client 對同一行指令的路由結果因此不同 ——
-        // run_cmd.py 推得出 `queues/<P>/`，這裡不推就落 anonymous，而且**回 Success 不會紅**。
-        // 🩸 summit 2026-08-16 親踩：觀影同場四人，一晚兩次 `ensure_idle` 逾時，
-        //    錯誤訊息裡是 `queues/anonymous/pending.trigger`，而 `queues/summit/` 好端端空在旁邊。
-        //    **功能在、路由在、旗標在 —— 沒有人被指向它。**
-        // ⇒ 規則要長在通道上，不要掛在呼叫端的記憶裡（＝不是叫每份文件記得補旗標）。
-        // ⚠ 條件寫死「iPersona 空白才觸發」：Server 的公用分道 `server` 是 lane 不是身分，
-        //   它送進來時 iPersona 非空 ⇒ 這段碰不到它。
-        if (string.IsNullOrWhiteSpace(iPersona)
-            && iArgs.TryGetValue("persona", out var aRoutedPersona)
-            && !string.IsNullOrWhiteSpace(aRoutedPersona))
-        {
-            iPersona = aRoutedPersona.Trim();
-            iLog($"  ↪ queue 路由：由 --arg persona={iPersona} 推得 → queues/{iPersona}/"
-                 + "（未帶 --persona；要走別條通道請顯式帶 --persona）");
-        }
+        // ⚠ **queue 路由 auto-route 不在這裡**（summit 2026-09-02 移走，血證留著）：
+        //   第一版寫在本方法開頭，結果 queue 寫進 `queues/<P>/` 而呼叫端的 EnsureIdle／Wait
+        //   仍在 `queues/anonymous/` 等 result ⇒ 判定退化成「Cmd disappeared → 推論 Success」。
+        //   一次派遣有四個地方吃 persona，這裡只是其中一個。
+        // ⇒ 現在做在 CLI 的**進入點**（`Program.cs` 的 `run` 分支，解析 `--persona` 之後）。
+        //   要改路由請改那裡，別在本方法內補第二處 —— 兩處各改一半的症狀是**畫面照樣印綠**。
 
         // caller-side env marker 注入（Treasury 審計欄；已顯式給的不覆寫 —— 測試 override 用）
         if (!iArgs.ContainsKey("_caller_env_marker"))

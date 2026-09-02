@@ -687,6 +687,28 @@ public static class Program
         double aTimeout = double.TryParse(ArgValue(iArgs, "--timeout"), out var t) ? t : AgentCmdClient.DefaultWaitTimeoutSec;
         bool aNoWait = iArgs.Contains("--no-wait");
 
+        // ── queue 路由 auto-route（TASK-0107，Tim 2026-09-02 拍板；與 run_cmd.py
+        //    `AUTO_ROUTE_BY_ARG_PERSONA` 同律）────────────────────────────────────
+        // `--arg persona=` 是**身分**、`--persona` 是**路由**，而幾乎所有既有指路字串只帶前者
+        // （Cmd 回傳檔印的那一行就是）⇒ 不推就落 anonymous，而且**回 Success 不會紅**。
+        // 🩸 summit 2026-08-16 親踩：觀影同場四人，兩次 `ensure_idle` 逾時，錯誤訊息裡是
+        //    `queues/anonymous/pending.trigger`，而 `queues/summit/` 好端端空在旁邊。
+        //
+        // ⚠ **為什麼在這裡而不是在 `AgentCmdClient.Submit()` 裡**（summit 2026-09-02 第一版的血證）：
+        //    一次派遣有四個地方吃 persona —— EnsureIdle／Submit／畫面那行／Wait。
+        //    第一版只在 Submit 內部改，於是 **queue 寫進 `queues/summit/`，而 Wait 在
+        //    `queues/anonymous/` 等 result** ⇒ 判定退化成「Cmd disappeared → 推論 Success」。
+        //    那比不修更糟：修之前四個地方一致地錯，修之後它們不一致，而**畫面照樣印綠**。
+        // ⇒ 路由這種東西要嘛在**進入點**改一次讓全鏈吃到，要嘛不要改。
+        if (string.IsNullOrWhiteSpace(aPersona)
+            && aCmdArgs.TryGetValue("persona", out var aRoutedPersona)
+            && !string.IsNullOrWhiteSpace(aRoutedPersona))
+        {
+            aPersona = aRoutedPersona.Trim();
+            Console.WriteLine($"  ↪ queue 路由：由 --arg persona={aPersona} 推得 → queues/{aPersona}/"
+                              + "（未帶 --persona；要走別條通道請顯式帶 --persona）");
+        }
+
         if (!AgentCmdClient.EnsureIdle(aDataRoot, aPersona, AgentCmdClient.DefaultAckTimeoutSec,
                 Console.WriteLine, out string aIdleWhy))
         {
