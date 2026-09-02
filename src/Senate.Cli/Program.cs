@@ -113,6 +113,7 @@ public static class Program
                 "ucmd" => CmdAgent(aRepoRoot, iArgs),   // Unity 那套（AgentCommand，走檔案協議）
                 "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
+                "server" => ServerCommand.Run(aRepoRoot, iArgs),   // 常駐 Server 生命週期（TASK-0102；前景、永駐、手動啟動）
                 "--help" or "-h" or "help" => Usage(0),
                 _ => Usage(2, $"認不得的指令 '{aCmd}'"),
             };
@@ -1023,6 +1024,9 @@ public static class Program
                 ⚠ 需要目標專案的 Unity Editor 開著（Watcher 執行）—— 這是派遣不是代跑
               ucmd status         看各 persona queue 的 trigger 狀態與殘量（唯讀）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
+              server start        常駐 Server（**前景**，開一個終端機掛著；Ctrl+C 停）。已有一顆在跑會拒絕
+              server stop         請 Server 自退，5 秒等不到才 kill；沒在跑也 exit 0（build 腳本每次都先呼叫它）
+              server status       身分／心跳／build id 三格分開印；沒在跑 exit 3
 
             共用選項：
               --width <n>       文字輸出寬度（字元格，預設 96）⚠ 不吃 --scale

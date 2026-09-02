@@ -21,7 +21,22 @@ cd "$root"
 echo '── Senate 一鍵 build ───────────────────────────'
 command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 ./install.sh' >&2; exit 1; }
 
-dotnet publish src/Senate.Cli \
+# ── publish 前先停常駐 Server（TASK-0102）─────────────────────
+# 🩸 D10：覆寫 publish 出來的 exe 會撞「exe 正在執行中」的鎖 —— Server 是前景永駐，
+#   一定在鎖著它。stop 是冪等的（沒在跑也 exit 0），所以每次 build 都無條件呼叫。
+#   ⚠ 用**舊的** exe 去停（新的還沒 build 出來）；舊 exe 不存在就沒有 Server 可停。
+if [ -f "$root/publish/senate.exe" ]; then
+  "$root/publish/senate.exe" server stop || echo "⚠ server stop 回非零 —— 若 publish 撞鎖，先手動收掉 Server 再重跑"
+fi
+
+# build id：git SHA ＋ UTC 時間 ⇒ 進 AssemblyInformationalVersion，Server 心跳與 CLI 拿它對「是不是同一顆 exe」。
+# ⚠ IncludeSourceRevisionInInformationalVersion 關掉：不然 SDK 會再接一段 +sha，兩邊字串就對不上。
+build_sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+build_dirty=""; [ -n "$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ] && build_dirty="-dirty"
+build_id="${build_sha}${build_dirty}.$(date -u +%Y%m%dT%H%M%SZ)"
+echo "· build id：$build_id"
+
+dotnet publish src/Senate.Cli   -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false \
   -c Release \
   -r win-x64 \
   --self-contained \

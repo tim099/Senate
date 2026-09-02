@@ -1,7 +1,7 @@
 ---
 title: 設計拍板紀錄（ADR）
 description: Senate 與 SCP_Core 的關鍵決策、當時的理由、以及被實測推翻或修正的部分。新決策往下加，不改舊條目
-last_updated: 2026-08-28
+last_updated: 2026-09-02
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -905,3 +905,30 @@ SCP_GuiHost.RedrawsContinuously ── true: 丟背景＋每幀顯示進度／fa
 
 ⇒ 兩者都要動 renderer 層（UI 框架的決定，不是這一頁的），所以記在這裡等拍板，
 **不順手改** —— 順手改 renderer 會讓「這一頁的改動」與「全站版位的改動」混在同一筆裡。
+
+---
+
+## D20 · Senate 常駐 Server：前景、永駐、手動啟動（2026-09-02，Tim）
+
+**決策**：Senate 長出一顆常駐 Server（TASK-0100 主單），作為酒館 seq／銀行 ledger 之後搬進來時的
+**單一寫入者容器**。生命週期三格由 Tim 拍：
+
+| 格 | 拍板 | 被否掉的選項與理由 |
+|---|---|---|
+| 誰在養 | **A. 獨立終端機前景跑**（Ctrl+C 停） | B. `start` 返回、背景 daemon —— 看不見的常駐最會出「我以為它在跑」；C. GUI 視窗即 Server —— 把「想看後台」跟「要不要服務」綁死 |
+| 何時退 | **永駐直到 `stop`** | idle 自退 —— 讓「Server 沒起來」多一種成因，錯誤訊息得多解釋一句 |
+| 誰啟動 | **人手動**；委派 Cmd 撞到沒 Server 只印 `senate server start` 並 exit 3 | CLI 自動 spawn —— 兩顆 CLI 同時發現沒 Server 的 race，且違反 R18「不做降級路」 |
+
+**為什麼這條線存在**（①）：LY 的酒館 `_seq.txt` 註解白紙黑字「prototype 不做跨 process lock」，
+per-room lock 只在同一 process 內成立。Server 的第一價值不是「多執行緒要鎖」，是**把「同一 process」這個
+前提從 Unity Editor 搬到 Senate**。⇒ 要鎖的清單就是 seq 與 ledger 兩格；其餘 per-persona 檔案的 Cmd 不遷移（⑧）。
+
+**它翻掉了 SCP_Cmd_System「為什麼沒有 queue」那節的前提**（呼叫端與執行端同一個 process）。
+那節不改寫 —— 本條目記下前提已變，執行器（TASK-0103）沿用檔案協議、Server 當 Watcher，
+三端同步的警告變四端。
+
+**身分不是 pid 檔**：Server 認人一律走 `SCP_ProcessRegistry` 三重身分（pid＋name＋start time）。
+**兩顆 exe 同形**：心跳帶 build id，`status` 對不上就明說；Debug DLL 是 `unversioned`，跟 exe 一定不符 —— 那是定語。
+**exe 會被自己鎖住**：build 腳本 publish 前先 `server stop`。
+
+**尚未做**：執行器（0103）、錯誤報告（0104）、persona lock 搬家（0105）、seq／ledger 搬入（0106）。

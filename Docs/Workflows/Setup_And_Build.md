@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
 description: setup / build 兩支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收三格、single-file 的真正判準（實測修正過一次）、產物與版控
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -135,6 +135,20 @@ powershell -NoProfile -Command "\$e=\$null; [void][System.Management.Automation.
   **內容比對在這一格給假綠燈，真正的證人是 link count**。
 
 ⇒ 連帶消失的還有「覆寫 exe 撞鎖」那個老問題：沒有複製動作，就沒有覆寫。
+
+## publish 前先停 Server，並把 build id 塞進 exe（TASK-0102）
+
+兩支 build 腳本在 `dotnet publish` **之前**多做兩件事：
+
+1. **`publish/senate.exe server stop`**（舊 exe 存在才跑）。Server 是前景永駐（Tim 2026-09-02 拍板），
+   publish 覆寫 exe 必撞「正在執行中」的鎖 —— 那正是上面 D10 那段重試三次在對付的東西。
+   stop 是冪等的（沒在跑也 exit 0），所以無條件呼叫。⚠ 舊 exe 不認 `server` 時（升級到本版的第一次 build）
+   會印 `⚠ server stop 回非零` 然後照常 publish —— 預期中的退路，之後每次都是新 exe。
+2. **`-p:InformationalVersion=<git short sha>[-dirty].<UTC 時間>`** ＋ `IncludeSourceRevisionInInformationalVersion=false`。
+   Server 心跳帶它、`server status` 拿自己的比；對不上就是「舊 exe 還在替新 exe 跑」那本帳。
+   ⚠ 關掉 SDK 自動接 `+sha` 是必要的：不關的話兩邊字串永遠對不上，而症狀是「每次都說版本不符」。
+
+⇒ 這一格是 §「先 build 再對 exe 跑」的機械版：**兩顆長得一樣的 exe，現在有一個地方會說出它們不一樣。**
 
 ## 安裝與移除（install.sh / install.ps1）
 

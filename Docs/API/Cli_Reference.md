@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -269,6 +269,35 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 Senate 只負責 client 半邊。⚠ v1 與 `run_cmd.py` 的已知差距（刻意，不是壞掉）：
 無 schema 預檢與 type 別名（打錯 type 由 Editor 端擋並附 did-you-mean）、
 無 Tavern `wait-reply` 握手、`op=post` 成功後不提交 catch-up cursor。
+
+### `server start` / `server stop` / `server status`
+
+常駐 Server 的生命週期（TASK-0102）。它是 TASK-0100「單一寫入端」那條線的容器：酒館 seq／銀行 ledger
+之後搬進 Senate 的前提是**只有一顆 process 在寫**。⚠ 目前只跳心跳，**還不執行任何 Cmd**（執行器是 TASK-0103）。
+
+Tim 2026-09-02 拍板三格：**前景**（掛在終端機，Ctrl+C 停，log 就在眼前）、**永駐**（不 idle 自退）、
+**手動啟動**（CLI 不自動 spawn；委派 Cmd 撞到沒 Server 只印怎麼啟動）。
+
+| 子指令 | 做什麼 | exit |
+|---|---|---|
+| `start` | 前景常駐。自我登記進 `SCP_ProcessRegistry`（tag `senate_server`），每 0.5 秒覆寫心跳檔。**已有一顆 Alive 就拒絕**（兩顆 Server ＝ 兩個寫入者），身分驗不出來的也拒絕 | 0 正常退出／1 已有或驗不出／70 登記不了 |
+| `stop` | 寫停止請求檔請它自退；5 秒等不到才 `KillRegistered`（身分複驗過才 kill）。**沒在跑也 exit 0**（冪等，build 腳本每次都先呼叫它） | 0／1 停不掉 |
+| `status` | 三格分開印：registry 身分、心跳新鮮度、**build id 對不對** | 0 活著／3 沒在跑或心跳停了 |
+
+`status` 的 `🔢 server_state` 五態：`not_running` / `alive_no_heartbeat` / `stale_heartbeat` /
+`running_build_mismatch` / `running`。⚠ 前三個都回 exit 3，腳本要分要看那個字不要看 exit code。
+
+**build id**：`build.sh`／`build.ps1` publish 時把 `<git short sha>[-dirty].<UTC 時間>` 塞進
+`AssemblyInformationalVersion`；Server 把它寫進心跳，CLI 拿自己的比。`dotnet run`（Debug DLL）沒有那個屬性
+⇒ `unversioned`，跟 exe 對比一定不符 —— **那是定語不是缺陷**：Debug 在跑與 exe 在跑從此分得出來。
+
+🩸 為什麼 build 前要先 `server stop`：Server 是前景永駐，publish 覆寫 exe 一定撞「正在執行中」的鎖（D10）。
+第一次 build 時舊 exe 還不認 `server` 這個動詞，腳本會印一行警告然後照常 publish —— 那是預期中的退路。
+
+驗收讀數（2026-09-02，`publish/senate.exe`）：沒在跑 exit 3／start 後 status `running` 且 build 相同／
+第二顆 start exit 1／ProcessAdminPage 列出 `● ALIVE [senate_server]`／stop 419 ms 自退、心跳與停止請求檔零殘留／
+Debug 當 Server、exe 當 CLI ⇒ `running_build_mismatch`，exe 照樣停得掉它。
+**沒驗到**：Ctrl+C 那條路（背景啟動沒有終端機可按）、5 秒等不到才 kill 那條路（沒有一顆會拒絕自退的 Server 可用）。
 
 ### `ui`
 

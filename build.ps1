@@ -27,7 +27,20 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     Write-Error '找不到 dotnet -- 先跑 .\install.ps1'; exit 1
 }
 
-& dotnet publish (Join-Path $root 'src/Senate.Cli') -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o (Join-Path $root 'publish') --nologo -v minimal
+# -- publish 前先停常駐 Server（TASK-0102）-- 理由見 build.sh 同一段（D10 exe 鎖；stop 冪等）
+$oldExe = Join-Path $root 'publish/senate.exe'
+if (Test-Path $oldExe) {
+    & $oldExe server stop
+    if ($LASTEXITCODE -ne 0) { Write-Host '警告 server stop 回非零 -- 若 publish 撞鎖，先手動收掉 Server 再重跑' }
+}
+
+# build id：git SHA + UTC 時間 -> AssemblyInformationalVersion（Server 心跳與 CLI 對「是不是同一顆 exe」）
+$buildSha = (& git -C $root rev-parse --short HEAD 2>$null); if (-not $buildSha) { $buildSha = 'nogit' }
+$buildDirty = ''; if (& git -C $root status --porcelain --untracked-files=no 2>$null | Select-Object -First 1) { $buildDirty = '-dirty' }
+$buildId = "$buildSha$buildDirty." + (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+Write-Host "-- build id：$buildId"
+
+& dotnet publish (Join-Path $root 'src/Senate.Cli') -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:InformationalVersion=$buildId" -p:IncludeSourceRevisionInInformationalVersion=false -o (Join-Path $root 'publish') --nologo -v minimal
 if ($LASTEXITCODE -ne 0) { Write-Error 'publish 失敗 -- 上面的編譯錯誤就是原因'; exit 1 }
 
 # 覆寫剛 publish 出來的 exe 會撞兩種鎖：① exe 正在執行中（Windows 不准覆寫）

@@ -67,6 +67,12 @@ public static class SenatePaths
     /// <summary>CLI 跨呼叫的 UI session（每次 CLI 都是新 process，靠它記住多步操作）。</summary>
     public static string UiSession(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "ui_session.json");
 
+    /// <summary>常駐 Server 的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ Server 沒在跑，重生成本零。</summary>
+    public static string ServerHeartbeat(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_server_heartbeat.json");
+
+    /// <summary>`senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉它）。</summary>
+    public static string ServerStopRequest(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop.request");
+
     /// <summary>
     /// 把三層目錄建出來。**只建目錄、不寫任何檔**，重複呼叫無副作用。
     /// <para>⚠ 存在的理由是 ImGui：它存 ini 時**不會替你建目錄**，

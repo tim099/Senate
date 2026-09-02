@@ -1,7 +1,7 @@
 ---
 title: SenateData 資料根版面
 description: Senate 自己的設定檔與專案內資料一律住 SenateData/ — 三層分類的判準（config / prefs / runtime）、新東西該往哪放、路徑的唯一決定點、以及改路徑必須同時做 migration 的理由
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -37,7 +37,9 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 │   └─ imgui.ini                   ❌ ImGui 視窗版面
 └─ runtime/    進程活著才有意義的狀態
     ├─ _process_registry/          ❌ 外部進程登記中心
-    └─ ui_session.json             ❌ CLI 跨呼叫的 UI session
+    ├─ ui_session.json             ❌ CLI 跨呼叫的 UI session
+    ├─ _server_heartbeat.json      ❌ 常駐 Server 的心跳（pid／build id／時間戳，每 0.5 秒覆寫）
+    └─ _server_stop.request        ❌ `senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉）
 ```
 
 ## ⭐ 新東西該放哪 —— 判準只有一句
@@ -63,6 +65,8 @@ SenatePaths.PageStore(iRepoRoot)         // SenateData/prefs/senate.pages.local.
 SenatePaths.ImGuiIni(iRepoRoot)          // SenateData/prefs/imgui.ini
 SenatePaths.ProcessRegistry(iRepoRoot)   // SenateData/runtime/_process_registry
 SenatePaths.UiSession(iRepoRoot)         // SenateData/runtime/ui_session.json
+SenatePaths.ServerHeartbeat(iRepoRoot)   // SenateData/runtime/_server_heartbeat.json
+SenatePaths.ServerStopRequest(iRepoRoot) // SenateData/runtime/_server_stop.request
 ```
 
 ⛔ **呼叫端不要自己 `Path.Combine(repoRoot, "SenateData", ...)`** —— 那就是第二個決定點，
@@ -95,7 +99,7 @@ SenatePaths.UiSession(iRepoRoot)         // SenateData/runtime/ui_session.json
 
 | 不搬的 | 為什麼 |
 |---|---|
-| `runtime/` 那兩格 | 判準的答案是「完全無感」，重生成本是零。而 `_process_registry` **更該重生而不是搬** —— 裡面是活著的 PID，搬一份舊的過去等於把早就死掉的進程當成還活著；那比沒有註冊表危險，因為它會回答問題，只是答錯 |
+| `runtime/` 那幾格 | 判準的答案是「完全無感」，重生成本是零。而 `_process_registry` **更該重生而不是搬** —— 裡面是活著的 PID，搬一份舊的過去等於把早就死掉的進程當成還活著；那比沒有註冊表危險，因為它會回答問題，只是答錯 |
 | `senate.local.example.json` | **它入版控，git 自己會搬。** 在 migration 裡多寫一條 ＝ 同一個檔有兩個搬運工 |
 
 ## .gitignore 的形狀
