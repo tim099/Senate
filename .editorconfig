@@ -1,0 +1,17 @@
+# 區塊職責：編輯器層的行尾與編碼統一（Rider / VS / VS Code 讀它；git 那層另由 .gitattributes 管）。
+# 物理意義：repo 裡存的一律是 LF（.gitattributes text=auto）；工作區在 Windows 上 .cs 用 CRLF、
+#           shell / python / .meta 用 LF（sh 的 shebang 帶 \r 會 bad interpreter；.meta Unity 只寫 LF）。
+# 數值影響：只管 end_of_line 與 charset，不動縮排等風格 —— 改風格會讓既有檔整檔重排。
+# ⚠ .ps1 必須 utf-8-bom：PowerShell 5.1 沒 BOM 用 ANSI 讀，中文直接壞（Docs/Logs/Decisions.md D10）。
+root = true
+
+[*]
+end_of_line = crlf
+charset = utf-8
+
+[*.{sh,py,meta,yml,yaml,toml}]
+end_of_line = lf
+
+[*.ps1]
+end_of_line = crlf
+charset = utf-8-bom
