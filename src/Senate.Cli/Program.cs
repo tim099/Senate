@@ -1,4 +1,4 @@
-// 區塊職責：CLI 入口 —— `senate init` / `doctor` / `ui`。
+﻿// 區塊職責：CLI 入口 —— `senate init` / `doctor` / `ui`。
 // 物理意義：**headless 優先**。這套後台的第一個實用價值是「Unity Editor 關著也能做事」，
 //           所以入口是命令列；ImGui 視窗是同一份頁面碼的第二個 renderer，不是唯一入口。
 // 數值影響：唯讀的指令不動任何檔（doctor / ui）；init 只在檔案**不存在**時建立，絕不覆寫。
@@ -351,6 +351,7 @@ public static class Program
             aWin.Run(iShot);
             Console.WriteLine($"字型：{aWin.LoadedFonts}");
             Console.WriteLine($"{aWin.ClipboardStatus}");
+            Console.WriteLine($"{aWin.WindowIconStatus}");
         }
         catch (Exception e)
         {

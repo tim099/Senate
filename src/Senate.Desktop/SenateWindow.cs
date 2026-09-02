@@ -1,4 +1,4 @@
-// 區塊職責：開一個原生視窗、每幀重畫頁面、（可選）把畫面存成 PNG 後結束。
+﻿// 區塊職責：開一個原生視窗、每幀重畫頁面、（可選）把畫面存成 PNG 後結束。
 // 物理意義：⭐ `--screenshot` 不是花俏功能，是**驗收手段**：
 //           原生視窗沒辦法被 CI／agent 用眼睛看，於是「GUI 到底有沒有畫出來、中文有沒有變方塊」
 //           就沒有讀數。把 framebuffer 落成圖檔之後，那兩件事就變成可以被別人檢查的證據。
@@ -91,6 +91,13 @@ public sealed class SenateWindow : IDisposable
     /// 而那跟「這個宿主本來就不支援」長得一模一樣 —— 兩者要分得出來。</para>
     /// </summary>
     public string ClipboardStatus { get; private set; } = "(尚未安裝)";
+
+    /// <summary>
+    /// 視窗／工作列那顆 icon 的安裝讀數。
+    /// <para>⚠ 跟 <see cref="ClipboardStatus"/> 同一個規矩：沒設到的症狀是「看起來就是預設圖示」，
+    /// 而那跟「這台系統圖示快取沒更新」長得一樣 —— 兩者要分得出來，所以這裡回的是一句話不是 bool。</para>
+    /// </summary>
+    public string WindowIconStatus { get; private set; } = "(尚未設定)";
 
     /// <summary>本文字級 —— 唯一來源是 <see cref="SCP_GuiStyle"/>，本類別不再自己存一份。</summary>
     public float FontSize => m_Style.FontSize;
@@ -199,6 +206,11 @@ public sealed class SenateWindow : IDisposable
 
         // 標題字型交給 renderer（沒載到就不設 ⇒ 標題用本文字級，不假裝有大一號）
         if (aFonts != null) m_Renderer.TitleFont = aFonts.Title;
+
+        // 視窗 icon —— 必須在窗開好之後（那時才有 HWND）。
+        // 🩸 GLFW 撈的是名為 GLFW_ICON 的資源，apphost 埋的是數字 ID 32512 ⇒ 名字對不上，
+        //    它會安靜地退回系統預設。詳見 SenateWindowIcon。
+        WindowIconStatus = SenateWindowIcon.Apply(m_Window);
     }
 
     /// <summary>把 <see cref="SCP_GuiStyle"/> 的尺寸／間距灌進 ImGui 的全域樣式。</summary>
