@@ -234,6 +234,22 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 | 2 | 用法錯：認不得的指令名／沒宣告的參數名／缺必填／值不在可選清單裡 |
 | 70 | Cmd 執行時丟出例外 —— ⚠ 跟 2 分開，否則腳本會把**程式 bug** 當成「我自己打錯」 |
 
+#### 錯誤報告（TASK-0104）
+
+Cmd 失敗時 CLI 印三行固定形狀：**哪一格不成立**（Cmd 自己的 Fail 訊息）／`📄 錯誤報告：<路徑>`／`🔢 exit_code = n`。
+報告形狀沿 Editor 的 `_cmd_errors/<id>.md`：cmd 名、exit code、時間（local＋UTC）、**執行位置**（local／server pid）、
+build id、client、例外型別與訊息、Cmd 說了什麼、Args 全列（單一值超過 20 行截斷並標原長）、stack trace。
+
+| exit | 寫不寫 | 落點 |
+|---|---|---|
+| 1／70 | 一律寫 | CLI 直跑 → `SenateData/runtime/_cmd_errors/`；Server 跑的 → `SenateData/runtime/server/_cmd_errors/`（Server 寫，CLI 只指路） |
+| 3 | **只在真的送出過**（有 `cmd_id`：逾時／送出後沒等到）才寫 | 同上 |
+| 2 | 不寫 | 打錯字配一份 stack 只會訓練人忽略這個目錄 |
+| `⤷Unity` 的失敗 | 本層不寫 | Editor 端有自己那份（`<專案資料根>/_cmd_errors/`），CLI 節錄它 |
+
+⚠ 落點刻意**不是**「某個專案的資料根」：原生 Cmd 不知道自己屬於哪個專案，拿「唯一啟用的專案」去猜會在多專案時
+靜默寫到別人那棵樹 —— 路徑不該被推導。
+
 #### 執行位置第四態：`⤷Server`
 
 `help` 清單行尾多一種標記，統計行變成「本地 ／ ⤷Unity ／ ⤷Server ／ ⛔未實作」。

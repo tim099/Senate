@@ -130,6 +130,9 @@ public sealed class ServerExecutor
                     foreach (var kv in aArgsNode) aArgs[kv.Key] = (string?)kv.Value ?? "";
 
                 SCP_CmdResult aResult = RunOne(aType, aArgs);
+                // 錯誤報告（TASK-0104）先寫再寫 result —— result 檔的 error_report 欄指的路徵要在它被讀到之前就存在。
+                if (CmdErrorReport.ShouldReport(aResult.ExitCode, iHasCmdId: true))
+                    CmdErrorReport.Write(m_Root, aId, aType, aArgs, aResult, "server", m_Err);
                 WriteResult(m_Root, aId, aType, aMode, aArgs, aResult);
                 Completed++;
                 m_Out(aResult.Ok
@@ -227,8 +230,7 @@ public sealed class ServerExecutor
         if (!iResult.Ok)
         {
             aJson["error"] = FirstLine(iResult);
-            // 錯誤報告檔（TASK-0104）—— 路徑先預留成同一個位置，寫檔那半等 0104。
-            aJson["error_report"] = Path.Combine(iServerRoot, "_cmd_errors", iCmdId + ".md");
+            aJson["error_report"] = Path.Combine(iServerRoot, CmdErrorReport.DirName, iCmdId + ".md");
         }
         string aPath = Path.Combine(aDir, iCmdId + ".json");
         string aTmp = aPath + ".tmp";

@@ -22,6 +22,8 @@ public sealed class Cmd_ServerPing : ServerDelegateCmd
             {
                 new SCP_CmdArgSpec("echo", "原樣回傳的字（驗參數有沒有穿過協議）", iDefault: ""),
                 new SCP_CmdArgSpec("persona", "走哪條分道；空 ＝ 公用分道 `server`", iDefault: ""),
+                // 探針要能故意壞：驗「Server 端失敗 → 錯誤報告 → CLI 指路」那條路（TASK-0104），不然那條路只有 selftest 的合成樣本。
+                new SCP_CmdArgSpec("fail", "故意失敗：fail＝回 exit 1；throw＝丟例外（exit 70）", iDefault: "", iChoices: new[] { "", "fail", "throw" }),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -31,6 +33,9 @@ public sealed class Cmd_ServerPing : ServerDelegateCmd
     protected override SCP_CmdResult ExecuteOnServer(SCP_CmdArgs iArgs)
     {
         string aEcho = iArgs.Get("echo");
+        string aFail = iArgs.Get("fail");
+        if (aFail == "fail") return SCP_CmdResult.Fail(1, "✗ 探針被要求失敗（fail=fail）—— 這一行就是「哪一格不成立」").AddValue("echo", aEcho);
+        if (aFail == "throw") throw new InvalidOperationException("探針被要求丟例外（fail=throw）—— stack 應該出現在錯誤報告裡");
         var aResult = SCP_CmdResult.Success(
             $"pong　thread={Environment.CurrentManagedThreadId}　utc={DateTime.UtcNow:O}",
             aEcho.Length > 0 ? $"echo：{aEcho}" : "echo：（空）");

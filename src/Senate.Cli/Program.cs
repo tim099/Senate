@@ -966,7 +966,42 @@ public static class Program
         foreach (string aOutput in aResult.Outputs) Console.WriteLine($"📄 回傳檔：{aOutput}");
         foreach (KeyValuePair<string, string> aValue in aResult.Values)
             Console.WriteLine($"🔢 {aValue.Key} = {aValue.Value}");
+
+        // ── 錯誤報告（TASK-0104）：exit 1／70 一律寫，3 只在真的送出過（有 cmd_id）才寫，2 不寫 ──
+        // 落點是 Senate 自己的 runtime（不是某個專案的資料根）：原生 Cmd 不知道「哪個專案」，
+        // 拿「唯一啟用的專案」去猜會在多專案時靜默寫到別人那棵樹（路徑不該被推導）。
+        // 委派 Unity 的那批**不在這裡寫**：Editor 端已經有自己那份，AgentCmdClient 會節錄它。
+        if (!aResult.Ok && aCmd != null && aCmd.PortStatus != SCP.Core.Cmd.SCP_CmdPortStatus.DelegatedToUnity)
+        {
+            string? aCmdId = null;
+            foreach (var kv in aResult.Values) if (kv.Key == "cmd_id") aCmdId = kv.Value;
+            if (CmdErrorReport.ShouldReport(aResult.ExitCode, aCmdId != null))
+            {
+                string aReportId = aCmdId ?? $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}-{aName.ToLowerInvariant()}";
+                string aHost = aResult.Values.Exists(v => v.Key == "delegate_host" && v.Value == "server") ? "server" : "local";
+                // Server 跑的那筆，報告由 Server 寫在它的根（cmd_id 同一個）；這裡只指路，不再寫第二份。
+                string? aPath = aHost == "server"
+                    ? Path.Combine(SenatePaths.ServerRoot(iRepoRoot), CmdErrorReport.DirName, aReportId + ".md")
+                    : CmdErrorReport.Write(SenatePaths.RuntimeDir(iRepoRoot), aReportId, aName, WithClient(aRawArgs), aResult, aHost,
+                        m => Console.Error.WriteLine(m));
+                if (aPath != null)
+                {
+                    // 三行固定形狀：哪一格不成立（上面 Lines 已印）／報告路徑／exit code。stdout＋stderr 各一份（PS 5.1 那課）。
+                    string aLine = File.Exists(aPath) ? $"📄 錯誤報告：{aPath}" : $"📄 錯誤報告：{aPath}　⚠ 檔案不在（Server 端沒寫成？）";
+                    Console.WriteLine(aLine); Console.Error.WriteLine(aLine);
+                }
+            }
+        }
+        Console.WriteLine($"🔢 exit_code = {aResult.ExitCode}");
         return aResult.ExitCode;
+    }
+
+    /// <summary>CLI 直跑的 Cmd 沒有經過 Submit，不會有 `_caller_client` —— 報告裡補上，不然「諰送的」會印成 unstated（那是給舊 client 留的態）。</summary>
+    static Dictionary<string, string> WithClient(Dictionary<string, string> iArgs)
+    {
+        if (iArgs.ContainsKey("_caller_client")) return iArgs;
+        var aCopy = new Dictionary<string, string>(iArgs, StringComparer.Ordinal) { ["_caller_client"] = AgentCmdClient.ClientId };
+        return aCopy;
     }
 
     static bool DeclaresArg(SCP.Core.Cmd.SCP_Cmd iCmd, string iName)

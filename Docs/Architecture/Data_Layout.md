@@ -40,6 +40,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
     ├─ ui_session.json             ❌ CLI 跨呼叫的 UI session
     ├─ _server_heartbeat.json      ❌ 常駐 Server 的心跳（pid／build id／時間戳，每 0.5 秒覆寫）
     ├─ _server_stop.request        ❌ `senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉）
+    ├─ _cmd_errors/                ❌ CLI 直跑的 SCP Cmd 失敗報告（exit 1／70；委派 Unity 的不在這，在該專案資料根）
     └─ server/                     ❌ Server 自己的資料根（版面同 AgentCommands：queues/<lane>/、_cmd_results/、_cmd_errors/）
 ```
 

@@ -52,6 +52,7 @@ public static class SelfTest
         aRows.Add(SourceCapabilityFallback());
         aRows.Add(SourceMessageLifecycle());
         aRows.Add(ServerResultRoundTrip());
+        aRows.Add(ErrorReportShape());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         return aRows;
@@ -84,6 +85,29 @@ public static class SelfTest
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
+    }
+
+    // 區塊職責：錯誤報告的判準與內容 —— 該寫的才寫、長值截斷、stack 有留、client 有欄。
+    // 物理意義：報告是「失敗之後唯一能回頭看的地方」，它自己漂掉沒有人會發現（失敗時沒人在看它長什麼樣）。
+    static CheckRow ErrorReportShape()
+    {
+        bool aPolicy = CmdErrorReport.ShouldReport(1, false) && CmdErrorReport.ShouldReport(70, false)
+                       && !CmdErrorReport.ShouldReport(2, true) && !CmdErrorReport.ShouldReport(0, true)
+                       && CmdErrorReport.ShouldReport(3, true) && !CmdErrorReport.ShouldReport(3, false);
+        var aRes = SCP.Core.Cmd.SCP_CmdResult.Fail(70, "✗ 爆了");
+        try { throw new InvalidOperationException("測試用例外"); } catch (Exception e) { aRes.Exception = e; }
+        string aLong = string.Join("\n", Enumerable.Range(1, 40).Select(i => "line" + i));
+        var aArgs = new Dictionary<string, string> { ["body"] = aLong, ["persona"] = "probe", ["_caller_client"] = "selftest" };
+        string aText = CmdErrorReport.Render("id-x", "probe-cmd", aArgs, aRes, "local");
+        bool aStack = aText.Contains("InvalidOperationException", StringComparison.Ordinal) && aText.Contains("Stack trace", StringComparison.Ordinal);
+        bool aTrunc = aText.Contains("40 行，只印前 20 行", StringComparison.Ordinal) && !aText.Contains("line21", StringComparison.Ordinal) && aText.Contains("line20", StringComparison.Ordinal);
+        bool aClient = aText.Contains("**client**: selftest", StringComparison.Ordinal);
+        bool aHost = aText.Contains("**執行位置**: local", StringComparison.Ordinal);
+        bool aExit = aText.Contains("**exit_code**: 70", StringComparison.Ordinal);
+        bool aOk = aPolicy && aStack && aTrunc && aClient && aHost && aExit;
+        return new CheckRow("錯誤報告形狀",
+            $"判準（1/70 寫、2/0 不寫、3 要有 cmd_id）={aPolicy}／stack 有留={aStack}／40 行值截成 20={aTrunc}／client 欄={aClient}／執行位置={aHost}／exit_code={aExit}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
     /// <summary>「不存在」不可以長得像「空值」—— 讀 Missing 必須丟例外。</summary>
