@@ -109,6 +109,23 @@ else {
     Get-Content $log -Tail 3
 }
 
+# -- 出廠驗收(5) 開真視窗轉十秒 -- 理由見 build.sh 同一段（凍住的視窗截起來是正常的）
+Write-Host '-- 出廠驗收(5) 開窗轉 10 秒（凍住 != 慢，門檻只擋凍住）--'
+$soakShot = Join-Path $root 'build/build_soak.png'
+$soakLog = Join-Path $root 'build/build_soak.log'
+& $exe ui --soak 10 --screenshot $soakShot > $soakLog 2>&1
+$soak = $LASTEXITCODE
+$soakLine = (Select-String -Path $soakLog -Pattern '^soak' | Select-Object -First 1).Line
+$soakFps = 0.0
+if ($soakLine -match '平均 ([0-9.]+) fps') { $soakFps = [double]$Matches[1] }
+if ($soak -eq 0 -and $soakFps -ge 10) { Write-Host "完成 $soakLine" }
+else {
+    $soak = 1
+    if ($soakLine) { Write-Host "失敗 視窗轉不動（門檻 10 fps）-- $soakLine" }
+    else { Write-Host '失敗 視窗轉不動 -- 沒有讀數，見 build/build_soak.log' }
+    Get-Content $soakLog -Tail 3
+}
+
 # -- 出廠驗收(4) Server round-trip（TASK-0100 主單那格）-- 理由見 build.sh 同一段
 Write-Host '-- 出廠驗收(4) Server round-trip（起一顆臨時 Server -> server-ping -> 收掉）--'
 $serverLog = Join-Path $root 'build/build_server.log'
@@ -133,10 +150,10 @@ if ($server -eq 0 -and (Select-String -Path $pingLog -Pattern 'echo = build-chec
 }
 
 Write-Host ''
-if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0 -and $server -eq 0) {
+if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0 -and $soak -eq 0 -and $server -eq 0) {
     Write-Host '完成 出廠驗收全過。開 GUI：.\senate.exe ui --window'
     exit 0
 }
-# 四格分開印 -- 壓成一句「驗收未過」會讓人不知道要去看哪一格
-Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / server=$server）"
+# 每一格分開印 -- 壓成一句「驗收未過」會讓人不知道要去看哪一格
+Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / soak=$soak / server=$server）"
 exit 1

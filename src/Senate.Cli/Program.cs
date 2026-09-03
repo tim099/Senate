@@ -341,6 +341,20 @@ public static class Program
         aWin.KeyDebug = HasFlag(iArgs, "--keydebug");
         if (aWin.KeyDebug) Console.WriteLine("・keydebug 開著 —— 畫面底部會多一行鍵盤／剪貼簿讀數");
 
+        // ⭐ soak：開真視窗**轉一段時間**再收工。截圖的 8 幀證明「畫得出來」，
+        //   證明不了「每幀成本」與「背景工作跑的時候畫面凍不凍」——
+        //   而那兩件事壞掉的樣子是畫面看起來正常、只是不動，跟截圖同形。
+        if (ArgValue(iArgs, "--soak") is { } aSoakText)
+        {
+            if (!double.TryParse(aSoakText, out double aSoak) || aSoak <= 0)
+            {
+                Console.Error.WriteLine($"✗ --soak 要一個正的秒數（收到 '{aSoakText}'）");
+                return 2;
+            }
+            aWin.SoakSeconds = aSoak;
+            Console.WriteLine($"・soak 開著 —— 視窗會真的轉 {aSoak:0.#} 秒再收工，收工時印幀數讀數");
+        }
+
         Console.WriteLine($"介面尺寸：{aStyle.Describe()}");
 
         if (SenateWindow.FindCjkFont() == null)
@@ -349,6 +363,7 @@ public static class Program
         try
         {
             aWin.Run(iShot);
+            if (aWin.SoakReading is { } aReading) Console.WriteLine(aReading);
             Console.WriteLine($"字型：{aWin.LoadedFonts}");
             Console.WriteLine($"{aWin.ClipboardStatus}");
             Console.WriteLine($"{aWin.WindowIconStatus}");
@@ -1055,6 +1070,7 @@ public static class Program
                 --page <key>      開窗直接停在某一頁（home / doctor / submodule / style / settings / projects / paths / login / skills / process）—— 給截圖驗收用
                 --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
+              ui --soak <秒>      開窗**真的轉這麼多秒**再收工，印幀數／fps／最慢一幀（可跟 --screenshot 併用）
               cmd [<name>]        SCP_CMD —— 不依賴 Unity 的指令系統（沒有 queue，直接呼叫 C#）
                                   不給 name ＝ 印出所有可用指令（等同 cmd help）
                 --arg k=v         指令參數，可重複。**沒宣告的參數名會被擋下**，不會靜默取預設

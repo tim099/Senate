@@ -354,6 +354,7 @@ Debug 當 Server、exe 當 CLI ⇒ `running_build_mismatch`，exe 照樣停得�
 | `--reset` | 清空 session（欄位與勾選回到頁面預設） |
 | `--window` | 開原生 ImGui 視窗，關窗才結束 |
 | `--screenshot <path>` | 開窗、畫幾幀、存 PNG 後**自己關掉** |
+| `--soak <秒>` | 開窗**真的轉這麼多秒**再收工，印 `幀數 / 秒數 / 平均 fps / 第一幀 / 其餘最慢`（可跟 `--screenshot` 併用）。截圖證明畫得出來，這個證明畫得動 |
 | `--width <n>` | 文字輸出寬度（字元格，預設 96），`doctor` / `selftest` 也吃 ⚠ 不吃 `--scale` |
 | `--scale <x>` | 介面縮放（0.5〜4，預設 1.0）。**本次有效，不寫回設定檔** |
 | `--size <段>` | `small`(1×) / `medium`(1.5×) / `big`(2×) / `xl`(2.5×) —— 同上，本次有效 |

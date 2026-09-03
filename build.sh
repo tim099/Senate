@@ -111,6 +111,30 @@ else
   tail -3 "$root/build/build_check.log"
 fi
 
+# ── 出廠驗收⑤：**開真視窗轉十秒**（會重畫的宿主，截圖蓋不到的那一半）──────────────
+# 物理意義：③ 的截圖證明「畫得出來」，證明不了「畫得動」。凍住的視窗**截起來是正常的** ——
+#   第一幀畫完就不動，framebuffer 裡是一張完整的畫面，跟 60fps 那張長得一模一樣。
+#   ⇒ 這一格量的是幀數：真的轉十秒，看它跑了幾幀。
+# 🩸 出處：@basecamp 2026-08-28 的清單條文（她 headless 全綠交付的頁面，Tim 開一次視窗就抓到卡死）。
+#   在此之前這件事在 Decisions 裡是一句「不宣稱它被驗過」——誠實，但誠實不會擋下任何一次交付。
+# ⚠ 門檻**刻意設得很低**（10 fps）：這一格要抓的是「凍住」不是「慢」。
+#   慢會隨機器、驅動、螢幕更新率漂移，設高了會變成一個會自己叫的假警報，
+#   而假警報最後一定是被關掉，不是被修好。
+echo '── 出廠驗收⑤ 開窗轉 10 秒（凍住 ≠ 慢，門檻只擋凍住）──'
+set +e
+"$exe" ui --soak 10 --screenshot "$root/build/build_soak.png" > "$root/build/build_soak.log" 2>&1
+soak=$?
+set -e
+soak_line=$(grep -m1 '^soak：' "$root/build/build_soak.log" || true)
+soak_fps=$(printf "%s" "$soak_line" | grep -o "平均 [0-9.]*" | grep -o "[0-9.]*")
+if [ "$soak" -eq 0 ] && [ -n "$soak_fps" ] && awk "BEGIN{exit !($soak_fps >= 10)}"; then
+  echo "✓ $soak_line"
+else
+  soak=1
+  echo "✗ 視窗轉不動（門檻 10 fps）—— ${soak_line:-沒有讀數，見 build/build_soak.log}"
+  tail -3 "$root/build/build_soak.log"
+fi
+
 # ── 出廠驗收④：**Server round-trip**（TASK-0100 主單那格）──────────────
 # 物理意義：selftest 對拍的是 result 檔的 schema，不是「一顆 CLI 送、一顆 Server 接、result 回來」這條路。
 #   那條路只有真的起一顆 Server 才有讀數 —— 所以在這裡起一顆、ping 一次、收掉。
@@ -138,10 +162,10 @@ else
 fi
 
 echo
-if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$server" -eq 0 ]; then
+if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$soak" -eq 0 ] && [ "$server" -eq 0 ]; then
   echo '✓ 出廠驗收全過。開 GUI：./senate.exe ui --window（或直接雙擊 senate.exe 會印用法）'
 else
-  # 四格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
-  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / server=$server）"
+  # 每一格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
+  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / soak=$soak / server=$server）"
 fi
-[ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ]
+[ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$soak" -eq 0 ]

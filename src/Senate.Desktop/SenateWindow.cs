@@ -42,6 +42,24 @@ public sealed class SenateWindow : IDisposable
     int m_ScreenshotAtFrame;
     int m_Frame;
 
+    System.Diagnostics.Stopwatch? m_SoakClock;
+    double m_SoakWorstFrameMs;
+    double m_SoakFirstFrameMs;
+
+    /// <summary>
+    /// 開窗之後**真的轉這麼多秒**再收工（0 ＝ 不轉，維持原本的固定幀數行為）。
+    /// <para>⭐ 為什麼要有這一格：8 幀（約 130ms）拍得到「畫得出來」，
+    /// 拍不到「每幀成本」與「背景工作跑的時候畫面凍不凍」——
+    /// 而後兩者壞掉的樣子是**畫面看起來正常、只是不動**，截圖與它同形。
+    /// ⇒ 會重畫的宿主要開真視窗轉一段時間，那一段時間裡的幀數才是讀數。
+    /// 🩸 出處：@basecamp 2026-08-28 的驗收清單條文（她 headless 全綠交付的頁面，
+    /// Tim 開一次視窗就抓到卡死）。</para>
+    /// </summary>
+    public double SoakSeconds { get; set; }
+
+    /// <summary>soak 跑完的讀數（幀數／秒數／平均 fps／最慢一幀）。沒跑 soak 就是 null。</summary>
+    public string? SoakReading { get; private set; }
+
     /// <summary>
     /// ImGui 版面檔（`imgui.ini`）要寫到哪。null ＝ 用 ImGui 預設。
     /// <para>⚠ ImGui 的預設是**相對 cwd 的 `imgui.ini`** —— 不是相對執行檔、也不是相對 repo。
@@ -309,6 +327,14 @@ public sealed class SenateWindow : IDisposable
     {
         m_Frame++;
 
+        // soak 的讀數在這裡累積。⚠ 第一幀不計最慢值：那一幀含 font atlas 與版位量測，
+        //   它一定是全場最慢的，計進去會讓「最慢一幀」永遠回答同一件事（＝沒有回答任何事）。
+        if (SoakSeconds > 0)
+        {
+            m_SoakClock ??= System.Diagnostics.Stopwatch.StartNew();
+            if (m_Frame > 1) m_SoakWorstFrameMs = Math.Max(m_SoakWorstFrameMs, iDelta * 1000.0);
+        }
+
         // ⚠ 補鍵盤 modifier **必須在 Update 之前**：`Update` 內部會呼叫 `ImGui.NewFrame`，
         //   而 NewFrame 才會消化 AddKeyEvent 的事件佇列。放在後面的話 Ctrl 會慢一幀到，
         //   於是 ImGui 看到 V 的那一幀 Ctrl 還是 false ⇒ 快捷鍵永遠差一步，而它不會報錯。
@@ -355,11 +381,34 @@ public sealed class SenateWindow : IDisposable
         ImGui.End();
         m_Controller.Render();
 
-        if (m_ScreenshotPath != null && m_Frame >= m_ScreenshotAtFrame)
+        // ⚠ soak 開著時，收工的判準從「幀數」換成「時間」——
+        //   兩個判準同時成立會讓視窗在第 8 幀就關掉，而那正是 soak 要避免的事。
+        if (SoakSeconds > 0 && m_Frame == 1 && m_SoakClock != null)
+            m_SoakFirstFrameMs = m_SoakClock.Elapsed.TotalMilliseconds;
+
+        bool aDone = SoakSeconds > 0
+            ? m_SoakClock is { } aClock && aClock.Elapsed.TotalSeconds >= SoakSeconds
+            : m_Frame >= m_ScreenshotAtFrame;
+
+        if (!aDone) return;
+
+        if (SoakSeconds > 0 && m_SoakClock != null)
         {
-            SenateScreenshot.Capture(m_Gl, m_Window!.FramebufferSize.X, m_Window.FramebufferSize.Y, m_ScreenshotPath);
-            m_Window.Close();
+            double aSec = m_SoakClock.Elapsed.TotalSeconds;
+            // 🩸 第一幀**分開印，不合併也不省略**：2026-09-03 我第一版把它併進「最慢一幀」的
+            //   排除項（理由是 font atlas 會讓它必定最慢），而 submodule 頁的真症狀
+            //   剛好整格住在第一幀（同步掃 git ⇒ 凍 8-10 秒，之後 0 幀）。
+            //   ⇒ 排除掉之後讀數印的是「最慢一幀 0.0 ms」——**一個全綠的數字在描述一個凍住的視窗**。
+            SoakReading = $"soak：{m_Frame} 幀 / {aSec:0.00} 秒 ⇒ 平均 {m_Frame / aSec:0.0} fps"
+                + $"，第一幀 {m_SoakFirstFrameMs:0.0} ms"
+                + (m_Frame > 1 ? $"，其餘最慢 {m_SoakWorstFrameMs:0.0} ms" : "，其餘：沒有第二幀");
         }
+
+        if (m_ScreenshotPath != null)
+            SenateScreenshot.Capture(m_Gl, m_Window!.FramebufferSize.X, m_Window.FramebufferSize.Y, m_ScreenshotPath);
+
+        // soak 沒帶截圖路徑時照樣要關窗 —— 否則 --soak 單獨用會卡成互動模式。
+        m_Window!.Close();
     }
 
     /// <summary>
