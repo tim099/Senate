@@ -92,14 +92,6 @@ public sealed class AwakeningSettings
     /// </summary>
     public string LettersRoot { get; set; } = "";
 
-    /// <summary>
-    /// session lock 目錄。<c>"auto"</c> ＝ 從 <see cref="LettersRoot"/> 逐層往上找第一個
-    /// <c>_session</c>（見 <c>PersonaLetters.ResolveSessionDir</c>）。
-    /// <para>⚠ 這一格存在的理由是「信件庫與 lock 不一定同一棵樹」——
-    /// 不是為了讓人有第二個地方可以填錯。預設 auto，填了就逐字採用。</para>
-    /// </summary>
-    public string SessionDir { get; set; } = PersonaLetters.AutoSessionDir;
-
     /// <summary>本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。</summary>
     /// <remarks>⚠ [SCP_Ignore]：不進畫面、不進自動序列化（同 <see cref="SenateProject.Extra"/>）。</remarks>
     [JsonExtensionData]

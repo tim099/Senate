@@ -16,9 +16,6 @@ namespace Senate.Core;
 
 public static class PersonaLetters
 {
-    /// <summary>`sessionDir` 填這個值 ＝ 由掃描層從信件夾往上推導。（值的定義在 SCP_Core。）</summary>
-    public const string AutoSessionDir = SCP_PersonaLetters.AutoSessionDir;
-
     /// <summary>
     /// 讀設定檔並取出信件夾根。**設定檔不存在 → 回 null**（那是「還沒 init」不是錯誤）；
     /// 檔在但壞掉 → 照 <see cref="SenateConfig.Load"/> 丟例外（不可靜默降級成「沒設定」）。
@@ -31,7 +28,7 @@ public static class PersonaLetters
         return aRoot.Length > 0 ? aRoot : null;
     }
 
-    /// <summary>設定檔整份讀出來（登入／早安流程要 sessionDir 這種其他欄位時用）。</summary>
+    /// <summary>設定檔整份讀出來（登入／早安流程要 lettersRoot 以外的欄位時用）。</summary>
     public static AwakeningSettings? LoadSettings(string iRepoRoot)
         => SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot))?.Awakening;
 
@@ -64,9 +61,9 @@ public static class PersonaLetters
         catch (Exception e) { return (false, $"寫完之後回讀失敗（檔案可能壞了）：{e.Message}"); }
     }
 
-    /// <summary>掃一次信件夾（實作在 SCP_Core；這裡只是既有呼叫端的入口）。</summary>
-    public static SCP_PersonaScan Scan(string? iLettersRoot, string? iConfiguredSessionDir)
-        => SCP_PersonaLetters.Scan(iLettersRoot, iConfiguredSessionDir);
+    /// <summary>掃一次信件夾（實作在 SCP_Core；這裡只是既有呼叫端的入口）。lock 住 `<p>/profile/_session.json`，沒有第二個輸入。</summary>
+    public static SCP_PersonaScan Scan(string? iLettersRoot)
+        => SCP_PersonaLetters.Scan(iLettersRoot);
 
     /// <summary>去掉包住整串的引號與尾斜線。（實作在 SCP_Core —— 兩處各寫一份會分岔。）</summary>
     public static string CleanPath(string? iRaw) => SCP_PersonaLetters.CleanPath(iRaw);

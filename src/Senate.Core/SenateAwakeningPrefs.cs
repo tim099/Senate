@@ -22,15 +22,10 @@ public sealed class SenateAwakeningPrefs : ISCP_Prefs
     public const string SectionName = "awakening";
 
     public const string KeyLettersRoot = "lettersRoot";
-    public const string KeySessionDir = "sessionDir";
 
     /// <summary>信件夾根（絕對路徑）。空 ＝ 還沒設定。</summary>
     public static readonly SCP_PrefKey<string> LettersRoot =
         SCP_PrefKey.String(SectionName, KeyLettersRoot, "");
-
-    /// <summary>session lock 目錄；<c>auto</c> ＝ 從信件夾往上推導。</summary>
-    public static readonly SCP_PrefKey<string> SessionDir =
-        SCP_PrefKey.String(SectionName, KeySessionDir, SCP.Core.Letters.SCP_PersonaLetters.AutoSessionDir);
 
     readonly string m_RepoRoot;
 
@@ -56,11 +51,6 @@ public sealed class SenateAwakeningPrefs : ISCP_Prefs
         {
             string aRoot = aCfg.LettersRoot ?? "";
             return aRoot.Length == 0 ? SCP_PrefRead<string>.Missing() : SCP_PrefRead<string>.Present(aRoot);
-        }
-        if (iKey.Name == KeySessionDir)
-        {
-            string aDir = aCfg.SessionDir ?? "";
-            return aDir.Length == 0 ? SCP_PrefRead<string>.Missing() : SCP_PrefRead<string>.Present(aDir);
         }
         return Unsupported<string>(iKey.Path);
     }
@@ -103,7 +93,7 @@ public sealed class SenateAwakeningPrefs : ISCP_Prefs
 
     static SCP_PrefRead<T> Unsupported<T>(string iPath)
         => SCP_PrefRead<T>.Failed($"{iPath}：SenateAwakeningPrefs 不認得這個 key（只有 "
-                                  + $"{SectionName}.{KeyLettersRoot} / {SectionName}.{KeySessionDir}）");
+                                  + $"{SectionName}.{KeyLettersRoot}）");
 
     static (bool Ok, string Message) WriteUnsupported(string iPath)
         => (false, $"{iPath}：SenateAwakeningPrefs 只支援寫 {SectionName}.{KeyLettersRoot}");

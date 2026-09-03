@@ -1327,7 +1327,7 @@ public static class SelfTest
             if (!Directory.Exists(aLetters.Value)) continue;
             aAny = true;
 
-            SCP_PersonaScan aScan = SCP_PersonaLetters.Scan(aLetters.Value, SCP_PersonaLetters.AutoSessionDir);
+            SCP_PersonaScan aScan = SCP_PersonaLetters.Scan(aLetters.Value);
 
             // 「量不到」必須看得出來：Unknown 只可能來自 Problems 有話說
             bool aThreeStateHonest = aScan.UnknownCount == 0 || aScan.Problems.Count > 0;
@@ -1337,7 +1337,7 @@ public static class SelfTest
             yield return new CheckRow(
                 $"真信件庫掃描（{p.Name}）",
                 $"persona={aScan.Personas.Count}（線上 {aScan.OnlineCount}／離線 {aScan.OfflineCount}／未知 {aScan.UnknownCount}）"
-                + $"／_session={(aScan.SessionDirDerived ? "推導" : "指定")} {aScan.SessionDir}"
+                + "／lock=<p>/profile/" + SCP_LettersPaths.SessionLockFileName
                 + $"／Unknown 有交代={aThreeStateHonest}／problems：{aProblems}",
                 aFound && aThreeStateHonest ? CheckResult.Pass : CheckResult.Fail);
         }
