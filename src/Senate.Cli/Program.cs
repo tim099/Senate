@@ -94,6 +94,14 @@ public static class Program
             return (SenateConfig.Load(aCfgPath), aCfgPath);
         };
 
+        // 宿主能力③：畫布閘（付款／自由時間資格／分享）——本宿主的實作是「派給 Unity Editor」。
+        // ⚠ 工廠吃資料根當參數，**不自己解析** —— Cmd 吃的 `--arg data_root` 與閘用的根若是兩個來源，
+        //   不一致時會安靜地把付款派到另一個專案（錢那邊扣、像素這邊落）。
+        // ⚠ 定語不由這裡宣告：閘自己從資料根算專案標籤。
+        //   實測過相反的做法 —— 傳 repo 根的 basename 會印出「@ Senate（D:/Unity/Bar/…）」，
+        //   而那是兩個來源拼出來的定語，比沒有定語更毒（它有出處的樣子）。
+        SCP.Core.Canvas.SCP_CanvasGatewayHost.Factory = aDataRoot => new SenateCanvasGateway(aDataRoot);
+
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
         //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
