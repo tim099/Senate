@@ -386,6 +386,15 @@ public sealed class SenateWindow : IDisposable
         if (SoakSeconds > 0 && m_Frame == 1 && m_SoakClock != null)
             m_SoakFirstFrameMs = m_SoakClock.Elapsed.TotalMilliseconds;
 
+        // ⚠ **先判「這個模式會不會自己收工」，再判「收工了沒」。** 只有兩種模式會自己關窗：
+        //   `--screenshot`（拍完關）與 `--soak`（轉完關）。互動模式兩者皆無 ⇒ 永遠不從這裡關窗。
+        // 🩸 2026-09-03 我把收工判準寫成 `SoakSeconds > 0 ? 時間到 : m_Frame >= 8`，
+        //   互動模式落到後者、第 8 幀就成立 ⇒ **開窗約 0.1 秒自己關掉**（Tim 回報）。
+        //   而我那一輪的每一個讀數都走 `--screenshot` 或 `--soak` —— **兩個都是會關窗的模式**，
+        //   所以這隻在我選的受測體上一次都不會現形。受測體必須涵蓋「不會關窗」那一種。
+        bool aSelfClosing = m_ScreenshotPath != null || SoakSeconds > 0;
+        if (!aSelfClosing) return;
+
         bool aDone = SoakSeconds > 0
             ? m_SoakClock is { } aClock && aClock.Elapsed.TotalSeconds >= SoakSeconds
             : m_Frame >= m_ScreenshotAtFrame;

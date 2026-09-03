@@ -206,7 +206,13 @@ public static class Program
     {
         bool aWindow = HasFlag(iArgs, "--window");
         string? aShot = ArgValue(iArgs, "--screenshot");
-        if (aWindow || aShot != null) return RunWindow(iRepoRoot, iArgs, aShot);
+
+        // ⭐ `--soak` **隱含開窗** —— 它量的就是「真視窗轉得動嗎」，在文字模式下沒有意義。
+        // 🩸 2026-09-03：漏了這一格時 `ui --soak 4` 靜默掉進文字模式 ——
+        //   印出一張文字畫面、`exit 0`、**一個讀數都沒有**。
+        //   ⇒ 那正是它要抓的形狀（成功與沒做同形），而它發生在這支工具自己身上。
+        bool aSoak = ArgValue(iArgs, "--soak") != null;
+        if (aWindow || aSoak || aShot != null) return RunWindow(iRepoRoot, iArgs, aShot);
 
         var aState = UiDriver.Load(iRepoRoot);
 

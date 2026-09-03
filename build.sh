@@ -151,8 +151,14 @@ set +e
 "$exe" ui --soak 10 --screenshot "$root/build/build_soak.png" > "$root/build/build_soak.log" 2>&1
 soak=$?
 set -e
-soak_line=$(grep -m1 '^soak：' "$root/build/build_soak.log" || true)
+# 🩸 這兩行**必須在 set +e 裡**：`set -e` 底下命令替換裡的 grep 沒命中 ⇒ 整個腳本當場 abort，
+#   於是下面那個 `✗` 永遠印不出來 —— **一個「失敗時不會說自己失敗」的閘**。
+#   2026-09-03 實際發生過一次：⑤ 印了標題就沒有下一行，exit 1 而沒有任何理由。
+#   ⇒ 判準：閘的失敗路徑要跟成功路徑一樣會出聲，否則它跟沒有閘同形。
+set +e
+soak_line=$(grep -m1 '^soak：' "$root/build/build_soak.log")
 soak_fps=$(printf "%s" "$soak_line" | grep -o "平均 [0-9.]*" | grep -o "[0-9.]*")
+set -e
 if [ "$soak" -eq 0 ] && [ -n "$soak_fps" ] && awk "BEGIN{exit !($soak_fps >= 10)}"; then
   echo "✓ $soak_line"
 else
