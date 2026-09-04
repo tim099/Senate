@@ -65,8 +65,8 @@ senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/b
 
 ⚠ 2 與 70 一定要分開：混在一起的話，腳本會把**程式 bug** 當成「我自己打錯」。
 
-失敗（1／70，3 只在真的送出過）會落一份 `_cmd_errors/<id>.md` 並在 CLI 印 `📄 錯誤報告：<路徑>`；
-2 刻意不落檔。細節見 [`Cli_Reference`](../API/Cli_Reference.md) 的「錯誤報告」節。
+失敗（只有 1／70 —— 真的有一端失敗才算）會落一份 `_cmd_errors/<id>.md` 並在 CLI 印 `📄 錯誤報告：<路徑>`；
+2（用法錯）與 3（沒有結果，含逾時）刻意不落檔。細節見 [`Cli_Reference`](../API/Cli_Reference.md) 的「錯誤報告」節。
 `SCP_CmdResult.Exception` 是 Dispatch 接住例外時留的原始現場 —— 給報告檔用，宿主印給使用者時不印它。
 
 ## ⭐ 沒宣告的參數名一律擋下

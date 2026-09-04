@@ -243,7 +243,7 @@ build id、client、例外型別與訊息、Cmd 說了什麼、Args 全列（單
 | exit | 寫不寫 | 落點 |
 |---|---|---|
 | 1／70 | 一律寫 | CLI 直跑 → `SenateData/runtime/_cmd_errors/`；Server 跑的 → `SenateData/runtime/server/_cmd_errors/`（Server 寫，CLI 只指路） |
-| 3 | **只在真的送出過**（有 `cmd_id`：逾時／送出後沒等到）才寫 | 同上 |
+| 3 | **不寫**（2026-09-04 拿掉）| 「沒有結果」的四種細分沒有一種代表對面失敗 —— 逾時那筆 Server 的 result 檔是 `Success`／`exit 0`。沒有失敗就沒有報告該存在 |
 | 2 | 不寫 | 打錯字配一份 stack 只會訓練人忽略這個目錄 |
 | `⤷Unity` 的失敗 | 本層不寫 | Editor 端有自己那份（`<專案資料根>/_cmd_errors/`），CLI 節錄它 |
 
@@ -263,7 +263,7 @@ CLI 那側撞到的四種「沒有結果」都是 exit 3，細分在 `🔢 deleg
 | `not_running` | Server 沒在跑，**這一筆沒送出**，⛔ 不降級成本地跑 | 開一個終端機 `senate server start` |
 | `build_mismatch` | Server 跟本 CLI 不是同一顆 exe，沒送出 | `senate server stop` 再 `start` |
 | `queue_busy` | 該 lane 前一筆還沒收 | `senate server status` 看分道；Server 活著卻不收 ⇒ 看它的終端機 |
-| `timeout` | 送了但沒在時限內拿到 result；**不讀回傳檔** | 看 Server 終端機 |
+| `timeout` | 送了但**本端**沒在時限內拿到 result；**不讀回傳檔**、**不寫錯誤報告** | 先看 `_cmd_results/<cmd_id>.json` 的 mtime（多半已經跑完），不要重打指令（會多送一筆） |
 
 Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 說的話（result 檔 `lines`）原樣印回來。
 

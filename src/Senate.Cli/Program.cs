@@ -1019,7 +1019,9 @@ public static class Program
         foreach (KeyValuePair<string, string> aValue in aResult.Values)
             Console.WriteLine($"🔢 {aValue.Key} = {aValue.Value}");
 
-        // ── 錯誤報告（TASK-0104）：exit 1／70 一律寫，3 只在真的送出過（有 cmd_id）才寫，2 不寫 ──
+        // ── 錯誤報告（TASK-0104）：只有真的有一端失敗才寫 —— exit 1／70。2（用法錯）與 3（沒有結果）都不寫 ──
+        // 🩸 exit 3 那格 2026-09-04 拿掉：逾時是本端放棄等待，對面往往跑完了（QA 量到 result 檔 Success）——
+        //    宣告一份不存在的報告，比沒有報告更糟，它有出處的樣子。判準在 CmdErrorReport.ShouldReport。
         // 落點是 Senate 自己的 runtime（不是某個專案的資料根）：原生 Cmd 不知道「哪個專案」，
         // 拿「唯一啟用的專案」去猜會在多專案時靜默寫到別人那棵樹（路徑不該被推導）。
         // 委派 Unity 的那批**不在這裡寫**：Editor 端已經有自己那份，AgentCmdClient 會節錄它。
@@ -1027,7 +1029,7 @@ public static class Program
         {
             string? aCmdId = null;
             foreach (var kv in aResult.Values) if (kv.Key == "cmd_id") aCmdId = kv.Value;
-            if (CmdErrorReport.ShouldReport(aResult.ExitCode, aCmdId != null))
+            if (CmdErrorReport.ShouldReport(aResult.ExitCode))
             {
                 string aReportId = aCmdId ?? $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}-{aName.ToLowerInvariant()}";
                 string aHost = aResult.Values.Exists(v => v.Key == "delegate_host" && v.Value == "server") ? "server" : "local";

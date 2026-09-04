@@ -201,7 +201,8 @@ public static class AgentCmdClient
         bool iPrintOutputs = true, string iHostLabel = "Editor")
     {
         iOut($"Waiting for {iCmdId}...");
-        iOut($"  Timeout: {iTimeoutSec:0}s   Poll: every {iPollSec:0.0}s");
+        // 🩸 `:0` 會把 0.01 印成 `0s`（TASK-0104 QA 第 3 點）—— 印的是截斷值，而讀的人會拿它當「我設的上限」。
+        iOut($"  Timeout: {iTimeoutSec:0.###}s   Poll: every {iPollSec:0.0}s");
         var aDeadline = DateTime.UtcNow.AddSeconds(iTimeoutSec);
         bool aSawRunning = false;
 
@@ -258,10 +259,15 @@ public static class AgentCmdClient
             }
             Thread.Sleep(TimeSpan.FromSeconds(iPollSec));
         }
+        // 🩸 措辭改於 2026-09-04（TASK-0104 QA 第 2 點）：舊句「{host} 接了但沒在時限內寫 result（看它的終端機）」
+        //    把人指向一個沒有問題的終端機 —— QA 用 timeout=0.01 造出活體，Server 那邊 result 檔是 Success／exit 0。
+        //    ⇒ 逾時是**本端的等待上限**，不是對面失敗；而「逾時後先看 mtime 不要重打」這個手勢原本只住在信裡，
+        //    現在把它搬到每個人都會走過的這條通道上。
         FailVerdict(iOut, iErr,
             iHostLabel == "Editor"
-                ? $"  ✗ Timeout after {iTimeoutSec:0}s — Editor not running, or UCL_AgentCommandWatcher disabled?"
-                : $"  ✗ Timeout after {iTimeoutSec:0}s — {iHostLabel} 接了但沒在時限內寫 result（看它的終端機）");
+                ? $"  ✗ 等了 {iTimeoutSec:0.###}s 沒等到 result — Editor 沒開？或 UCL_AgentCommandWatcher 沒啟用？"
+                : $"  ✗ 等了 {iTimeoutSec:0.###}s 沒等到 result —— 這是 CLI 端的等待上限，**不代表 {iHostLabel} 失敗**。");
+        iErr($"  下一步：先看 {ResultPath(iDataRoot, iCmdId)} 的 mtime（它很可能已經跑完了），不要重打指令（會多送一筆）。");
         iErr("  ⚠ 本筆未完成 ⇒ **回傳檔沒有被更新**。若下一步要讀它，先確認檔頭時間戳。");
         return AgentCmdWaitResult.Timeout;
     }
@@ -344,11 +350,15 @@ public static class AgentCmdClient
         }
     }
 
+    /// <summary>判定檔的路徑（唯一組法）—— 逾時訊息要指著它叫人看 mtime，那條路不能是第二份拼出來的。</summary>
+    static string ResultPath(string iDataRoot, string iCmdId)
+        => Path.Combine(iDataRoot, "_cmd_results", $"{iCmdId}.json");
+
     static JsonObject? ReadCmdResult(string iDataRoot, string iCmdId)
     {
         try
         {
-            string aPath = Path.Combine(iDataRoot, "_cmd_results", $"{iCmdId}.json");
+            string aPath = ResultPath(iDataRoot, iCmdId);
             if (!File.Exists(aPath)) return null;
             return JsonNode.Parse(File.ReadAllText(aPath, System.Text.Encoding.UTF8)) as JsonObject;
         }

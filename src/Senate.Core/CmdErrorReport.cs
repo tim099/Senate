@@ -19,16 +19,20 @@ public static class CmdErrorReport
     public const int MaxArgLines = 20;
 
     /// <summary>
-    /// 要不要寫報告。exit 1（Cmd 回報失敗）／70（例外）一律寫；exit 3（委派沒有結果）**只在真的送出過**（有 cmd_id）才寫 ——
-    /// not_running／build_mismatch 那種「一筆都沒送」是使用者可以當場處置的事，每次都落一份檔只是噪音。
+    /// 要不要寫報告。**只有真的有一端失敗才寫**：exit 1（Cmd 回報失敗）／70（例外）。
     /// exit 2 用法錯不寫；exit 0 不寫。
+    /// <para>
+    /// 🩸 exit 3（委派沒有結果）**整格不寫**（2026-09-04，TASK-0104 QA 判不通過那格）：
+    /// 它的四種細分（not_running／build_mismatch／queue_busy／submit_failed／timeout）沒有一種代表對面失敗 ——
+    /// timeout 那筆 summit 量到 Server 自己寫的 result 是 <c>Success</c>／<c>exit_code 0</c>，
+    /// 而 CLI 照樣宣告了一份報告路徑、再自己承認找不到、再猜「Server 端沒寫成？」。
+    /// ⇒ 逾時是**本端放棄等待**，不是回報失敗；沒有失敗就沒有報告該存在，所以是**拿掉**不是加判斷。
+    /// （原本 exit 3 靠 <c>iHasCmdId</c> 濾掉「一筆都沒送」那兩種 —— 而送出去之後唯一會走到 exit 3 的就是 timeout，
+    /// 也就是說那個參數過濾出來的正好是唯一不該寫的那一種。）
+    /// </para>
     /// </summary>
-    public static bool ShouldReport(int iExitCode, bool iHasCmdId)
-    {
-        if (iExitCode == 1 || iExitCode == 70) return true;
-        if (iExitCode == 3) return iHasCmdId;
-        return false;
-    }
+    public static bool ShouldReport(int iExitCode)
+        => iExitCode == 1 || iExitCode == 70;
 
     /// <summary>
     /// 寫一份報告，回傳路徑。<paramref name="iHostLabel"/> 是執行位置定語（<c>local</c>／<c>server</c>）。

@@ -131,7 +131,7 @@ public sealed class ServerExecutor
 
                 SCP_CmdResult aResult = RunOne(aType, aArgs);
                 // 錯誤報告（TASK-0104）先寫再寫 result —— result 檔的 error_report 欄指的路徵要在它被讀到之前就存在。
-                if (CmdErrorReport.ShouldReport(aResult.ExitCode, iHasCmdId: true))
+                if (CmdErrorReport.ShouldReport(aResult.ExitCode))
                     CmdErrorReport.Write(m_Root, aId, aType, aArgs, aResult, "server", m_Err);
                 WriteResult(m_Root, aId, aType, aMode, aArgs, aResult);
                 Completed++;

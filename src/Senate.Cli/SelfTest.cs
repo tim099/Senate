@@ -91,9 +91,10 @@ public static class SelfTest
     // 物理意義：報告是「失敗之後唯一能回頭看的地方」，它自己漂掉沒有人會發現（失敗時沒人在看它長什麼樣）。
     static CheckRow ErrorReportShape()
     {
-        bool aPolicy = CmdErrorReport.ShouldReport(1, false) && CmdErrorReport.ShouldReport(70, false)
-                       && !CmdErrorReport.ShouldReport(2, true) && !CmdErrorReport.ShouldReport(0, true)
-                       && CmdErrorReport.ShouldReport(3, true) && !CmdErrorReport.ShouldReport(3, false);
+        // exit 3（沒有結果）2026-09-04 起一律不寫 —— 逾時那筆對面其實跑完了，報告不該被宣告（TASK-0104 QA）。
+        bool aPolicy = CmdErrorReport.ShouldReport(1) && CmdErrorReport.ShouldReport(70)
+                       && !CmdErrorReport.ShouldReport(2) && !CmdErrorReport.ShouldReport(0)
+                       && !CmdErrorReport.ShouldReport(3);
         var aRes = SCP.Core.Cmd.SCP_CmdResult.Fail(70, "✗ 爆了");
         try { throw new InvalidOperationException("測試用例外"); } catch (Exception e) { aRes.Exception = e; }
         string aLong = string.Join("\n", Enumerable.Range(1, 40).Select(i => "line" + i));
@@ -106,7 +107,7 @@ public static class SelfTest
         bool aExit = aText.Contains("**exit_code**: 70", StringComparison.Ordinal);
         bool aOk = aPolicy && aStack && aTrunc && aClient && aHost && aExit;
         return new CheckRow("錯誤報告形狀",
-            $"判準（1/70 寫、2/0 不寫、3 要有 cmd_id）={aPolicy}／stack 有留={aStack}／40 行值截成 20={aTrunc}／client 欄={aClient}／執行位置={aHost}／exit_code={aExit}",
+            $"判準（1/70 寫、0/2/3 不寫）={aPolicy}／stack 有留={aStack}／40 行值截成 20={aTrunc}／client 欄={aClient}／執行位置={aHost}／exit_code={aExit}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
