@@ -4,11 +4,13 @@
 //           是拿真檔案去試的問題。⇒ 每一項都印出**讀到什麼**，不是只印 ✓。
 // 數值影響：純讀。找不到樣本檔時回報「跳過（沒有樣本）」，**不當成通過** ——
 //           「沒測」與「測過而且對」同形是這個 repo 最貴的錯誤形狀。
+using System.Text;
 using Senate.Core;
 using SCP.Core.Gui;
 using SCP.Core.Json;
 using SCP.Core.Paths;
 using SCP.Core.Prefs;
+using SCP.Core.Session;
 using SCP.Core.Skills;
 using SCP.Core.Entry;
 using SCP.Core.Letters;
@@ -54,8 +56,10 @@ public static class SelfTest
         aRows.Add(ServerResultRoundTrip());
         aRows.Add(ErrorReportShape());
         aRows.Add(ProcessStatusClassification());
+        aRows.Add(ActivitySessionBehaviour());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
+        aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
         return aRows;
     }
 
@@ -1406,6 +1410,157 @@ public static class SelfTest
         if (!aAny)
             yield return new CheckRow("真信件庫掃描",
                 "找不到樣本（沒有可用專案或該專案沒有 letters 目錄）—— **這是跳過，不是通過**",
+                CheckResult.Skipped);
+    }
+
+
+    // 區塊職責：活動 session 的四個行為 —— 未知鍵保留／跨 kind 擋覆蓋／同 kind 不擋／關場三本帳分開回報。
+    // 物理意義：這四格全部是**沒有畫面的**：出錯時沒有紅字，只有「別人的欄位不見了」「別人的場被覆蓋了」
+    //          「結算失敗被講成關場失敗」。⇒ 它們只能長在這裡，不能靠人記得試。
+    // 數值影響：寫在暫存根，跑完刪掉；不碰任何真資料。
+    static CheckRow ActivitySessionBehaviour()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_selftest_session_" + Guid.NewGuid().ToString("N")[..8]);
+        var aRoot = new SCP_DataRoot(aTmp);
+        try
+        {
+            SCP_ActivitySessionGatewayHost.ClearForTest();
+            Directory.CreateDirectory(SCP_ActivitySessionStore.Dir(aRoot));
+
+            // ① 未知鍵保留：手寫一份帶 kind 專屬欄位的檔（真檔就長這樣：rounds / activities_done / activity）
+            string aPath = SCP_ActivitySessionStore.PathOf(aRoot, "probe") ?? "";
+            File.WriteAllText(aPath,
+                "{\"rounds\":3,\"activity\":\"canvas-2d\",\"persona\":\"probe\",\"kind\":\"FreeTime\","
+                + "\"session_id\":\"ft-x\",\"end_ts\":\"2099-01-01T00:00:00.000Z\",\"active\":true}",
+                new UTF8Encoding(false));
+            var aLoaded = SCP_ActivitySessionStore.Load(aRoot, "probe");
+            bool aReadOk = aLoaded != null && aLoaded.kind == "FreeTime" && aLoaded.active && aLoaded.session_id == "ft-x";
+            SCP_ActivitySessionStore.Save(aRoot, "probe", aLoaded!);
+            string aBack = File.ReadAllText(aPath, Encoding.UTF8);
+            bool aKeepUnknown = aBack.Contains("\"rounds\"", StringComparison.Ordinal)
+                                && aBack.Contains("canvas-2d", StringComparison.Ordinal);
+
+            // ② 跨 kind 擋覆蓋（TASK-0056 那個洞的守衛）：probe 正在 FreeTime，開 StreamWatch 應被擋
+            var aNew = new SCP_ActivitySession { persona = "probe", session_id = "sw-x", active = true,
+                end_ts = "2099-01-01T00:00:00.000Z" };
+            bool aBlocked = !SCP_ActivitySessionStore.TryStart(aRoot, "probe", aNew,
+                SCP_ActivitySessionKind.StreamWatch, DateTime.Now, out var aBlocker);
+            bool aBlockerNamed = aBlocker != null && aBlocker.kind == "FreeTime" && aBlocker.session_id == "ft-x";
+            // ⭐ 反向對照：擋下之後**原本那份必須原封不動**（只驗「有沒有擋」的話，一個擋完仍覆蓋的實作也會通過）
+            var aStill = SCP_ActivitySessionStore.Load(aRoot, "probe");
+            bool aVictimAlive = aStill != null && aStill.kind == "FreeTime" && aStill.session_id == "ft-x";
+
+            // ③ 同 kind 不擋（那由各 kind 自己的守衛管，本層不重造）
+            var aSame = new SCP_ActivitySession { persona = "probe", session_id = "ft-y", active = true,
+                end_ts = "2099-01-01T00:00:00.000Z" };
+            bool aSameOk = SCP_ActivitySessionStore.TryStart(aRoot, "probe", aSame,
+                SCP_ActivitySessionKind.FreeTime, DateTime.Now, out _);
+
+            // ④ 關場三本帳：沒有 handler ⇒ 關得掉且**明說沒有 handler**（不是靜默成功）
+            var aCur = SCP_ActivitySessionStore.Load(aRoot, "probe")!;
+            var aNoGate = SCP_ActivitySessionStore.CloseWithSettlement(aRoot, "probe", aCur, "selftest");
+            bool aNoGateOk = aNoGate.Closed && !aNoGate.HasHandler && !aNoGate.Settled
+                             && SCP_ActivitySessionStore.Load(aRoot, "probe")!.active == false;
+
+            // ⑤ 結算炸掉**不得冒充關場失敗**（0043/0044 那族：回報層炸掉冒充主動作失敗）
+            SCP_ActivitySessionGatewayHost.Register(new ThrowingGate());
+            var aBoom = new SCP_ActivitySession { persona = "probe2", kind = SCP_ActivitySessionKind.FreeTime,
+                session_id = "ft-z", active = true, end_ts = "2099-01-01T00:00:00.000Z" };
+            SCP_ActivitySessionStore.Save(aRoot, "probe2", aBoom, SCP_ActivitySessionKind.FreeTime);
+            var aRes = SCP_ActivitySessionStore.CloseWithSettlement(aRoot, "probe2", aBoom, "selftest");
+            bool aSplitLedger = aRes.Closed && aRes.HasHandler && !aRes.Settled && aRes.SettleError.Length > 0
+                                && SCP_ActivitySessionStore.Load(aRoot, "probe2")!.active == false;
+
+            bool aOk = aReadOk && aKeepUnknown && aBlocked && aBlockerNamed && aVictimAlive && aSameOk
+                       && aNoGateOk && aSplitLedger;
+            return new CheckRow("活動 session 行為",
+                $"讀真形狀={aReadOk}／未知鍵保留={aKeepUnknown}／跨 kind 擋下={aBlocked}（點名擋你的那場={aBlockerNamed}）"
+                + $"／被擋後原場沒被覆蓋={aVictimAlive}／同 kind 不擋={aSameOk}／無 handler 明確降級={aNoGateOk}"
+                + $"／結算炸掉但場仍關閉={aSplitLedger}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally
+        {
+            SCP_ActivitySessionGatewayHost.ClearForTest();
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
+        }
+    }
+
+    /// <summary>只會爆炸的結算 gateway —— 驗「結算失敗不得冒充關場失敗」。</summary>
+    sealed class ThrowingGate : SCP_IActivitySessionSettleGateway
+    {
+        public string Kind => SCP_ActivitySessionKind.FreeTime;
+        public bool TrySettle(SCP_ActivitySession iSession, string iReason, List<string> oLines, out string oError)
+            => throw new InvalidOperationException("結算故意炸掉（selftest）");
+    }
+
+    // 區塊職責：拿**真的** session 檔跑 round-trip —— 讀得回來、而且寫回去不會吃掉別人的欄位。
+    // 物理意義：這些檔是 Unity 那側寫的（TASK-0127 之後兩邊共用同一份）。
+    //          「能不能讀」不是單元測試問題，是拿真檔案去試的問題 —— 找不到樣本回**跳過**，不是通過。
+    // ⚠ 純讀：複製到暫存根再寫，**絕不碰原檔**。
+    static IEnumerable<CheckRow> RealActivitySessionRoundTrip(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            var aSrcRoot = new SCP_DataRoot(p.AgentCommandsRoot);
+            string aDir = SCP_ActivitySessionStore.Dir(aSrcRoot);
+            if (!Directory.Exists(aDir)) continue;
+            string[] aFiles = Directory.GetFiles(aDir, "*.json");
+            if (aFiles.Length == 0) continue;
+            aAny = true;
+
+            var aProblems = new List<string>();
+            List<SCP_ActivitySession> aAll = SCP_ActivitySessionStore.LoadAll(aSrcRoot, aProblems);
+            int aRunning = 0, aRegistered = 0;
+            foreach (var s in aAll)
+            {
+                if (SCP_ActivitySessionKind.IsRegistered(s.kind)) aRegistered++;
+                if (s.IsRunningNow()) aRunning++;
+            }
+
+            // 寫回對拍：複製一份到暫存根，Save 之後比對「原檔的每一個鍵都還在」
+            string aTmp = Path.Combine(Path.GetTempPath(), "senate_selftest_realsession_" + Guid.NewGuid().ToString("N")[..8]);
+            bool aKeysKept = true;
+            string aWorst = "";
+            try
+            {
+                var aTmpRoot = new SCP_DataRoot(aTmp);
+                Directory.CreateDirectory(SCP_ActivitySessionStore.Dir(aTmpRoot));
+                foreach (string aFile in aFiles)
+                {
+                    string aName = Path.GetFileNameWithoutExtension(aFile);
+                    string? aDst = SCP_ActivitySessionStore.PathOf(aTmpRoot, aName);
+                    if (aDst == null) continue;
+                    File.Copy(aFile, aDst, true);
+                    SCP_JsonData aBefore = SCP_JsonParser.Parse(File.ReadAllText(aDst, Encoding.UTF8));
+                    var aSession = SCP_ActivitySessionStore.Load(aTmpRoot, aName);
+                    if (aSession == null) { aKeysKept = false; aWorst = aName + "：讀不回來"; continue; }
+                    SCP_ActivitySessionStore.Save(aTmpRoot, aName, aSession);
+                    SCP_JsonData aAfter = SCP_JsonParser.Parse(File.ReadAllText(aDst, Encoding.UTF8));
+                    for (int i = 0; i < aBefore.Keys.Count; ++i)
+                    {
+                        if (aAfter.Contains(aBefore.Keys[i])) continue;
+                        aKeysKept = false;
+                        aWorst = aName + "：寫回後少了鍵 `" + aBefore.Keys[i] + "`";
+                        break;
+                    }
+                }
+            }
+            finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+
+            string aProb = aProblems.Count == 0 ? "無" : string.Join("；", aProblems);
+            yield return new CheckRow(
+                $"真活動 session round-trip（{p.Name}）",
+                $"檔 {aFiles.Length} 份／讀回 {aAll.Count} 份（已登記 kind {aRegistered}／此刻進行中 {aRunning}）"
+                + $"／寫回不吃鍵={aKeysKept}{(aWorst.Length > 0 ? "（" + aWorst + "）" : "")}／problems：{aProb}",
+                aAll.Count == aFiles.Length && aKeysKept ? CheckResult.Pass : CheckResult.Fail);
+        }
+
+        if (!aAny)
+            yield return new CheckRow("真活動 session round-trip",
+                "找不到樣本（沒有可用專案或該專案沒有 sessions 目錄）—— **這是跳過，不是通過**",
                 CheckResult.Skipped);
     }
 
