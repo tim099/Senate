@@ -57,6 +57,7 @@ public static class SelfTest
         aRows.Add(ErrorReportShape());
         aRows.Add(ProcessStatusClassification());
         aRows.Add(ActivitySessionBehaviour());
+        aRows.Add(ActivitySessionSubclassRoundTrip());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
@@ -1497,6 +1498,84 @@ public static class SelfTest
         public string Kind => SCP_ActivitySessionKind.FreeTime;
         public bool TryClose(SCP_ActivitySession iSession, string iReason, List<string> oLines, out string oError)
             => throw new InvalidOperationException("關場故意炸掉（selftest）");
+    }
+
+    // ===========================================================
+    // 區塊職責：**子類別** round-trip —— 各 kind 的宿主用 typed 子類別讀寫同一份檔（TASK-0127 ⑦ 的機制）。
+    // 物理意義：⑦ 把 UCL 那側的 typed model（`UCL_FreeTimeSession` / `UCL_StreamWatchSession`）
+    //          的基底換成 `SCP_ActivitySession`，於是那 33 個 typed 欄位由 `SCP_JsonMapper` 進出。
+    //          這一格要擋的是**那個換基底如果錯了會怎麼死**：不是編譯錯，是欄位安靜消失。
+    // 🩸 為什麼它值一格永久的驗收：2026-09-04 上午的活體就是「讀成比檔案窄的型別 → 改幾欄 → 寫回」
+    //    吃掉 `rounds`／`activity`，而工具回 `closed=1`、零紅字。⇒ 那條路現在有機器在看。
+    // 數值影響：寫在暫存根，跑完刪掉；不碰任何真資料。
+    // ===========================================================
+    static CheckRow ActivitySessionSubclassRoundTrip()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_selftest_subsession_" + Guid.NewGuid().ToString("N")[..8]);
+        var aRoot = new SCP_DataRoot(aTmp);
+        try
+        {
+            SCP_ActivitySessionGatewayHost.ClearForTest();
+            Directory.CreateDirectory(SCP_ActivitySessionStore.Dir(aRoot));
+
+            // ① 子類別寫出去 ⇒ 專屬欄位**真的落在檔案裡**，而且 bool 是**原生 bool** 不是 "True" 字串。
+            //    （UCL 那側原本為此各寫一個 SerializeToJson override；換基底之後由函式庫滿足，
+            //      而「由誰滿足」如果沒有人在量，下一個人會以為它從來沒有人在意過。）
+            var aWrite = new ProbeKindSession
+            {
+                persona = "probe", session_id = "ft-sub", active = true,
+                end_ts = "2099-01-01T00:00:00.000Z",
+                rounds = 7, activity = "canvas-2d", note_written = true,
+            };
+            bool aSaved = SCP_ActivitySessionStore.Save(aRoot, "probe", aWrite, SCP_ActivitySessionKind.FreeTime);
+            string aPath = SCP_ActivitySessionStore.PathOf(aRoot, "probe") ?? "";
+            string aText = File.ReadAllText(aPath, Encoding.UTF8);
+            bool aTypedOut = aText.Contains("\"rounds\"", StringComparison.Ordinal)
+                             && aText.Contains("canvas-2d", StringComparison.Ordinal);
+            // ⚠ 量的是「沒有引號包住的 true」——`"True"` 與 `true` 在「有沒有這個字」的問法下同形。
+            bool aNativeBool = aText.Contains("\"note_written\": true", StringComparison.Ordinal)
+                               && !aText.Contains("\"True\"", StringComparison.OrdinalIgnoreCase);
+            bool aNoRawLeak = !aText.Contains("\"Raw\"", StringComparison.Ordinal)
+                              && !aText.Contains("RawJson", StringComparison.Ordinal);
+
+            // ② 讀回**同一個子類別** ⇒ typed 欄位拿到原值（不是預設值 —— 預設值跟「沒設過」同形）。
+            var aTyped = SCP_ActivitySessionStore.Load<ProbeKindSession>(
+                aRoot, "probe", SCP_ActivitySessionKind.FreeTime);
+            bool aTypedBack = aTyped != null && aTyped.rounds == 7 && aTyped.activity == "canvas-2d"
+                              && aTyped.note_written && aTyped.session_id == "ft-sub";
+
+            // ③ ⭐ 反向對照（這一格才是 09-04 那隻）：**讀成基底**（管理頁／關場路徑走的就是這條）
+            //    → 動共通欄位 → 寫回 ⇒ 子類別的專屬欄位**必須還在**。
+            //    只驗 ①② 的話，一個「基底寫回就吃鍵」的實作也會通過這個 check。
+            var aBase = SCP_ActivitySessionStore.Load(aRoot, "probe");
+            bool aBaseIsNotSubclass = aBase != null && aBase.GetType() == typeof(SCP_ActivitySession);
+            SCP_ActivitySessionStore.Close(aRoot, "probe", aBase!, "selftest");
+            var aAfter = SCP_ActivitySessionStore.Load<ProbeKindSession>(aRoot, "probe");
+            bool aSurvived = aAfter != null && aAfter.rounds == 7 && aAfter.activity == "canvas-2d"
+                             && aAfter.note_written && !aAfter.active && aAfter.ended_at.Length > 0;
+
+            bool aOk = aSaved && aTypedOut && aNativeBool && aNoRawLeak
+                       && aTypedBack && aBaseIsNotSubclass && aSurvived;
+            return new CheckRow("活動 session 子類別 round-trip",
+                $"子類別欄位落檔={aTypedOut}／bool 原生={aNativeBool}／無 Raw 外洩={aNoRawLeak}"
+                + $"／讀回 typed 原值={aTypedBack}／基底讀的真是基底={aBaseIsNotSubclass}"
+                + $"／**基底寫回不吃專屬欄位**={aSurvived}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally
+        {
+            SCP_ActivitySessionGatewayHost.ClearForTest();
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
+        }
+    }
+
+    /// <summary>假的 kind 專屬子類別 —— 模仿 UCL 那側的 <c>UCL_FreeTimeSession</c>（rounds/activity）
+    /// 與 <c>UCL_StreamWatchSession</c>（bool 欄位）各取一格，欄位形狀與真的那兩個同族。</summary>
+    sealed class ProbeKindSession : SCP_ActivitySession
+    {
+        public int rounds = 0;
+        public string activity = "";
+        public bool note_written = false;
     }
 
     // 區塊職責：拿**真的** session 檔跑 round-trip —— 讀得回來、而且寫回去不會吃掉別人的欄位。
