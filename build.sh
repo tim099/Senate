@@ -25,8 +25,18 @@ command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 
 # 🩸 D10：覆寫 publish 出來的 exe 會撞「exe 正在執行中」的鎖 —— Server 是前景永駐，
 #   一定在鎖著它。stop 是冪等的（沒在跑也 exit 0），所以每次 build 都無條件呼叫。
 #   ⚠ 用**舊的** exe 去停（新的還沒 build 出來）；舊 exe 不存在就沒有 Server 可停。
+# 🩸 2026-09-04（Tim 提問）：停掉之後**沒有人會幫你起回來** —— 出廠驗收④ 起的那顆是臨時的，
+#   它在同一段裡就被收掉了。⇒ 這裡先記下「build 前本來有沒有一顆在跑」，收尾才講得出那句話。
+#   （`server status` 沒在跑回 exit 3 ⇒ 拿它當探針，不看畫面說什麼。）
+had_server=0
 if [ -f "$root/publish/senate.exe" ]; then
+  if "$root/publish/senate.exe" server status > /dev/null 2>&1; then had_server=1; fi
   "$root/publish/senate.exe" server stop || echo "⚠ server stop 回非零 —— 若 publish 撞鎖，先手動收掉 Server 再重跑"
+  # ⚠ 寫成 `[ ... ] && echo` 會在**沒有 Server 在跑**時讓整支腳本當場 abort：
+  #   `set -e` 底下 `A && B` 的 A 失敗 ⇒ 整個 list 回非零、且它不在條件位置。用 if，不用短路。
+  if [ "$had_server" -eq 1 ]; then
+    echo "· 你本來有一顆 Server 在跑 —— 已停；**build 完不會自動起回來**（收尾會再提醒一次）"
+  fi
 fi
 
 # build id：git SHA ＋ UTC 時間 ⇒ 進 AssemblyInformationalVersion，Server 心跳與 CLI 拿它對「是不是同一顆 exe」。
@@ -173,5 +183,16 @@ if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$soak" -
 else
   # 每一格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
   echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / soak=$soak / server=$server）"
+fi
+
+# ── 收尾：Server 現在是停的（規則長在必經路上，不掛在誰的記性裡）───────────
+# 物理意義：④ 起的那顆是**驗收用的臨時 process**，同一段就收掉了；而開頭那次 stop 收掉的是
+#   使用者原本掛著的那顆。⇒ build 結束時**一定沒有 Server 在跑**，而下一個 `⤷Server` 的
+#   Cmd 會 exit 3（不降級成本地跑）。那個 exit 3 長得像「壞了」，其實是「沒人起它」。
+if [ "$had_server" -eq 1 ]; then
+  echo '⚠ 你 build 前掛著的那顆 Server 已被停掉，而 build **不會**幫你起回來 ——'
+  echo '   要用 ⤷Server 的 Cmd 就開一個終端機跑：senate server start'
+else
+  echo '· Server：本來就沒在跑，現在也沒有（⤷Server 的 Cmd 需要 `senate server start`）'
 fi
 [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$soak" -eq 0 ]

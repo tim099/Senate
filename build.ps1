@@ -29,9 +29,14 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 # -- publish 前先停常駐 Server（TASK-0102）-- 理由見 build.sh 同一段（D10 exe 鎖；stop 冪等）
 $oldExe = Join-Path $root 'publish/senate.exe'
+# 2026-09-04：先記下 build 前本來有沒有一顆在跑 -- 停掉之後沒有人會幫你起回來（理由見 build.sh 同一段）
+$hadServer = $false
 if (Test-Path $oldExe) {
+    & $oldExe server status > $null 2>&1
+    if ($LASTEXITCODE -eq 0) { $hadServer = $true }
     & $oldExe server stop
     if ($LASTEXITCODE -ne 0) { Write-Host '警告 server stop 回非零 -- 若 publish 撞鎖，先手動收掉 Server 再重跑' }
+    if ($hadServer) { Write-Host '. 你本來有一顆 Server 在跑 -- 已停；build 完不會自動起回來（收尾會再提醒一次）' }
 }
 
 # build id：git SHA + UTC 時間 -> AssemblyInformationalVersion（Server 心跳與 CLI 對「是不是同一顆 exe」）
@@ -150,6 +155,14 @@ else {
 }
 
 Write-Host ''
+# 收尾：Server 現在是停的 -- (4) 起的那顆是臨時的、同一段就收掉；開頭那次 stop 收掉的是你原本掛著的。
+# 這一段要印在成功那條路 exit 0 之前，不然「全過」就直接走掉、提醒永遠不出現。
+if ($hadServer) {
+    Write-Host '警告 你 build 前掛著的那顆 Server 已被停掉，而 build 不會幫你起回來 --'
+    Write-Host '     要用 ⤷Server 的 Cmd 就開一個終端機跑：senate server start'
+}
+else { Write-Host '. Server：本來就沒在跑，現在也沒有（⤷Server 的 Cmd 需要 senate server start）' }
+
 if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0 -and $soak -eq 0 -and $server -eq 0) {
     Write-Host '完成 出廠驗收全過。開 GUI：.\senate.exe ui --window'
     exit 0
