@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-02
+last_updated: 2026-09-04
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -222,8 +222,33 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 | `--arg k=v` | 指令參數，可重複。⭐ **沒宣告的參數名會被擋下**，不會靜默取預設值 |
 | `--arg-file k=<路徑>` | 參數值從檔案讀（UTF-8）—— **長內文不經過 shell**，檔案不存在直接擋 |
 
-便利：宣告了 `letters_root` 的 Cmd 沒給該參數時，會用設定檔的 `awakening.lettersRoot`
-並**印出來**（靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」）。
+#### 便利：兩個根沒給就從設定檔補上（**而且印出來**）
+
+宣告了下列參數的 Cmd，沒給該參數時 CLI 會從**唯一那格設定**補上：
+
+| 參數 | 值來自 | 印出來的樣子 |
+|---|---|---|
+| `letters_root` | `senate.local.json` 的 `awakening.lettersRoot` | `· letters_root 沒給 ⇒ 用設定檔的 awakening.lettersRoot：<路徑>` |
+| `data_root` | `SCP_PathId.AgentCommandsRoot`（＝「路徑管理」頁那一格，走 `SCP_PathRegistry.Resolve`） | `· data_root 沒給 ⇒ 用設定檔那一格（<算式>）：<路徑>` |
+
+⭐ **印出來、不靜默注入。** 靜默注入的症狀是「我明明沒指定，它卻讀了**另一棵資料樹**」——
+而那種錯讀寫都會「成功」，只是對象不是你以為的那棵樹。`data_root` 那行連 **算式**一起印
+（`auto ⇒ 由 ProjectRoot 推導` 或 `手填`）⇒ 「我為什麼看這裡」看得出來。
+
+三條語意，都刻意如此：
+
+1. **顯式給值優先** —— 給了 `--arg data_root=…` 就完全不注入，也不印那行（`ucmd` 的 `--project` 同理）。
+2. **解不出來時什麼都不填** —— 例：有兩個啟用專案 ⇒ 資料根不唯一。這時印
+   `· data_root 沒給，而設定檔那一格解不出來：<理由>`，然後讓 Cmd 自己用「缺必填參數」擋。
+   ⛔ **不替人挑一個** —— 挑錯的症狀是「路徑全對，只是屬於別的專案」。
+3. **`iRequired` 不變** —— 「必填」講的是那支 Cmd 這一層真的需要它（它不讀任何設定檔），
+   「可以不打」講的是宿主的便利。**兩件事分開講**，所以 `cmd help <name>` 仍然標必填。
+
+⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支（現況 `data_root`：`sessions`／`tasks`／`canvas`）。
+> 🩸 為什麼要做成通則：那個值原本抄在每一個呼叫端、**含每一份文件範例裡**，
+> 而手抄的那份會過期 —— `sessions` 的用法範例到 2026-09-04 還印著 `D:/Unity/LY/AgentCommands`，
+> 而那是**另一台**的根。路徑的族與唯一決定點見
+> [`Data_Layout`](../Architecture/Data_Layout.md#路徑分兩族--先確認你要的是哪一族)。
 
 #### exit code
 

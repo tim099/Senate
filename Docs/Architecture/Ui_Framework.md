@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
-description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、非 UI 操控介面與 session 狀態
-last_updated: 2026-09-01
+description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、頁面要宿主的值一律問介面（不自存第二份）、非 UI 操控介面與 session 狀態
+last_updated: 2026-09-04
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -397,6 +397,43 @@ SCP_GuiPage? aPage = aCatalog.Create("doctor");    // 認不得回 null
 所以 `SettingsPage` 的讀檔從建構子搬到了 `OnPush` —— 光是「列出有哪些頁」不該去讀一次設定檔。
 
 ---
+
+## ⛔ 頁面要「宿主的值」：問介面，**不要自己存一份**（2026-09-04）
+
+頁面需要的東西分兩種，而它們的落點不同：
+
+| 頁面要的 | 走哪 | 例 |
+|---|---|---|
+| **這一頁自己的偏好**（只有它在意、丟了不心疼） | `m_Ctx.Prefs`（專案層設定） | 篩選條件、上次選的分組 |
+| **系統層的值**（別的地方也在用同一個） | **`ISCP_GuiAppContext` 的具名成員** | 資料根、信件庫根、宿主專案 |
+
+判準就是那個介面檔頭那句：**沒有它這一頁畫不出來嗎？** 是 ⇒ 進介面。
+
+```csharp
+// ✅ 問宿主 —— 它跟「路徑管理」頁、`senate cmd paths` 走同一支解析
+SCP_PathResolution aRoot = m_Ctx.AgentCommandsRoot;
+
+// ❌ 自己存一格手填的同一個值 ⇒ 第二份設定，而它可以跟第一份說不一樣的話
+static readonly SCP_PrefKey<string> KeyDataRoot = SCP_PrefKey.String("sessions", "dataRoot", "");
+```
+
+⭐ **回的是 `SCP_PathResolution` 不是 `string`**，而那不是包裝癖：
+「解出來了／沒有人填過／取不到（例：兩個啟用專案 ⇒ 資料根不唯一）」**三態不得同形**。
+空字串會讓「量不到」長得像「沒有人在 session」，而頁面必須說得出它是哪一態。
+⇒ 沒有資料源時要印**理由**，並指路去改值的那一頁；有值時把 `Origin`（`auto ⇒ 由 ProjectRoot 推導`）
+一起印出來 —— **「這個值是誰給的」比「這個值是什麼」更常是問題的答案。**
+
+> 🩸 血證（Session 管理頁，TASK-0127 ⑥）：我讓那一頁自己存 `sessions/dataRoot`，
+> 於是它印著「還沒設定資料根」，而**整個 CLI 早就解得出那個根**。
+> 我把自己造的洞讀成設定的缺口，去寫了使用者的 prefs 才把那一頁「驗完」。
+> 修法與判準（含「怎麼證明它是純重複」的反向對照）在
+> [`Data_Layout`](Data_Layout.md#決定點包含值存在哪不只是誰拼路徑2026-09-04)。
+
+⚠ 已經有一個對的先例可抄：`SCP_GuiLoginStatusPage` 的 `awakening.lettersRoot` 走
+`SenateAwakeningPrefs` **轉接到 `senate.local.json` 同一個檔**（`ISCP_Prefs` 對外、
+`SenateConfig` 對內）—— 那是「頁面搬得動、而值只有一份」的形狀。
+⚠ 而那條路讀的是 pref 的**原始值**：`lettersRoot` 在描述表裡支援 `auto`
+⇒ 有人設成 `auto` 時那一頁會顯示字面的 `auto`。**這是線索不是讀數**（2026-09-04 沒有人這樣設，我沒量）。
 
 ## 宿主能力：`SCP_GuiHost`
 

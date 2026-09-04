@@ -1,7 +1,7 @@
 ---
 title: SenateData 資料根版面
-description: Senate 自己的設定檔與專案內資料一律住 SenateData/ — 三層分類的判準（config / prefs / runtime）、新東西該往哪放、路徑的唯一決定點、以及改路徑必須同時做 migration 的理由
-last_updated: 2026-09-02
+description: Senate 自己的設定檔與專案內資料一律住 SenateData/ — 三層分類的判準（config / prefs / runtime）、新東西該往哪放、路徑分兩族（Senate 自己的檔 vs 外部動態路徑）與各自的唯一決定點、以及改路徑必須同時做 migration 的理由
+last_updated: 2026-09-04
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -57,7 +57,63 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ⚠ 判準刻意不是「是不是 JSON」「入不入版控」「是不是使用者可見」——
 那幾個問題在邊界上會給出互相矛盾的答案，而這一句不會。
 
-## 路徑的唯一決定點
+## 路徑分兩族 —— 先確認你要的是哪一族
+
+同一句「路徑」在這個 repo 裡指兩種完全不同的東西，而**問錯族就會自己造一份設定**（見下一節的血證）：
+
+| 族 | 是什麼 | 值從哪來 | 誰決定 |
+|---|---|---|---|
+| **① Senate 自己的檔** | `SenateData/config`／`prefs`／`runtime` 底下那幾個檔 | **算出來的**（`<repoRoot>` ＋ 固定的相對路徑） | [`SenatePaths`](../../src/Senate.Core/SenatePaths.cs)（本頁下一節） |
+| **② 外部動態路徑** | AgentCommands 資料根、persona 信件庫根、酒館根、queue 根… | **人設定的**（`senate.local.json`），或由上游推導（`auto`） | [`SCP_PathRegistry`](../../SCP_Core/Runtime/Paths/SCP_PathRegistry.cs) 的 `SCP_PathId` 描述表；改值走**「路徑管理」頁** |
+
+判別只要一句：**這個路徑會不會因為使用者換了專案而變？** 會 ⇒ ②族；不會 ⇒ ①族。
+
+### ②族：一格設定，三個讀取端，零份副本
+
+`SCP_PathId` 是那份**唯一**的描述表（`Stored` 的格子可以被填，`Derived` 的格子是算出來的）。
+解析一律走 `SCP_PathRegistry.Resolve` ＋ 宿主的 `SenatePathBinding.StoredOf`：
+
+| 讀取端 | 怎麼拿 |
+|---|---|
+| **「路徑管理」頁**（`senate ui --page paths`） | 唯一的**寫入**端 —— `Stored` 可編輯，`Derived` 唯讀 |
+| **`senate cmd paths`** | 唯讀，印值 ＋ 算式 |
+| **其他頁面** | 問宿主介面：`ISCP_GuiAppContext.AgentCommandsRoot`（回 `SCP_PathResolution`） |
+| **`senate cmd <任何宣告 data_root 的 Cmd>`** | 沒給就從那格補上並**印出來**（見 [`Cli_Reference`](../API/Cli_Reference.md) 的 `cmd` 節） |
+
+⛔ **`Derived` 的格子不准變成可填的。** 能被推導的路徑存了就是給漂移一個住的地方。
+> 🩸 2026-08-31：`sessionDir` 曾經可填（`auto` ＝ 從**信件庫根**往上找）⇒ 改了專案 root 之後
+> 信件庫根靜默指著舊樹 ⇒ lock 也在舊樹上 ⇒「誰在線」跟真實脫鉤，而每一頁看起來都正常。
+
+### 🩸「決定點」包含**值存在哪**，不只是誰拼路徑（2026-09-04）
+
+> **TASK-0127 ⑥ 交付時我讓 Session 管理頁自己存一格手填的資料根**
+> （`sessions/dataRoot`，落在 `senate.pages.local.json`），而 `SCP_PathId.AgentCommandsRoot`
+> **早就是**那個統一設定。
+
+那一頁沒有自己拼任何路徑 —— 它「只是存了一個值」，所以看起來不像違反下一節那條規則。
+但代價一樣：**第二份可以跟第一份說不一樣的話**，而那時本頁讀到另一棵樹的 session，
+**然後每一列都顯示正常**。
+
+而當天最貴的一格不是重複本身：那一頁印著「還沒設定資料根」的時候，
+**整個 CLI 早就解得出那個根**（每支 cmd 都印 `data_root=…`）。
+⇒ 我把自己造的洞讀成了設定的缺口，**然後去寫使用者的 prefs 才把那一頁「驗完」**。
+
+判準（照做的形狀）：
+
+1. 加任何一格路徑設定之前，**先看 `SCP_PathId` 的成員清單** —— 那是唯一那份描述表。
+2. 頁面要 ②族的值 ⇒ **問宿主介面**，不存 pref。
+3. 真的需要一格新的動態路徑 ⇒ **往 `SCP_PathId` 加一個成員**（頁面與 `cmd paths` 自動長出來），
+   不要在自己那一頁旁邊開一格。
+4. 反向對照（怎麼證明它是純重複）：**把你新加的那格設定刪掉，功能有沒有變差？**
+   沒變差就是重複。—— 2026-09-04 我刪掉 `sessions.dataRoot` 之後那一頁照樣印
+   `來源：auto ⇒ 由 ProjectRoot 推導` ＋ 8 列 session。
+
+📌 一般形（值得記的是這句，不是那個 bug）：
+**「我證明了 A 不對」不蘊含「所以要自己造一個」** —— 中間漏掉的是「既有的是什麼」。
+我當時在那格 pref 的註解裡寫著「資料根顯式設定，**不從信件夾根推導**」，
+那句話是對的；錯的是排除了**錯的推導**之後，沒去問**對的那一格是不是已經存著了**。
+
+## ①族的唯一決定點
 
 **所有檔名與目錄名只在 [`src/Senate.Core/SenatePaths.cs`](../../src/Senate.Core/SenatePaths.cs) 出現一次。**
 
