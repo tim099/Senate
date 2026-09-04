@@ -1088,7 +1088,8 @@ public static class Program
                 --reset           清空 session
                 --json            整棵畫面樹輸出成 JSON（給程式讀）
               ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
-                --page <key>      開窗直接停在某一頁（home / doctor / submodule / style / settings / projects / paths / login / skills / process）—— 給截圖驗收用
+                --page <key>      開窗直接停在某一頁 —— 給截圖驗收用。⚠ **key 清單不寫在這裡**（寫死的那一行會在加頁時安靜過期）：
+                                打錯 key 會 exit 2 並把目錄裡的現有 key 全部印出來
                 --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               ui --soak <秒>      開窗**真的轉這麼多秒**再收工，印幀數／fps／最慢一幀（可跟 --screenshot 併用）
