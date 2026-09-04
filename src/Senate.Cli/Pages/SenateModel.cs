@@ -11,6 +11,7 @@ using System.Reflection;
 using Senate.Core;
 using SCP.Core.Git;
 using SCP.Core.Gui;
+using SCP.Core.Paths;
 using SCP.Core.Prefs;
 
 namespace Senate.Cli.Pages;
@@ -131,6 +132,31 @@ public sealed class SenateModel : ISCP_GuiAppContext
     /// 不要讓兩個名字長期並存 —— 兩個入口遲早會有一個漏掉新加的動作。</para>
     /// </summary>
     public void ApplyStyle(SCP_GuiSize iSize) { ApplySize(iSize); }
+
+    // 區塊職責：資料根 —— **與「路徑管理」頁、`senate cmd paths` 同一個來源**。
+    // 物理意義：走 `SCP_PathRegistry.Resolve` ＋ `SenatePathBinding.StoredOf`，
+    //           而那兩支正是那一頁與那支 Cmd 用的 ⇒ 三個地方**不可能對同一格給出不同的值**。
+    // 數值影響：每次讀都重載設定檔（一個小 json）—— 刻意不快取：
+    //           使用者在「路徑管理」頁改完值切回來，快取會讓他看到舊的而以為沒存進去。
+    // ⚠ 不吞 `Error`：兩個啟用專案 ⇒ 資料根不唯一，那是**狀態壞了**，不是「沒設定」。
+    //   靜默挑一個的症狀是「路徑全對，只是屬於別的專案」。
+    public SCP_PathResolution AgentCommandsRoot
+    {
+        get
+        {
+            SenateConfig? aCfg;
+            try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(m_RepoRoot)); }
+            catch (InvalidDataException e)
+            {
+                return new SCP_PathResolution("", "設定檔讀不了", e.Message);
+            }
+            if (aCfg == null)
+                return new SCP_PathResolution("", "沒有設定檔",
+                    $"還沒有 {Path.GetFileName(SenateConfig.DefaultPath(m_RepoRoot))} —— 先跑 `senate init`");
+            return SCP_PathRegistry.Resolve(SCP_PathId.AgentCommandsRoot,
+                iId => SenatePathBinding.StoredOf(aCfg, iId));
+        }
+    }
 
     public void Refresh()
     {

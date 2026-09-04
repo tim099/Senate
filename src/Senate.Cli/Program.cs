@@ -1012,6 +1012,37 @@ public static class Program
             }
         }
 
+        // 便利：`data_root` 沒給就用**同一格設定**（`SCP_PathId.AgentCommandsRoot`，＝「路徑管理」頁那一格）。
+        // ⚠ 適用範圍是「凡宣告 data_root 的 Cmd」不是某一支 —— 現況 sessions／tasks／canvas 三支
+        //   各自要求呼叫端手打絕對路徑，而那是同一個值抄在 N 個呼叫端（含每一份文件範例裡）。
+        //   🩸 手抄的那份會過期：`SCP_Cmd_Sessions` 的用法範例到今天還印著 `D:/Unity/LY/AgentCommands`，
+        //   而那是**另一台**的根。⇒ 唯一那格設定解得出來時，不該逼人重打一次。
+        // ⛔ 仍然**印出來、不靜默注入**（同 letters_root 的理由）：
+        //   靜默注入的症狀是「我明明沒指定，它卻讀了另一棵資料樹」。
+        // ⛔ 也不吞 Error：兩個啟用專案 ⇒ 資料根不唯一 ⇒ 這裡什麼都不填，讓 Cmd 自己用「缺必填參數」擋，
+        //   並把不唯一的理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
+        if (aCmd != null && !aRawArgs.ContainsKey("data_root") && DeclaresArg(aCmd, "data_root"))
+        {
+            SenateConfig? aCfg = null;
+            try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot)); }
+            catch (InvalidDataException e) { Console.Error.WriteLine($"✗ 設定檔有問題：{e.Message}"); return 3; }
+            if (aCfg != null)
+            {
+                SCP.Core.Paths.SCP_PathResolution aRes = SCP.Core.Paths.SCP_PathRegistry.Resolve(
+                    SCP.Core.Paths.SCP_PathId.AgentCommandsRoot,
+                    iId => SenatePathBinding.StoredOf(aCfg, iId));
+                if (aRes.Error == null && aRes.Value.Length > 0)
+                {
+                    aRawArgs["data_root"] = aRes.Value;
+                    Console.WriteLine($"· data_root 沒給 ⇒ 用設定檔那一格（{aRes.Origin}）：{aRes.Value}");
+                }
+                else
+                {
+                    Console.WriteLine($"· data_root 沒給，而設定檔那一格解不出來：{aRes.Error}");
+                }
+            }
+        }
+
         SCP.Core.Cmd.SCP_CmdResult aResult = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
 
         foreach (string aLine in aResult.Lines)
