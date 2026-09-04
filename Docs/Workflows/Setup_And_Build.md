@@ -58,7 +58,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ## 出廠驗收：build 綠燈不算數
 
-`build` 的最後**真的跑五件事**（都跑在剛產出的那顆 exe 上）：
+`build` 的最後**真的跑四件事**（都跑在剛產出的那顆 exe 上），跑完再開一顆**常駐視窗**：
 
 1. `senate doctor` —— 證明那顆 exe 起得來、路徑解析對、設定讀得到
 2. `senate selftest` —— 24 項自我對拍。**失敗回 exit 1，會讓整個 build 判未過**
@@ -67,13 +67,6 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
    `server stop` 收掉。selftest 對拍的是 result 檔的 schema，這一格驗的是「一顆 CLI 送、一顆 Server 接、result 回來」那條路本身。
    ⚠ 它起的 Server 是驗收用的臨時 process，log 在 `build/build_server.log`／`build/build_ping.log`；publish 前的 `server stop` 保證沒有別顆在跑。
 
-5. `senate ui --soak 10 --screenshot build/build_soak.png` —— **開真視窗轉十秒**，
-   判定看幀數（門檻 10 fps）。⭐ 第 3 項證明「畫得出來」，這一項證明「畫得動」——
-   **凍住的視窗截起來是正常的**：第一幀畫完就不動，framebuffer 裡是一張完整畫面，跟 60fps 那張同形。
-   🩸 出處：@basecamp 2026-08-28 的條文（她 headless 全綠交付的頁面，Tim 開一次視窗就抓到卡死）。
-   在那之後這件事在 `Decisions` 裡是一句「不宣稱它被驗過」—— 誠實，但**誠實不會擋下任何一次交付**。
-   ⚠ 門檻刻意設得很低（10 fps）：這一格抓的是**凍住**不是**慢**。慢會隨機器／驅動／更新率漂移，
-   設高了會變成會自己叫的假警報，而假警報最後一定是被關掉、不是被修好。
 
 ⚠ 第 3 項不是裝飾。self-contained 最常壞的地方在執行期，而**文字模式照常運作**
 ⇒ 開窗的錯只有真的去開窗才會現形（見下節血證）。
@@ -83,8 +76,27 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 📌 修法選的是「長在必經路上」而不是「文件叫人記得跑」：
 第三階（記得注意）只在前兩階都做不到時才用，而這一格做得到第二階。
 
-五格**分開印**（`doctor=? / selftest=? / gui=? / soak=? / server=?`）—— 壓成一句「驗收未過」
+四格**分開印**（`doctor=? / selftest=? / gui=? / server=?`）—— 壓成一句「驗收未過」
 會讓人不知道要去看哪一格。
+
+### 收尾：**開一顆常駐視窗**（不是驗收格，Tim 2026-09-04 拍板）
+
+四格跑完之後 `build` 會 `senate ui --window` 開一顆**留著**的視窗 —— build 之後你本來就要開它，
+那一步交給腳本，人不用記得重開。
+
+- ⛔ **它不是第五格**：不看 exit code、不擋 build 判定。「畫得出來」由第 3 項的截圖擋。
+- ⚠ 它會**鎖住 `publish/senate.exe`** ⇒ 下一次 build **開頭會自己把它收掉**
+  （先 `CloseMainWindow()`，2 秒不走才 `Kill()`；比對的是 process 的 `Path`，別份 clone 的 senate 不動）。
+  🩸 這一格是必要的配套：2026-09-03／09-04 各撞一次 `GenerateBundle … Access to the path … is denied`，
+  兩次佔住 exe 的都是一顆開著的視窗，而**錯誤訊息不會告訴你是誰**。
+- `nohup`／`Start-Process` 起，log 落在 `build/build_window.log`。
+
+> 🩸 **退場的那一格**：原本第 5 項是 `ui --soak 10`（開真視窗轉十秒、門檻 10 fps），
+> 2026-09-04 Tim 拍板換成常駐視窗、`--soak` 不再進 build。
+> ⚠ 換掉的代價要講清楚：**「畫得動」從此沒有機器在量** —— 凍住的視窗截起來跟正常的一模一樣，
+> 而那正是這一格當初存在的理由（@basecamp 2026-08-28 headless 全綠交付、Tim 開一次窗就卡死）。
+> ⇒ 現在擋它的是**人的眼睛**：build 收尾那顆窗就在你面前，動不動一眼看得到。
+> `senate ui --soak <秒>` 這支旗標**還在**（`Cli_Reference`），要量隨時可以手動跑。
 
 ---
 

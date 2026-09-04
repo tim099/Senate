@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # 一鍵 build —— 產出 publish/senate.exe，並在 repo 根放一個給人雙擊的捷徑 senate.lnk。
 #
-# 區塊職責：publish → 把執行檔與原生 DLL 放到 repo 根 → **真的跑一次＋真的開一次窗**。
+# 區塊職責：publish → 把執行檔與原生 DLL 放到 repo 根 → **真的跑一次＋真的開一次窗** → 收尾留一顆常駐視窗。
 # 物理意義：⭐ 最後那兩步才是重點。「build succeeded」只證明編譯器沒抱怨，
 #           完全沒證明那顆 exe 跑得起來 —— 而 self-contained 最常壞的地方正好在執行期，
 #           且**文字模式照常運作**，所以開窗的錯只有真的去開窗才會現形。
@@ -21,13 +21,12 @@ cd "$root"
 echo '── Senate 一鍵 build ───────────────────────────'
 command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 ./install.sh' >&2; exit 1; }
 
-# ── publish 前先停常駐 Server（TASK-0102）─────────────────────
-# 🩸 D10：覆寫 publish 出來的 exe 會撞「exe 正在執行中」的鎖 —— Server 是前景永駐，
-#   一定在鎖著它。stop 是冪等的（沒在跑也 exit 0），所以每次 build 都無條件呼叫。
-#   ⚠ 用**舊的** exe 去停（新的還沒 build 出來）；舊 exe 不存在就沒有 Server 可停。
-# 🩸 2026-09-04（Tim 提問）：停掉之後**沒有人會幫你起回來** —— 出廠驗收④ 起的那顆是臨時的，
-#   它在同一段裡就被收掉了。⇒ 這裡先記下「build 前本來有沒有一顆在跑」，收尾才講得出那句話。
-#   （`server status` 沒在跑回 exit 3 ⇒ 拿它當探針，不看畫面說什麼。）
+# ── publish 前先收掉會鎖住 exe 的東西：① 常駐 Server ② 上一顆 GUI 視窗（TASK-0102＋2026-09-04）
+# 🩸 D10：覆寫 publish 出來的 exe 會撞「exe 正在執行中」的鎖。鎖它的有兩種 process：
+#   前景永駐的 Server，以及**收尾留下來的那顆視窗**（2026-09-04 起 build 會自己開一顆）。
+#   兩者都要收 —— 2026-09-03／09-04 各撞一次 `GenerateBundle … Access to the path … is denied`，
+#   兩次佔住它的都是一顆開著的視窗，而錯誤訊息不會告訴你是誰。
+#   ⚠ 用**舊的** exe 去停 Server（新的還沒 build 出來）；舊 exe 不存在就沒有東西可停。
 had_server=0
 if [ -f "$root/publish/senate.exe" ]; then
   if "$root/publish/senate.exe" server status > /dev/null 2>&1; then had_server=1; fi
@@ -37,7 +36,32 @@ if [ -f "$root/publish/senate.exe" ]; then
   if [ "$had_server" -eq 1 ]; then
     echo "· 你本來有一顆 Server 在跑 —— 已停；**build 完不會自動起回來**（收尾會再提醒一次）"
   fi
+  # ② 視窗：先請它自己關（CloseMainWindow），2 秒不走才 kill。只收**這顆 exe** 開的，
+  #    比對的是 Path 不是 process 名 —— 別台／別份 clone 的 senate 不干我的事。
+  if command -v powershell.exe > /dev/null 2>&1; then
+    # ⚠ 這段 PowerShell 整個住在 bash 的 '...' 裡 ⇒ **裡面一律只用雙引號**。
+    #   🩸 2026-09-04：寫了 'Open', 'Write' ⇒ bash 在第一個單引號就把字串收掉，
+    #     PS 拿到被切碎的碼、回非零、零輸出，而畫面上只有一行「收視窗那步回非零」。
+    SENATE_EXE_WIN="$(cygpath -w "$root/publish/senate.exe" 2>/dev/null || echo "$root/publish/senate.exe")" \
+    powershell.exe -NoProfile -NonInteractive -Command '
+      $t = $env:SENATE_EXE_WIN
+      $ps = @(Get-Process -Name senate -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $t })
+      if ($ps.Count -gt 0) {
+        Write-Host ("· 收掉 " + $ps.Count + " 顆還開著的 senate（它們鎖著 publish/senate.exe）")
+        foreach ($p in $ps) { try { $null = $p.CloseMainWindow() } catch { } }
+        foreach ($p in $ps) { try { $null = $p.WaitForExit(2000) } catch { } }
+        foreach ($p in $ps) { try { if (-not $p.HasExited) { $p.Kill(); $null = $p.WaitForExit(3000) } } catch { } }
+      }
+      $free = $false
+      for ($i = 0; $i -lt 20; $i++) {
+        try { $fs = [System.IO.File]::Open($t, "Open", "Write"); $fs.Close(); $free = $true; break }
+        catch { Start-Sleep -Milliseconds 250 }
+      }
+      if (-not $free) { Write-Host "⚠ publish/senate.exe 仍被鎖著（等了 5 秒）—— publish 大概會撞 Access denied" }
+      elseif ($ps.Count -gt 0) { Write-Host "· exe 已可寫入" }' 2>/dev/null || echo "⚠ 收視窗那步回非零 —— 若 publish 撞鎖，手動關掉開著的 senate 視窗再重跑"
+  fi
 fi
+
 
 # build id：git SHA ＋ UTC 時間 ⇒ 進 AssemblyInformationalVersion，Server 心跳與 CLI 拿它對「是不是同一顆 exe」。
 # ⚠ IncludeSourceRevisionInInformationalVersion 關掉：不然 SDK 會再接一段 +sha，兩邊字串就對不上。
@@ -147,42 +171,13 @@ else
   tail -3 "$root/build/build_ping.log"; tail -3 "$root/build/build_server.log"
 fi
 
-# ── 出廠驗收⑤：**開真視窗轉十秒**（會重畫的宿主，截圖蓋不到的那一半）──────────────
-# 物理意義：③ 的截圖證明「畫得出來」，證明不了「畫得動」。凍住的視窗**截起來是正常的** ——
-#   第一幀畫完就不動，framebuffer 裡是一張完整的畫面，跟 60fps 那張長得一模一樣。
-#   ⇒ 這一格量的是幀數：真的轉十秒，看它跑了幾幀。
-# 🩸 出處：@basecamp 2026-08-28 的清單條文（她 headless 全綠交付的頁面，Tim 開一次視窗就抓到卡死）。
-#   在此之前這件事在 Decisions 裡是一句「不宣稱它被驗過」——誠實，但誠實不會擋下任何一次交付。
-# ⚠ 門檻**刻意設得很低**（10 fps）：這一格要抓的是「凍住」不是「慢」。
-#   慢會隨機器、驅動、螢幕更新率漂移，設高了會變成一個會自己叫的假警報，
-#   而假警報最後一定是被關掉，不是被修好。
-echo '── 出廠驗收⑤ 開窗轉 10 秒（凍住 ≠ 慢，門檻只擋凍住）──'
-set +e
-"$exe" ui --soak 10 --screenshot "$root/build/build_soak.png" > "$root/build/build_soak.log" 2>&1
-soak=$?
-set -e
-# 🩸 這兩行**必須在 set +e 裡**：`set -e` 底下命令替換裡的 grep 沒命中 ⇒ 整個腳本當場 abort，
-#   於是下面那個 `✗` 永遠印不出來 —— **一個「失敗時不會說自己失敗」的閘**。
-#   2026-09-03 實際發生過一次：⑤ 印了標題就沒有下一行，exit 1 而沒有任何理由。
-#   ⇒ 判準：閘的失敗路徑要跟成功路徑一樣會出聲，否則它跟沒有閘同形。
-set +e
-soak_line=$(grep -m1 '^soak：' "$root/build/build_soak.log")
-soak_fps=$(printf "%s" "$soak_line" | grep -o "平均 [0-9.]*" | grep -o "[0-9.]*")
-set -e
-if [ "$soak" -eq 0 ] && [ -n "$soak_fps" ] && awk "BEGIN{exit !($soak_fps >= 10)}"; then
-  echo "✓ $soak_line"
-else
-  soak=1
-  echo "✗ 視窗轉不動（門檻 10 fps）—— ${soak_line:-沒有讀數，見 build/build_soak.log}"
-  tail -3 "$root/build/build_soak.log"
-fi
 
 echo
-if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$soak" -eq 0 ] && [ "$server" -eq 0 ]; then
-  echo '✓ 出廠驗收全過。開 GUI：./senate.exe ui --window（或直接雙擊 senate.exe 會印用法）'
+if [ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$server" -eq 0 ]; then
+  echo '✓ 出廠驗收全過。'
 else
   # 每一格分開印 —— 壓成一句「驗收未過」會讓人不知道要去看哪一格
-  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / soak=$soak / server=$server）"
+  echo "⚠ 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / server=$server）"
 fi
 
 # ── 收尾：Server 現在是停的（規則長在必經路上，不掛在誰的記性裡）───────────
@@ -195,4 +190,14 @@ if [ "$had_server" -eq 1 ]; then
 else
   echo '· Server：本來就沒在跑，現在也沒有（⤷Server 的 Cmd 需要 `senate server start`）'
 fi
-[ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ] && [ "$soak" -eq 0 ]
+# ── 收尾：開一顆**常駐**視窗（Tim 2026-09-04 拍板）──────────────
+# 物理意義：build 之後你本來就要開它 —— 那一步交給腳本，人不用記得重開。
+#   ⚠ 這顆會**鎖住 publish/senate.exe** ⇒ 下一次 build 開頭會自己把它收掉（見上面 ② 那段）。
+#   ⛔ 它不是驗收格：不看它的 exit code、不擋 build 判定。開窗**畫得出來**由 ③ 的截圖擋。
+#   ⚠ 要 nohup：不然關掉這個終端機時 SIGHUP 會把它一起帶走 —— 而「視窗自己消失」跟「它當掉了」同形。
+nohup "$exe" ui --window > "$root/build/build_window.log" 2>&1 &
+#   ⚠ 不印 pid：$! 給的是 Git Bash 的 MSYS pid（實測 2081），而工作管理員／Get-Process 看到的是
+#     另一個號（14648）—— 印一個查不到的號比不印更糟。
+echo "· 已開一顆常駐視窗（log：build/build_window.log）—— 下次 build 會自己收掉它"
+
+[ "$code" -eq 0 ] && [ "$selftest" -eq 0 ] && [ "$gui" -eq 0 ]

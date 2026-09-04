@@ -27,7 +27,7 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     Write-Error '找不到 dotnet -- 先跑 .\install.ps1'; exit 1
 }
 
-# -- publish 前先停常駐 Server（TASK-0102）-- 理由見 build.sh 同一段（D10 exe 鎖；stop 冪等）
+# -- publish 前先收掉會鎖住 exe 的東西：(1) 常駐 Server (2) 上一顆 GUI 視窗 -- 理由見 build.sh 同一段
 $oldExe = Join-Path $root 'publish/senate.exe'
 # 2026-09-04：先記下 build 前本來有沒有一顆在跑 -- 停掉之後沒有人會幫你起回來（理由見 build.sh 同一段）
 $hadServer = $false
@@ -37,6 +37,23 @@ if (Test-Path $oldExe) {
     & $oldExe server stop
     if ($LASTEXITCODE -ne 0) { Write-Host '警告 server stop 回非零 -- 若 publish 撞鎖，先手動收掉 Server 再重跑' }
     if ($hadServer) { Write-Host '. 你本來有一顆 Server 在跑 -- 已停；build 完不會自動起回來（收尾會再提醒一次）' }
+    # (2) 視窗：先請它自己關，2 秒不走才 kill。比對 Path 不是 process 名 -- 別份 clone 的 senate 不干我的事。
+    $wins = @(Get-Process -Name senate -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $oldExe })
+    if ($wins.Count -gt 0) {
+        Write-Host (". 收掉 " + $wins.Count + " 顆還開著的 senate（它們鎖著 publish/senate.exe）")
+        foreach ($w in $wins) { try { $null = $w.CloseMainWindow() } catch { } }
+        foreach ($w in $wins) { try { $null = $w.WaitForExit(2000) } catch { } }
+        foreach ($w in $wins) { try { if (-not $w.HasExited) { $w.Kill(); $null = $w.WaitForExit(3000) } } catch { } }
+    }
+    # 判準是「exe 可不可寫」不是「我殺了幾顆」-- Kill() 回傳不代表 handle 放掉了
+    # （2026-09-04 實測：印完「收掉 2 顆」下一步照樣 Access denied）。
+    $free = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        try { $fs = [System.IO.File]::Open($oldExe, 'Open', 'Write'); $fs.Close(); $free = $true; break }
+        catch { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $free) { Write-Host '警告 publish/senate.exe 仍被鎖著（等了 5 秒）-- publish 大概會撞 Access denied' }
+    elseif ($wins.Count -gt 0) { Write-Host '. exe 已可寫入' }
 }
 
 # build id：git SHA + UTC 時間 -> AssemblyInformationalVersion（Server 心跳與 CLI 對「是不是同一顆 exe」）
@@ -137,22 +154,6 @@ if ($server -eq 0 -and (Select-String -Path $pingLog -Pattern 'echo = build-chec
     Get-Content $pingLog -Tail 3
 }
 
-# -- 出廠驗收(5) 開真視窗轉十秒 -- 理由見 build.sh 同一段（凍住的視窗截起來是正常的）
-Write-Host '-- 出廠驗收(5) 開窗轉 10 秒（凍住 != 慢，門檻只擋凍住）--'
-$soakShot = Join-Path $root 'build/build_soak.png'
-$soakLog = Join-Path $root 'build/build_soak.log'
-& $exe ui --soak 10 --screenshot $soakShot > $soakLog 2>&1
-$soak = $LASTEXITCODE
-$soakLine = (Select-String -Path $soakLog -Pattern '^soak' | Select-Object -First 1).Line
-$soakFps = 0.0
-if ($soakLine -match '平均 ([0-9.]+) fps') { $soakFps = [double]$Matches[1] }
-if ($soak -eq 0 -and $soakFps -ge 10) { Write-Host "完成 $soakLine" }
-else {
-    $soak = 1
-    if ($soakLine) { Write-Host "失敗 視窗轉不動（門檻 10 fps）-- $soakLine" }
-    else { Write-Host '失敗 視窗轉不動 -- 沒有讀數，見 build/build_soak.log' }
-    Get-Content $soakLog -Tail 3
-}
 
 Write-Host ''
 # 收尾：Server 現在是停的 -- (4) 起的那顆是臨時的、同一段就收掉；開頭那次 stop 收掉的是你原本掛著的。
@@ -163,10 +164,16 @@ if ($hadServer) {
 }
 else { Write-Host '. Server：本來就沒在跑，現在也沒有（⤷Server 的 Cmd 需要 senate server start）' }
 
-if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0 -and $soak -eq 0 -and $server -eq 0) {
-    Write-Host '完成 出廠驗收全過。開 GUI：.\senate.exe ui --window'
+# -- 收尾：開一顆常駐視窗（Tim 2026-09-04 拍板）-- 理由見 build.sh 同一段
+# 它會鎖住 publish/senate.exe ⇒ 下一次 build 開頭會自己收掉它。不是驗收格，不擋判定。
+$winLog = Join-Path $root 'build/build_window.log'
+$win = Start-Process -FilePath $exe -ArgumentList 'ui', '--window' -RedirectStandardOutput $winLog -PassThru
+Write-Host (". 已開一顆常駐視窗（pid=" + $win.Id + "，log：build/build_window.log）-- 下次 build 會自己收掉它")
+
+if ($code -eq 0 -and $selftest -eq 0 -and $gui -eq 0 -and $server -eq 0) {
+    Write-Host '完成 出廠驗收全過。'
     exit 0
 }
 # 每一格分開印 -- 壓成一句「驗收未過」會讓人不知道要去看哪一格
-Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / soak=$soak / server=$server）"
+Write-Host "警告 出廠驗收有項目未過（doctor=$code / selftest=$selftest / gui=$gui / server=$server）"
 exit 1

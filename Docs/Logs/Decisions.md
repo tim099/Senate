@@ -985,3 +985,21 @@ per-room lock 只在同一 process 內成立。Server 的第一價值不是「�
 2. **`build.ps1` 那半只有靜態對照**（BOM 保留、邏輯與 .sh 同形），沒有在 PowerShell 下跑過。
 3. **submodule 頁第一幀凍 8.7 秒是真 bug，本次沒修** —— 它要把掃描搬到背景
    （這一頁已經有 `SubmoduleSyncJob` 的背景基礎設施），屬於另一筆改動，不順手做。
+
+## D24 · 出廠驗收⑤（`ui --soak`）退場，改成 build 收尾開一顆常駐視窗（2026-09-04，Tim 拍板）
+
+**現象／需求**：build 每次把視窗關掉，人要自己重開；而 soak 那 10 秒也是等待。
+Tim：「開窗測 10 秒可以直接改為一直開著，這樣就不用跑重啟（相關說明也可以移除）。」
+
+**攤開的代價（我先講、他仍拍板，照做）**：`--soak` 是唯一在量「畫得動」的閘。
+凍住的視窗**截起來跟正常的一模一樣**（第一幀畫完就不動，framebuffer 是一張完整畫面）——
+D21 加它的理由就是 @basecamp 2026-08-28 那次 headless 全綠交付、Tim 開一次窗就卡死。
+⇒ 換掉之後「畫得動」由**人的眼睛**擋：收尾那顆窗就在眼前。旗標本身保留，要量隨時手動跑。
+
+**連帶必須加的一格**：常駐視窗會鎖住 `publish/senate.exe` ⇒ 下一次 build **開頭自己收掉它**
+（`CloseMainWindow()` → 2 秒 → `Kill()`，比對 process 的 `Path`）。
+沒有這一格的話，這個改動等於讓**每一次 build 都撞** 09-03／09-04 那個
+`GenerateBundle … Access to the path … is denied` —— 而那個錯誤訊息不會說是誰鎖的。
+
+**落地**：`build.sh` / `build.ps1`（四格判定：doctor / selftest / gui / server）、
+`Docs/Workflows/Setup_And_Build.md`。`Cli_Reference` 的 `--soak` 條目不動。
