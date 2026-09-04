@@ -101,6 +101,11 @@ public static class Program
         //   實測過相反的做法 —— 傳 repo 根的 basename 會印出「@ Senate（D:/Unity/Bar/…）」，
         //   而那是兩個來源拼出來的定語，比沒有定語更毒（它有出處的樣子）。
         SCP.Core.Canvas.SCP_CanvasGatewayHost.Factory = aDataRoot => new SenateCanvasGateway(aDataRoot);
+        // 活動 session 的關場閘（TASK-0127 ⑤）：Senate 這側**不寫 session 檔、不算錢** ——
+        // 整步委派 Editor 的 SessionClose（結算就是金流，而金流搬家是 TASK-0106，Tim 拍 B 不動）。
+        // ⏳ 過渡（退場條件：TASK-0106）—— 那天換掉 SenateSessionCloseGateway 一個 class 就好。
+        SCP.Core.Session.SCP_ActivitySessionGatewayHost.Factory =
+            (aDataRoot, aKind) => new SenateSessionCloseGateway(aDataRoot, aKind);
 
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——

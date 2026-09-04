@@ -1462,21 +1462,26 @@ public static class SelfTest
             bool aNoGateOk = aNoGate.Closed && !aNoGate.HasHandler && !aNoGate.Settled
                              && SCP_ActivitySessionStore.Load(aRoot, "probe")!.active == false;
 
-            // ⑤ 結算炸掉**不得冒充關場失敗**（0043/0044 那族：回報層炸掉冒充主動作失敗）
+            // ⑤ gateway 炸掉 ⇒ **不留半關的場**，而且判定看的是**回讀**不是 gateway 說什麼。
+            //   🩸 語意 2026-09-04 改過：gateway 從「只結算」變成「整步關場」（權威狀態由那一端寫）
+            //   ⇒ 它炸掉時本層**不自己補寫** —— 補寫就是第二個寫入端，而那正是 TASK-0100 的主題。
+            //   ⇒ 要驗的因此不是「場仍關閉」，是「**磁碟上那份沒有被動過**」（沒有半關的狀態）。
             SCP_ActivitySessionGatewayHost.Register(new ThrowingGate());
             var aBoom = new SCP_ActivitySession { persona = "probe2", kind = SCP_ActivitySessionKind.FreeTime,
                 session_id = "ft-z", active = true, end_ts = "2099-01-01T00:00:00.000Z" };
             SCP_ActivitySessionStore.Save(aRoot, "probe2", aBoom, SCP_ActivitySessionKind.FreeTime);
             var aRes = SCP_ActivitySessionStore.CloseWithSettlement(aRoot, "probe2", aBoom, "selftest");
-            bool aSplitLedger = aRes.Closed && aRes.HasHandler && !aRes.Settled && aRes.SettleError.Length > 0
-                                && SCP_ActivitySessionStore.Load(aRoot, "probe2")!.active == false;
+            var aAfterBoom = SCP_ActivitySessionStore.Load(aRoot, "probe2");
+            bool aSplitLedger = !aRes.Closed && aRes.HasHandler && !aRes.ClosedByGateway
+                                && aRes.SettleError.Length > 0
+                                && aAfterBoom != null && aAfterBoom.active && aAfterBoom.ended_at.Length == 0;
 
             bool aOk = aReadOk && aKeepUnknown && aBlocked && aBlockerNamed && aVictimAlive && aSameOk
                        && aNoGateOk && aSplitLedger;
             return new CheckRow("活動 session 行為",
                 $"讀真形狀={aReadOk}／未知鍵保留={aKeepUnknown}／跨 kind 擋下={aBlocked}（點名擋你的那場={aBlockerNamed}）"
-                + $"／被擋後原場沒被覆蓋={aVictimAlive}／同 kind 不擋={aSameOk}／無 handler 明確降級={aNoGateOk}"
-                + $"／結算炸掉但場仍關閉={aSplitLedger}",
+                + $"／被擋後原場沒被覆蓋={aVictimAlive}／同 kind 不擋={aSameOk}／無 gateway 走 base close={aNoGateOk}"
+                + $"／gateway 炸掉不留半關的場={aSplitLedger}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally
@@ -1486,12 +1491,12 @@ public static class SelfTest
         }
     }
 
-    /// <summary>只會爆炸的結算 gateway —— 驗「結算失敗不得冒充關場失敗」。</summary>
-    sealed class ThrowingGate : SCP_IActivitySessionSettleGateway
+    /// <summary>只會爆炸的關場 gateway —— 驗「gateway 炸掉時，判定看的是回讀不是它說什麼」。</summary>
+    sealed class ThrowingGate : SCP_IActivitySessionCloseGateway
     {
         public string Kind => SCP_ActivitySessionKind.FreeTime;
-        public bool TrySettle(SCP_ActivitySession iSession, string iReason, List<string> oLines, out string oError)
-            => throw new InvalidOperationException("結算故意炸掉（selftest）");
+        public bool TryClose(SCP_ActivitySession iSession, string iReason, List<string> oLines, out string oError)
+            => throw new InvalidOperationException("關場故意炸掉（selftest）");
     }
 
     // 區塊職責：拿**真的** session 檔跑 round-trip —— 讀得回來、而且寫回去不會吃掉別人的欄位。
