@@ -53,6 +53,7 @@ public static class SelfTest
         aRows.Add(SourceMessageLifecycle());
         aRows.Add(ServerResultRoundTrip());
         aRows.Add(ErrorReportShape());
+        aRows.Add(ProcessStatusClassification());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         return aRows;
@@ -112,6 +113,65 @@ public static class SelfTest
     }
 
     /// <summary>「不存在」不可以長得像「空值」—— 讀 Missing 必須丟例外。</summary>
+    // 區塊職責：process 四態的**分類邏輯**（Alive／Dead／PidReused／Unknown）＋ 四種狀態各有各的字。
+    // 物理意義：🩸 TASK-0101 QA（summit 2026-09-03）量到 Dead／PidReused **在任何 QA 能驅動的路徑上都到不了畫面** ——
+    //           `Main` 每次先跑 CleanupStale，`--window --screenshot` 也是一次新的 Main。
+    //           而她 grep 完當時 28 格 selftest：沒有任何一格碰到這四態。
+    //           ⇒ 那兩態當時由「讀 code 覺得對」保證。本格把分類搬到一個**不需要畫面也不需要活體**的地方：
+    //           直接餵四筆記錄給 Validate。畫面呈現那半留給 Alive／Unknown（QA 驅動得到的那兩態）。
+    // 數值影響：純讀 OS 的 process 表，不寫檔、不殺任何東西。
+    static CheckRow ProcessStatusClassification()
+    {
+        using var aSelf = System.Diagnostics.Process.GetCurrentProcess();
+        // Alive：三個身分欄全部吻合本行程（name ＋ start time 都要對，只有 pid 不算數）。
+        var aAliveRec = new SCP.Core.Proc.SCP_ProcessRecord
+        {
+            Pid = aSelf.Id, ProcessName = aSelf.ProcessName,
+            StartTimeUtcText = aSelf.StartTime.ToUniversalTime().ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+        };
+        // PidReused：pid 真的活著，但名字不是當初登記的那顆 ⇒ 這個 pid 被 OS 回收再發給別人了。
+        var aReusedRec = new SCP.Core.Proc.SCP_ProcessRecord
+        {
+            Pid = aSelf.Id, ProcessName = "definitely-not-this-process",
+            StartTimeUtcText = aAliveRec.StartTimeUtcText,
+        };
+        // PidReused（第二條路）：名字對而**啟動時間差太多** —— 兩條路要分開驗，不然只證明其中一條。
+        var aReusedByTimeRec = new SCP.Core.Proc.SCP_ProcessRecord
+        {
+            Pid = aSelf.Id, ProcessName = aSelf.ProcessName,
+            StartTimeUtcText = aSelf.StartTime.ToUniversalTime().AddHours(-3).ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+        };
+        var aDeadRec = new SCP.Core.Proc.SCP_ProcessRecord { Pid = 0x3FFFFFFF, ProcessName = "senate" };   // 不存在的 pid
+        var aUnknownRec = new SCP.Core.Proc.SCP_ProcessRecord { Pid = 0, ProcessName = "senate" };         // 沒有 pid 可問
+
+        var aStatus = SCP.Core.Proc.SCP_ProcessRegistry.Validate(aAliveRec);
+        var aReused = SCP.Core.Proc.SCP_ProcessRegistry.Validate(aReusedRec);
+        var aReused2 = SCP.Core.Proc.SCP_ProcessRegistry.Validate(aReusedByTimeRec);
+        var aDead = SCP.Core.Proc.SCP_ProcessRegistry.Validate(aDeadRec);
+        var aUnknown = SCP.Core.Proc.SCP_ProcessRegistry.Validate(aUnknownRec);
+        var aNull = SCP.Core.Proc.SCP_ProcessRegistry.Validate(null);
+
+        bool aClass = aStatus == SCP.Core.Proc.SCP_ProcessStatus.Alive
+                      && aReused == SCP.Core.Proc.SCP_ProcessStatus.PidReused
+                      && aReused2 == SCP.Core.Proc.SCP_ProcessStatus.PidReused
+                      && aDead == SCP.Core.Proc.SCP_ProcessStatus.Dead
+                      && aUnknown == SCP.Core.Proc.SCP_ProcessStatus.Unknown
+                      && aNull == SCP.Core.Proc.SCP_ProcessStatus.Unknown;
+        // 四種狀態各自的說明字必須互不相同 —— 併成同一句就等於畫面上分不出來（四態分開的理由本身）。
+        var aTexts = new List<string>
+        {
+            SCP.Core.Proc.SCP_ProcessRegistry.StatusText(SCP.Core.Proc.SCP_ProcessStatus.Alive),
+            SCP.Core.Proc.SCP_ProcessRegistry.StatusText(SCP.Core.Proc.SCP_ProcessStatus.Dead),
+            SCP.Core.Proc.SCP_ProcessRegistry.StatusText(SCP.Core.Proc.SCP_ProcessStatus.PidReused),
+            SCP.Core.Proc.SCP_ProcessRegistry.StatusText(SCP.Core.Proc.SCP_ProcessStatus.Unknown),
+        };
+        bool aDistinct = aTexts.TrueForAll(t => !string.IsNullOrWhiteSpace(t)) && aTexts.Distinct(StringComparer.Ordinal).Count() == 4;
+        bool aOk = aClass && aDistinct;
+        return new CheckRow("process 四態分類",
+            $"本行程三欄吻合⇒Alive={aStatus}／換名字⇒{aReused}／啟動時間差 3 小時⇒{aReused2}／不存在的 pid⇒{aDead}／pid=0⇒{aUnknown}／null⇒{aNull}／四種說明字互不相同={aDistinct}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
     static CheckRow MissingSemantics()
     {
         var aData = SCP_JsonData.Parse("{\"a\":1}");
