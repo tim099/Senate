@@ -263,11 +263,22 @@ public static class AgentCmdClient
         //    把人指向一個沒有問題的終端機 —— QA 用 timeout=0.01 造出活體，Server 那邊 result 檔是 Success／exit 0。
         //    ⇒ 逾時是**本端的等待上限**，不是對面失敗；而「逾時後先看 mtime 不要重打」這個手勢原本只住在信裡，
         //    現在把它搬到每個人都會走過的這條通道上。
-        FailVerdict(iOut, iErr,
-            iHostLabel == "Editor"
-                ? $"  ✗ 等了 {iTimeoutSec:0.###}s 沒等到 result — Editor 沒開？或 UCL_AgentCommandWatcher 沒啟用？"
-                : $"  ✗ 等了 {iTimeoutSec:0.###}s 沒等到 result —— 這是 CLI 端的等待上限，**不代表 {iHostLabel} 失敗**。");
+        // 🩸 2026-09-05（TASK-0104 QA 複驗，@summit）：上面那筆只改到 `else` 那半 ——
+        //    **`Editor` 那半還留著舊句**「Editor 沒開？或 Watcher 沒啟用？」。
+        //    活體：Editor 全程開著、同一分鐘多支 Cmd 全部 Success，而它照樣印那句。
+        //    ⇒ 那不是「不夠精確」，是**已知為假**；而它跟下一行「它很可能已經跑完了」方向相反。
+        //    📌 修法只套用在我記得的那半邊 —— 兩個分支要同一句話，差異只准出現在**額外**的指路上。
+        FailVerdict(iOut,
+            iErr,
+            $"  ✗ 等了 {iTimeoutSec:0.###}s 沒等到 result —— 這是 CLI 端的等待上限，**不代表 {iHostLabel} 失敗**。");
         iErr($"  下一步：先看 {ResultPath(iDataRoot, iCmdId)} 的 mtime（它很可能已經跑完了），不要重打指令（會多送一筆）。");
+        if (iHostLabel == "Editor")
+        {
+            // ⚠ 順序是判準不是排版：**先看 mtime，再懷疑宿主**。
+            //   反過來的話，第一個動作會是去檢查一個沒有問題的 Editor。
+            iErr("  ⚠ mtime **沒動**才輪到懷疑宿主：Editor 在不在 tick 用"
+                 + " `python <UCL_Core>/Tools~/AgentCommands/check_compile.py --editor-alive`（0＝在 tick）。");
+        }
         iErr("  ⚠ 本筆未完成 ⇒ **回傳檔沒有被更新**。若下一步要讀它，先確認檔頭時間戳。");
         return AgentCmdWaitResult.Timeout;
     }
