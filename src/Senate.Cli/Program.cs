@@ -106,6 +106,10 @@ public static class Program
         // ⏳ 過渡（退場條件：TASK-0106）—— 那天換掉 SenateSessionCloseGateway 一個 class 就好。
         SCP.Core.Session.SCP_ActivitySessionGatewayHost.Factory =
             (aDataRoot, aKind) => new SenateSessionCloseGateway(aDataRoot, aKind);
+        // Coding 退場的編譯閘（TASK-0058 **A2**）：這一側的尺是 `dotnet build`，
+        // ⛔ 跟 Unity 側的 `check_compile` **不可以合成一把**（合了會讓其中一邊量的不是它自己的編譯）。
+        // ⚠ 沒裝閘不是綠燈 —— `cmd coding --arg op=end` 沒閘時會明說「未驗編譯」。
+        SenateCodingExitGate.Install(aRepoRoot);
 
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
