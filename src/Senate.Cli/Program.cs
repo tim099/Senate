@@ -110,6 +110,12 @@ public static class Program
         // ⛔ 跟 Unity 側的 `check_compile` **不可以合成一把**（合了會讓其中一邊量的不是它自己的編譯）。
         // ⚠ 沒裝閘不是綠燈 —— `cmd coding --arg op=end` 沒閘時會明說「未驗編譯」。
         SenateCodingExitGate.Install(aRepoRoot);
+        // 宿主能力④：酒館發文閘（`cmd rest` 的廣播那半）—— 同樣是**派給 Editor**：
+        // seq 是全域遞增的，同時只能有一個寫入端 ⇒ 這一格沒有本地版，也不會有。
+        // ⚠ 沒裝閘不是「發出去了」—— `cmd rest` 會明說「本宿主沒有登記發文閘 ⇒ 這一則沒有發出去」。
+        SCP.Core.Letters.SCP_TavernPostGatewayHost.Factory =
+            aDataRoot => new SenateTavernPostGateway(aDataRoot, Console.WriteLine);
+
 
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——

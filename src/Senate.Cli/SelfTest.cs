@@ -60,6 +60,7 @@ public static class SelfTest
         aRows.Add(ProcessStatusClassification());
         aRows.Add(ActivitySessionBehaviour());
         aRows.Add(ActivitySessionSubclassRoundTrip());
+        aRows.Add(RestLetterShape());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
@@ -1578,6 +1579,76 @@ public static class SelfTest
         public int rounds = 0;
         public string activity = "";
         public bool note_written = false;
+    }
+
+    // 區塊職責：小歇記憶信的**形狀**（`SCP_LetterWriter`）—— 兩個寫入端並存時唯一擋得住漂移的那一格。
+    // 物理意義：python `awakening.py write_letter` 與本層寫的是同一種檔。形狀分岔的症狀
+    //          **不是解析失敗**（那會喊），是讀信的人拿到預設值 ⇒ 只能靠對拍。
+    // ⚠ 四格裡有兩格是反向對照：空 body 要**一個位元組都不寫**、
+    //   不該修的字面 \n 要**原封不動**。只驗正向的話，
+    //   一個「永遠寫檔」或「無腦全域替換」的實作也會全綠。
+    static CheckRow RestLetterShape()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_selftest_rest_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aLetters = Path.Combine(aTmp, "letters").Replace('\\', '/');
+            string aPersona = "Probe";
+            Directory.CreateDirectory(Path.Combine(aLetters, aPersona));
+
+            // ① 正向：寫得成，而且 `_latest.md` 與信本體**逐位元組相同**（不是「存在」）
+            var aR1 = SCP_LetterWriter.WriteSelfLetter(aLetters, aPersona, "probe-bank", "第一段\n\n第二段");
+            string aBody1 = File.ReadAllText(aR1.Path);
+            bool aWrote = File.Exists(aR1.Path) && aBody1.Contains("trigger: cmd_rest")
+                          && aBody1.Contains("written_by_persona: " + aPersona)
+                          && aBody1.Contains("type: letter_to_future_self");
+            bool aLatestSame = File.Exists(aR1.LatestPath)
+                               && File.ReadAllBytes(aR1.LatestPath).Length == File.ReadAllBytes(aR1.Path).Length
+                               && File.ReadAllText(aR1.LatestPath) == aBody1;
+
+            // ② 作者自己也寫了 frontmatter ⇒ 併入，**不疊第二坨**；同名欄留 `_as_written`
+            var aR2 = SCP_LetterWriter.WriteSelfLetter(aLetters, aPersona, "probe-bank",
+                "---\ntype: hand_written\nintended_reader: 明天的我\n---\n\n內文",
+                iNowUtc: DateTime.UtcNow.AddSeconds(1));
+            string aBody2 = File.ReadAllText(aR2.Path);
+            int aFmCount = CountText(aBody2, "---");
+            bool aMerged = aBody2.Contains("intended_reader: 明天的我")
+                           && aBody2.Contains("type_as_written: hand_written")   // 作者版留痕
+                           && aBody2.Contains("type: letter_to_future_self")     // 機器版勝出
+                           && aFmCount == 2;                                     // 只有一份 frontmatter
+
+            // ③ 反向對照：空 body ⇒ 丟例外，而且 rests/ **沒有多出任何檔**
+            int aBefore = Directory.GetFiles(Path.Combine(aLetters, aPersona, "rests")).Length;
+            bool aRefused = false;
+            try { SCP_LetterWriter.WriteSelfLetter(aLetters, aPersona, "probe-bank", "   "); }
+            catch (ArgumentException) { aRefused = true; }
+            int aAfter = Directory.GetFiles(Path.Combine(aLetters, aPersona, "rests")).Length;
+            bool aNothingWritten = aRefused && aAfter == aBefore;
+
+            // ④ 反向對照：字面換行只在**兩個門檻同時成立**時才修
+            SCP_LetterWriter.NormalizeEscapedNewlines("一行\\n二行\\n三行", out bool aFixedHit);
+            SCP_LetterWriter.NormalizeEscapedNewlines("真的換行很多\n\n\n而這裡只是在講 \\n 這個符號", out bool aFixedMiss);
+            bool aNewlineRule = aFixedHit && !aFixedMiss;
+
+            bool aOk = aWrote && aLatestSame && aMerged && aNothingWritten && aNewlineRule;
+            return new CheckRow("小歇記憶信形狀（SCP_LetterWriter）",
+                $"落檔＋機器欄={aWrote}／`_latest` 與本體逐位元組同={aLatestSame}"
+                + $"／作者 frontmatter 併入不疊第二坨={aMerged}"
+                + $"／**空 body 一個位元組都不寫**={aNothingWritten}"
+                + $"／**字面換行只在門檻內才修**={aNewlineRule}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally
+        {
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
+        }
+    }
+
+    static int CountText(string iText, string iNeedle)
+    {
+        int aCount = 0, aAt = 0;
+        while ((aAt = iText.IndexOf(iNeedle, aAt, StringComparison.Ordinal)) >= 0) { ++aCount; aAt += iNeedle.Length; }
+        return aCount;
     }
 
     // 區塊職責：拿**真的** session 檔跑 round-trip —— 讀得回來、而且寫回去不會吃掉別人的欄位。
