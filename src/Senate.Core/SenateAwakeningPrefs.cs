@@ -1,7 +1,13 @@
 // 區塊職責：把 `senate.local.json` 的 `awakening` 區塊**包成 ISCP_Prefs**，給搬進 SCP_Core 的頁面用。
-// 物理意義：`LoginStatusPage` 要讀寫「信件夾根」，而那個值住在 senate.local.json ——
+// 物理意義：某一頁要讀寫「信件夾根」，而那個值住在 senate.local.json ——
 //           一個 Unity 那側不存在的檔。頁面直接讀它就永遠搬不動（Coding_Standards.md §3）。
 //           ⇒ 這裡是**轉接頭**：對外是 prefs 介面，對內仍然走 `SenateConfig.Load/Save`。
+//
+// ⚠ **目前沒有讀者**（2026-09-05）：唯一的呼叫端「登入狀態」頁已改走
+//   `ISCP_GuiAppContext.LettersRoot`（解析器），因為這一格支援 `auto` ——
+//   讀原始值會讓頁面拿字面 `"auto"` 去掃目錄。⇒ 本轉接頭現在只剩**路由登記**還活著。
+//   要刪它請連 `SenateModel` 的 `.Route(...)` 一起刪；留著的唯一理由是
+//   「下一個要寫 awakening 區塊的頁面不必重造轉接頭」，而那還不是讀數，只是預期。
 //
 //           🩸 為什麼不讓 SCP_JsonPrefs 直接寫這個檔（那樣一行程式都不用寫）：
 //           那會讓 senate.local.json 有**兩個寫入端**，各有一套欄位保留與格式化規則。

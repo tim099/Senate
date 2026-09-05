@@ -140,22 +140,27 @@ public sealed class SenateModel : ISCP_GuiAppContext
     //           使用者在「路徑管理」頁改完值切回來，快取會讓他看到舊的而以為沒存進去。
     // ⚠ 不吞 `Error`：兩個啟用專案 ⇒ 資料根不唯一，那是**狀態壞了**，不是「沒設定」。
     //   靜默挑一個的症狀是「路徑全對，只是屬於別的專案」。
-    public SCP_PathResolution AgentCommandsRoot
+    public SCP_PathResolution AgentCommandsRoot => ResolvePath(SCP_PathId.AgentCommandsRoot);
+
+    // ⚠ 信件庫根**支援 `auto`** ⇒ 讀取端不准讀原始值。
+    //   🩸 2026-09-05：「登入狀態」頁原本自己 `Prefs.Read(awakening.lettersRoot)`，
+    //   填 `auto` 時它會拿字面 `"auto"` 去掃目錄 ⇒ 畫面說「這裡真的還沒有人」，
+    //   而同一台的 CLI 解得出真正的路徑（兩邊都不報錯）。
+    public SCP_PathResolution LettersRoot => ResolvePath(SCP_PathId.LettersRoot);
+
+    /// <summary>解一格路徑 —— 上面那幾格共用的實作（多一格路徑不必再抄一次設定檔三態）。</summary>
+    SCP_PathResolution ResolvePath(SCP_PathId iId)
     {
-        get
+        SenateConfig? aCfg;
+        try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(m_RepoRoot)); }
+        catch (InvalidDataException e)
         {
-            SenateConfig? aCfg;
-            try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(m_RepoRoot)); }
-            catch (InvalidDataException e)
-            {
-                return new SCP_PathResolution("", "設定檔讀不了", e.Message);
-            }
-            if (aCfg == null)
-                return new SCP_PathResolution("", "沒有設定檔",
-                    $"還沒有 {Path.GetFileName(SenateConfig.DefaultPath(m_RepoRoot))} —— 先跑 `senate init`");
-            return SCP_PathRegistry.Resolve(SCP_PathId.AgentCommandsRoot,
-                iId => SenatePathBinding.StoredOf(aCfg, iId));
+            return new SCP_PathResolution("", "設定檔讀不了", e.Message);
         }
+        if (aCfg == null)
+            return new SCP_PathResolution("", "沒有設定檔",
+                $"還沒有 {Path.GetFileName(SenateConfig.DefaultPath(m_RepoRoot))} —— 先跑 `senate init`");
+        return SCP_PathRegistry.Resolve(iId, iInner => SenatePathBinding.StoredOf(aCfg, iInner));
     }
 
     public void Refresh()

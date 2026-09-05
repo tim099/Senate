@@ -4,6 +4,7 @@
 //           是拿真檔案去試的問題。⇒ 每一項都印出**讀到什麼**，不是只印 ✓。
 // 數值影響：純讀。找不到樣本檔時回報「跳過（沒有樣本）」，**不當成通過** ——
 //           「沒測」與「測過而且對」同形是這個 repo 最貴的錯誤形狀。
+using System.Reflection;
 using System.Text;
 using Senate.Core;
 using SCP.Core.Gui;
@@ -36,6 +37,7 @@ public static class SelfTest
         aRows.Add(PrefsKeepsOtherSections());
         aRows.Add(PathsSingleSource());
         aRows.Add(PathRegistryShape());
+        aRows.Add(LoginPageResolvesLettersRoot());
         aRows.Add(StyleRoundTrip());
         aRows.Add(PageStack());
         aRows.Add(TypeSchemaShape());
@@ -1673,6 +1675,69 @@ public static class SelfTest
             default:
                 return iA.ToJson(false) == iB.ToJson(false);
         }
+    }
+
+    // 區塊職責：**「登入狀態」頁拿到的是解析後的信件庫根，不是存起來的原始值。**
+    // 物理意義：`lettersRoot` 是 `[SCP_PathAuto]` 的 ⇒ 它可以合法地存成字面 `auto`。
+    //          🩸 2026-09-05 之前那一頁自己走 `Prefs.Read(awakening.lettersRoot)` ——
+    //          存 `auto` 時它會拿字面 `"auto"` 當目錄去掃，掃不到 ⇒ 畫面印
+    //          「這裡真的還沒有人」，**而同一台的 CLI 解得出真正的路徑**。兩邊都不報錯。
+    //          ⇒ 這一格用**最壞的那個值**（`auto`）當輸入：解析對了，畫面才數得出人。
+    // 數值影響：全在暫存目錄裡自己造一份 senate.local.json 與一個 persona，跑完刪掉 ——
+    //          ⛔ **不碰使用者的設定**（去寫使用者的 prefs 來「驗完」一頁，正是上一版的錯法）。
+    static CheckRow LoginPageResolvesLettersRoot()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_selftest_login_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            // ① 造一份「最壞但合法」的設定：lettersRoot 存的是字面 auto
+            string aCfgDir = Path.Combine(aTmp, "SenateData", "config");
+            Directory.CreateDirectory(aCfgDir);
+            string aProjRoot = aTmp.Replace(Path.DirectorySeparatorChar, '/');
+            File.WriteAllText(Path.Combine(aCfgDir, "senate.local.json"),
+                "{\n  \"schemaVersion\": 1,\n  \"projects\": [\n    {\n"
+                + "      \"name\": \"Probe\",\n      \"root\": \"" + aProjRoot + "\",\n"
+                + "      \"agentCommandsRoot\": \"auto\",\n      \"enabled\": true,\n      \"profile\": \"\"\n"
+                + "    }\n  ],\n  \"awakening\": {\n    \"lettersRoot\": \"auto\"\n  }\n}\n");
+
+            // ② 造一個看得見的 persona —— 掃得到它，就證明掃的不是字面 "auto"
+            string aLetters = aProjRoot + "/AgentCommands/ChatTavern/baton/letters";
+            Directory.CreateDirectory(Path.Combine(aLetters, "probe-one", SCP_LettersPaths.ProfileDirName));
+
+            // ③ 宿主解析：值要是推導出來的那條，Origin 要說得出「是 auto 推的」
+            var aModel = new SenateModel(aTmp);
+            SCP_PathResolution aRes = aModel.LettersRoot;
+            bool aResolved = aRes.Error == null
+                             && aRes.Value.Replace(Path.DirectorySeparatorChar, '/') == aLetters
+                             && aRes.Origin.Contains(SCP_PathRegistry.AutoLiteral, StringComparison.Ordinal);
+
+            // ④ 畫真的那一頁：數得出人 ＝ 它掃的是解析後的目錄（舊版會是 0 人）
+            var aPage = new SCP_GuiLoginStatusPage(aModel);
+            aPage.OnPush();
+            var aUi = new SCP_Ui();
+            aPage.Draw(aUi);
+            string aText = SCP_GuiTextRenderer.Render(aUi.Root, 200);
+            bool aCounts = aText.Contains("persona 1 人", StringComparison.Ordinal);
+            bool aShowsOrigin = aText.Contains("來源：", StringComparison.Ordinal)
+                                && aText.Contains(aLetters, StringComparison.Ordinal);
+
+            // ⑤ 那一頁**不准再自己存一份路徑**：反射找它身上的 prefs key，應該一個都沒有
+            int aOwnKeys = 0;
+            foreach (FieldInfo f in typeof(SCP_GuiLoginStatusPage)
+                         .GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance))
+                if (f.FieldType == typeof(SCP_PrefKey<string>)) aOwnKeys++;
+
+            bool aOk = aResolved && aCounts && aShowsOrigin && aOwnKeys == 0;
+            return new CheckRow("登入頁信件庫根",
+                $"auto 解析={aResolved}（值={aRes.Value}／來源={aRes.Origin}）"
+                + $"／畫面數得出人={aCounts}／印出值＋來源={aShowsOrigin}／本頁自存的路徑 key={aOwnKeys}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e)
+        {
+            return new CheckRow("登入頁信件庫根", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail);
+        }
+        finally { try { Directory.Delete(aTmp, true); } catch { /* 暫存目錄刪不掉不影響判定 */ } }
     }
 
     // 區塊職責：路徑描述表自身的合法性 —— **「漏掛 attribute」要在出廠驗收擋下**，
