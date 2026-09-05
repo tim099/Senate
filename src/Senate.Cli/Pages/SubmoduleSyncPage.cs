@@ -42,6 +42,17 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     /// </summary>
     string m_ScannedFingerprint = "";
 
+    /// <summary>
+    /// 進行中的**背景掃描**（null ＝ 沒有在掃）。
+    /// <para>🩸 TASK-0113：掃描原本在 <c>DrawContent</c> 同步跑 ⇒ 開頁第一幀凍住
+    /// （LY 24 顆實測 <b>1 幀 / 13.14 秒</b>，第一幀 13144.2 ms、沒有第二幀）。
+    /// 而**凍住的視窗截起來是正常的** ⇒ 既有的截圖驗收全程綠燈，
+    /// 那 13 秒沒有任何一層看得到。</para>
+    /// <para>⚠ 它只在**會重畫的宿主**上出現（見 <see cref="Rescan"/>）——
+    /// 純文字那側丟背景等於什麼都不會發生。</para>
+    /// </summary>
+    SubmoduleScanJob? m_ScanJob;
+
     // 區塊職責：草稿 ↔ 生效值的兩組 id。
     // 物理意義：打字欄位是**草稿**（`…`），按下「套用」才寫進**生效值**（`…/applied`）。
     // 🩸 為什麼生效值不能只放在頁面欄位（第一版就是那樣）：
@@ -138,6 +149,8 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         //   即使它們的節點要等 DrawContent 才被建出來（工具列**先於**內容區畫）。
         //   ⭐ 這就是操作鈕能放在工具列的原因：設定的真相源在 session，不在「這一輪畫到哪了」。
         bool aFetch = g.ToggleValue(FetchId, m_Saved?.Fetch ?? false);
+        // 掃描中不畫那顆鈕（同「執行中不畫操作鈕」的判準）—— 一顆按了不會有事的鈕看起來像壞的。
+        if (m_ScanJob != null) { g.Label("⏳ 掃描中…"); return; }
         if (g.Button(aFetch ? "重新掃描（含 fetch）" : "重新掃描", "submodule/rescan"))
         {
             // ⚠ 顯式傳生效值，不靠 `m_Scan?.Root` 兜 —— 新 process 的第一輪 `m_Scan` 還是 null
@@ -243,8 +256,15 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         string aRoot = g.FieldValue(RootAppliedId, DefaultRoot);
         string aBranch = g.FieldValue(BranchAppliedId, DefaultBranch);
 
+        // ⓪ 背景正在掃 ⇒ **等它**（不是丟掉重來）。接下來那一輪批次是分鐘級的，
+        //    等一輪唯讀掃描是相稱的代價；而丟掉重來會讓同一份 git 被問兩次。
+        //    ⚠ 這是整頁**唯一**准許 WaitForExit 的地方（見 SubmoduleScanJob 的註解）。
+        if (m_ScanJob != null) { m_ScanJob.WaitForExit(); HarvestScan(); }
+
         // ① 還沒有照片 ⇒ 先掃一次（這一輪拿不到 overrides —— 它們的 id 要靠 items 才列舉得出來）
-        if (m_Scan == null) Rescan(iFetch: false, aRoot, aBranch, null);
+        //    ⚠ 這裡走**就地**掃：使用者已經按下會動手的鈕，沒有照片就不知道要對誰動手 ——
+        //      丟背景會讓這一趟直接返回，而那等於「按了沒反應」。
+        if (m_Scan == null) RescanNow(iFetch: false, aRoot, aBranch, null);
 
         if (m_Scan is not { Ok: true } aScan)
         {
@@ -263,7 +283,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         var aSettings = CollectSettings(g);
         string aFp = Fingerprint(aRoot, aBranch, aSettings.Overrides, aSettings.Options.Fetch);
         if (aFp != m_ScannedFingerprint)
-            Rescan(aSettings.Options.Fetch, aRoot, aBranch, aSettings.Overrides);
+            RescanNow(aSettings.Options.Fetch, aRoot, aBranch, aSettings.Overrides);   // 同上：這一趟要拿到照片才走得下去
 
         return m_Scan is { Ok: true, Items.Count: > 0 };
     }
@@ -417,7 +437,8 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         //     它們是單次離散事件，不會連續觸發，而且立即看到結果才是那些元件的價值。
         // 生效值 —— 住 session，跨 process 活得下來（見 RootAppliedId 的血證）。
         // 草稿欄位的**預設**就是它：一進頁面欄位顯示「現在掃的是誰」，而不是一格空白。
-        // ── ⓿ 批次跑完了就收割（UI 執行緒做，背景不直接寫頁面狀態）──────
+        // ── ⓿ 批次／掃描跑完了就收割（UI 執行緒做，背景不直接寫頁面狀態）──────
+        HarvestScan();
         HarvestJob(g);
         DrawJobStatus(g);
 
@@ -528,8 +549,11 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         // ⚠ 批次執行中**一律不重掃**：那會在背景正在移動 HEAD 的同時去讀狀態 ——
         //   讀到的是一張「一半」的照片，而它看起來跟一張完整的照片一模一樣。
         //   跑完之後 HarvestJob 會自己重掃一次（報告說切好了不算數，狀態表讀回來的才算）。
+        // ⚠ 多一格 `m_ScanJob == null`：掃描期間使用者改設定 ⇒ 指紋不符 ⇒ 這裡每幀都會想再丟一輪。
+        //   `Rescan` 自己也擋（它是最後一道），但讓「正在掃就不再丟」在**讀得到的地方**寫一次 ——
+        //   一道只寫在被呼叫端的閘，會在有人加第二個呼叫端的那天靜默失效。
         string aFingerprint = Fingerprint(aAppliedRoot, aAppliedBranch, aOverrides, aOptions.Fetch);
-        if (m_Job == null && (m_Scan == null || aFingerprint != m_ScannedFingerprint))
+        if (m_Job == null && m_ScanJob == null && (m_Scan == null || aFingerprint != m_ScannedFingerprint))
         {
             Rescan(aOptions.Fetch, aAppliedRoot, aAppliedBranch, aOverrides);
         }
@@ -537,7 +561,25 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         g.Space();
 
         // ── ③ 攤讀數 ──────────────────────────────────────────────
-        if (m_Scan == null) { g.Note("還沒掃描。按上面的「重新掃描」。"); return; }
+        // ⚠ 「正在掃」與「還沒掃」不得同形：前者等一下就會有東西，後者要人動手。
+        //   而這一段是**第一幀就看得到的東西** —— TASK-0113 修的就是「第一幀什麼都不畫、視窗凍住」。
+        if (m_ScanJob != null)
+        {
+            SubmoduleScanProgress aScanSnap = m_ScanJob.Snapshot();
+            using (g.Box($"⏳ 掃描中　{m_ScanJob.Root}"))
+            {
+                g.Note(aScanSnap.Done > 0
+                    ? $"已讀 {aScanSnap.Done} 顆　{aScanSnap.Current}"
+                    : "正在問 git 有哪些 submodule…");
+                g.Note("　⚠ 掃描是唯讀的（fetch 開著時只動 remote-tracking ref）——"
+                       + "跑完會自己把表畫出來，不必按任何鈕。");
+                // 手上還有舊照片時**要說它是舊的** —— 一張沒有標記的過期照片跟現況同形。
+                if (m_Scan != null) g.Note("　下面那張表是**上一次掃的**，還不是這一輪的結果。");
+            }
+            if (m_Scan == null) return;
+            g.Space();
+        }
+        else if (m_Scan == null) { g.Note("還沒掃描。按上面的「重新掃描」。"); return; }
 
         if (!m_Scan.Ok)
         {
@@ -1049,16 +1091,70 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         return aArgs.ToString();
     }
 
+    /// <summary>
+    /// 重掃 —— **兩種宿主走同一份碼，差別只在跑在哪條執行緒上**（跟 <see cref="StartJob"/> 同一個判準）：
+    /// 會重畫的宿主丟背景、第一幀先畫「掃描中」；不重畫的同步跑完才返回。
+    /// <para>🩸 TASK-0113：以前這裡無條件同步 ⇒ 視窗開在這一頁就凍 13 秒（LY 24 顆）。
+    /// ⚠ 純文字那側**不能**丟背景：它畫幾趟就結束 process，丟背景等於整頁永遠是「掃描中」，
+    /// 而那個症狀跟「這一頁壞了」同形。</para>
+    /// <para>⚠ 指紋在**起跑當下**就記下來（不是跑完才記）：少了這一格，
+    /// 第一幀丟出去的那輪掃描還沒回來，第二幀就會再丟一輪 ⇒ 每秒 60 條掃描執行緒。</para>
+    /// </summary>
     void Rescan(bool iFetch, string? iRoot = null, string? iDefaultBranch = null,
         IReadOnlyDictionary<string, string>? iOverrides = null)
     {
-        string aRoot = iRoot ?? m_Scan?.Root ?? m_Model.RepoRoot;
-        // 生效 branch 由呼叫端顯式給（頁面不再自己存一份 —— 那份會跟 session 分岔）
-        string aBranch = iDefaultBranch ?? "";
+        if (!SCP_GuiHost.RedrawsContinuously) { RescanNow(iFetch, iRoot, iDefaultBranch, iOverrides); return; }
+
+        // 已經在掃了就不再丟一輪 —— 兩輪掃描的結果會互相蓋，而後到的那一份未必是後起的那一份。
+        if (m_ScanJob != null) return;
+
+        (string aRoot, string aBranch) = ResolveScanTarget(iRoot, iDefaultBranch);
+        m_ScannedFingerprint = Fingerprint(aRoot, aBranch, iOverrides, iFetch);
+        var aJob = new SubmoduleScanJob(aRoot, iFetch,
+            string.IsNullOrWhiteSpace(aBranch) ? null : aBranch,
+            iOverrides, m_ScannedFingerprint);
+        m_ScanJob = aJob;
+        aJob.Start();
+    }
+
+    /// <summary>就地掃完才返回（純文字那側的正路；視窗那側只有「按了會動手的鈕」才走）。</summary>
+    void RescanNow(bool iFetch, string? iRoot = null, string? iDefaultBranch = null,
+        IReadOnlyDictionary<string, string>? iOverrides = null)
+    {
+        (string aRoot, string aBranch) = ResolveScanTarget(iRoot, iDefaultBranch);
         m_Scan = SubmoduleScan.Scan(aRoot, iFetch,
             string.IsNullOrWhiteSpace(aBranch) ? null : aBranch,
             iOverrides);
         m_ScannedFingerprint = Fingerprint(aRoot, aBranch, iOverrides, iFetch);
+    }
+
+    /// <summary>掃誰／用哪條預設 branch —— 兩條路（背景／就地）必須算出同一組值，所以只寫一份。</summary>
+    (string aRoot, string aBranch) ResolveScanTarget(string? iRoot, string? iDefaultBranch)
+        // 生效 branch 由呼叫端顯式給（頁面不再自己存一份 —— 那份會跟 session 分岔）
+        => (iRoot ?? m_Scan?.Root ?? m_Model.RepoRoot, iDefaultBranch ?? "");
+
+    /// <summary>
+    /// 背景掃描跑完了就把照片搬進頁面（**UI 執行緒做**，背景不直接寫頁面狀態 —— 契約③）。
+    /// <para>⚠ 只在指紋還相符時才收 —— 掃描期間使用者可能已經改了設定，
+    /// 那張照片配上新設定就是「畫面說 LY、讀數是 Senate」，而它不會報錯。</para>
+    /// </summary>
+    void HarvestScan()
+    {
+        if (m_ScanJob == null) return;
+        SubmoduleScanProgress aSnap = m_ScanJob.Snapshot();
+        if (!aSnap.Finished) return;
+
+        string aFingerprint = m_ScanJob.Fingerprint;
+        string aRoot = m_ScanJob.Root;
+        m_ScanJob = null;
+
+        if (aFingerprint != m_ScannedFingerprint) return;   // 設定已經變了 ⇒ 這張照片過期，下一幀會再掃一輪
+
+        // 背景執行緒炸掉的例外不會自己出現在任何地方 ⇒ 收成一張「掃描失敗」的照片，
+        // 那一頁本來就會把 Ok=false 印成「✗ 掃描失敗：<原因>」。
+        m_Scan = aSnap.Error != null
+            ? new SubmoduleScanResult { Root = aRoot, Ok = false, Error = $"掃描執行緒炸了：{aSnap.Error}" }
+            : aSnap.Result;
     }
 
     /// <summary>
