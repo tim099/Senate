@@ -18,6 +18,7 @@ using SCP.Core.Letters;
 using SCP.Core.Reflect;
 using System.Text.RegularExpressions;
 using SCP.Core.Watch;
+using SCP.Core.Books;
 using SCP.Core.Cmd;
 using System.Globalization;
 
@@ -74,6 +75,7 @@ public static class SelfTest
         aRows.AddRange(RealWatchChapterRebuild(iProjects));
         aRows.AddRange(WatchWriteCleanRoom(iProjects));
         aRows.Add(BookAddCleanRoom());
+        aRows.Add(BookWritingFilter());
         return aRows;
     }
 
@@ -176,6 +178,90 @@ public static class SelfTest
         {
             return new CheckRow("add-book clean-room（對照 library.py 真產物）",
                 "例外：" + e.Message, CheckResult.Fail);
+        }
+        finally
+        {
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ }
+        }
+    }
+
+    // 區塊職責：`op=writing`／brief §6.7 的篩選 —— **驗該被排除的有沒有真的不見**。
+    // 物理意義：只驗「有列出來」驗不到東西：一個永遠回全部的實作也會通過。
+    //          所以這裡放三本**應該被排除**的（已發布／imported／沒有 origin），
+    //          它們有沒有消失才是這一格的讀數。
+    // 數值影響：純暫存目錄，⛔ 不碰真 store。另驗「0 本」與「未量」**必須是兩個不同的結局** ——
+    //          🩸 那兩件事在畫面上同形，而人往那個空格裡填的一定是「沒事」。
+    static CheckRow BookWritingFilter()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bookwrite_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aCmd = new SCP_Cmd_Book();
+            SCP_CmdArgs Args(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return a;
+            }
+
+            Directory.CreateDirectory(Path.Combine(aTmp, "BookNotes"));
+            void Add(string iId, string iOrigin, string iPersona)
+            {
+                var aRaw = new Dictionary<string, string>
+                {
+                    ["data_root"] = aTmp, ["op"] = "add", ["id"] = iId,
+                    ["title"] = iId, ["aliases"] = iId,
+                };
+                if (iOrigin.Length > 0) aRaw["origin"] = iOrigin;
+                if (iPersona.Length > 0) aRaw["author_persona"] = iPersona;
+                aCmd.Execute(Args(aRaw));
+            }
+
+            Add("a-writing", "authored", "basecamp");    // ← 只有這本該出現
+            Add("b-published", "authored", "basecamp");  // 下一步改成 published
+            Add("c-imported", "imported", "");
+            Add("d-noorigin", "", "");
+
+            // 改成已發布 —— 直接改檔：這裡是暫存根，而「發布」不是 add 的職責。
+            string aBJson = Path.Combine(aTmp, "BookNotes", "b-published", "book.json");
+            File.WriteAllText(aBJson,
+                File.ReadAllText(aBJson, Encoding.UTF8).Replace("\"draft\"", "\"published\""),
+                new UTF8Encoding(false));
+
+            if (!SCP_BookStore.TryListWriting(aTmp, null, out List<SCP_AuthoredBook> aAll, out _))
+                return new CheckRow("寫到一半的書：篩選 ＋ 未量／零本分家",
+                    "四本都建好了卻讀不到書庫", CheckResult.Fail);
+
+            var aIds = new List<string>();
+            foreach (SCP_AuthoredBook aBook in aAll) aIds.Add(aBook.Id);
+            aIds.Sort(StringComparer.Ordinal);
+            bool aOnlyOne = aIds.Count == 1 && aIds[0] == "a-writing";
+
+            // persona 篩選：別人的名字要回 0 本（⛔ 不是回全部）
+            SCP_BookStore.TryListWriting(aTmp, "someone-else", out List<SCP_AuthoredBook> aOther, out _);
+
+            // 「0 本」與「未量」必須分得開
+            string aEmpty = Path.Combine(aTmp, "empty");
+            Directory.CreateDirectory(Path.Combine(aEmpty, "BookNotes"));
+            bool aZeroOk = SCP_BookStore.TryListWriting(aEmpty, null, out List<SCP_AuthoredBook> aZero, out _)
+                           && aZero.Count == 0;
+            bool aUnmeasured = !SCP_BookStore.TryListWriting(Path.Combine(aTmp, "no-such-root"), null,
+                                                            out _, out string aWhy)
+                               && aWhy.Length > 0;
+
+            string aReading =
+                $"四本進 ⇒ 列出 [{string.Join(" , ", aIds)}]"
+                + $"（該排除的 b-published／c-imported／d-noorigin {(aOnlyOne ? "**都不見了**" : "**沒排乾淨**")}）"
+                + $"；別人的 persona ⇒ {aOther.Count} 本"
+                + $"；空書庫 ⇒ {(aZeroOk ? "0 本且 ok=true" : "**不是 0**")}"
+                + $"；根不存在 ⇒ {(aUnmeasured ? "ok=false 且說得出原因" : "**沒有分家**")}";
+
+            return new CheckRow("寫到一半的書：篩選 ＋ 未量／零本分家", aReading,
+                aOnlyOne && aOther.Count == 0 && aZeroOk && aUnmeasured ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e)
+        {
+            return new CheckRow("寫到一半的書：篩選 ＋ 未量／零本分家", "例外：" + e.Message, CheckResult.Fail);
         }
         finally
         {
