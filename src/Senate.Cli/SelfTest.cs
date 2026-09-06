@@ -70,6 +70,7 @@ public static class SelfTest
         aRows.AddRange(RealWatchLedgerRead(iProjects));
         aRows.AddRange(RealWatchResolveFingerprint(iProjects));
         aRows.AddRange(RealWatchChapterRebuild(iProjects));
+        aRows.AddRange(WatchWriteCleanRoom(iProjects));
         return aRows;
     }
 
@@ -1908,6 +1909,158 @@ public static class SelfTest
             oRanges.Add(new SCP_SeqRange(long.Parse(m.Groups[1].Value), long.Parse(m.Groups[2].Value)));
         }
         return oRanges.Count > 0;
+    }
+
+    // 區塊職責：章的**落檔那一半**（守衛＋寫檔＋回讀＋台帳回填）在 **clean-room** 跑一次。
+    // 物理意義：這一層會寫東西 ⇒ ⛔ 不可以拿真資料根驗。
+    //          把需要的輸入複製到暫存根（只複製用得到的那幾個 seq 檔），在那裡寫、在那裡比。
+    // ⭐ 四格，其中**兩格是反向對照**：
+    //    ① 正向：重出真章 ⇒ 與真產物逐位元組相同
+    //    ② 反向：同一章再跑一次而不給 force ⇒ **擋下且檔案 md5 不變**
+    //       （只驗「寫得成」的話，一個永遠覆寫的實作也會全綠）
+    //    ③ 反向：拿一段與既有章重疊的區間 ⇒ **擋下**（一話不該有兩章）
+    //    ④ 台帳：append-only ⇒ 行數只增不減，且既有行逐位元組不變
+    static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aSrc = p.AgentCommandsRoot;
+            string aBooksSrc = Path.Combine(aSrc, "Books");
+            if (!Directory.Exists(aBooksSrc)) continue;
+
+            // 取「最新那章」當受測體 —— 它保證來自現行實作。
+            string? aPick = null; DateTime aBest = DateTime.MinValue;
+            foreach (string d in Directory.GetDirectories(aBooksSrc, "watch-*"))
+                foreach (string f in Directory.GetFiles(d, "???.txt"))
+                {
+                    string aStem = Path.GetFileNameWithoutExtension(f);
+                    if (aStem.Length != 3 || !int.TryParse(aStem, out _)) continue;
+                    DateTime t = File.GetLastWriteTimeUtc(f);
+                    if (t > aBest) { aBest = t; aPick = f; }
+                }
+            if (aPick == null) continue;
+            aAny = true;
+
+            string aWant = File.ReadAllText(aPick, Encoding.UTF8).Replace("\r\n", "\n");
+            if (!TryParseChapterHeader(aWant, out string aMedia, out List<SCP_SeqRange> aRanges,
+                                       out string aTitle, out string aSub, out string aWork,
+                                       out string aSessions, out string aNote))
+            {
+                yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
+                    $"受測體 `{Path.GetFileName(aPick)}` 的表頭解析不出來 ⇒ **跳過**（⛔ 不當成通過）",
+                    CheckResult.Skipped);
+                continue;
+            }
+
+            string aTmp = Path.Combine(Path.GetTempPath(), "senate_watchwrite_" + Guid.NewGuid().ToString("N")[..8]);
+            try
+            {
+                // ── 只複製用得到的輸入（⛔ 不整棵複製，也絕不寫回來源）──
+                string aMsgSrc = SCP_WatchExport.MessagesDir(aSrc, "tavern");
+                int aCopied = 0;
+                if (Directory.Exists(aMsgSrc))
+                    foreach (string f in Directory.GetFiles(aMsgSrc, "*.json", SearchOption.AllDirectories))
+                    {
+                        if (!long.TryParse(Path.GetFileNameWithoutExtension(f), out long q)) continue;
+                        bool aIn = false;
+                        foreach (SCP_SeqRange r in aRanges) if (q >= r.Lo && q <= r.Hi) { aIn = true; break; }
+                        if (!aIn) continue;
+                        string aRel = f.Substring(aMsgSrc.Length).TrimStart('\\', '/');
+                        string aDst = Path.Combine(SCP_WatchExport.MessagesDir(aTmp, "tavern"), aRel);
+                        Directory.CreateDirectory(Path.GetDirectoryName(aDst)!);
+                        File.Copy(f, aDst); ++aCopied;
+                    }
+                Directory.CreateDirectory(Path.Combine(aTmp, "StreamWatch"));
+                foreach (string n in new[] { "sessions_log.jsonl", "segments.jsonl", "settings.json" })
+                {
+                    string f = Path.Combine(aSrc, "StreamWatch", n);
+                    if (File.Exists(f)) File.Copy(f, Path.Combine(aTmp, "StreamWatch", n));
+                }
+                string aMediaJson = Path.Combine(SCP_WatchWriter.MediaRoot(aSrc, aMedia), "media.json");
+                if (File.Exists(aMediaJson))
+                {
+                    string aMd = SCP_WatchWriter.MediaRoot(aTmp, aMedia);
+                    Directory.CreateDirectory(aMd);
+                    File.Copy(aMediaJson, Path.Combine(aMd, "media.json"));
+                }
+
+                string aLedger = SCP_WatchLedger.SessionsLogPath(aTmp);
+                int aLedgerBefore = File.Exists(aLedger) ? File.ReadAllLines(aLedger).Length : 0;
+                string aLedgerHeadBefore = File.Exists(aLedger)
+                    ? string.Join("\n", File.ReadAllLines(aLedger)) : "";
+
+                // ── ① 正向：重出 ──
+                var aL1 = new List<string>();
+                var aW1 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)),
+                    Path.GetFileNameWithoutExtension(aPick),
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL1);
+                bool aWrote = aW1.Error.Length == 0 && File.Exists(aW1.OutPath);
+                string aGot = aWrote ? File.ReadAllText(aW1.OutPath, Encoding.UTF8).Replace("\r\n", "\n") : "";
+                bool aSame = aWrote && string.Equals(aGot, aWant, StringComparison.Ordinal);
+                bool aBackOk = aWrote && aW1.BackEntries == aW1.Chapterized!.Kept.Count;
+
+                // ── ② 反向：不給 force 再跑一次 ⇒ 擋下且檔案不變 ──
+                string aMd5Before = aWrote ? Md5OfFile(aW1.OutPath) : "";
+                var aL2 = new List<string>();
+                var aW2 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)),
+                    Path.GetFileNameWithoutExtension(aPick),
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL2);
+                bool aRefused = aW2.Error.Contains("拒絕覆寫");
+                bool aUnchanged = aWrote && string.Equals(aMd5Before, Md5OfFile(aW1.OutPath), StringComparison.Ordinal);
+
+                // ── ③ 反向：另一章號但區間重疊 ⇒ 擋下 ──
+                var aL3 = new List<string>();
+                var aW3 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)), "777",
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL3);
+                bool aOverlapBlocked = aW3.Error.Contains("一話不該有兩章")
+                                       && !File.Exists(Path.Combine(Path.GetDirectoryName(aW1.OutPath)!, "777.txt"));
+
+                // ── ④ 台帳 append-only ──
+                int aLedgerAfter = File.Exists(aLedger) ? File.ReadAllLines(aLedger).Length : 0;
+                string aLedgerHeadAfter = File.Exists(aLedger)
+                    ? string.Join("\n", File.ReadAllLines(aLedger)[..aLedgerBefore]) : "";
+                bool aAppendOnly = aLedgerAfter >= aLedgerBefore
+                                   && string.Equals(aLedgerHeadBefore, aLedgerHeadAfter, StringComparison.Ordinal);
+
+                bool aOk = aSame && aBackOk && aRefused && aUnchanged && aOverlapBlocked && aAppendOnly;
+                yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
+                    $"受測體 `{Path.GetFileName(Path.GetDirectoryName(aPick))}/{Path.GetFileName(aPick)}`"
+                    + $"（複製 {aCopied} 則訊息進暫存根）"
+                    + $"／**重出逐位元組相同={aSame}**／回讀段數＝收錄數={aBackOk}"
+                    + $"／**沒給 force 擋下={aRefused}** 且檔案 md5 不變={aUnchanged}"
+                    + $"／**區間重疊擋下且沒生出 777.txt={aOverlapBlocked}**"
+                    + $"／台帳 append-only（{aLedgerBefore}→{aLedgerAfter} 行、既有行不變={aAppendOnly}）"
+                    + "　⚠ 全程在暫存根，**來源一個位元組都沒動**",
+                    aOk ? CheckResult.Pass : CheckResult.Fail);
+            }
+            finally
+            {
+                try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
+            }
+        }
+        if (!aAny)
+            yield return new CheckRow("章落檔 clean-room",
+                "找不到任何 `Books/watch-*/NNN.txt` ⇒ **跳過**（⛔ 不當成通過）", CheckResult.Skipped);
+    }
+
+    static string Md5OfFile(string iPath)
+    {
+        using var aHash = System.Security.Cryptography.MD5.Create();
+        byte[] aB = aHash.ComputeHash(File.ReadAllBytes(iPath));
+        var aHex = new StringBuilder(32);
+        foreach (byte b in aB) aHex.Append(b.ToString("x2"));
+        return aHex.ToString();
     }
 
     static IEnumerable<CheckRow> RealWatchLedgerRead(IReadOnlyList<ProjectReading> iProjects)
