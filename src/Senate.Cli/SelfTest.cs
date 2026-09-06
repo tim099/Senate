@@ -61,6 +61,7 @@ public static class SelfTest
         aRows.Add(ActivitySessionBehaviour());
         aRows.Add(ActivitySessionSubclassRoundTrip());
         aRows.Add(RestLetterShape());
+        aRows.Add(TavernPostVerdictThreeStates());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
@@ -1630,18 +1631,71 @@ public static class SelfTest
             SCP_LetterWriter.NormalizeEscapedNewlines("真的換行很多\n\n\n而這裡只是在講 \\n 這個符號", out bool aFixedMiss);
             bool aNewlineRule = aFixedHit && !aFixedMiss;
 
-            bool aOk = aWrote && aLatestSame && aMerged && aNothingWritten && aNewlineRule;
+            // ⑤ 現地定語兩欄（TASK-0134 QA 抓到的那格）—— **正反都要**：
+            //    給了 ⇒ 寫進去的是那個值；沒給 ⇒ 欄位**仍在**而值是 unstated。
+            //    🩸 只驗「有 region 欄」的話，一個永遠寫 unstated 的實作會全綠；
+            //    只驗「給了有值」的話，沒給時整欄消失也會全綠 —— 而後者正是這隻 bug 的原形
+            //    （少欄的信會被讀成「2026-09-02 之前的舊信」，而它是今天寫的）。
+            var aR3 = SCP_LetterWriter.WriteSelfLetter(aLetters, aPersona, "probe-bank", "帶定語",
+                iNowUtc: DateTime.UtcNow.AddSeconds(2),
+                iRegion: "PROBEREGION", iDataRoot: "/tmp/ProbeProject/AgentCommands");
+            string aBody3 = File.ReadAllText(aR3.Path);
+            bool aQualifiedGiven = aBody3.Contains("region: PROBEREGION")
+                                   && aBody3.Contains("project: ProbeProject");
+            var aR4 = SCP_LetterWriter.WriteSelfLetter(aLetters, aPersona, "probe-bank", "沒有定語",
+                iNowUtc: DateTime.UtcNow.AddSeconds(3));
+            string aBody4 = File.ReadAllText(aR4.Path);
+            bool aQualifiedMissing = aBody4.Contains("region: unstated")
+                                     && aBody4.Contains("project: unstated");
+            bool aQualifiers = aQualifiedGiven && aQualifiedMissing;
+
+            bool aOk = aWrote && aLatestSame && aMerged && aNothingWritten && aNewlineRule && aQualifiers;
             return new CheckRow("小歇記憶信形狀（SCP_LetterWriter）",
                 $"落檔＋機器欄={aWrote}／`_latest` 與本體逐位元組同={aLatestSame}"
                 + $"／作者 frontmatter 併入不疊第二坨={aMerged}"
                 + $"／**空 body 一個位元組都不寫**={aNothingWritten}"
-                + $"／**字面換行只在門檻內才修**={aNewlineRule}",
+                + $"／**字面換行只在門檻內才修**={aNewlineRule}"
+                + $"／**現地定語正反兩格**（給了寫值={aQualifiedGiven}／沒給仍留欄位＝unstated={aQualifiedMissing}）",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally
         {
             try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
         }
+    }
+
+    // 區塊職責：發文判定的**三態不同形**（`SCP_TavernPostVerdict`）。
+    // 物理意義：🩸 TASK-0134 QA（summit 2026-09-05）拿到「廣播沒發」而**廣播其實成功了**
+    //          （Editor 開著、post_seq 19082）—— 真實語意是「CLI 沒等到回執」。
+    //          兩者的處置**相反**：真沒發要補發；沒等到去補發＝在全域遞增的 seq 上多出第二則。
+    // ⚠ 本格量的是**型別層**（三態分不分得開），不是活體。活體那格要真的讓廣播逾時，
+    //   而那需要關 Editor ⇒ 它是 QA 的事，⛔ 這裡不假裝量到了。
+    static CheckRow TavernPostVerdictThreeStates()
+    {
+        var aGood = SCP_TavernPostVerdict.Good("seq=1", "1");
+        var aBad = SCP_TavernPostVerdict.Bad("宿主回報失敗");
+        var aUnknown = SCP_TavernPostVerdict.Unknown("沒等到回執", "cat /tmp/probe.json");
+
+        // ① 三個 Outcome 兩兩不同 —— 這是「分得開」的直接讀數
+        bool aDistinct = aGood.Outcome == SCP_TavernPostOutcome.Posted
+                         && aBad.Outcome == SCP_TavernPostOutcome.NotPosted
+                         && aUnknown.Outcome == SCP_TavernPostOutcome.Unresolved;
+        // ② 反向對照：`Posted` 這個 bool **分不開**後兩態 —— 把它記進讀數，
+        //    是為了讓下一個想「用 Posted 判斷要不要補發」的人在這裡看到為什麼不行。
+        bool aBoolCannotTell = !aBad.Posted && !aUnknown.Posted;
+        // ③ 未定態**必須**帶得走一行可貼的回讀指令；確定沒發的那態不需要（它要的是補發指令）
+        bool aHintOnlyWhenUnknown = aUnknown.RecheckHint.Length > 0
+                                    && aBad.RecheckHint.Length == 0
+                                    && aGood.RecheckHint.Length == 0;
+        // ④ 未定 ⇒ **沒有 seq**（有 seq 就不叫未定了）
+        bool aNoSeqWhenUnknown = aUnknown.Seq.Length == 0 && aGood.Seq.Length > 0;
+
+        bool aOk = aDistinct && aBoolCannotTell && aHintOnlyWhenUnknown && aNoSeqWhenUnknown;
+        return new CheckRow("發文判定三態不同形（SCP_TavernPostVerdict）",
+            $"三態兩兩可分={aDistinct}／**bool `Posted` 分不開「沒發」與「不知道」**={aBoolCannotTell}"
+            + $"／回讀指令只掛在未定態={aHintOnlyWhenUnknown}／未定態無 seq={aNoSeqWhenUnknown}"
+            + "　⚠ 這是型別層讀數；**逾時活體要關 Editor 才量得到**（未量）",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
     static int CountText(string iText, string iNeedle)

@@ -4,7 +4,13 @@
 //           ⚠ python 那支 `awakening.py tavern_post` 本來也是 spawn `run_cmd.py Tavern op=post`
 //           —— 它從頭到尾就是委派。所以「搬到 CLI 就不用 Editor」對廣播那半**不成立**，
 //           別把那句話寫進任何說明裡。
-// 數值影響：一次 Cmd round-trip（檔案協議＋Watcher 輪詢，1〜3 秒）。逾時 ⇒ **當作沒發成**。
+// 數值影響：一次 Cmd round-trip（檔案協議＋Watcher 輪詢，1〜3 秒）。
+//           🩸 逾時 ⇒ **`Unresolved`（不知道），不是「沒發」**。TASK-0134 QA（summit 2026-09-05）
+//           用一次真的小歇量到：CLI 逾時回報「沒發」，而 Editor 開著、廣播**其實成功了**
+//           （`post_seq 19082`）。⇒ 這一層拿得到的只有「我有沒有等到回執」，
+//           而「有沒有發出去」的真相在 result 檔與酒館裡 —— 那是**另一本帳**。
+//           ⛔ 兩者處置相反（真沒發要補發／沒等到去補發＝多出第二則，seq 全域遞增），
+//           所以它們在回傳型別上就必須不同形，不能靠讀的人自己分辨。
 //
 // ⚠ 樣板照抄 `SenateSessionCloseGateway`（Tim 2026-09-03 在 TASK-0114 拍過的形狀：內部串 ucmd）。
 #nullable enable
@@ -73,11 +79,19 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             AgentCmdWaitResult aVerdict = AgentCmdClient.Wait(m_DataRoot, iSenderPersona, aCmdId,
                 m_TimeoutSec, AgentCmdClient.DefaultPollSec, m_Log, m_Log, iPrintOutputs: false);
             // ⛔ 順序寫死：**先判定，才准碰 result 檔**（逾時讀到的是上一輪，而它看起來完全正常）。
+            if (aVerdict == AgentCmdWaitResult.Timeout)
+                // ⚠ 這一格**不是失敗，是不知道**。措辭順序刻意是「等待上限 → 才提 Editor 沒開」：
+                //   「Editor 沒開？」擺第一句時，讀的人會把它讀成診斷結果而不是猜測
+                //   （summit 拿到 exit 6 時 Editor 是開著的）。同 TASK-0104 對 AgentCmdClient 做過的事。
+                return SCP_TavernPostVerdict.Unknown(
+                    "**沒等到回執**（這是 CLI 端的等待上限 "
+                    + m_TimeoutSec.ToString("0.###", CultureInfo.InvariantCulture)
+                    + "s，不是宿主的成敗）—— 它可能已經發出去了，也可能 Editor 沒開",
+                    "cat \"" + AgentCmdClient.ResultPath(m_DataRoot, aCmdId).Replace('\\', '/')
+                    + "\"   # result=Success ＋ post_seq ⇒ **發了，別補發**；檔不存在／非 Success ⇒ 才補發");
             if (aVerdict != AgentCmdWaitResult.Success)
-                return SCP_TavernPostVerdict.Bad(aVerdict == AgentCmdWaitResult.Timeout
-                    ? "逾時 " + m_TimeoutSec.ToString("0.###", CultureInfo.InvariantCulture)
-                      + "s 沒等到 Editor 的 result —— Editor 沒開？（⚠ 那不代表它沒發，回讀酒館才知道）"
-                    : "Editor 端回報失敗（詳見它的 _cmd_errors 報告）");
+                // 宿主自己回報失敗 ⇒ 這一格**確定沒發**，補發是安全的。
+                return SCP_TavernPostVerdict.Bad("Editor 端回報失敗（詳見它的 _cmd_errors 報告）");
 
             (bool aFound, IReadOnlyList<string> aOutputs, List<KeyValuePair<string, string>> aValues) =
                 AgentCmdClient.ResultReport(m_DataRoot, aCmdId);
