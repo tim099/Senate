@@ -1995,7 +1995,31 @@ public static class SelfTest
             // ⚠ 這個常數是**python 那側算出來的**（`_resolve_from_session` 全量，2026-09-06）。
             //   ⛔ 它不是「期望值」是**對照組**：哪天 python 那側改了行為，這一格會紅 ——
             //   而那正是我要的：兩個實作分岔時，我要它當場喊，不是等產物出錯才發現。
-            const string aPythonMd5 = "5897bf6df16cf9a2b10b2fca29ebdef2";
+            // 對照組更新紀錄（⚠ 每次更新都要寫清楚**這個值是從哪一側算來的**）：
+            //   2026-09-06 早　103 場　`5897bf6df16cf9a2b10b2fca29ebdef2`
+            //   2026-09-06 晚　108 場　`9719f72abe60f95558194701df487ee3`
+            //     ← 當晚觀影把台帳推到 108 場，**在 python 那側對同一份台帳重算**（`_resolve_from_session` 全量）
+            //       ⇒ 兩側仍然逐場逐欄位相同。⛔ 不是把 C# 的值抄過來，那樣對照組就變成自己抄自己。
+            const string aPythonMd5 = "9719f72abe60f95558194701df487ee3";
+            const int aPythonSessions = 108;   // ⭐ 對照組是在**這個場次數**上算出來的
+
+            // 🩸 寫下它的**當天晚上**就踩到（2026-09-06）：一場觀影把台帳推到 108 場，
+            //   這一格立刻紅 —— 而它紅的原因不是兩個實作分岔，是**資料集長大了**。
+            //   ⇒ 一個「每次有人看片就會紅」的測試，最後會被所有人忽略，
+            //     而被忽略的紅燈跟綠燈一樣沒有攔截力。
+            //   ⇒ 場次數對不上時回 **Skipped（未量）**，⛔ 不是 Pass 也不是 Fail：
+            //     「這次沒得比」與「比過而且一樣」必須長得不一樣。
+            if (aSids.Count != aPythonSessions)
+            {
+                yield return new CheckRow($"觀影反查全量對拍（{p.Name}）",
+                    $"場次 **{aSids.Count}**（解得出 {aOk}／錯 {aErr}）／C# md5 `{aMd5}`"
+                    + $"　⚠ **對照組是 {aPythonSessions} 場時算的（2026-09-06），場次數已變 ⇒ 這次沒得比**"
+                    + "　（要恢復對拍：在 python 那側對**同一份台帳**重算一次指紋再更新這兩個常數；"
+                    + "⛔ 不要只把 md5 改成 C# 現在算出來的值 —— 那會讓對照組變成自己抄自己）",
+                    CheckResult.Skipped);
+                continue;
+            }
+
             bool aMatch = string.Equals(aMd5, aPythonMd5, StringComparison.Ordinal);
             yield return new CheckRow($"觀影反查全量對拍（{p.Name}）",
                 $"場次 **{aSids.Count}**（解得出 {aOk}／錯 {aErr}）／C# md5 `{aMd5}`"
@@ -2089,36 +2113,14 @@ public static class SelfTest
     }
 
     /// <summary>從章的表頭把當初的參數讀回來。⛔ 解不出就回 false，不猜。</summary>
+    // ⛔ 本檔曾自己維護一份 `TryParseChapterHeader` —— 已搬進 `SCP_WatchExport`（TASK-0143）。
+    //   理由：`cmd watch --arg op=audit` 也要用它，而兩份各自維護的解析器＝兩個會各自漂的真相源，
+   //   漂掉的症狀是「selftest 說 5 章符合、audit 說 7 章符合」，**兩邊都不報錯**。
     static bool TryParseChapterHeader(string iText, out string oMedia, out List<SCP_SeqRange> oRanges,
                                       out string oTitle, out string oSubtitle, out string oWork,
                                       out string oSessions, out string oNote)
-    {
-        oMedia = ""; oRanges = new List<SCP_SeqRange>(); oTitle = ""; oSubtitle = "";
-        oWork = ""; oSessions = ""; oNote = "";
-        var mTitle = Regex.Match(iText, @"^# 第 \d+ 章(?: · (.*))?$", RegexOptions.Multiline);
-        if (!mTitle.Success) return false;
-        oTitle = mTitle.Groups[1].Success ? mTitle.Groups[1].Value : "";
-        var mSub = Regex.Match(iText, @"^### —— (.*)$", RegexOptions.Multiline);
-        if (mSub.Success) oSubtitle = mSub.Groups[1].Value;
-        var mMedia = Regex.Match(iText, @"^\| 媒材 \| `([^`]+)` \|$", RegexOptions.Multiline);
-        if (!mMedia.Success) return false;
-        oMedia = mMedia.Groups[1].Value;
-        var mWork = Regex.Match(iText, @"^\| 作品 \| (.*) \|$", RegexOptions.Multiline);
-        if (mWork.Success) oWork = mWork.Groups[1].Value;
-        var mSess = Regex.Match(iText, @"^\| 場次 \| (.*) \|$", RegexOptions.Multiline);
-        if (mSess.Success) oSessions = mSess.Groups[1].Value.Replace(" ／ ", ",");
-        var mNote = Regex.Match(iText, @"^\| 備註 \| (.*) \|$", RegexOptions.Multiline);
-        if (mNote.Success) oNote = mNote.Groups[1].Value;
-        var mRng = Regex.Match(iText, @"^\| seq 區間 \| (.*) \|$", RegexOptions.Multiline);
-        if (!mRng.Success) return false;
-        foreach (string aPart in mRng.Groups[1].Value.Split(new[] { " ／ " }, StringSplitOptions.None))
-        {
-            var m = Regex.Match(aPart.Trim(), @"^(\d+)[–\-](\d+)$");
-            if (!m.Success) return false;
-            oRanges.Add(new SCP_SeqRange(long.Parse(m.Groups[1].Value), long.Parse(m.Groups[2].Value)));
-        }
-        return oRanges.Count > 0;
-    }
+        => SCP_WatchExport.TryParseChapterHeader(iText, out oMedia, out oRanges, out oTitle,
+                                                 out oSubtitle, out oWork, out oSessions, out oNote);
 
     // 區塊職責：章的**落檔那一半**（守衛＋寫檔＋回讀＋台帳回填）在 **clean-room** 跑一次。
     // 物理意義：這一層會寫東西 ⇒ ⛔ 不可以拿真資料根驗。
