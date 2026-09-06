@@ -67,6 +67,7 @@ public static class SelfTest
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
         aRows.AddRange(RealWatchLedgerRead(iProjects));
+        aRows.AddRange(RealWatchResolveFingerprint(iProjects));
         return aRows;
     }
 
@@ -1719,6 +1720,84 @@ public static class SelfTest
     //    python 是 `if sid in state`，照抄成 `state[sid] = ...` 就會讓孤兒事件長出一個沒有區間的場，
     //    而它在計數上跟真的場**完全同形**。
     // ⚠ 純讀：一個位元組都不寫（AppendExportEvents **不在本格**，它要寫真台帳，不能拿真檔驗）。
+    // 區塊職責：拿**台帳裡的每一場**跑一次 C# 版反查，壓成一個指紋（md5）跟 python 版對拍。
+    // 物理意義：這一格是移植的**全量**驗收 —— 不是抽樣、不是計數，是「103 場逐場逐欄位」。
+    //          規範格式兩邊寫死成同一句：`sid|media|lib|chapter|title|work|R:區間|S:場次`，
+    //          任何一欄漂掉、任何一場的區間或場次**順序**不同，md5 就不會一樣。
+    // ⭐ 為什麼用指紋而不是逐筆比：指紋讓「哪裡不一樣」變成一個**必須去查**的問題，
+    //   而逐筆比很容易被寫成「差異只有 N 筆，看起來還好」。⇒ 它只有兩種答案。
+    // ⚠ 純讀。反查一個位元組都不寫（寫入端是 AppendExportEvents，不在本格）。
+    static IEnumerable<CheckRow> RealWatchResolveFingerprint(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (!File.Exists(SCP_WatchLedger.SessionsLogPath(p.AgentCommandsRoot))) continue;
+            aAny = true;
+
+            var aWarn = new List<string>();
+            var aState = SCP_WatchLedger.SessionsLogState(p.AgentCommandsRoot, aWarn);
+            // 哨兵值由**宿主**供給（本層不自己讀設定，同 SCP_WakeBrief 對 region 的契約）。
+            string aMarker = "##None##";
+            string aSettings = Path.Combine(p.AgentCommandsRoot, "StreamWatch", "settings.json");
+            if (File.Exists(aSettings))
+            {
+                try
+                {
+                    string aV = SCP_JsonData.Parse(File.ReadAllText(aSettings, Encoding.UTF8))
+                                            .GetString("untitled_marker", "").Trim();
+                    if (aV.Length > 0) aMarker = aV;
+                }
+                catch { /* 讀不動 ⇒ 用地板值；python 那側同一條退路 */ }
+            }
+
+            var aSids = new List<string>(aState.Keys);
+            aSids.Sort(StringComparer.Ordinal);
+            var aSb = new StringBuilder();
+            int aOk = 0, aErr = 0;
+            for (int i = 0; i < aSids.Count; ++i)
+            {
+                var aLines = new List<string>();
+                var r = SCP_WatchResolve.FromSession(p.AgentCommandsRoot, aSids[i], null, aMarker, aLines);
+                if (i > 0) aSb.Append('\n');
+                if (r.Error.Length > 0) { ++aErr; aSb.Append(aSids[i]).Append("|ERR"); continue; }
+                ++aOk;
+                var aRng = new StringBuilder();
+                for (int k = 0; k < r.Ranges.Count; ++k)
+                { if (k > 0) aRng.Append(','); aRng.Append(r.Ranges[k].ToString()); }
+                aSb.Append(aSids[i]).Append('|').Append(r.Media).Append('|').Append(r.LibraryMediaId)
+                   .Append('|').Append(r.Chapter).Append('|').Append(r.LedgerTitle)
+                   .Append('|').Append(r.LedgerWorkTitle).Append("|R:").Append(aRng)
+                   .Append("|S:").Append(string.Join(",", r.Sessions));
+            }
+            string aMd5;
+            using (var aHash = System.Security.Cryptography.MD5.Create())
+            {
+                byte[] aBytes = aHash.ComputeHash(new UTF8Encoding(false).GetBytes(aSb.ToString()));
+                var aHex = new StringBuilder(32);
+                foreach (byte b in aBytes) aHex.Append(b.ToString("x2"));
+                aMd5 = aHex.ToString();
+            }
+
+            // ⚠ 這個常數是**python 那側算出來的**（`_resolve_from_session` 全量，2026-09-06）。
+            //   ⛔ 它不是「期望值」是**對照組**：哪天 python 那側改了行為，這一格會紅 ——
+            //   而那正是我要的：兩個實作分岔時，我要它當場喊，不是等產物出錯才發現。
+            const string aPythonMd5 = "5897bf6df16cf9a2b10b2fca29ebdef2";
+            bool aMatch = string.Equals(aMd5, aPythonMd5, StringComparison.Ordinal);
+            yield return new CheckRow($"觀影反查全量對拍（{p.Name}）",
+                $"場次 **{aSids.Count}**（解得出 {aOk}／錯 {aErr}）／C# md5 `{aMd5}`"
+                + $"／python md5 `{aPythonMd5}` ⇒ **逐場逐欄位相同={aMatch}**"
+                + "　（規範格式 `sid|media|lib|chapter|title|work|R:區間|S:場次`，"
+                + "任一欄或任一順序漂掉都不會同號）",
+                aMatch && aOk > 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        if (!aAny)
+            yield return new CheckRow("觀影反查全量對拍",
+                "找不到任何專案的 `StreamWatch/sessions_log.jsonl` ⇒ **跳過**（⛔ 不當成通過）",
+                CheckResult.Skipped);
+    }
+
     static IEnumerable<CheckRow> RealWatchLedgerRead(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
@@ -1758,8 +1837,8 @@ public static class SelfTest
                 $"場次 **{aState.Count}**／export 事件 {aExportEvents}（其中孤兒 {aOrphanEvents} 筆**未造出場次**）"
                 + $"／有章號 **{aWithChapter}**／有章名 **{aWithTitle}**"
                 + $"／壞行 {aWarn.Count}／每一列都帶 session_id={aNoGhost}"
-                + "　⚠ 這是**異源讀數**（與 python `_sessions_log_state()` 並排用）；"
-                + "**全量逐位元組對拍等 Cmd 落地後有 dump 出口才做**（未量）",
+                + "　⚠ 這是**異源讀數**（與 python `_sessions_log_state()` 並排用）——"
+                + "本格只比三個計數；**全量逐場逐欄位的對拍在下一格**（觀影反查全量對拍）",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         if (!aAny)
