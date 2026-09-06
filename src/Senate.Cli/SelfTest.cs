@@ -2000,8 +2000,12 @@ public static class SelfTest
                     aTitle, aSub, aWork, aSessions, aNote, null, null,
                     iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL1);
                 bool aWrote = aW1.Error.Length == 0 && File.Exists(aW1.OutPath);
-                string aGot = aWrote ? File.ReadAllText(aW1.OutPath, Encoding.UTF8).Replace("\r\n", "\n") : "";
-                bool aSame = aWrote && string.Equals(aGot, aWant, StringComparison.Ordinal);
+                // 🩸 這裡原本兩邊都先 `Replace("\r\n","\n")` 才比 —— **把唯一的差異正規化掉了**
+                //   （python 文字模式寫出 CRLF、C# `WriteAllText` 寫出 LF，而內容全同）
+                //   於是它綠著，而實跑 `cmp` 立刻紅在第 1 行第 51 字元。
+                //   ⇒ 「一樣／不一樣」的問題只能用**位元組**回答，⛔ 不准在比之前先整理。
+                bool aSame = aWrote
+                    && ByteEqual(File.ReadAllBytes(aW1.OutPath), File.ReadAllBytes(aPick));
                 bool aBackOk = aWrote && aW1.BackEntries == aW1.Chapterized!.Kept.Count;
 
                 // ── ② 反向：不給 force 再跑一次 ⇒ 擋下且檔案不變 ──
@@ -2052,6 +2056,14 @@ public static class SelfTest
         if (!aAny)
             yield return new CheckRow("章落檔 clean-room",
                 "找不到任何 `Books/watch-*/NNN.txt` ⇒ **跳過**（⛔ 不當成通過）", CheckResult.Skipped);
+    }
+
+    /// <summary>逐位元組比。⛔ 不做任何正規化 —— 被正規化掉的那一格正是最容易漏的那一格。</summary>
+    static bool ByteEqual(byte[] iA, byte[] iB)
+    {
+        if (iA.Length != iB.Length) return false;
+        for (int i = 0; i < iA.Length; ++i) if (iA[i] != iB[i]) return false;
+        return true;
     }
 
     static string Md5OfFile(string iPath)
