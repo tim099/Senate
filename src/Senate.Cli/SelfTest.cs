@@ -18,6 +18,8 @@ using SCP.Core.Letters;
 using SCP.Core.Reflect;
 using System.Text.RegularExpressions;
 using SCP.Core.Watch;
+using SCP.Core.Cmd;
+using System.Globalization;
 
 using Senate.Cli.Pages;
 
@@ -71,7 +73,128 @@ public static class SelfTest
         aRows.AddRange(RealWatchResolveFingerprint(iProjects));
         aRows.AddRange(RealWatchChapterRebuild(iProjects));
         aRows.AddRange(WatchWriteCleanRoom(iProjects));
+        aRows.Add(BookAddCleanRoom());
         return aRows;
+    }
+
+    // 區塊職責：`cmd book op=add` 的產物，與 `library.py add-book` 的**真實輸出**逐位元組對拍。
+    // 物理意義：下面那段 aWant **是 2026-09-06 從 python 真跑出來的檔抄回來的**（只有日期那格
+    //          換成今天，因為 `_today()` 本來就是當日）—— 它是**對照組**，不是「我期望它長這樣」。
+    //          兩份實作各自寫同一個 store，漂掉的症狀是「兩邊都成功、內容也對，而位元組不同」，
+    //          沒有任何一層會喊 —— TASK-0143 第五刀就是被這個形狀咬的。
+    // 數值影響：純暫存目錄，⛔ 不碰任何真 store。四格一起驗：
+    //          ① 逐位元組相同（含 **CRLF** 與 2 空格縮排、`characters: []` 不展開）
+    //          ② `status` 覆寫成 `writing` 後**留在原位**（python dict 的插入序保證）
+    //          ③ 別名去重且保序
+    //          ④ 反向對照：同一本再建一次要被擋（exit 1）且**檔案逐位元組沒被動過**
+    static CheckRow BookAddCleanRoom()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bookadd_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "BookNotes"));
+            var aCmd = new SCP_Cmd_Book();
+
+            // ⭐ 走 Bind 不自己塞值 —— 順帶讓這格測試也吃到 ArgSpec 預檢：
+            //   我在測試裡打錯參數名會**當場炸**，不會靜默取預設值然後綠著過。
+            SCP_CmdArgs Args(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return a;
+            }
+
+            SCP_CmdResult aR1 = aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp,
+                ["op"] = "add",
+                ["title"] = "深海的對拍錄 Vol.2",
+                ["title_original"] = "Abyssal Recheck",
+                ["author"] = "gura",
+                // 刻意讓第一個別名與 title 重複 ⇒ 驗去重；分隔符 `;` 與 `|` 各出現一次。
+                ["aliases"] = "深海的對拍錄 Vol.2;鯊魚札記|對拍錄",
+                ["origin"] = "authored",
+                ["author_persona"] = "gura",
+            }));
+
+            string aOut = Path.Combine(aTmp, "BookNotes", "深海的對拍錄-vol-2", "book.json");
+            if (aR1.ExitCode != 0 || !File.Exists(aOut))
+                return new CheckRow("add-book clean-room（對照 library.py 真產物）",
+                    $"建檔失敗：exit={aR1.ExitCode}、檔案存在={File.Exists(aOut)}", CheckResult.Fail);
+
+            string aToday = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string aWant = string.Join("\r\n", new[]
+            {
+                "{",
+                "  \"id\": \"深海的對拍錄-vol-2\",",
+                "  \"title\": \"深海的對拍錄 Vol.2\",",
+                "  \"title_original\": \"Abyssal Recheck\",",
+                "  \"author\": \"gura\",",
+                "  \"aliases\": [",
+                "    \"深海的對拍錄 Vol.2\",",
+                "    \"鯊魚札記\",",
+                "    \"對拍錄\",",
+                "    \"Abyssal Recheck\"",
+                "  ],",
+                "  \"reader_persona\": \"gura\",",
+                "  \"status\": \"writing\",",
+                "  \"progress\": {",
+                "    \"current_chapter\": 0,",
+                "    \"last_read\": \"" + aToday + "\"",
+                "  },",
+                "  \"characters\": [],",
+                "  \"origin\": \"authored\",",
+                "  \"author_persona\": \"gura\",",
+                "  \"publish_status\": \"draft\"",
+                "}",
+                "",
+            });
+
+            byte[] aGot = File.ReadAllBytes(aOut);
+            bool aSame = ByteEqual(aGot, new UTF8Encoding(false).GetBytes(aWant));
+
+            // ── ④ 反向對照：再建一次要被擋，而且**不准動到既有檔** ──
+            SCP_CmdResult aR2 = aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp,
+                ["op"] = "add",
+                ["id"] = "深海的對拍錄-vol-2",
+                ["title"] = "覆寫用的假書名",
+                ["aliases"] = "覆寫用的假書名",
+            }));
+            bool aGuarded = aR2.ExitCode == 1 && ByteEqual(File.ReadAllBytes(aOut), aGot);
+
+            string aReading =
+                $"逐位元組對 python 真產物：{(aSame ? "相同" : "**不同**")}（{aGot.Length} bytes、"
+                + $"CRLF {CountCrLf(aGot)} 個／換行 {CountLf(aGot)} 個）"
+                + $"；重建守衛：{(aGuarded ? $"擋下（exit {aR2.ExitCode}）且既有檔未被動" : "**沒擋住或檔被動了**")}";
+
+            return new CheckRow("add-book clean-room（對照 library.py 真產物）", aReading,
+                aSame && aGuarded ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e)
+        {
+            return new CheckRow("add-book clean-room（對照 library.py 真產物）",
+                "例外：" + e.Message, CheckResult.Fail);
+        }
+        finally
+        {
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ }
+        }
+    }
+
+    static int CountCrLf(byte[] iBytes)
+    {
+        int n = 0;
+        for (int i = 1; i < iBytes.Length; ++i) if (iBytes[i] == (byte)'\n' && iBytes[i - 1] == (byte)'\r') ++n;
+        return n;
+    }
+
+    static int CountLf(byte[] iBytes)
+    {
+        int n = 0;
+        foreach (byte b in iBytes) if (b == (byte)'\n') ++n;
+        return n;
     }
 
     // 區塊職責：Server 端寫的 result 檔，CLI 端（AgentCmdClient）讀得回同樣的東西 —— 協議第四端的對拍。
