@@ -16,6 +16,7 @@ using SCP.Core.Skills;
 using SCP.Core.Entry;
 using SCP.Core.Letters;
 using SCP.Core.Reflect;
+using SCP.Core.Watch;
 
 using Senate.Cli.Pages;
 
@@ -65,6 +66,7 @@ public static class SelfTest
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
+        aRows.AddRange(RealWatchLedgerRead(iProjects));
         return aRows;
     }
 
@@ -1709,6 +1711,63 @@ public static class SelfTest
     // 物理意義：這些檔是 Unity 那側寫的（TASK-0127 之後兩邊共用同一份）。
     //          「能不能讀」不是單元測試問題，是拿真檔案去試的問題 —— 找不到樣本回**跳過**，不是通過。
     // ⚠ 純讀：複製到暫存根再寫，**絕不碰原檔**。
+    // 區塊職責：拿**真的**實錄台帳跑一次 C# 版讀取（TASK-0143 ⑤ 的移植第一刀）。
+    // 物理意義：這一層是從 `library.py` 移過來的，而移植的判準是「**行為一樣**」不是「編得過」。
+    //          ⇒ 本格取的是**異源讀數**：同一份 `sessions_log.jsonl`，C# 自己數一次，
+    //            拿去跟 python `_sessions_log_state()` 的數字並排（python 那半在單子留言上）。
+    // 🩸 為什麼要驗「export 事件不會憑空造出一場」：那是移植時最容易寫錯的一格 ——
+    //    python 是 `if sid in state`，照抄成 `state[sid] = ...` 就會讓孤兒事件長出一個沒有區間的場，
+    //    而它在計數上跟真的場**完全同形**。
+    // ⚠ 純讀：一個位元組都不寫（AppendExportEvents **不在本格**，它要寫真台帳，不能拿真檔驗）。
+    static IEnumerable<CheckRow> RealWatchLedgerRead(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aPath = SCP_WatchLedger.SessionsLogPath(p.AgentCommandsRoot);
+            if (!File.Exists(aPath)) continue;
+            aAny = true;
+
+            var aWarn = new List<string>();
+            var aRaw = SCP_WatchLedger.ReadSessionsLog(p.AgentCommandsRoot, aWarn);
+            var aState = SCP_WatchLedger.SessionsLogState(p.AgentCommandsRoot, aWarn);
+
+            int aExportEvents = 0, aOrphanEvents = 0;
+            foreach (var kv in aRaw)
+            {
+                if (!string.Equals(kv.Value.GetString("record_type", ""), SCP_WatchLedger.RecordTypeExport,
+                                   StringComparison.Ordinal)) continue;
+                ++aExportEvents;
+                string aSid = kv.Value.GetString("session_id", "");
+                if (aSid.Length > 0 && !aState.ContainsKey(aSid)) ++aOrphanEvents;
+            }
+            int aWithChapter = 0, aWithTitle = 0;
+            foreach (var kv in aState)
+            {
+                if (kv.Value.ExportedChapter.Length > 0) ++aWithChapter;
+                if (kv.Value.ExportedTitle.Length > 0) ++aWithTitle;
+            }
+            // 反向對照：孤兒 export 事件**不可以**變成一個場次列。
+            // ⛔ 只數「有幾場」的話，一個把孤兒也塞進去的實作會得到更大的數字而看起來更「完整」。
+            bool aNoGhost = true;
+            foreach (var kv in aState) if (!kv.Value.Raw.Contains("session_id")) { aNoGhost = false; break; }
+
+            bool aOk = aState.Count > 0 && aExportEvents > 0 && aNoGhost;
+            yield return new CheckRow($"真實錄台帳讀取（{p.Name}）",
+                $"場次 **{aState.Count}**／export 事件 {aExportEvents}（其中孤兒 {aOrphanEvents} 筆**未造出場次**）"
+                + $"／有章號 **{aWithChapter}**／有章名 **{aWithTitle}**"
+                + $"／壞行 {aWarn.Count}／每一列都帶 session_id={aNoGhost}"
+                + "　⚠ 這是**異源讀數**（與 python `_sessions_log_state()` 並排用）；"
+                + "**全量逐位元組對拍等 Cmd 落地後有 dump 出口才做**（未量）",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        if (!aAny)
+            yield return new CheckRow("真實錄台帳讀取",
+                "找不到任何專案的 `StreamWatch/sessions_log.jsonl` ⇒ **跳過**（⛔ 不當成通過）",
+                CheckResult.Skipped);
+    }
+
     static IEnumerable<CheckRow> RealActivitySessionRoundTrip(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
