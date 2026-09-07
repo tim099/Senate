@@ -191,7 +191,20 @@ public sealed class DoctorPage : SCP_GuiToolPage
             return ($"`{aSha}` 不在這個 repo（{Path.GetFileName(aRepo)}）裡 ⇒ 不是這裡建的，無法比較", "·");
 
         if (string.Equals(aSha, aHead, StringComparison.OrdinalIgnoreCase))
-            return ($"＝目前 HEAD `{aHead}`" + (aDirty ? "（build 當時工作區是髒的）" : ""), "✓");
+        {
+            // 🩸 第三態，2026-09-07 我用自己剛做的這一列時當場撞到：
+            //   exe ＝ HEAD ✓，而我**改完還沒 commit** ⇒ 那些改動一個都不在這顆 exe 裡。
+            //   而這正是 agent 改完 code 之後最常見的狀態（比「落後 N 顆」常見得多）——
+            //   ⚠ `-dirty` 只記得「build 當時」髒不髒，**它答不了「現在」**。
+            //   ⇒ 這裡要問一次現在的工作區，否則 ✓ 會被讀成「我的改動已經在裡面了」。
+            var aStatR = SCP_Git.Run(aRepo, "status", "--porcelain", "--untracked-files=no");
+            bool aNowDirty = aStatR.Ok && SCP_Git.FirstLine(aStatR.StdOut).Length > 0;
+            if (aNowDirty)
+                return ($"＝目前 HEAD `{aHead}`，**但工作區現在有未提交的改動**"
+                        + " ⇒ 那些改動**不在這顆 exe 裡**（要驗它們得先重 build）", "⚠");
+            return ($"＝目前 HEAD `{aHead}`（工作區乾淨）"
+                    + (aDirty ? "　⚠ 但 build 當時工作區是髒的" : ""), "✓");
+        }
 
         var aCntR = SCP_Git.Run(aRepo, "rev-list", "--count", aSha + "..HEAD");
         string aCnt = aCntR.Ok ? SCP_Git.FirstLine(aCntR.StdOut) : "?";

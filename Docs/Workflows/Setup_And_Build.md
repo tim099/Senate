@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
-description: setup / build 兩支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收三格、single-file 的真正判準（實測修正過一次）、產物與版控
-last_updated: 2026-09-02
+description: setup / build / check 三支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收四關（2026-09-07 起與 build 分離、可挑項目）、single-file 的真正判準（實測修正過一次）、產物與版控
+last_updated: 2026-09-07
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -12,7 +12,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 腳本 | 做什麼 |
 |---|---|
 | `install.ps1` / `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
-| `build.ps1` / `build.sh` | `dotnet publish`（self-contained，直接產出 `publish/senate.exe`）→ 在根層放雙擊用的 `senate.lnk` → **出廠驗收** |
+| `build.ps1` / `build.sh` | `dotnet publish`（self-contained，直接產出 `publish/senate.exe`）→ 在根層放雙擊用的 `senate.lnk`。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
+| `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
 
 > ⛔ **build 只有一個入口。** install 不准自己另寫一條 `dotnet build`。
 > 🩸 2026-09-01 實測：這台當時有 **五顆可執行產物、三種年份** ——
@@ -32,7 +33,14 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 **判準：你要交付的是 `senate.exe`，那驗收就必須跑在 `senate.exe` 上。**
 
 ```bash
-./build.sh          # publish → 放根層 → 出廠驗收（doctor + selftest + 開窗）
+./build.sh          # publish → 放根層（⛔ 不驗收）
+./check.sh          # 出廠驗收四關（doctor + selftest + 開窗 + Server round-trip）
+./build.sh --check  # 兩步串起來
+
+# 項目多了不必每次全跑（Tim 2026-09-07）：
+senate selftest --list          # 有哪些項目與群
+./check.sh --only core          # selftest 只跑 core 群（實測 6.2s → 1.6s）
+./check.sh --gates self --only watch
 ./senate.exe <你要驗的那件事>
 ```
 
@@ -58,7 +66,23 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ## 出廠驗收：build 綠燈不算數
 
-`build` 的最後**真的跑四件事**（都跑在剛產出的那顆 exe 上），跑完再開一顆**常駐視窗**：
+`check.sh` **真的跑四件事**（都跑在 `publish/` 那顆 exe 上）：
+
+> ⚠ **2026-09-07 起這四關與 `build.sh` 分離**（Tim 拍板：測試流程另外跑、可挑項目）。
+> 理由是效率 —— 項目只會愈來愈多，而「改一行就得付全套驗收」會讓人開始繞過它，
+> **而繞過去之後就沒有人在驗了**。
+>
+> 🩸 但 2026-08-30 把 selftest 綁上 build 的理由**仍然成立**：
+> **驗收不在必經路上就會沒有人跑。**
+> ⇒ 所以分家的方式是「`build.sh` 收尾明講『本次沒有驗收』並印出指令」，
+> ⛔ 不是靜默結束。分開的是流程，不是那個事實。
+>
+> 挑選：`--gates doctor,self,gui,server` 挑關；`--only <篩選>` 挑 selftest 項目
+> （`senate selftest --list` 看有哪些；比對項目名或群的子字串）。
+> ⚠ 兩者都會讓收尾那行印出**射程**——`失敗 0` 在「全跑」與「只跑一關」上同形。
+> ⛔ 打錯篩選字會 **exit 2 並擋下**，不會靜默變成「0 格、失敗 0」（那看起來像全過）。
+> 實測：selftest 全跑 6.2s／`--only core` **1.6s**／`--only watch` 4.4s；四關全跑 15.3s。
+
 
 1. `senate doctor` —— 證明那顆 exe 起得來、路徑解析對、設定讀得到
 2. `senate selftest` —— 24 項自我對拍。**失敗回 exit 1，會讓整個 build 判未過**

@@ -427,7 +427,35 @@ public static class Program
     {
         var aModel = new SenateModel(iRepoRoot);
         var aStyle = StyleFrom(iArgs, aModel);   // 同 doctor：覆寫先套，再畫
-        var aRows = SelfTest.Run(aModel.Projects);
+
+        // ── `--list`：只印有哪些項目，⛔ 一格都不跑 ────────────────────────────
+        if (HasFlag(iArgs, "--list"))
+        {
+            var aCat = SelfTest.List(aModel.Projects);
+            var aUiL = new SCP_Ui();
+            aUiL.Title($"對拍項目（{aCat.Count} 筆）");
+            using (aUiL.Table("項目（--only 吃這個）", "群"))
+                foreach (var (k, g) in aCat) aUiL.TableRow(k, g);
+            Console.Write(SCP_GuiTextRenderer.Render(aUiL.Root, aStyle));
+            Console.WriteLine("⇒ 挑選：`--only <逗號分隔>`，比對**項目名或群**的子字串（大小寫不敏感）");
+            Console.WriteLine("   例：`--only watch`／`--only real,book`／`--only WatchWrite`");
+            return 0;
+        }
+
+        // ── `--only`：**在呼叫之前**過濾 ⇒ 沒被選到的那一格根本不執行 ────────
+        // ⚠ 這一格的意義是省時間（Tim 2026-09-07：項目多了會影響效率 ⇒ 要能挑）；
+        //   跑完再把行藏起來是省不到的。
+        string aOnly = ArgValue(iArgs, "--only") ?? "";
+        int aSelected = SelfTest.CountSelected(aModel.Projects, aOnly);
+        // 🩸 打錯篩選字的下場如果是「0 格、失敗 0」，那它看起來跟全過一模一樣 ——
+        //   而那正是這支工具存在的理由的反面。⇒ 選不到就**擋下並印出有哪些**。
+        if (aOnly.Length > 0 && aSelected == 0)
+        {
+            Console.Error.WriteLine($"✗ `--only {aOnly}` 一格都沒選到 —— ⛔ 這不是「全部通過」");
+            Console.Error.WriteLine("  有哪些項目：`senate selftest --list`");
+            return 2;
+        }
+        var aRows = SelfTest.Run(aModel.Projects, aOnly);
 
         // 剪貼簿 round-trip 是 **opt-in**（`--clipboard`）。
         // ⚠ 為什麼不進預設清單：它會**覆蓋使用者的剪貼簿**，而那是不可逆的
@@ -458,8 +486,13 @@ public static class Program
         int aSkip = aRows.Count(r => r.Result == CheckResult.Skipped);
         int aPass = aRows.Count(r => r.Result == CheckResult.Pass);
         // 跳過的項目**單獨報**，不併進通過數 —— 「沒測」與「測過而且對」不得同形。
+        // ⚠ 有篩選時**射程要印在同一行**：`失敗 0` 在「全部跑完」與「只跑了 4 格」上同形，
+        //   而那個差別正是讀的人要據以放行的東西。
         Console.WriteLine($"⇒ 通過 {aPass}／失敗 {aFail}／跳過 {aSkip}"
-            + (aSkip > 0 ? "（跳過的項目沒有讀數，不算通過）" : ""));
+            + (aSkip > 0 ? "（跳過的項目沒有讀數，不算通過）" : "")
+            + (aOnly.Length > 0
+               ? $"　⚠ 射程：`--only {aOnly}` ⇒ 只跑了 {aSelected} 筆項目（**不是全部**）"
+               : ""));
         return aFail > 0 ? 1 : 0;
     }
 

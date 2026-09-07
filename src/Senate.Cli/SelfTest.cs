@@ -32,53 +32,129 @@ public sealed record CheckRow(string Name, string Reading, CheckResult Result);
 
 public static class SelfTest
 {
-    public static List<CheckRow> Run(IReadOnlyList<ProjectReading> iProjects)
+    // ===========================================================
+    // 區塊職責：一筆對拍項目的**登記**（key／群／怎麼跑），供列出與挑選。
+    //
+    // 物理意義：`Key` 一律用 `nameof(<那支方法>)` —— ⛔ 不另取顯示名。
+    //   理由：另取名字就是第二份真相源，而它會在方法改名的那天安靜地過期
+    //   （`nameof` 會被編譯器逼著一起改）。
+    //
+    // ⚠ `Group` 是**成本分類**不是主題分類：挑選的目的是「不要每次都付慢的那一份」，
+    //   所以分群的判準是「這一格要不要碰真檔案」，而不是「它在講哪個功能」。
+    // ===========================================================
+    sealed record Entry(string Key, string Group, Func<IEnumerable<CheckRow>> Run);
+
+    static Entry One(string iKey, string iGroup, Func<CheckRow> iRun)
+        => new Entry(iKey, iGroup, () => new[] { iRun() });
+
+    static Entry Many(string iKey, string iGroup, Func<IEnumerable<CheckRow>> iRun)
+        => new Entry(iKey, iGroup, iRun);
+
+    // ⚠ 這張表就是「有哪些項目」的唯一來源 —— `--list` 印它、`--only` 篩它、`Run` 跑它。
+    //   三個消費端吃同一份，⛔ 不要在別處再抄一份清單。
+    static List<Entry> Catalog(IReadOnlyList<ProjectReading> iProjects) => new()
+    {
+        One(nameof(MissingSemantics), "core", MissingSemantics),
+        One(nameof(WriterStability), "core", WriterStability),
+        One(nameof(ConfigRoundTripKeepsUnknownKeys), "core", ConfigRoundTripKeepsUnknownKeys),
+        One(nameof(PrefsThreeStates), "core", PrefsThreeStates),
+        One(nameof(PrefsKeepsOtherSections), "core", PrefsKeepsOtherSections),
+        One(nameof(PathsSingleSource), "core", PathsSingleSource),
+        One(nameof(PathRegistryShape), "core", PathRegistryShape),
+        One(nameof(ErrorReportShape), "core", ErrorReportShape),
+        One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
+        One(nameof(QueueSubLaneShape), "core", QueueSubLaneShape),
+        One(nameof(ServerResultRoundTrip), "core", ServerResultRoundTrip),
+        One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
+
+        One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
+        One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
+        One(nameof(PageStack), "gui", PageStack),
+        One(nameof(TypeSchemaShape), "gui", TypeSchemaShape),
+        One(nameof(MapperRoundTrip), "gui", MapperRoundTrip),
+        One(nameof(InspectorEdits), "gui", InspectorEdits),
+        One(nameof(FoldSemantics), "gui", FoldSemantics),
+        One(nameof(DropdownWidget), "gui", DropdownWidget),
+        One(nameof(PageCatalogShape), "gui", PageCatalogShape),
+        One(nameof(PageDiscovery), "gui", PageDiscovery),
+        One(nameof(RowLayout), "gui", RowLayout),
+        One(nameof(SourceHint), "gui", SourceHint),
+        One(nameof(SourceCapabilityFallback), "gui", SourceCapabilityFallback),
+        One(nameof(SourceMessageLifecycle), "gui", SourceMessageLifecycle),
+
+        One(nameof(EntryDocBlock), "entrydoc", EntryDocBlock),
+        One(nameof(EntryDocDefects), "entrydoc", EntryDocDefects),
+        One(nameof(EntryDocInstallIo), "entrydoc", EntryDocInstallIo),
+        One(nameof(SkillMirror), "entrydoc", SkillMirror),
+
+        One(nameof(ActivitySessionBehaviour), "session", ActivitySessionBehaviour),
+        One(nameof(ActivitySessionSubclassRoundTrip), "session", ActivitySessionSubclassRoundTrip),
+
+        One(nameof(RestLetterShape), "letters", RestLetterShape),
+        One(nameof(TavernPostVerdictThreeStates), "letters", TavernPostVerdictThreeStates),
+
+        One(nameof(BookAddCleanRoom), "book", BookAddCleanRoom),
+        One(nameof(BookWritingFilter), "book", BookWritingFilter),
+
+        // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
+        Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
+        Many(nameof(RealPersonaScan), "real", () => RealPersonaScan(iProjects)),
+        Many(nameof(RealActivitySessionRoundTrip), "real", () => RealActivitySessionRoundTrip(iProjects)),
+        Many(nameof(RealWatchLedgerRead), "watch", () => RealWatchLedgerRead(iProjects)),
+        Many(nameof(RealWatchResolveFingerprint), "watch", () => RealWatchResolveFingerprint(iProjects)),
+        Many(nameof(RealWatchChapterRebuild), "watch", () => RealWatchChapterRebuild(iProjects)),
+        Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iProjects)),
+    };
+
+    /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
+    public static List<(string Key, string Group)> List(IReadOnlyList<ProjectReading> iProjects)
+    {
+        var aOut = new List<(string, string)>();
+        foreach (var e in Catalog(iProjects)) aOut.Add((e.Key, e.Group));
+        return aOut;
+    }
+
+    /// <summary>
+    /// 跑對拍。<paramref name="iOnly"/> 給了就**只跑**名稱或群命中的那幾格。
+    /// <para>⚠ 挑選是在**呼叫之前**過濾的（沒被選到的那一格根本不執行）——
+    /// 不是跑完再把行藏起來。⇒ 這一格的意義是省時間，藏起來省不到。</para>
+    /// <para>⛔ 篩到 0 格時**不回空清單當成功** —— 呼叫端要能分辨
+    /// 「全部通過」與「我一格都沒跑」，那兩件事在 `失敗 0` 上同形。</para>
+    /// </summary>
+    public static List<CheckRow> Run(IReadOnlyList<ProjectReading> iProjects, string iOnly = "")
     {
         var aRows = new List<CheckRow>();
-        aRows.Add(MissingSemantics());
-        aRows.Add(WriterStability());
-        aRows.Add(ConfigRoundTripKeepsUnknownKeys());
-        aRows.Add(PrefsThreeStates());
-        aRows.Add(PrefsKeepsOtherSections());
-        aRows.Add(PathsSingleSource());
-        aRows.Add(PathRegistryShape());
-        aRows.Add(LoginPageResolvesLettersRoot());
-        aRows.Add(StyleRoundTrip());
-        aRows.Add(PageStack());
-        aRows.Add(TypeSchemaShape());
-        aRows.Add(MapperRoundTrip());
-        aRows.Add(InspectorEdits());
-        aRows.Add(FoldSemantics());
-        aRows.Add(DropdownWidget());
-        aRows.Add(PageCatalogShape());
-        aRows.Add(PageDiscovery());
-        aRows.Add(EntryDocBlock());
-        aRows.Add(EntryDocDefects());
-        aRows.Add(EntryDocInstallIo());
-        aRows.Add(SkillMirror());
-        aRows.Add(RowLayout());
-        aRows.Add(SourceHint());
-        aRows.Add(SourceCapabilityFallback());
-        aRows.Add(SourceMessageLifecycle());
-        aRows.Add(ServerResultRoundTrip());
-        aRows.Add(ErrorReportShape());
-        aRows.Add(ProcessStatusClassification());
-        aRows.Add(ActivitySessionBehaviour());
-        aRows.Add(ActivitySessionSubclassRoundTrip());
-        aRows.Add(RestLetterShape());
-        aRows.Add(TavernPostVerdictThreeStates());
-        aRows.Add(UnityCompileStatusShape());
-        aRows.Add(QueueSubLaneShape());
-        aRows.AddRange(RealFileRoundTrip(iProjects));
-        aRows.AddRange(RealPersonaScan(iProjects));
-        aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
-        aRows.AddRange(RealWatchLedgerRead(iProjects));
-        aRows.AddRange(RealWatchResolveFingerprint(iProjects));
-        aRows.AddRange(RealWatchChapterRebuild(iProjects));
-        aRows.AddRange(WatchWriteCleanRoom(iProjects));
-        aRows.Add(BookAddCleanRoom());
-        aRows.Add(BookWritingFilter());
+        foreach (var e in Catalog(iProjects))
+        {
+            if (!Matches(e, iOnly)) continue;
+            aRows.AddRange(e.Run());
+        }
         return aRows;
+    }
+
+    /// <summary>幾筆會被 <paramref name="iOnly"/> 選中（給呼叫端分辨「0 格」與「全過」）。</summary>
+    public static int CountSelected(IReadOnlyList<ProjectReading> iProjects, string iOnly)
+    {
+        int n = 0;
+        foreach (var e in Catalog(iProjects)) if (Matches(e, iOnly)) ++n;
+        return n;
+    }
+
+    /// <summary>
+    /// 命中判準：逗號分隔、**大小寫不敏感的子字串**，比對 key 與 group 兩者任一。
+    /// <para>⚠ 用子字串而不是完全相符：完全相符要人記得整個方法名，而打錯的下場是
+    /// 「0 格、失敗 0」—— 看起來像全過。子字串讓 `watch`／`real`／`book` 這種短詞就能用。</para>
+    /// </summary>
+    static bool Matches(Entry iEntry, string iOnly)
+    {
+        if (string.IsNullOrWhiteSpace(iOnly)) return true;
+        foreach (string aTok in iOnly.Split(',', StringSplitOptions.RemoveEmptyEntries
+                                                 | StringSplitOptions.TrimEntries))
+        {
+            if (iEntry.Key.Contains(aTok, StringComparison.OrdinalIgnoreCase)) return true;
+            if (iEntry.Group.Contains(aTok, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     // 區塊職責：queue 子分道（`<persona>/<lane>`）的路徑與**身分不被污染**。
