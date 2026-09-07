@@ -664,8 +664,8 @@ public static class Program
     static int CmdAgent(string iRepoRoot, string[] iArgs)
     {
         string aSub = iArgs.Length > 1 ? iArgs[1].ToLowerInvariant() : "";
-        if (aSub != "run" && aSub != "status")
-            return AgentUsageError($"cmd 要 run 或 status（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）",
+        if (aSub != "run" && aSub != "status" && aSub != "wait")
+            return AgentUsageError($"cmd 要 run／status／wait（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）",
                 "senate ucmd run <CmdType> [--project <名>] [--persona <p>] [--lane <id>] [--arg k=v]… [--arg-file k=<路徑>]…");
 
         // ── 對象專案解析：--project 名字 ＞ 唯一啟用專案自動選（會說出來）＞ 擋下 ──
@@ -706,6 +706,57 @@ public static class Program
                 Console.WriteLine($"  · {aWho}　state={aState}　queue={(aCount < 0 ? "⚠壞檔" : aCount.ToString())}");
             }
             return 0;
+        }
+
+        // ── wait <cmd_id> ────────────────────────────────────────────────────
+        // 區塊職責：等一筆**已經送出**的 Cmd 跑完（`ucmd run --no-wait` 印的那個 id）。
+        // 物理意義：submit 與 wait 分開，呼叫端才能在中間做別的事 ——
+        //   `hook_validate_modified.py` 就是這個形狀：一次 submit 一批、之後再逐筆收。
+        //   ⚠ 沒有這一支的時候，那種呼叫端只能改成阻塞式，而那不是「等價寫法」，
+        //   是把它原本重疊掉的等待時間變回序列的。
+        // ⚠ 要知道去**哪條分道**等 —— `--persona` / `--lane` 與 submit 那次必須一致；
+        //   不一致的症狀不是紅燈，是在一條空分道上等到逾時（TriggerState 永遠 idle、
+        //   queue 裡找不到那個 id ⇒ 走「無 result 檔」的推論路）。
+        // 數值影響：純讀（trigger／queue／_cmd_results）。
+        if (aSub == "wait")
+        {
+            string? aWaitId = iArgs.Length > 2 && !iArgs[2].StartsWith("--") ? iArgs[2] : null;
+            if (aWaitId == null)
+                return AgentUsageError("wait 少了 <cmd_id>",
+                                       "senate ucmd wait 20260907-104510-e09b83-tavern --persona summit");
+
+            string? aWaitLane = ArgValue(iArgs, "--lane");
+            string? aWaitQueueId = aPersona;
+            if (!string.IsNullOrWhiteSpace(aWaitLane))
+            {
+                aWaitQueueId = (string.IsNullOrWhiteSpace(aPersona)
+                                ? SCP_DataPaths.AnonymousQueueId : aPersona!.Trim()) + "/" + aWaitLane.Trim();
+                (string aWFolder, string aWLane) = SCP_DataPaths.SplitQueueId(aWaitQueueId);
+                if (aWLane.Length == 0)
+                    return AgentUsageError($"--lane '{aWaitLane}' 不是合法分道名（空／含 .. ／含斜線）",
+                                           "分道名只是檔名後綴，例：chess-5");
+                Console.WriteLine($"  ↪ 等的是子分道：queues/{aWFolder}/queue-{aWLane}.json");
+            }
+
+            double aWaitTimeout = double.TryParse(ArgValue(iArgs, "--timeout"), out var wt)
+                                  ? wt : AgentCmdClient.DefaultWaitTimeoutSec;
+            double aWaitPoll = double.TryParse(ArgValue(iArgs, "--poll-interval"), out var wp)
+                               ? wp : AgentCmdClient.DefaultPollSec;
+            int aRc = (int)AgentCmdClient.Wait(aDataRoot, aWaitQueueId, aWaitId, aWaitTimeout,
+                aWaitPoll, Console.WriteLine, Console.Error.WriteLine);
+
+            // --output-file：**順便**確認產物真的在（run_cmd.py `wait --output-file` 同律）。
+            // ⭐ 它的價值是這一句：「Cmd 回報成功」與「那個檔生出來了」是**兩個讀數**，
+            //   而它們不必然一致 —— 這一行是走另一條路徑的證言，不是裝飾。
+            // ⚠ 刻意**不改 exit code**（與 run_cmd.py 逐位元對齊）：既有呼叫端讀的是 returncode，
+            //   在這裡多回一種碼會讓「產物沒生出來」被讀成「Cmd 失敗」，而那兩件事的處置不同。
+            string? aOutFile = ArgValue(iArgs, "--output-file");
+            if (!string.IsNullOrWhiteSpace(aOutFile))
+                Console.WriteLine(File.Exists(aOutFile)
+                    ? $"  ✓ Output file exists: {aOutFile}"
+                    : $"  ⚠ Output file NOT found: {aOutFile}"
+                      + "（⚠ 這**不影響** exit code —— Cmd 說成功與產物存在是兩個讀數）");
+            return aRc;
         }
 
         // ── run ──
@@ -785,7 +836,13 @@ public static class Program
                               + $"（身分仍是 {aFolder}；同一個人的其他派遣不會互相阻塞）");
         }
 
-        if (!AgentCmdClient.EnsureIdle(aDataRoot, aPersona, AgentCmdClient.DefaultAckTimeoutSec,
+        // --ack-timeout：等**前一批被取走**的上限（不是等自己跑完的那個 --timeout）。
+        // ⚠ 兩者常被混為一談，而混淆的症狀是：以為在等執行、其實在等排隊。
+        //   `hook_validate_modified.py` 兩條路各給不同值（submit 給 5、阻塞式 run 給 30）——
+        //   那是因為 submit 本來就不等執行，排不進去就該早點放棄。
+        double aAckTimeout = double.TryParse(ArgValue(iArgs, "--ack-timeout"), out var at) && at > 0
+                             ? at : AgentCmdClient.DefaultAckTimeoutSec;
+        if (!AgentCmdClient.EnsureIdle(aDataRoot, aPersona, aAckTimeout,
                 Console.WriteLine, out string aIdleWhy))
         {
             Console.Error.WriteLine($"✗ {aIdleWhy}");
@@ -796,8 +853,18 @@ public static class Program
         Console.WriteLine($"  Type={aCmdType}, Mode=OneShot → {aTarget.ProjectName}:{(string.IsNullOrWhiteSpace(aPersona) ? AgentCmdClient.AnonymousQueueId : aPersona)}");
         Console.WriteLine("  Trigger written → pending.trigger（Editor 的 Auto-Watcher ~1s 內接手；沒動靜就檢查 Editor 開著沒）");
         if (aNoWait) return 0;
-        return (int)AgentCmdClient.Wait(aDataRoot, aPersona, aCmdId, aTimeout,
-            AgentCmdClient.DefaultPollSec, Console.WriteLine, Console.Error.WriteLine);
+        double aRunPoll = double.TryParse(ArgValue(iArgs, "--poll-interval"), out var rp) && rp > 0
+                          ? rp : AgentCmdClient.DefaultPollSec;
+        int aRunRc = (int)AgentCmdClient.Wait(aDataRoot, aPersona, aCmdId, aTimeout,
+            aRunPoll, Console.WriteLine, Console.Error.WriteLine);
+        // 同 `wait --output-file`：「Cmd 說成功」與「產物在」是兩個讀數，⛔ 不改 exit code。
+        string? aRunOutFile = ArgValue(iArgs, "--output-file");
+        if (!string.IsNullOrWhiteSpace(aRunOutFile))
+            Console.WriteLine(File.Exists(aRunOutFile)
+                ? $"  ✓ Output file exists: {aRunOutFile}"
+                : $"  ⚠ Output file NOT found: {aRunOutFile}"
+                  + "（⚠ 這**不影響** exit code —— Cmd 說成功與產物存在是兩個讀數）");
+        return aRunRc;
     }
 
     static int AgentUsageError(string iError, string iHint)
@@ -1191,6 +1258,12 @@ public static class Program
                 --persona <p>     身分（決定 queue 路由並戳進 args；沒給走 anonymous）
                 --lane <id>       子分道：改落 queues/<persona>/queue-<id>.json（身分不變）——
                                   同一個人同時派多筆而**不想互相排隊**時用（例：一人多局的棋局廣播）
+                --ack-timeout <秒> 等**前一批被取走**的上限（不是等自己跑完的 --timeout）
+                --poll-interval <秒> 輪詢間隔
+                --output-file <路徑> 跑完順便確認那個產物在不在（⚠ 只印，**不改 exit code**）
+              ucmd wait <cmd_id>  等一筆已送出的 Cmd（`ucmd run --no-wait` 印的那個 id）
+                --persona/--lane  **要跟 submit 那次一致** —— 不一致會在一條空分道上等到逾時
+                --timeout / --poll-interval / --output-file  同上
                 --arg k=v         指令參數（可重複）
                 --arg-file k=<路徑>  參數值從檔案讀（長內文不經過 shell）
                 --timeout <秒>    等待逾時（預設 120）；--no-wait 送出就返回
