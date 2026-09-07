@@ -193,11 +193,16 @@ public sealed class ServerExecutor
     /// <summary>
     /// 寫 `_cmd_results/&lt;id&gt;.json`。成功與失敗都寫 —— 只寫失敗的話「沒有檔」又變回要推論的空白。
     /// <para>public static 是為了 selftest 能對它做 round-trip（寫 → AgentCmdClient 讀回）。</para>
+    /// <para>⚠ 目錄名走 <see cref="SCP_DataPaths.CmdResultsDirName"/>，**與 <c>AgentCmdClient.ResultPath</c>
+    /// 同一份**（TASK-0103 ①，@summit 指認：條文說「同一份」而兩端各自拼一次）。
+    /// 🩸 而根**不共用**：這裡是 Server 根、那端是資料根 —— 所以共用的只到名字那一層，
+    /// ⛔ 不能把它換成 <c>SCP_PathRegistry</c> 的衍生條目（那條從 <c>AgentCommandsRoot</c> 長出來，
+    /// 接上來會**靜默**把這個目錄搬到另一個父目錄底下，而 round-trip 會變成「沒有回傳檔」）。</para>
     /// </summary>
     public static string WriteResult(string iServerRoot, string iCmdId, string iType, string iMode,
         IReadOnlyDictionary<string, string> iArgs, SCP_CmdResult iResult)
     {
-        string aDir = Path.Combine(iServerRoot, "_cmd_results");
+        string aDir = Path.Combine(iServerRoot, SCP_DataPaths.CmdResultsDirName);
         Directory.CreateDirectory(aDir);
         var aJson = new JsonObject
         {

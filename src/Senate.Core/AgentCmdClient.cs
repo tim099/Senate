@@ -369,9 +369,13 @@ public static class AgentCmdClient
 
     /// <summary>判定檔的路徑（唯一組法）—— 逾時訊息要指著它叫人看 mtime，那條路不能是第二份拼出來的。</summary>
     /// <remarks>⚠ <c>public</c> 的理由：委派閘逾時後要給人一行**可以貼的回讀指令**
-    /// （TASK-0134），而那條路徑只准有一個組法 —— 讓它自己在閘裡拼一次就是第二份。</remarks>
+    /// （TASK-0134），而那條路徑只准有一個組法 —— 讓它自己在閘裡拼一次就是第二份。
+    /// <para>⚠ 而「唯一組法」原本只涵蓋**這一端**：目錄名的字面在對面
+    /// （<c>ServerExecutor.WriteResult</c>）又拼了一次 ⇒ 兩端各自有一份。
+    /// 現在名字走 <see cref="SCP_DataPaths.CmdResultsDirName"/>（TASK-0103 ①）——
+    /// 🩸 而**根仍然各自傳**（這端是資料根、那端是 Server 根），因為那兩個根本來就不同。</para></remarks>
     public static string ResultPath(string iDataRoot, string iCmdId)
-        => Path.Combine(iDataRoot, "_cmd_results", $"{iCmdId}.json");
+        => Path.Combine(iDataRoot, SCP_DataPaths.CmdResultsDirName, $"{iCmdId}.json");
 
     static JsonObject? ReadCmdResult(string iDataRoot, string iCmdId)
     {
