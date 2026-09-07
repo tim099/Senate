@@ -180,12 +180,12 @@ public abstract class UnityDelegateCmd : SCP_Cmd
             aResult.ExitCode = 1;
             aResult.AddValue("delegate_failure", "cmd_failed");
             AppendReport(aResult, aWhere.DataRoot, aCmdId);
-            // blocked 的出口清單在回傳檔裡，而那份清單是 Editor 寫的 ⇒ 一律 python 形。
+            // blocked 的出口清單在回傳檔裡，而那份清單是 Editor 寫的。
             // ⚠ 這裡**不去對映**那些出口成 CLI 指令：那份清單是動態的（隨守衛列出），
             //   憑猜寫一份對照表，錯的那條印出來跟對的一模一樣。
-            //   ⇒ 只說「它是哪一種形狀、去哪裡查本入口的等價物」，不代它翻譯。
-            aResult.Lines.Add("⚠ 回傳檔裡的出口清單是 Editor 寫的、寫成 `run_cmd.py`／`awakening.py` 形 ——"
-                              + " 本入口的等價指令查 `senate cmd`（本 CLI 不猜對映）。");
+            //   ⇒ 只說「去哪裡查本入口的等價物」，不代它翻譯。
+            aResult.Lines.Add("⚠ 回傳檔裡的出口清單是 Editor 寫的 —— 本入口的等價指令查 `senate cmd`"
+                              + "（本 CLI 不猜對映）。若清單點名某支 `.py`，先確認它還活著：多數已是 exit 2 stub。");
             return aResult;
         }
 
@@ -208,9 +208,10 @@ public abstract class UnityDelegateCmd : SCP_Cmd
         {
             aResult.Lines.Add("## next（本入口＝`senate cmd`，照這行走）");
             aResult.Lines.Add("   " + CliNextHint);
-            aResult.Lines.Add("⚠ 回傳檔裡的 `## next` 是 Editor 端寫的、只認 `run_cmd.py`／`awakening.py`"
-                              + " —— **那一段對本入口不適用**，別照它打。");
+            aResult.Lines.Add("⚠ 回傳檔裡的 `## next` 是 Editor 端寫的 —— 以**上面這一行**為準。");
             aResult.Lines.Add("   回傳檔的其餘內容（讀數／守衛／出口清單）照讀，那些與 client 無關。");
+            aResult.Lines.Add("   ⛔ 那一段若點名某支 `.py`：**先確認它還活著** —— 多數已退場為 exit 2 stub，"
+                              + "而 relogin／reissue-token／migrate-letters／whoami 今天仍是 python 獨有的那幾格。");
         }
         return aResult;
     }
