@@ -95,6 +95,7 @@ public static class SelfTest
 
         One(nameof(BookAddCleanRoom), "book", BookAddCleanRoom),
         One(nameof(BookWritingFilter), "book", BookWritingFilter),
+        One(nameof(BookChapterArcCleanRoom), "book", BookChapterArcCleanRoom),
 
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
         Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
@@ -293,6 +294,208 @@ public static class SelfTest
     //          ② `status` 覆寫成 `writing` 後**留在原位**（python dict 的插入序保證）
     //          ③ 別名去重且保序
     //          ④ 反向對照：同一本再建一次要被擋（exit 1）且**檔案逐位元組沒被動過**
+    // 區塊職責：`op=log-chapter` / `op=arc` 的 clean-room 對拍 —— 期望值是 **python 真產物的位元組**。
+    // 物理意義：TASK-0143 ②-bis 拍板 (a) 補上的那兩個寫入端。本格把「我 2026-09-07 手動跑過一次的
+    //          逐位元組對拍」換成長在必經路上的機械 —— 手動讀數只證明那一天，而**下次改這支的人
+    //          不會來問我**（攔截來源只有兩個，「記得再跑一遍」不在名單上）。
+    // 🩸 兩個會漂又不會叫的細節各給一格斷言：
+    //   ① 空值欄位那行是 `title: `（**尾隨一個空格** —— python `f"{k}: {v}"` 的結果）。
+    //   ② 產物是 **CRLF**（python 文字模式在 Windows）⇒ 寫成 LF 會「內容一樣、逐位元組不同」。
+    // 數值影響：純暫存目錄，⛔ 不碰真 store。
+    static CheckRow BookChapterArcCleanRoom()
+    {
+        const string aName = "log-chapter／arc clean-room（對照 library.py 真產物）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bookch_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "BookNotes"));
+            var aCmd = new SCP_Cmd_Book();
+
+            // ⭐ 走 Bind 不自己塞值 —— 測試裡打錯參數名要**當場炸**，不是靜默取預設值然後綠著過。
+            SCP_CmdArgs Args(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return a;
+            }
+
+            string aBookDir = Path.Combine(aTmp, "BookNotes", "cr-test-book");
+            string aBookJson = Path.Combine(aBookDir, "book.json");
+
+            SCP_CmdResult aAdd = aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "add", ["id"] = "cr-test-book",
+                ["title"] = "對拍用書", ["aliases"] = "對拍用書", ["author"] = "誰",
+            }));
+            if (aAdd.ExitCode != 0 || !File.Exists(aBookJson))
+                return new CheckRow(aName,
+                    $"前置建檔失敗：exit={aAdd.ExitCode}、book.json 存在={File.Exists(aBookJson)}",
+                    CheckResult.Fail);
+
+            // ── ① 滿參數的 ch3，接著**全省略**的 ch1（fallback 路徑才是空格與「（待補）」住的地方）──
+            aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "log-chapter", ["book"] = "cr-test-book",
+                ["chapter"] = "3", ["title"] = "約克的石頭", ["summary"] = "第三章摘要",
+                ["events"] = "事件甲;事件乙", ["views"] = "看法一|看法二",
+                ["new_characters"] = "諾瑞爾;史傳傑", ["foreshadow"] = "伏筆X",
+            }));
+            aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "log-chapter", ["book"] = "cr-test-book",
+                ["chapter"] = "1",
+            }));
+
+            string aToday = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string aWantCh1 = string.Join("\r\n", new[]
+            {
+                "---",
+                "book: cr-test-book",
+                "chapter: 1",
+                "title: ",                       // ← ⚠ 尾隨空格是產物的一部分，不是編輯失誤
+                "reading_date: " + aToday,
+                "new_characters: []",
+                "---",
+                "",
+                "## 內容摘要",
+                "（待補）",
+                "",
+                "## 關鍵事件",
+                "- （待補）",
+                "",
+                "## 本章對人物的新認識",
+                "- （待補）",
+                "",
+                "## 伏筆 / 待解",
+                "- （無）",
+                "",
+            });
+            byte[] aGotCh1 = File.ReadAllBytes(Path.Combine(aBookDir, "chapters", "ch01_ch1.md"));
+            bool aCh1Same = ByteEqual(aGotCh1, new UTF8Encoding(false).GetBytes(aWantCh1));
+
+            // ── ② 書籤不倒退：跑過 ch3 之後跑 ch1，`current_chapter` 必須仍是 3 ──
+            string aJsonAfterCh = File.ReadAllText(aBookJson, Encoding.UTF8);
+            bool aNoRegress = aJsonAfterCh.Contains("\"current_chapter\": 3");
+
+            // ── ③ arc：先 7-9，再用同範圍 1-6 覆蓋一次（python 會把它移到陣列尾端）──
+            aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "arc", ["book"] = "cr-test-book",
+                ["chapters"] = "1-6", ["title"] = "第一階段",
+            }));
+            aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "arc", ["book"] = "cr-test-book",
+                ["chapters"] = "7-9", ["title"] = "第二階段",
+            }));
+            aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "arc", ["book"] = "cr-test-book",
+                ["chapters"] = "1-6", ["title"] = "第一階段（改）",
+            }));
+            string aWantArc = string.Join("\r\n", new[]
+            {
+                "---",
+                "book: cr-test-book",
+                "chapters: 1-6",
+                "title: 第一階段（改）",
+                "date: " + aToday,
+                "---",
+                "",
+                "## 階段大綱（見林）",
+                "（待補）",
+                "",
+                "## 貫穿線索 / 伏筆狀態",
+                "- （待補）",
+                "",
+            });
+            byte[] aGotArc = File.ReadAllBytes(Path.Combine(aBookDir, "arcs", "arc_1-6.md"));
+            bool aArcSame = ByteEqual(aGotArc, new UTF8Encoding(false).GetBytes(aWantArc));
+
+            string aJsonAfterArc = File.ReadAllText(aBookJson, Encoding.UTF8);
+            int aIdx79 = aJsonAfterArc.IndexOf("\"7-9\"", StringComparison.Ordinal);
+            int aIdx16 = aJsonAfterArc.IndexOf("\"1-6\"", StringComparison.Ordinal);
+            // 取代那筆要移到尾端 ⇒ 7-9 在前、1-6 在後；且只剩兩筆（沒有重複登記）。
+            bool aArcOrder = aIdx79 >= 0 && aIdx16 > aIdx79
+                             && CountOccurrences(aJsonAfterArc, "\"1-6\"") == 1;
+
+            // ── ④ `--reader` 分支：首次啟用要自動 init，且 **不影響初始讀者** ──
+            aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "log-chapter", ["book"] = "cr-test-book",
+                ["chapter"] = "2", ["title"] = "分支章", ["reader"] = "gura",
+            }));
+            string aWantBranch = string.Join("\r\n", new[]
+            {
+                "{",
+                "  \"id\": \"cr-test-book::gura\",",
+                "  \"title\": \"對拍用書\",",
+                "  \"title_original\": \"\",",
+                "  \"author\": \"誰\",",
+                "  \"reader_persona\": \"gura\",",
+                "  \"branch_of\": \"cr-test-book\",",
+                "  \"branched_from\": \"(獨立起讀)\",",
+                "  \"status\": \"reading\",",
+                "  \"progress\": {",
+                "    \"current_chapter\": 2,",
+                "    \"last_read\": \"" + aToday + "\",",
+                "    \"bookmark_note\": \"\"",
+                "  },",
+                "  \"characters\": []",
+                "}",
+                "",
+            });
+            byte[] aGotBranch = File.ReadAllBytes(
+                Path.Combine(aBookDir, "branches", "gura", "book.json"));
+            bool aBranchSame = ByteEqual(aGotBranch, new UTF8Encoding(false).GetBytes(aWantBranch));
+            // 初始讀者那份的章號不准被分支動到（分支寫 ch2，main 仍該是 3）。
+            bool aMainUntouched = File.ReadAllText(aBookJson, Encoding.UTF8)
+                                      .Contains("\"current_chapter\": 3");
+
+            // ── ⑤ 反向對照：書不存在時要擋（exit 1）且**不准生出目錄** ──
+            //    ⛔ 只驗「該寫的寫了」的話，一個「什麼書名都先建目錄」的實作也會全綠。
+            SCP_CmdResult aMiss = aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "log-chapter", ["book"] = "沒有這本書",
+                ["chapter"] = "1",
+            }));
+            bool aGuarded = aMiss.ExitCode == 1
+                            && !Directory.Exists(Path.Combine(aTmp, "BookNotes", "沒有這本書"));
+
+            bool aOk = aCh1Same && aNoRegress && aArcSame && aArcOrder
+                       && aBranchSame && aMainUntouched && aGuarded;
+            string aReading =
+                $"ch01（全省略）逐位元組：{(aCh1Same ? "相同" : "**不同**")}"
+                + $"（{aGotCh1.Length} bytes、CRLF {CountCrLf(aGotCh1)}／換行 {CountLf(aGotCh1)}）"
+                + $"；arc_1-6 逐位元組：{(aArcSame ? "相同" : "**不同**")}（{aGotArc.Length} bytes）"
+                + $"；分支 book.json 逐位元組：{(aBranchSame ? "相同" : "**不同**")}（{aGotBranch.Length} bytes）"
+                + $"；書籤不倒退：{(aNoRegress ? "current_chapter 仍是 3" : "**被 ch1 蓋掉了**")}"
+                + $"；arcs[] 同範圍取代：{(aArcOrder ? "7-9 在前、1-6 移到尾端且只一筆" : "**順序或筆數不對**")}"
+                + $"；分支不影響初始讀者：{(aMainUntouched ? "main 仍是 3" : "**main 被動了**")}"
+                + $"；書不存在守衛：{(aGuarded ? $"擋下（exit {aMiss.ExitCode}）且沒生出目錄" : "**沒擋住或生了目錄**")}";
+
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e)
+        {
+            return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail);
+        }
+        finally
+        {
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ }
+        }
+    }
+
+    /// <summary>數一個字面出現幾次（`"1-6"` 有沒有被重複登記那一格要它）。</summary>
+    static int CountOccurrences(string iText, string iNeedle)
+    {
+        int aCount = 0;
+        for (int i = iText.IndexOf(iNeedle, StringComparison.Ordinal); i >= 0;
+             i = iText.IndexOf(iNeedle, i + iNeedle.Length, StringComparison.Ordinal))
+            aCount++;
+        return aCount;
+    }
+
     static CheckRow BookAddCleanRoom()
     {
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_bookadd_" + Guid.NewGuid().ToString("N")[..8]);
