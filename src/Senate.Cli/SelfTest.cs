@@ -62,10 +62,94 @@ public static class SelfTest
         aRows.Add(ActivitySessionSubclassRoundTrip());
         aRows.Add(RestLetterShape());
         aRows.Add(TavernPostVerdictThreeStates());
+        aRows.Add(UnityCompileStatusShape());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
         return aRows;
+    }
+
+    // 區塊職責：Unity 編譯狀態讀取層的**反向對照** —— 那三種「看起來像綠燈的沒有讀數」。
+    // 物理意義：這一支的價值全在它**不會**說什麼：檔不在時不可以印 0 errors、
+    //          找不到第二來源時不可以說「一致」、tracker 說 0 而 ErrorLog 有錯時要以 ErrorLog 為準。
+    //          🩸 這三格都不是假想：`check_compile.py --watch` 就是在「沒有讀數」那一格印了綠燈
+    //          （TASK-0154，2026-09-07 實測印出三天前的快照）。
+    // ⚠ 用暫存根，不碰任何真專案 —— 驗一個「讀狀態」的東西時去動真的狀態，是把受測體污染掉。
+    static CheckRow UnityCompileStatusShape()
+    {
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_compile_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aRoot);
+
+            // ① 檔不在 ⇒ 沒有讀數，且那句話不可以長得像「沒有錯誤」
+            var aMissing = SCP.Core.Compile.SCP_UnityCompile.Read(aRoot);
+            bool aMissingOk = !aMissing.Found && aMissing.Status == null
+                              && aMissing.Error.Contains("沒有讀數", StringComparison.Ordinal)
+                              && aMissing.Path.EndsWith(SCP.Core.Compile.SCP_UnityCompile.StatusFileName, StringComparison.Ordinal);
+
+            // ② 壞 JSON ⇒ 帶原因回來，⛔ 不可以靜默變成「空的狀態」
+            string aPath = Path.Combine(aRoot, SCP.Core.Compile.SCP_UnityCompile.StatusFileName);
+            File.WriteAllText(aPath, "{ 這不是 json", Encoding.UTF8);
+            var aBroken = SCP.Core.Compile.SCP_UnityCompile.Read(aPath.Length > 0 ? aRoot : aRoot);
+            bool aBrokenOk = !aBroken.Found && aBroken.Error.Length > 0;
+
+            // ③ 正常讀 ＋ 已知答案：兩顆錯、一顆警告 ⇒ 去重後錯誤剩兩顆
+            File.WriteAllText(aPath, """
+{
+  "tracker": "UCL_CompileErrorTracker",
+  "timestamp": "2026-09-07T09:01:13",
+  "duration_seconds": 1.8,
+  "in_progress": false,
+  "total_errors": 2,
+  "total_warnings": 1,
+  "total_messages": 4,
+  "messages": [
+    {"assembly":"A","file":"X.cs","line":1,"column":2,"type":"Error","message":"error CS0128: 甲"},
+    {"assembly":"A","file":"X.cs","line":1,"column":2,"type":"Error","message":"error CS0128: 甲"},
+    {"assembly":"A","file":"Y.cs","line":9,"column":1,"type":"Error","message":"error CS8603: 乙"},
+    {"assembly":"A","file":"Z.cs","line":3,"column":1,"type":"Warning","message":"warning CS0168: 丙"}
+  ]
+}
+""", Encoding.UTF8);
+            var aRead = SCP.Core.Compile.SCP_UnityCompile.Read(aRoot);
+            bool aReadOk = aRead.Found && aRead.Status != null && aRead.Status.total_errors == 2
+                           && aRead.Status.messages.Count == 4
+                           && SCP.Core.Compile.SCP_UnityCompile.ErrorsOf(aRead.Status).Count == 2;   // 去重把重複那顆吃掉
+
+            // ④ 新鮮度：mtime **等於**基準要算新（tracker 只有秒精度，同一秒觸發會等於而不是大於
+            //    —— 判成「還沒跑」就是永遠等下去）
+            DateTime aStamp = aRead.WriteTimeUtc;
+            bool aFreshOk = SCP.Core.Compile.SCP_UnityCompile.IsFresherThan(aRead, aStamp)
+                            && SCP.Core.Compile.SCP_UnityCompile.IsFresherThan(aRead, aStamp.AddSeconds(-1))
+                            && !SCP.Core.Compile.SCP_UnityCompile.IsFresherThan(aRead, aStamp.AddSeconds(1));
+
+            // ⑤ 找不到第二來源 ⇒ **NoSecondSource**，⛔ 不可以退化成 AgreeClean
+            var aCross = SCP.Core.Compile.SCP_UnityCompile.Crosscheck(aRoot, aRead.Status!);
+            bool aCrossOk = aCross.Verdict == SCP.Core.Compile.SCP_UnityCompile.SCP_CrosscheckVerdict.NoSecondSource;
+
+            // ⑥ tracker 說 0 而 ErrorLog 有錯 ⇒ 以 ErrorLog 為準（這格是本層存在的理由）
+            string aLogDir = Path.Combine(aRoot, "Assets", "DebugLogs~");
+            Directory.CreateDirectory(aLogDir);
+            File.WriteAllText(Path.Combine(aLogDir, "Errors_latest.log"),
+                "[09:05:00] Foo.cs(1,1): error CS0246: 找不到型別\n", Encoding.UTF8);
+            var aZero = new SCP.Core.Compile.SCP_UnityCompileStatus { timestamp = "2026-09-07T09:01:13", total_errors = 0 };
+            var aMissed = SCP.Core.Compile.SCP_UnityCompile.Crosscheck(aRoot, aZero);
+            bool aMissedOk = aMissed.Verdict == SCP.Core.Compile.SCP_UnityCompile.SCP_CrosscheckVerdict.TrackerMissedErrors
+                             && aMissed.LogCount == 1;
+
+            // ⑦ 射程那句話必須真的印在輸出裡（它是結論的一部分，不是說明文件）
+            List<string> aRender = SCP.Core.Compile.SCP_UnityCompile.Render(aRead, aRoot, true, 20);
+            bool aScopeOk = aRender.Exists(l => l.Contains("不涵蓋 `senate.exe`", StringComparison.Ordinal));
+
+            bool aOk = aMissingOk && aBrokenOk && aReadOk && aFreshOk && aCrossOk && aMissedOk && aScopeOk;
+            return new CheckRow("Unity 編譯狀態讀取（反向對照）",
+                $"檔不在≠0錯={aMissingOk}／壞 JSON 帶原因={aBrokenOk}／讀回＋去重={aReadOk}／"
+                + $"**mtime 等於基準算新**={aFreshOk}／無第二來源≠一致={aCrossOk}／"
+                + $"**tracker 說 0 而 ErrorLog 有錯**={aMissedOk}／射程有印={aScopeOk}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
     }
 
     // 區塊職責：Server 端寫的 result 檔，CLI 端（AgentCmdClient）讀得回同樣的東西 —— 協議第四端的對拍。

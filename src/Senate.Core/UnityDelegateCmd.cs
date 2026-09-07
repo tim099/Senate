@@ -43,6 +43,21 @@ public abstract class UnityDelegateCmd : SCP_Cmd
     /// </summary>
     protected virtual string CliNextHint => "";
 
+    /// <summary>
+    /// 判定成功之後、印 `## next` 之前的掛點。**預設什麼都不做。**
+    /// <para>物理意義：有些委派的「完成」不等於「那件事發生完了」——
+    /// `Recompile` 是活體：Editor 回 Success 只代表**觸發送到了**，
+    /// 而編譯要再過幾秒才開始、十幾秒才結束。⇒ 需要一個「委派完再等一個外部訊號」的位置。</para>
+    /// <para>⚠ 為什麼不讓子類別覆寫 <see cref="Execute"/>（它是 sealed）：委派本體有六道
+    /// 順序相依的閘（ConfigProvider／目標解析／分道／EnsureIdle／Submit／Wait），
+    /// 複製一份出去的那一份**不會跟著這裡的修正走**，而兩份的輸出長得一樣。</para>
+    /// <param name="iTriggerUtc">送出觸發的時刻 —— 子類別要判「這是不是我這一趟」時的基準。</param>
+    /// </summary>
+    protected virtual void AfterDelegateSucceeded(SCP_CmdResult ioResult, UnityTarget iWhere,
+                                                  SCP_CmdArgs iArgs, DateTime iTriggerUtc)
+    {
+    }
+
     /// <summary>組要送過去的 args。⚠ 這裡只組**這一支的語意**，`persona` / 環境標記由 client 補。</summary>
     protected abstract Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs);
 
@@ -121,6 +136,10 @@ public abstract class UnityDelegateCmd : SCP_Cmd
         }
 
         // ② 送出
+        // ⚠ 基準取在 **Submit 之前**：取在之後的話，那幾毫秒裡寫出來的狀態檔會被算成「我這一趟的」。
+        //   寧可把基準取早（多等一輪），不要取晚（拿到上一趟的還以為是自己的）——
+        //   那正是 TASK-0154 那隻 bug 的形狀。
+        DateTime aTriggerUtc = DateTime.UtcNow;
         string aCmdId;
         try
         {
@@ -171,6 +190,7 @@ public abstract class UnityDelegateCmd : SCP_Cmd
         }
 
         AppendReport(aResult, aWhere.DataRoot, aCmdId);
+        AfterDelegateSucceeded(aResult, aWhere, iArgs, aTriggerUtc);
         // ── 下一步：**由本 CLI 自己講，而且講的是 CLI 的指令** ─────────────
         // 物理意義：走 `senate cmd` 的人，指路牌就該是 `senate cmd`。
         //          Tim 2026-08-31 拍板：「Senate CLI 內的 Cmd 回傳值必須給 CLI 的指令，
