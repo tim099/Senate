@@ -666,7 +666,7 @@ public static class Program
         string aSub = iArgs.Length > 1 ? iArgs[1].ToLowerInvariant() : "";
         if (aSub != "run" && aSub != "status")
             return AgentUsageError($"cmd 要 run 或 status（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）",
-                "senate ucmd run <CmdType> [--project <名>] [--persona <p>] [--arg k=v]… [--arg-file k=<路徑>]…");
+                "senate ucmd run <CmdType> [--project <名>] [--persona <p>] [--lane <id>] [--arg k=v]… [--arg-file k=<路徑>]…");
 
         // ── 對象專案解析：--project 名字 ＞ 唯一啟用專案自動選（會說出來）＞ 擋下 ──
         // ⚠ 解析本體在 UnityTargetResolver（Senate.Core）—— 委派型 SCP_Cmd 問的是同一個問題，
@@ -752,6 +752,37 @@ public static class Program
             aPersona = aRoutedPersona.Trim();
             Console.WriteLine($"  ↪ queue 路由：由 --arg persona={aPersona} 推得 → queues/{aPersona}/"
                               + "（未帶 --persona；要走別條通道請顯式帶 --persona）");
+        }
+
+        // ── 子分道 --lane（2026-09-07，TASK-0107 chess.py 轉接的前置）─────────────
+        // 物理意義：**身分是資料夾、通道是檔名後綴** —— `queues/<persona>/queue-<lane>.json`
+        //   ＋ `pending-<lane>.trigger`（與 python `run_cmd.py --lane` 逐字同形；
+        //   Editor 端 watcher 本來就掃 `queue*.json`，所以那半不用動）。
+        // 為什麼需要它：同一個人同時有兩件事在派遣時，`EnsureIdle` 會**等**（每秒輪詢到 timeout），
+        //   而呼叫端的 subprocess timeout 常常更短 ⇒ 後到的那筆被砍掉。
+        //   🩸 chess.py 現場：basecamp 今天同時有兩局在下（#2／#4），走同一條 persona 分道時
+        //   後走的那一步盤面會**靜默**不出現在酒館（broadcast 是 best-effort，失敗被吞掉）。
+        // ⛔ **只在這裡組一次**：一次派遣有四個地方吃 queue id（EnsureIdle／Submit／畫面那行／Wait），
+        //   在下游任何一處補第二次，就會出現「queue 寫進 A、Wait 在 B 等」——
+        //   而那個症狀是判定退化成「推論 Success」，畫面照樣印綠（2026-09-02 血證，見 Submit 檔頭）。
+        string? aLane = ArgValue(iArgs, "--lane");
+        if (!string.IsNullOrWhiteSpace(aLane))
+        {
+            // ⚠ 不強制要 --persona：沒有具名發送者時落 `queues/anonymous/queue-<lane>.json`
+            //   —— 與 python `run_cmd.py --lane` 同形。**刻意不假造一個身分**：
+            //   chess 的系統代發就是這一格（「這局沒有具名發送者」是事實，不是缺漏）。
+            //   ⛔ 而它仍然有自己的分道，否則系統代發會掉回共用 queue 跟所有人擠。
+            string aQueueId = (string.IsNullOrWhiteSpace(aPersona)
+                               ? SCP_DataPaths.AnonymousQueueId : aPersona.Trim()) + "/" + aLane.Trim();
+            // 不合法的組合會被 SplitQueueId 整筆退回 anonymous —— 那是**靜默**掉進共用分道，
+            // 所以在這裡先自己檢查一次並出聲：路由退化不出聲，就跟沒有路由一樣。
+            (string aFolder, string aSafeLane) = SCP_DataPaths.SplitQueueId(aQueueId);
+            if (aSafeLane.Length == 0)
+                return AgentUsageError($"--lane '{aLane}' 不是合法分道名（空／含 .. ／含斜線）",
+                                       "分道名只是檔名後綴，例：chess-5");
+            aPersona = aQueueId;
+            Console.WriteLine($"  ↪ 子分道：queues/{aFolder}/queue-{aSafeLane}.json"
+                              + $"（身分仍是 {aFolder}；同一個人的其他派遣不會互相阻塞）");
         }
 
         if (!AgentCmdClient.EnsureIdle(aDataRoot, aPersona, AgentCmdClient.DefaultAckTimeoutSec,
@@ -1158,6 +1189,8 @@ public static class Program
                                      `cmd` 讓給不依賴 Unity 的 SCP_CMD（見上）
                 --project <name>  對哪個專案（senate.local.json projects[]；只有一個啟用時可省）
                 --persona <p>     身分（決定 queue 路由並戳進 args；沒給走 anonymous）
+                --lane <id>       子分道：改落 queues/<persona>/queue-<id>.json（身分不變）——
+                                  同一個人同時派多筆而**不想互相排隊**時用（例：一人多局的棋局廣播）
                 --arg k=v         指令參數（可重複）
                 --arg-file k=<路徑>  參數值從檔案讀（長內文不經過 shell）
                 --timeout <秒>    等待逾時（預設 120）；--no-wait 送出就返回

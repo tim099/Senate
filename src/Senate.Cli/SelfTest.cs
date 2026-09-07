@@ -63,10 +63,54 @@ public static class SelfTest
         aRows.Add(RestLetterShape());
         aRows.Add(TavernPostVerdictThreeStates());
         aRows.Add(UnityCompileStatusShape());
+        aRows.Add(QueueSubLaneShape());
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
         return aRows;
+    }
+
+    // 區塊職責：queue 子分道（`<persona>/<lane>`）的路徑與**身分不被污染**。
+    // 物理意義：子分道要解的是「同一個人同時派兩筆會互相排隊」——
+    //          而它最可能的壞法不是路徑錯，是**身分被連著 lane 一起戳進 args**：
+    //          下游（Tavern 署名／Treasury 記帳）會拿到一個叫 `summit/chess-5` 的人，
+    //          那個人不存在，而且沒有任何一層會報錯。
+    // ⚠ 檔名與 python `run_cmd.py` 逐字同形是硬需求：Editor 端 watcher 掃 `queue*.json`，
+    //   形狀差一個字＝那筆永遠不被取走（而送出端一切正常）。
+    static CheckRow QueueSubLaneShape()
+    {
+        var aRoot = new SCP_DataRoot("D:/x/AgentCommands");
+
+        // ① 不帶 lane ⇒ 原樣（既有呼叫端行為一個字都不能變）
+        bool aPlain = SCP_DataPaths.QueueFile(aRoot, "summit").EndsWith("/queues/summit/queue.json", StringComparison.Ordinal)
+                      && SCP_DataPaths.TriggerFile(aRoot, "summit").EndsWith("/queues/summit/pending.trigger", StringComparison.Ordinal);
+
+        // ② 帶 lane ⇒ 同一個資料夾、不同檔名（與 run_cmd.py 同形）
+        bool aLaned = SCP_DataPaths.QueueFile(aRoot, "summit/chess-5").EndsWith("/queues/summit/queue-chess-5.json", StringComparison.Ordinal)
+                      && SCP_DataPaths.TriggerFile(aRoot, "summit/chess-5").EndsWith("/queues/summit/pending-chess-5.trigger", StringComparison.Ordinal)
+                      && SCP_DataPaths.QueueFolder(aRoot, "summit/chess-5").EndsWith("/queues/summit", StringComparison.Ordinal);
+
+        // ③ **互不阻塞**的機械證據：兩條分道的 trigger 是不同的檔
+        bool aIsolated = SCP_DataPaths.TriggerFile(aRoot, "summit") != SCP_DataPaths.TriggerFile(aRoot, "summit/chess-5")
+                         && SCP_DataPaths.TriggerFile(aRoot, "summit/chess-2") != SCP_DataPaths.TriggerFile(aRoot, "summit/chess-4");
+
+        // ④ 身分只取 folder 那一半 —— 這一格是本測項存在的理由
+        bool aIdentity = SCP_DataPaths.SplitQueueId("summit/chess-5").Folder == "summit"
+                         && SCP_DataPaths.SplitQueueId("summit/chess-5").Lane == "chess-5"
+                         && SCP_DataPaths.SplitQueueId("summit").Lane.Length == 0;
+
+        // ⑤ 反向對照：不合法的組合**整筆**退回 anonymous，⛔ 不可以只消毒一半
+        bool aGuard = SCP_DataPaths.SplitQueueId("../etc/x").Folder == SCP_DataPaths.AnonymousQueueId
+                      && SCP_DataPaths.SplitQueueId("summit/..").Folder == SCP_DataPaths.AnonymousQueueId
+                      && SCP_DataPaths.SplitQueueId("summit/a/b").Folder == SCP_DataPaths.AnonymousQueueId
+                      && SCP_DataPaths.SplitQueueId("summit/..").Lane.Length == 0
+                      && SCP_DataPaths.SplitQueueId("").Folder == SCP_DataPaths.AnonymousQueueId;
+
+        bool aOk = aPlain && aLaned && aIsolated && aIdentity && aGuard;
+        return new CheckRow("queue 子分道（<persona>/<lane>）",
+            $"不帶 lane 原樣={aPlain}／帶 lane 同資料夾異檔名={aLaned}／**兩條分道 trigger 不同檔**={aIsolated}／"
+            + $"**身分只取 folder**={aIdentity}／不合法整筆退回 anonymous={aGuard}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
     // 區塊職責：Unity 編譯狀態讀取層的**反向對照** —— 那三種「看起來像綠燈的沒有讀數」。

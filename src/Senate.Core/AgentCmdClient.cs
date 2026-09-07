@@ -143,13 +143,19 @@ public static class AgentCmdClient
         if (!iArgs.ContainsKey("_caller_client"))
             iArgs["_caller_client"] = ClientId;
         // 顯式 --persona 戳進 args（與 run_cmd.py 同律：只在缺席時填；兩者不同 → 出聲照 --arg 走）
-        if (iInjectPersona && !string.IsNullOrWhiteSpace(iPersona))
+        // ⚠ 戳進去的是 **queue id 的身分那一半**，不是整個 queue id ——
+        //   帶子分道時 `iPersona` 是 `<persona>/<lane>`（例 `summit/chess-5`），
+        //   而 lane 是**通道**不是人。整串戳進去的話下游（Tavern 署名／Treasury 記帳）
+        //   會拿到一個叫「summit/chess-5」的身分，而那個人不存在 —— 且不會有任何一層報錯。
+        string aIdentity = SCP_DataPaths.SplitQueueId(iPersona).Folder;
+        if (iInjectPersona && !string.IsNullOrWhiteSpace(iPersona)
+            && !string.Equals(aIdentity, SCP_DataPaths.AnonymousQueueId, StringComparison.Ordinal))
         {
             string aArgPersona = iArgs.TryGetValue("persona", out var p) ? p.Trim() : "";
             if (aArgPersona.Length == 0)
-                iArgs["persona"] = iPersona.Trim();
-            else if (!string.Equals(aArgPersona, iPersona.Trim(), StringComparison.Ordinal))
-                iLog($"  ⚠ 身分宣告衝突：--persona {iPersona} vs --arg persona={aArgPersona} → 依 --arg 值送出。");
+                iArgs["persona"] = aIdentity;
+            else if (!string.Equals(aArgPersona, aIdentity, StringComparison.Ordinal))
+                iLog($"  ⚠ 身分宣告衝突：--persona {aIdentity} vs --arg persona={aArgPersona} → 依 --arg 值送出。");
         }
 
         string aCmdId = MakeId(iCmdType);
