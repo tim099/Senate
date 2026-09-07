@@ -2188,6 +2188,26 @@ public static class SelfTest
             aAny = true;
             aFiles.Sort((x, y) => File.GetLastWriteTimeUtc(y).CompareTo(File.GetLastWriteTimeUtc(x)));
 
+            // ⚠ 判定只認最新那章 ⇒ **先問它在不在本區的 seq 軸上**。
+            //   不問的話，一章別區產的實錄會讓整格變紅，而紅的理由跟「移植壞了」同形。
+            {
+                string aTop = File.ReadAllText(aFiles[0], Encoding.UTF8).Replace("\r\n", "\n");
+                if (TryParseChapterHeader(aTop, out _, out List<SCP_SeqRange> aTopRanges,
+                                          out _, out _, out _, out _, out _))
+                {
+                    string? aOut = WhyOutOfThisRegion(p.AgentCommandsRoot, aTopRanges);
+                    if (aOut != null)
+                    {
+                        yield return new CheckRow($"觀影章重出對拍（{p.Name}）",
+                            $"最新那章 `{Path.GetFileName(Path.GetDirectoryName(aFiles[0]))}/"
+                            + $"{Path.GetFileName(aFiles[0])}`：{aOut}"
+                            + $" ⇒ **跳過**（⛔ 不當成通過）。全庫共 {aFiles.Count} 章，本次一章都沒判",
+                            CheckResult.Skipped);
+                        continue;
+                    }
+                }
+            }
+
             int aMatch = 0, aDiff = 0, aSkip = 0;
             var aMatched = new List<string>();
             bool aNewestOk = false; string aNewestName = ""; string aNewestWhy = "";
@@ -2259,6 +2279,58 @@ public static class SelfTest
     //       （只驗「寫得成」的話，一個永遠覆寫的實作也會全綠）
     //    ③ 反向：拿一段與既有章重疊的區間 ⇒ **擋下**（一話不該有兩章）
     //    ④ 台帳：append-only ⇒ 行數只增不減，且既有行逐位元組不變
+    // ===========================================================
+    // 區塊職責：這一章的 seq 區間，**在這台機器的這個區裡有資料嗎**？
+    //
+    // 物理意義：酒館 seq 是**分區的**（跨區各自從 1 開始數）。而觀影出書那兩格對拍
+    //   取的是「`Books/` 底下最新那一章」—— 而 `Books` 是同一個 repo 被多專案掛著，
+    //   ⇒ **最新那章很可能是別區產的**，它的 seq 區間在本區的 tavern 裡根本不存在。
+    //
+    // 🩸 TASK-0138 QA 現場（basecamp 2026-09-07，這兩格紅燈的成因）：
+    //   最新那章 `watch-sluha-narodu/002.txt` 要 seq **18738–18779**，
+    //   而本區（LY／Florin）的 tavern 最大只到 **16541**。
+    //   ⇒ 撈到 0 則 ⇒ 重出是空的 ⇒ 「不符 31 章」。
+    //   **那不是移植壞了，是這個測試沒有帶區域定語。**
+    //
+    // ⚠ 而它最貴的地方在輸出：「沒撈到資料」與「比對不通過」印出來**是同一句話**
+    //   ——「不符 31 章」會被讀成「有 31 章壞了」，真相是「有 31 章我根本沒去比」。
+    //   ⇒ 這裡回 **Skipped 並把兩個數字印出來**，⛔ 不是 Pass 也不是 Fail。
+    //
+    // 數值影響：只掃檔名（`messages/<date>/<8 位 seq>.json`）取最大值，**不 parse 任何 JSON**。
+    // ===========================================================
+    static long MaxTavernSeq(string iDataRoot)
+    {
+        try
+        {
+            string aBase = SCP_WatchExport.MessagesDir(iDataRoot, "tavern");
+            if (!Directory.Exists(aBase)) return -1;
+            long aMax = -1;
+            foreach (string f in Directory.GetFiles(aBase, "*.json", SearchOption.AllDirectories))
+                if (long.TryParse(Path.GetFileNameWithoutExtension(f), out long s) && s > aMax) aMax = s;
+            return aMax;
+        }
+        catch { return -1; }
+    }
+
+    /// <summary>
+    /// 這批區間能不能在本區判定。回 <c>null</c>＝可以；回字串＝**不能判的理由**（拿去當 Skipped 的說明）。
+    /// </summary>
+    static string? WhyOutOfThisRegion(string iDataRoot, IReadOnlyList<SCP_SeqRange> iRanges)
+    {
+        long aMax = MaxTavernSeq(iDataRoot);
+        if (aMax < 0) return "本區的 `tavern` 一則訊息都沒有 ⇒ 沒有資料可判";
+        if (iRanges.Count == 0) return "表頭沒有可用的 seq 區間";
+        long aLo = long.MaxValue, aHi = long.MinValue;
+        foreach (var r in iRanges) { if (r.Lo < aLo) aLo = r.Lo; if (r.Hi > aHi) aHi = r.Hi; }
+        // ⚠ 判準刻意只擋「**整段**都在本區軸之外」這一種。
+        //   ⛔ 部分重疊仍然要去比 —— 把「只有一半資料」也跳掉的話，
+        //   真的缺資料的那種 bug 會跟著被藏起來，而那正是這個測試要抓的東西。
+        if (aLo > aMax)
+            return $"這一章要 seq {aLo}–{aHi}，而本區 `tavern` 最大只到 {aMax}"
+                   + " ⇒ **這批資料不在這一區**（酒館 seq 分區，跨區各自從 1 數）";
+        return null;
+    }
+
     static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
@@ -2289,6 +2361,15 @@ public static class SelfTest
             {
                 yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
                     $"受測體 `{Path.GetFileName(aPick)}` 的表頭解析不出來 ⇒ **跳過**（⛔ 不當成通過）",
+                    CheckResult.Skipped);
+                continue;
+            }
+
+            string? aOut = WhyOutOfThisRegion(aSrc, aRanges);
+            if (aOut != null)
+            {
+                yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
+                    $"受測體 `{Path.GetFileName(aPick)}`：{aOut} ⇒ **跳過**（⛔ 不當成通過）",
                     CheckResult.Skipped);
                 continue;
             }

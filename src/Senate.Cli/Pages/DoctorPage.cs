@@ -5,6 +5,7 @@
 //           ③ 沒有視窗也能驗收 UI —— 文字輸出可以 diff、可以貼給人看
 // 數值影響：唯讀。它不改任何設定，也不動任何 repo 的 index。
 using Senate.Core;
+using SCP.Core.Git;
 using SCP.Core.Gui;
 
 namespace Senate.Cli.Pages;
@@ -62,6 +63,14 @@ public sealed class DoctorPage : SCP_GuiToolPage
                 string aBuild = ServerHost.BuildId;
                 g.TableRow("本執行檔 build（AssemblyInformationalVersion）", aBuild,
                     aBuild == "unversioned" ? "· Debug" : "✓");
+                // ⚠ 上面那一列只回答「我是哪一顆」；**它不會說這顆是不是舊的**。
+                // 🩸 TASK-0138 QA（basecamp 2026-09-07）指出的那半：
+                //   知道要懷疑的人可以自己拿它去比 HEAD —— 而這張單存在的理由正是
+                //   **人不會想到要懷疑**（summit 09-06 那天就是不知道要問）。⇒ 那一步改成工具自己做。
+                // ⛔ 落後**不擋任何事**（原單拍板：這一格要的是看得見，不是攔下來）——
+                //   落後常常是合法的（別人剛推了不相干的 commit）。
+                (string aVs, string aVsVerdict) = BuildVsHead(aBuild);
+                g.TableRow("　↳ 對照目前 HEAD", aVs, aVsVerdict);
                 g.TableRow(".NET SDK（dotnet --version）", m_Env.DotnetSdkVersion ?? "(問不到)",
                     m_Env.DotnetSdkVersion == null ? "✗" : "✓");
                 g.TableRow("執行期（Environment.Version）", m_Env.RuntimeVersion, "·");
@@ -137,4 +146,76 @@ public sealed class DoctorPage : SCP_GuiToolPage
         ProbeState.NotGitRepo => "非 git repo",
         _ => "未設定",
     };
+
+    // ===========================================================
+    // 區塊職責：把 build stamp 的 SHA 拿去跟**本機這個 repo 的 HEAD** 比，回 (讀數, 判定)。
+    //
+    // 物理意義：TASK-0138 的建議 (B)。上一列說「我是哪一顆」，這一列說「那一顆是不是舊的」。
+    //
+    // ⚠ 五種答案**刻意各自不同形** —— 這一格最貴的錯是把「我不知道」印成「沒落後」：
+    //   ① `unversioned`（Debug 組建）      ⇒ 沒有 SHA 可比，判定 `·`
+    //   ② 找不到 repo（exe 被複製到別處）  ⇒ 「問不到」，判定 `·`　⛔ 不是 ✓
+    //   ③ 那顆 SHA 不在這個 repo 裡        ⇒ 「不是這個 repo 建的」，判定 `·`
+    //   ④ ＝ HEAD                          ⇒ ✓
+    //   ⑤ 落後 N 顆                        ⇒ ⚠（**只標記，不擋**）
+    //
+    // 數值影響：純讀（`git rev-parse` / `cat-file -e` / `rev-list --count`），不寫任何檔。
+    //   repo 位置由**本執行檔所在目錄往上找**（最多五層）—— exe 通常住在 `<repo>/publish/`。
+    //   ⛔ 不寫死路徑：寫死的那一行在別台機器上會安靜地指到不存在的地方。
+    // ===========================================================
+    static (string Reading, string Verdict) BuildVsHead(string iBuildId)
+    {
+        if (iBuildId == "unversioned")
+            return ("Debug 組建沒有嵌 SHA ⇒ 沒有東西可比（⛔ 這不是「沒落後」）", "·");
+
+        // stamp 形狀是 `<sha>[-dirty].<UTC>`；取第一個 `.` 之前、去掉 `-dirty`。
+        string aSha = iBuildId.Split('.')[0];
+        bool aDirty = aSha.EndsWith("-dirty", StringComparison.Ordinal);
+        if (aDirty) aSha = aSha.Substring(0, aSha.Length - "-dirty".Length);
+        if (aSha.Length == 0)
+            return ($"stamp `{iBuildId}` 解不出 SHA ⇒ 不猜", "·");
+
+        string? aRepo = FindRepoUpwards(AppContext.BaseDirectory, 5);
+        if (aRepo == null)
+            return ("找不到本執行檔所屬的 git repo（被複製到別處？）⇒ **問不到**，不是沒落後", "·");
+
+        var aHeadR = SCP_Git.Run(aRepo, "rev-parse", "--short", "HEAD");
+        if (!aHeadR.Ok)
+            return ($"問不到 HEAD（{SCP_Git.ReasonLine(aHeadR.StdErr)}）", "·");
+        string aHead = SCP_Git.FirstLine(aHeadR.StdOut);
+
+        // 那顆 SHA 在不在這個 repo 裡 —— 不在就代表這顆 exe 不是這裡建的，
+        // ⛔ 那時候比「落後幾顆」是拿兩條不同的歷史相減，答案沒有意義。
+        var aHasR = SCP_Git.Run(aRepo, "cat-file", "-e", aSha + "^{commit}");
+        if (!aHasR.Ok)
+            return ($"`{aSha}` 不在這個 repo（{Path.GetFileName(aRepo)}）裡 ⇒ 不是這裡建的，無法比較", "·");
+
+        if (string.Equals(aSha, aHead, StringComparison.OrdinalIgnoreCase))
+            return ($"＝目前 HEAD `{aHead}`" + (aDirty ? "（build 當時工作區是髒的）" : ""), "✓");
+
+        var aCntR = SCP_Git.Run(aRepo, "rev-list", "--count", aSha + "..HEAD");
+        string aCnt = aCntR.Ok ? SCP_Git.FirstLine(aCntR.StdOut) : "?";
+        // 反方向也要說得出來：HEAD 在那顆之前（別人 reset 過／checkout 到舊點）也是「不一致」，
+        // 而它跟「落後」的處置不同 —— 前者要問發生什麼事，後者只要重 build。
+        var aAheadR = SCP_Git.Run(aRepo, "rev-list", "--count", "HEAD.." + aSha);
+        string aAhead = aAheadR.Ok ? SCP_Git.FirstLine(aAheadR.StdOut) : "?";
+        if (aCnt == "0" && aAhead != "0")
+            return ($"這顆 exe **比 HEAD 新** {aAhead} 顆（HEAD 是 `{aHead}`）—— 工作區被切回舊點？", "⚠");
+        return ($"**落後 {aCnt} 顆**：build `{aSha}` → HEAD `{aHead}`"
+                + (aDirty ? "（且 build 當時工作區是髒的）" : "")
+                + " ⇒ 要最新行為請重 build（⛔ 落後本身不是錯）", "⚠");
+    }
+
+    /// <summary>從 <paramref name="iStart"/> 往上找第一個 git repo；找不到回 null（⛔ 不回空字串當「找到了」）。</summary>
+    static string? FindRepoUpwards(string iStart, int iMaxLevels)
+    {
+        try
+        {
+            var aDir = new DirectoryInfo(iStart);
+            for (int i = 0; i <= iMaxLevels && aDir != null; ++i, aDir = aDir.Parent)
+                if (SCP_Git.IsRepo(aDir.FullName)) return aDir.FullName;
+        }
+        catch { /* 路徑問不到就當找不到 —— 這一格回 null 比丟例外有用 */ }
+        return null;
+    }
 }
