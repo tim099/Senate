@@ -47,6 +47,21 @@ public sealed class DoctorPage : SCP_GuiToolPage
         {
             using (g.Table("項目", "讀數", "判定"))
             {
+                // ⚠ 這一列排最前面（TASK-0138）：doctor 該回答的第一個問題是
+                //   「**你現在跑的是哪一顆**」，而不是「這台機器裝了什麼」。
+                // 🩸 為什麼補它：2026-09-06 @basecamp 修好一個缺陷、@summit 回驗，
+                //   而活體讀數**沒有跟著變** —— 那一刻「修法沒生效」與「二進位還沒重建」
+                //   在讀數上完全同形。分開它們的是去 stat `senate.exe` 的 mtime 再跟 commit 時間比，
+                //   而那個量法**不在任何指路牌上**（`senate --version` 還回「認不得的指令」）。
+                //   ⇒ 代價落在下一個回驗的人身上，所以擋在這裡。
+                // 📌 值不是新造的：`ServerHost.BuildId` 早就在（AssemblyInformationalVersion，
+                //   由 build.sh／build.ps1 在 publish 時塞入 git SHA＋時間）。它讀的是
+                //   **本執行檔自己**，跟 Server 無關 —— 在此之前它只在 Server 卡片上露過臉。
+                // ⚠ `unversioned` 不是壞掉，是**定語**：`dotnet run`（Debug）就會是它，
+                //   而「Debug 在跑」正是最需要被看見的那一種 ⇒ 判定欄標 `· Debug` 不標 ✗。
+                string aBuild = ServerHost.BuildId;
+                g.TableRow("本執行檔 build（AssemblyInformationalVersion）", aBuild,
+                    aBuild == "unversioned" ? "· Debug" : "✓");
                 g.TableRow(".NET SDK（dotnet --version）", m_Env.DotnetSdkVersion ?? "(問不到)",
                     m_Env.DotnetSdkVersion == null ? "✗" : "✓");
                 g.TableRow("執行期（Environment.Version）", m_Env.RuntimeVersion, "·");

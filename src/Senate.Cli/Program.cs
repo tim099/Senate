@@ -140,6 +140,12 @@ public static class Program
                 "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
                 "server" => ServerCommand.Run(aRepoRoot, iArgs),   // 常駐 Server 生命週期（TASK-0102；前景、永駐、手動啟動）
+                // ⚠ `--version` 是**第一個會被打**的字（TASK-0138），而它原本回「認不得的指令」
+                //   ⇒ 想確認「我手上這顆是哪一顆」的人，在最需要那個答案的那一刻被推去猜。
+                //   🩸 2026-09-06 實撞：修法落地後回驗、活體沒變，而「修法沒生效」與
+                //   「二進位沒重建」在讀數上同形；分開它們得去 stat exe 的 mtime 跟 commit 時間比。
+                //   📌 doctor 那一列仍在（它是環境檢查的一部分）；這裡是給**只想問這一題**的人。
+                "--version" or "-v" or "version" => PrintVersion(),
                 "--help" or "-h" or "help" => Usage(0),
                 _ => Usage(2, $"認不得的指令 '{aCmd}'"),
             };
@@ -1209,6 +1215,22 @@ public static class Program
         return false;
     }
 
+    /// <summary>
+    /// `senate --version` —— 印**這顆執行檔自己**的 build id（TASK-0138）。
+    /// <para>值來自 <see cref="ServerHost.BuildId"/>（AssemblyInformationalVersion，
+    /// publish 時由 build 腳本塞入 git SHA＋時間）。⚠ 它跟 Server 無關，只是屬性住在那個類別裡。</para>
+    /// <para>⚠ `unversioned` ＝ `dotnet run`（Debug）在跑 —— 那是**定語不是錯誤**，
+    /// 所以照樣 exit 0；把它印出來正是這一支存在的理由。</para>
+    /// </summary>
+    static int PrintVersion()
+    {
+        string aBuild = ServerHost.BuildId;
+        Console.WriteLine(aBuild == "unversioned"
+            ? "senate build = unversioned（`dotnet run` 的 Debug 組建，不是 publish 出來的 exe）"
+            : $"senate build = {aBuild}");
+        return 0;
+    }
+
     static int Usage(int iCode, string? iError = null)
     {
         if (iError != null) Console.Error.WriteLine($"✗ {iError}");
@@ -1216,6 +1238,7 @@ public static class Program
             senate <command>
               （不給指令 ＝ doctor；**從檔案總管雙擊 ＝ 直接開 GUI 視窗**）
 
+              --version           印這顆執行檔的 build id（publish 時塞入的 git SHA＋時間；`dotnet run` 印 unversioned）
               init                建立 SenateData/config/senate.local.json（樣板：同目錄的 senate.local.example.json；已存在則不覆寫）
               doctor              印出環境與各專案的讀數（唯讀）。exit 1 ＝ 有項目不通過
               ui                  把後台頁面輸出成純文字

@@ -16,6 +16,11 @@ using SCP.Core.Skills;
 using SCP.Core.Entry;
 using SCP.Core.Letters;
 using SCP.Core.Reflect;
+using System.Text.RegularExpressions;
+using SCP.Core.Watch;
+using SCP.Core.Books;
+using SCP.Core.Cmd;
+using System.Globalization;
 
 using Senate.Cli.Pages;
 
@@ -67,6 +72,12 @@ public static class SelfTest
         aRows.AddRange(RealFileRoundTrip(iProjects));
         aRows.AddRange(RealPersonaScan(iProjects));
         aRows.AddRange(RealActivitySessionRoundTrip(iProjects));
+        aRows.AddRange(RealWatchLedgerRead(iProjects));
+        aRows.AddRange(RealWatchResolveFingerprint(iProjects));
+        aRows.AddRange(RealWatchChapterRebuild(iProjects));
+        aRows.AddRange(WatchWriteCleanRoom(iProjects));
+        aRows.Add(BookAddCleanRoom());
+        aRows.Add(BookWritingFilter());
         return aRows;
     }
 
@@ -194,6 +205,210 @@ public static class SelfTest
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
+    }
+
+    // 區塊職責：`cmd book op=add` 的產物，與 `library.py add-book` 的**真實輸出**逐位元組對拍。
+    // 物理意義：下面那段 aWant **是 2026-09-06 從 python 真跑出來的檔抄回來的**（只有日期那格
+    //          換成今天，因為 `_today()` 本來就是當日）—— 它是**對照組**，不是「我期望它長這樣」。
+    //          兩份實作各自寫同一個 store，漂掉的症狀是「兩邊都成功、內容也對，而位元組不同」，
+    //          沒有任何一層會喊 —— TASK-0143 第五刀就是被這個形狀咬的。
+    // 數值影響：純暫存目錄，⛔ 不碰任何真 store。四格一起驗：
+    //          ① 逐位元組相同（含 **CRLF** 與 2 空格縮排、`characters: []` 不展開）
+    //          ② `status` 覆寫成 `writing` 後**留在原位**（python dict 的插入序保證）
+    //          ③ 別名去重且保序
+    //          ④ 反向對照：同一本再建一次要被擋（exit 1）且**檔案逐位元組沒被動過**
+    static CheckRow BookAddCleanRoom()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bookadd_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "BookNotes"));
+            var aCmd = new SCP_Cmd_Book();
+
+            // ⭐ 走 Bind 不自己塞值 —— 順帶讓這格測試也吃到 ArgSpec 預檢：
+            //   我在測試裡打錯參數名會**當場炸**，不會靜默取預設值然後綠著過。
+            SCP_CmdArgs Args(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return a;
+            }
+
+            SCP_CmdResult aR1 = aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp,
+                ["op"] = "add",
+                ["title"] = "深海的對拍錄 Vol.2",
+                ["title_original"] = "Abyssal Recheck",
+                ["author"] = "gura",
+                // 刻意讓第一個別名與 title 重複 ⇒ 驗去重；分隔符 `;` 與 `|` 各出現一次。
+                ["aliases"] = "深海的對拍錄 Vol.2;鯊魚札記|對拍錄",
+                ["origin"] = "authored",
+                ["author_persona"] = "gura",
+            }));
+
+            string aOut = Path.Combine(aTmp, "BookNotes", "深海的對拍錄-vol-2", "book.json");
+            if (aR1.ExitCode != 0 || !File.Exists(aOut))
+                return new CheckRow("add-book clean-room（對照 library.py 真產物）",
+                    $"建檔失敗：exit={aR1.ExitCode}、檔案存在={File.Exists(aOut)}", CheckResult.Fail);
+
+            string aToday = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string aWant = string.Join("\r\n", new[]
+            {
+                "{",
+                "  \"id\": \"深海的對拍錄-vol-2\",",
+                "  \"title\": \"深海的對拍錄 Vol.2\",",
+                "  \"title_original\": \"Abyssal Recheck\",",
+                "  \"author\": \"gura\",",
+                "  \"aliases\": [",
+                "    \"深海的對拍錄 Vol.2\",",
+                "    \"鯊魚札記\",",
+                "    \"對拍錄\",",
+                "    \"Abyssal Recheck\"",
+                "  ],",
+                "  \"reader_persona\": \"gura\",",
+                "  \"status\": \"writing\",",
+                "  \"progress\": {",
+                "    \"current_chapter\": 0,",
+                "    \"last_read\": \"" + aToday + "\"",
+                "  },",
+                "  \"characters\": [],",
+                "  \"origin\": \"authored\",",
+                "  \"author_persona\": \"gura\",",
+                "  \"publish_status\": \"draft\"",
+                "}",
+                "",
+            });
+
+            byte[] aGot = File.ReadAllBytes(aOut);
+            bool aSame = ByteEqual(aGot, new UTF8Encoding(false).GetBytes(aWant));
+
+            // ── ④ 反向對照：再建一次要被擋，而且**不准動到既有檔** ──
+            SCP_CmdResult aR2 = aCmd.Execute(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp,
+                ["op"] = "add",
+                ["id"] = "深海的對拍錄-vol-2",
+                ["title"] = "覆寫用的假書名",
+                ["aliases"] = "覆寫用的假書名",
+            }));
+            bool aGuarded = aR2.ExitCode == 1 && ByteEqual(File.ReadAllBytes(aOut), aGot);
+
+            string aReading =
+                $"逐位元組對 python 真產物：{(aSame ? "相同" : "**不同**")}（{aGot.Length} bytes、"
+                + $"CRLF {CountCrLf(aGot)} 個／換行 {CountLf(aGot)} 個）"
+                + $"；重建守衛：{(aGuarded ? $"擋下（exit {aR2.ExitCode}）且既有檔未被動" : "**沒擋住或檔被動了**")}";
+
+            return new CheckRow("add-book clean-room（對照 library.py 真產物）", aReading,
+                aSame && aGuarded ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e)
+        {
+            return new CheckRow("add-book clean-room（對照 library.py 真產物）",
+                "例外：" + e.Message, CheckResult.Fail);
+        }
+        finally
+        {
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ }
+        }
+    }
+
+    // 區塊職責：`op=writing`／brief §6.7 的篩選 —— **驗該被排除的有沒有真的不見**。
+    // 物理意義：只驗「有列出來」驗不到東西：一個永遠回全部的實作也會通過。
+    //          所以這裡放三本**應該被排除**的（已發布／imported／沒有 origin），
+    //          它們有沒有消失才是這一格的讀數。
+    // 數值影響：純暫存目錄，⛔ 不碰真 store。另驗「0 本」與「未量」**必須是兩個不同的結局** ——
+    //          🩸 那兩件事在畫面上同形，而人往那個空格裡填的一定是「沒事」。
+    static CheckRow BookWritingFilter()
+    {
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bookwrite_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aCmd = new SCP_Cmd_Book();
+            SCP_CmdArgs Args(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return a;
+            }
+
+            Directory.CreateDirectory(Path.Combine(aTmp, "BookNotes"));
+            void Add(string iId, string iOrigin, string iPersona)
+            {
+                var aRaw = new Dictionary<string, string>
+                {
+                    ["data_root"] = aTmp, ["op"] = "add", ["id"] = iId,
+                    ["title"] = iId, ["aliases"] = iId,
+                };
+                if (iOrigin.Length > 0) aRaw["origin"] = iOrigin;
+                if (iPersona.Length > 0) aRaw["author_persona"] = iPersona;
+                aCmd.Execute(Args(aRaw));
+            }
+
+            Add("a-writing", "authored", "basecamp");    // ← 只有這本該出現
+            Add("b-published", "authored", "basecamp");  // 下一步改成 published
+            Add("c-imported", "imported", "");
+            Add("d-noorigin", "", "");
+
+            // 改成已發布 —— 直接改檔：這裡是暫存根，而「發布」不是 add 的職責。
+            string aBJson = Path.Combine(aTmp, "BookNotes", "b-published", "book.json");
+            File.WriteAllText(aBJson,
+                File.ReadAllText(aBJson, Encoding.UTF8).Replace("\"draft\"", "\"published\""),
+                new UTF8Encoding(false));
+
+            if (!SCP_BookStore.TryListWriting(aTmp, null, out List<SCP_AuthoredBook> aAll, out _))
+                return new CheckRow("寫到一半的書：篩選 ＋ 未量／零本分家",
+                    "四本都建好了卻讀不到書庫", CheckResult.Fail);
+
+            var aIds = new List<string>();
+            foreach (SCP_AuthoredBook aBook in aAll) aIds.Add(aBook.Id);
+            aIds.Sort(StringComparer.Ordinal);
+            bool aOnlyOne = aIds.Count == 1 && aIds[0] == "a-writing";
+
+            // persona 篩選：別人的名字要回 0 本（⛔ 不是回全部）
+            SCP_BookStore.TryListWriting(aTmp, "someone-else", out List<SCP_AuthoredBook> aOther, out _);
+
+            // 「0 本」與「未量」必須分得開
+            string aEmpty = Path.Combine(aTmp, "empty");
+            Directory.CreateDirectory(Path.Combine(aEmpty, "BookNotes"));
+            bool aZeroOk = SCP_BookStore.TryListWriting(aEmpty, null, out List<SCP_AuthoredBook> aZero, out _)
+                           && aZero.Count == 0;
+            bool aUnmeasured = !SCP_BookStore.TryListWriting(Path.Combine(aTmp, "no-such-root"), null,
+                                                            out _, out string aWhy)
+                               && aWhy.Length > 0;
+
+            string aReading =
+                $"四本進 ⇒ 列出 [{string.Join(" , ", aIds)}]"
+                + $"（該排除的 b-published／c-imported／d-noorigin {(aOnlyOne ? "**都不見了**" : "**沒排乾淨**")}）"
+                + $"；別人的 persona ⇒ {aOther.Count} 本"
+                + $"；空書庫 ⇒ {(aZeroOk ? "0 本且 ok=true" : "**不是 0**")}"
+                + $"；根不存在 ⇒ {(aUnmeasured ? "ok=false 且說得出原因" : "**沒有分家**")}";
+
+            return new CheckRow("寫到一半的書：篩選 ＋ 未量／零本分家", aReading,
+                aOnlyOne && aOther.Count == 0 && aZeroOk && aUnmeasured ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e)
+        {
+            return new CheckRow("寫到一半的書：篩選 ＋ 未量／零本分家", "例外：" + e.Message, CheckResult.Fail);
+        }
+        finally
+        {
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ }
+        }
+    }
+
+    static int CountCrLf(byte[] iBytes)
+    {
+        int n = 0;
+        for (int i = 1; i < iBytes.Length; ++i) if (iBytes[i] == (byte)'\n' && iBytes[i - 1] == (byte)'\r') ++n;
+        return n;
+    }
+
+    static int CountLf(byte[] iBytes)
+    {
+        int n = 0;
+        foreach (byte b in iBytes) if (b == (byte)'\n') ++n;
+        return n;
     }
 
     // 區塊職責：Server 端寫的 result 檔，CLI 端（AgentCmdClient）讀得回同樣的東西 —— 協議第四端的對拍。
@@ -1837,6 +2052,417 @@ public static class SelfTest
     // 物理意義：這些檔是 Unity 那側寫的（TASK-0127 之後兩邊共用同一份）。
     //          「能不能讀」不是單元測試問題，是拿真檔案去試的問題 —— 找不到樣本回**跳過**，不是通過。
     // ⚠ 純讀：複製到暫存根再寫，**絕不碰原檔**。
+    // 區塊職責：拿**真的**實錄台帳跑一次 C# 版讀取（TASK-0143 ⑤ 的移植第一刀）。
+    // 物理意義：這一層是從 `library.py` 移過來的，而移植的判準是「**行為一樣**」不是「編得過」。
+    //          ⇒ 本格取的是**異源讀數**：同一份 `sessions_log.jsonl`，C# 自己數一次，
+    //            拿去跟 python `_sessions_log_state()` 的數字並排（python 那半在單子留言上）。
+    // 🩸 為什麼要驗「export 事件不會憑空造出一場」：那是移植時最容易寫錯的一格 ——
+    //    python 是 `if sid in state`，照抄成 `state[sid] = ...` 就會讓孤兒事件長出一個沒有區間的場，
+    //    而它在計數上跟真的場**完全同形**。
+    // ⚠ 純讀：一個位元組都不寫（AppendExportEvents **不在本格**，它要寫真台帳，不能拿真檔驗）。
+    // 區塊職責：拿**台帳裡的每一場**跑一次 C# 版反查，壓成一個指紋（md5）跟 python 版對拍。
+    // 物理意義：這一格是移植的**全量**驗收 —— 不是抽樣、不是計數，是「103 場逐場逐欄位」。
+    //          規範格式兩邊寫死成同一句：`sid|media|lib|chapter|title|work|R:區間|S:場次`，
+    //          任何一欄漂掉、任何一場的區間或場次**順序**不同，md5 就不會一樣。
+    // ⭐ 為什麼用指紋而不是逐筆比：指紋讓「哪裡不一樣」變成一個**必須去查**的問題，
+    //   而逐筆比很容易被寫成「差異只有 N 筆，看起來還好」。⇒ 它只有兩種答案。
+    // ⚠ 純讀。反查一個位元組都不寫（寫入端是 AppendExportEvents，不在本格）。
+    static IEnumerable<CheckRow> RealWatchResolveFingerprint(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (!File.Exists(SCP_WatchLedger.SessionsLogPath(p.AgentCommandsRoot))) continue;
+            aAny = true;
+
+            var aWarn = new List<string>();
+            var aState = SCP_WatchLedger.SessionsLogState(p.AgentCommandsRoot, aWarn);
+            // 哨兵值由**宿主**供給（本層不自己讀設定，同 SCP_WakeBrief 對 region 的契約）。
+            string aMarker = "##None##";
+            string aSettings = Path.Combine(p.AgentCommandsRoot, "StreamWatch", "settings.json");
+            if (File.Exists(aSettings))
+            {
+                try
+                {
+                    string aV = SCP_JsonData.Parse(File.ReadAllText(aSettings, Encoding.UTF8))
+                                            .GetString("untitled_marker", "").Trim();
+                    if (aV.Length > 0) aMarker = aV;
+                }
+                catch { /* 讀不動 ⇒ 用地板值；python 那側同一條退路 */ }
+            }
+
+            var aSids = new List<string>(aState.Keys);
+            aSids.Sort(StringComparer.Ordinal);
+            var aSb = new StringBuilder();
+            int aOk = 0, aErr = 0;
+            for (int i = 0; i < aSids.Count; ++i)
+            {
+                var aLines = new List<string>();
+                var r = SCP_WatchResolve.FromSession(p.AgentCommandsRoot, aSids[i], null, aMarker, aLines);
+                if (i > 0) aSb.Append('\n');
+                if (r.Error.Length > 0) { ++aErr; aSb.Append(aSids[i]).Append("|ERR"); continue; }
+                ++aOk;
+                var aRng = new StringBuilder();
+                for (int k = 0; k < r.Ranges.Count; ++k)
+                { if (k > 0) aRng.Append(','); aRng.Append(r.Ranges[k].ToString()); }
+                aSb.Append(aSids[i]).Append('|').Append(r.Media).Append('|').Append(r.LibraryMediaId)
+                   .Append('|').Append(r.Chapter).Append('|').Append(r.LedgerTitle)
+                   .Append('|').Append(r.LedgerWorkTitle).Append("|R:").Append(aRng)
+                   .Append("|S:").Append(string.Join(",", r.Sessions));
+            }
+            string aMd5;
+            using (var aHash = System.Security.Cryptography.MD5.Create())
+            {
+                byte[] aBytes = aHash.ComputeHash(new UTF8Encoding(false).GetBytes(aSb.ToString()));
+                var aHex = new StringBuilder(32);
+                foreach (byte b in aBytes) aHex.Append(b.ToString("x2"));
+                aMd5 = aHex.ToString();
+            }
+
+            // ⚠ 這個常數是**python 那側算出來的**（`_resolve_from_session` 全量，2026-09-06）。
+            //   ⛔ 它不是「期望值」是**對照組**：哪天 python 那側改了行為，這一格會紅 ——
+            //   而那正是我要的：兩個實作分岔時，我要它當場喊，不是等產物出錯才發現。
+            // 對照組更新紀錄（⚠ 每次更新都要寫清楚**這個值是從哪一側算來的**）：
+            //   2026-09-06 早　103 場　`5897bf6df16cf9a2b10b2fca29ebdef2`
+            //   2026-09-06 晚　108 場　`9719f72abe60f95558194701df487ee3`
+            //     ← 當晚觀影把台帳推到 108 場，**在 python 那側對同一份台帳重算**（`_resolve_from_session` 全量）
+            //       ⇒ 兩側仍然逐場逐欄位相同。⛔ 不是把 C# 的值抄過來，那樣對照組就變成自己抄自己。
+            const string aPythonMd5 = "9719f72abe60f95558194701df487ee3";
+            const int aPythonSessions = 108;   // ⭐ 對照組是在**這個場次數**上算出來的
+
+            // 🩸 寫下它的**當天晚上**就踩到（2026-09-06）：一場觀影把台帳推到 108 場，
+            //   這一格立刻紅 —— 而它紅的原因不是兩個實作分岔，是**資料集長大了**。
+            //   ⇒ 一個「每次有人看片就會紅」的測試，最後會被所有人忽略，
+            //     而被忽略的紅燈跟綠燈一樣沒有攔截力。
+            //   ⇒ 場次數對不上時回 **Skipped（未量）**，⛔ 不是 Pass 也不是 Fail：
+            //     「這次沒得比」與「比過而且一樣」必須長得不一樣。
+            if (aSids.Count != aPythonSessions)
+            {
+                yield return new CheckRow($"觀影反查全量對拍（{p.Name}）",
+                    $"場次 **{aSids.Count}**（解得出 {aOk}／錯 {aErr}）／C# md5 `{aMd5}`"
+                    + $"　⚠ **對照組是 {aPythonSessions} 場時算的（2026-09-06），場次數已變 ⇒ 這次沒得比**"
+                    + "　（要恢復對拍：在 python 那側對**同一份台帳**重算一次指紋再更新這兩個常數；"
+                    + "⛔ 不要只把 md5 改成 C# 現在算出來的值 —— 那會讓對照組變成自己抄自己）",
+                    CheckResult.Skipped);
+                continue;
+            }
+
+            bool aMatch = string.Equals(aMd5, aPythonMd5, StringComparison.Ordinal);
+            yield return new CheckRow($"觀影反查全量對拍（{p.Name}）",
+                $"場次 **{aSids.Count}**（解得出 {aOk}／錯 {aErr}）／C# md5 `{aMd5}`"
+                + $"／python md5 `{aPythonMd5}` ⇒ **逐場逐欄位相同={aMatch}**"
+                + "　（規範格式 `sid|media|lib|chapter|title|work|R:區間|S:場次`，"
+                + "任一欄或任一順序漂掉都不會同號）",
+                aMatch && aOk > 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        if (!aAny)
+            yield return new CheckRow("觀影反查全量對拍",
+                "找不到任何專案的 `StreamWatch/sessions_log.jsonl` ⇒ **跳過**（⛔ 不當成通過）",
+                CheckResult.Skipped);
+    }
+
+    // 區塊職責：把**磁碟上真的章**用 C# 版重出一次，逐位元組比。
+    // 物理意義：章的表頭是機械產物，它自己就寫著當初的參數（媒材／區間／章名／作品／場次／備註）
+    //          ⇒ 拿它當輸入重跑，就是一次**不需要任何人記得參數**的重現實驗。
+    // ⭐ 判準只認**最新那一章**：舊章可能是更早版本的 python 排出來的，
+    //   它們不符不代表移植錯（那是「舊快照」不是「壞掉」）。⇒ 其餘章只報數字不判定。
+    // ⚠ 純讀：重出的結果只留在記憶體裡比對，**一個位元組都不寫回 Books/**。
+    static IEnumerable<CheckRow> RealWatchChapterRebuild(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aBooks = Path.Combine(p.AgentCommandsRoot, "Books");
+            if (!Directory.Exists(aBooks)) continue;
+
+            var aFiles = new List<string>();
+            foreach (string aDir in Directory.GetDirectories(aBooks, "watch-*"))
+                foreach (string aF in Directory.GetFiles(aDir, "???.txt"))
+                {
+                    string aStem = Path.GetFileNameWithoutExtension(aF);
+                    if (aStem.Length == 3 && int.TryParse(aStem, out _)) aFiles.Add(aF);
+                }
+            if (aFiles.Count == 0) continue;
+            aAny = true;
+            aFiles.Sort((x, y) => File.GetLastWriteTimeUtc(y).CompareTo(File.GetLastWriteTimeUtc(x)));
+
+            int aMatch = 0, aDiff = 0, aSkip = 0;
+            var aMatched = new List<string>();
+            bool aNewestOk = false; string aNewestName = ""; string aNewestWhy = "";
+            for (int i = 0; i < aFiles.Count; ++i)
+            {
+                string aF = aFiles[i];
+                string aWant = File.ReadAllText(aF, Encoding.UTF8).Replace("\r\n", "\n");
+                if (!TryParseChapterHeader(aWant, out string aMedia, out List<SCP_SeqRange> aRanges,
+                                           out string aTitle, out string aSub, out string aWork,
+                                           out string aSessions, out string aNote))
+                { ++aSkip; if (i == 0) { aNewestName = Path.GetFileName(aF); aNewestWhy = "表頭解析不出來"; } continue; }
+
+                var aWarn = new List<string>();
+                var aCh = SCP_WatchExport.BuildChapter(
+                    p.AgentCommandsRoot, "tavern", aRanges,
+                    Path.GetFileNameWithoutExtension(aF), aMedia, aTitle, aSub, aWork, aSessions, aNote,
+                    null, null, iAllowZeroStripped: true, aWarn);
+                bool aSame = aCh.Error.Length == 0
+                             && string.Equals(aCh.Text, aWant, StringComparison.Ordinal);
+                if (aSame)
+                {
+                    ++aMatch;
+                    // ⚠ 印出**是哪幾章**符合 —— 只印數字的話，「哪幾章」永遠是讀的人自己推的，
+                    //   而推出來的相關性跟量出來的長得一樣。
+                    aMatched.Add(Path.GetFileName(Path.GetDirectoryName(aF)) + "/"
+                                 + Path.GetFileName(aF) + "@"
+                                 + File.GetLastWriteTime(aF).ToString("MM-dd HH:mm"));
+                }
+                else ++aDiff;
+                if (i == 0)
+                {
+                    aNewestOk = aSame;
+                    aNewestName = Path.GetFileName(Path.GetDirectoryName(aF)) + "/" + Path.GetFileName(aF);
+                    if (!aSame)
+                        aNewestWhy = aCh.Error.Length > 0 ? aCh.Error
+                                     : $"長度 {aCh.Text.Length} vs {aWant.Length}";
+                }
+            }
+            yield return new CheckRow($"觀影章重出對拍（{p.Name}）",
+                $"**最新那章 `{aNewestName}` 逐位元組相同={aNewestOk}**"
+                + (aNewestOk ? "" : $"（{aNewestWhy}）")
+                + $"／全部 {aFiles.Count} 章：符合 {aMatch}／不符 {aDiff}／表頭解不出 {aSkip}"
+                + "　符合的是：" + (aMatched.Count > 0 ? string.Join("、", aMatched) : "（無）")
+                + "　⚠ 只判定最新那章 —— **舊章可能是更早版本的 python 排的**，"
+                + "它們不符是「舊快照」不是「移植壞了」（⛔ 也不代表它們一定沒事，那是未量）",
+                aNewestOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        if (!aAny)
+            yield return new CheckRow("觀影章重出對拍",
+                "找不到任何 `Books/watch-*/NNN.txt` ⇒ **跳過**（⛔ 不當成通過）", CheckResult.Skipped);
+    }
+
+    /// <summary>從章的表頭把當初的參數讀回來。⛔ 解不出就回 false，不猜。</summary>
+    // ⛔ 本檔曾自己維護一份 `TryParseChapterHeader` —— 已搬進 `SCP_WatchExport`（TASK-0143）。
+    //   理由：`cmd watch --arg op=audit` 也要用它，而兩份各自維護的解析器＝兩個會各自漂的真相源，
+   //   漂掉的症狀是「selftest 說 5 章符合、audit 說 7 章符合」，**兩邊都不報錯**。
+    static bool TryParseChapterHeader(string iText, out string oMedia, out List<SCP_SeqRange> oRanges,
+                                      out string oTitle, out string oSubtitle, out string oWork,
+                                      out string oSessions, out string oNote)
+        => SCP_WatchExport.TryParseChapterHeader(iText, out oMedia, out oRanges, out oTitle,
+                                                 out oSubtitle, out oWork, out oSessions, out oNote);
+
+    // 區塊職責：章的**落檔那一半**（守衛＋寫檔＋回讀＋台帳回填）在 **clean-room** 跑一次。
+    // 物理意義：這一層會寫東西 ⇒ ⛔ 不可以拿真資料根驗。
+    //          把需要的輸入複製到暫存根（只複製用得到的那幾個 seq 檔），在那裡寫、在那裡比。
+    // ⭐ 四格，其中**兩格是反向對照**：
+    //    ① 正向：重出真章 ⇒ 與真產物逐位元組相同
+    //    ② 反向：同一章再跑一次而不給 force ⇒ **擋下且檔案 md5 不變**
+    //       （只驗「寫得成」的話，一個永遠覆寫的實作也會全綠）
+    //    ③ 反向：拿一段與既有章重疊的區間 ⇒ **擋下**（一話不該有兩章）
+    //    ④ 台帳：append-only ⇒ 行數只增不減，且既有行逐位元組不變
+    static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aSrc = p.AgentCommandsRoot;
+            string aBooksSrc = Path.Combine(aSrc, "Books");
+            if (!Directory.Exists(aBooksSrc)) continue;
+
+            // 取「最新那章」當受測體 —— 它保證來自現行實作。
+            string? aPick = null; DateTime aBest = DateTime.MinValue;
+            foreach (string d in Directory.GetDirectories(aBooksSrc, "watch-*"))
+                foreach (string f in Directory.GetFiles(d, "???.txt"))
+                {
+                    string aStem = Path.GetFileNameWithoutExtension(f);
+                    if (aStem.Length != 3 || !int.TryParse(aStem, out _)) continue;
+                    DateTime t = File.GetLastWriteTimeUtc(f);
+                    if (t > aBest) { aBest = t; aPick = f; }
+                }
+            if (aPick == null) continue;
+            aAny = true;
+
+            string aWant = File.ReadAllText(aPick, Encoding.UTF8).Replace("\r\n", "\n");
+            if (!TryParseChapterHeader(aWant, out string aMedia, out List<SCP_SeqRange> aRanges,
+                                       out string aTitle, out string aSub, out string aWork,
+                                       out string aSessions, out string aNote))
+            {
+                yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
+                    $"受測體 `{Path.GetFileName(aPick)}` 的表頭解析不出來 ⇒ **跳過**（⛔ 不當成通過）",
+                    CheckResult.Skipped);
+                continue;
+            }
+
+            string aTmp = Path.Combine(Path.GetTempPath(), "senate_watchwrite_" + Guid.NewGuid().ToString("N")[..8]);
+            try
+            {
+                // ── 只複製用得到的輸入（⛔ 不整棵複製，也絕不寫回來源）──
+                string aMsgSrc = SCP_WatchExport.MessagesDir(aSrc, "tavern");
+                int aCopied = 0;
+                if (Directory.Exists(aMsgSrc))
+                    foreach (string f in Directory.GetFiles(aMsgSrc, "*.json", SearchOption.AllDirectories))
+                    {
+                        if (!long.TryParse(Path.GetFileNameWithoutExtension(f), out long q)) continue;
+                        bool aIn = false;
+                        foreach (SCP_SeqRange r in aRanges) if (q >= r.Lo && q <= r.Hi) { aIn = true; break; }
+                        if (!aIn) continue;
+                        string aRel = f.Substring(aMsgSrc.Length).TrimStart('\\', '/');
+                        string aDst = Path.Combine(SCP_WatchExport.MessagesDir(aTmp, "tavern"), aRel);
+                        Directory.CreateDirectory(Path.GetDirectoryName(aDst)!);
+                        File.Copy(f, aDst); ++aCopied;
+                    }
+                Directory.CreateDirectory(Path.Combine(aTmp, "StreamWatch"));
+                foreach (string n in new[] { "sessions_log.jsonl", "segments.jsonl", "settings.json" })
+                {
+                    string f = Path.Combine(aSrc, "StreamWatch", n);
+                    if (File.Exists(f)) File.Copy(f, Path.Combine(aTmp, "StreamWatch", n));
+                }
+                string aMediaJson = Path.Combine(SCP_WatchWriter.MediaRoot(aSrc, aMedia), "media.json");
+                if (File.Exists(aMediaJson))
+                {
+                    string aMd = SCP_WatchWriter.MediaRoot(aTmp, aMedia);
+                    Directory.CreateDirectory(aMd);
+                    File.Copy(aMediaJson, Path.Combine(aMd, "media.json"));
+                }
+
+                string aLedger = SCP_WatchLedger.SessionsLogPath(aTmp);
+                int aLedgerBefore = File.Exists(aLedger) ? File.ReadAllLines(aLedger).Length : 0;
+                string aLedgerHeadBefore = File.Exists(aLedger)
+                    ? string.Join("\n", File.ReadAllLines(aLedger)) : "";
+
+                // ── ① 正向：重出 ──
+                var aL1 = new List<string>();
+                var aW1 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)),
+                    Path.GetFileNameWithoutExtension(aPick),
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL1);
+                bool aWrote = aW1.Error.Length == 0 && File.Exists(aW1.OutPath);
+                // 🩸 這裡原本兩邊都先 `Replace("\r\n","\n")` 才比 —— **把唯一的差異正規化掉了**
+                //   （python 文字模式寫出 CRLF、C# `WriteAllText` 寫出 LF，而內容全同）
+                //   於是它綠著，而實跑 `cmp` 立刻紅在第 1 行第 51 字元。
+                //   ⇒ 「一樣／不一樣」的問題只能用**位元組**回答，⛔ 不准在比之前先整理。
+                bool aSame = aWrote
+                    && ByteEqual(File.ReadAllBytes(aW1.OutPath), File.ReadAllBytes(aPick));
+                bool aBackOk = aWrote && aW1.BackEntries == aW1.Chapterized!.Kept.Count;
+
+                // ── ② 反向：不給 force 再跑一次 ⇒ 擋下且檔案不變 ──
+                string aMd5Before = aWrote ? Md5OfFile(aW1.OutPath) : "";
+                var aL2 = new List<string>();
+                var aW2 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)),
+                    Path.GetFileNameWithoutExtension(aPick),
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL2);
+                bool aRefused = aW2.Error.Contains("拒絕覆寫");
+                bool aUnchanged = aWrote && string.Equals(aMd5Before, Md5OfFile(aW1.OutPath), StringComparison.Ordinal);
+
+                // ── ③ 反向：另一章號但區間重疊 ⇒ 擋下 ──
+                var aL3 = new List<string>();
+                var aW3 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)), "777",
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL3);
+                bool aOverlapBlocked = aW3.Error.Contains("一話不該有兩章")
+                                       && !File.Exists(Path.Combine(Path.GetDirectoryName(aW1.OutPath)!, "777.txt"));
+
+                // ── ④ 台帳 append-only ──
+                int aLedgerAfter = File.Exists(aLedger) ? File.ReadAllLines(aLedger).Length : 0;
+                string aLedgerHeadAfter = File.Exists(aLedger)
+                    ? string.Join("\n", File.ReadAllLines(aLedger)[..aLedgerBefore]) : "";
+                bool aAppendOnly = aLedgerAfter >= aLedgerBefore
+                                   && string.Equals(aLedgerHeadBefore, aLedgerHeadAfter, StringComparison.Ordinal);
+
+                bool aOk = aSame && aBackOk && aRefused && aUnchanged && aOverlapBlocked && aAppendOnly;
+                yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
+                    $"受測體 `{Path.GetFileName(Path.GetDirectoryName(aPick))}/{Path.GetFileName(aPick)}`"
+                    + $"（複製 {aCopied} 則訊息進暫存根）"
+                    + $"／**重出逐位元組相同={aSame}**／回讀段數＝收錄數={aBackOk}"
+                    + $"／**沒給 force 擋下={aRefused}** 且檔案 md5 不變={aUnchanged}"
+                    + $"／**區間重疊擋下且沒生出 777.txt={aOverlapBlocked}**"
+                    + $"／台帳 append-only（{aLedgerBefore}→{aLedgerAfter} 行、既有行不變={aAppendOnly}）"
+                    + "　⚠ 全程在暫存根，**來源一個位元組都沒動**",
+                    aOk ? CheckResult.Pass : CheckResult.Fail);
+            }
+            finally
+            {
+                try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
+            }
+        }
+        if (!aAny)
+            yield return new CheckRow("章落檔 clean-room",
+                "找不到任何 `Books/watch-*/NNN.txt` ⇒ **跳過**（⛔ 不當成通過）", CheckResult.Skipped);
+    }
+
+    /// <summary>逐位元組比。⛔ 不做任何正規化 —— 被正規化掉的那一格正是最容易漏的那一格。</summary>
+    static bool ByteEqual(byte[] iA, byte[] iB)
+    {
+        if (iA.Length != iB.Length) return false;
+        for (int i = 0; i < iA.Length; ++i) if (iA[i] != iB[i]) return false;
+        return true;
+    }
+
+    static string Md5OfFile(string iPath)
+    {
+        using var aHash = System.Security.Cryptography.MD5.Create();
+        byte[] aB = aHash.ComputeHash(File.ReadAllBytes(iPath));
+        var aHex = new StringBuilder(32);
+        foreach (byte b in aB) aHex.Append(b.ToString("x2"));
+        return aHex.ToString();
+    }
+
+    static IEnumerable<CheckRow> RealWatchLedgerRead(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aPath = SCP_WatchLedger.SessionsLogPath(p.AgentCommandsRoot);
+            if (!File.Exists(aPath)) continue;
+            aAny = true;
+
+            var aWarn = new List<string>();
+            var aRaw = SCP_WatchLedger.ReadSessionsLog(p.AgentCommandsRoot, aWarn);
+            var aState = SCP_WatchLedger.SessionsLogState(p.AgentCommandsRoot, aWarn);
+
+            int aExportEvents = 0, aOrphanEvents = 0;
+            foreach (var kv in aRaw)
+            {
+                if (!string.Equals(kv.Value.GetString("record_type", ""), SCP_WatchLedger.RecordTypeExport,
+                                   StringComparison.Ordinal)) continue;
+                ++aExportEvents;
+                string aSid = kv.Value.GetString("session_id", "");
+                if (aSid.Length > 0 && !aState.ContainsKey(aSid)) ++aOrphanEvents;
+            }
+            int aWithChapter = 0, aWithTitle = 0;
+            foreach (var kv in aState)
+            {
+                if (kv.Value.ExportedChapter.Length > 0) ++aWithChapter;
+                if (kv.Value.ExportedTitle.Length > 0) ++aWithTitle;
+            }
+            // 反向對照：孤兒 export 事件**不可以**變成一個場次列。
+            // ⛔ 只數「有幾場」的話，一個把孤兒也塞進去的實作會得到更大的數字而看起來更「完整」。
+            bool aNoGhost = true;
+            foreach (var kv in aState) if (!kv.Value.Raw.Contains("session_id")) { aNoGhost = false; break; }
+
+            bool aOk = aState.Count > 0 && aExportEvents > 0 && aNoGhost;
+            yield return new CheckRow($"真實錄台帳讀取（{p.Name}）",
+                $"場次 **{aState.Count}**／export 事件 {aExportEvents}（其中孤兒 {aOrphanEvents} 筆**未造出場次**）"
+                + $"／有章號 **{aWithChapter}**／有章名 **{aWithTitle}**"
+                + $"／壞行 {aWarn.Count}／每一列都帶 session_id={aNoGhost}"
+                + "　⚠ 這是**異源讀數**（與 python `_sessions_log_state()` 並排用）——"
+                + "本格只比三個計數；**全量逐場逐欄位的對拍在下一格**（觀影反查全量對拍）",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        if (!aAny)
+            yield return new CheckRow("真實錄台帳讀取",
+                "找不到任何專案的 `StreamWatch/sessions_log.jsonl` ⇒ **跳過**（⛔ 不當成通過）",
+                CheckResult.Skipped);
+    }
+
     static IEnumerable<CheckRow> RealActivitySessionRoundTrip(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
