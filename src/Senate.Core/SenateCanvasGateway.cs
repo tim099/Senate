@@ -184,7 +184,18 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         return SCP_CanvasGateResult.Good("扣 " + iAmount + " token（Editor 端 Treasury debit）");
     }
 
-    public SCP_CanvasGateResult Share(string iPersona, string iRoom, string iBody)
+    // 區塊職責：把分享（含預覽附件）派給 Editor 的 Cmd_Tavern op=post
+    // 物理意義：附件**原封不動送絕對路徑**，相對化交給收件端（`Cmd_Tavern.ParseRefs`）——
+    //   🩸 2026-09-07 我第一版在這裡相對化，實測整條路都掛不上附件。真因：Senate 的
+    //   `Program.RepoRoot()` 是**從 exe 自己的目錄**往上找 `.git` ⇒ 它永遠是 `D:/Unity/Senate`，
+    //   而預覽圖住在消費端專案（`D:/Unity/Bar/AgentCommands/Canvas/previews/`）⇒
+    //   `StartsWith` 永遠不成立、refs 永遠是空的。
+    //   ⇒ 本宿主**結構上不知道**那棵樹的 repo 根在哪；知道的是 Editor（mirror 就在它那邊）。
+    //   📌 一般形：路徑相對化要在**知道那個根的那一層**做，不是在手上剛好有一個根的那一層做。
+    // 數值影響：`iAttachAbsolutePath` 給 null ⇒ 不帶 refs（純文字分享，行為與加入前相同）；
+    //          `iTag` 給值時掛 `meta=tag:<tag>`（收件端用它分類，09-06 之前那批是 `canvas-share`）。
+    public SCP_CanvasGateResult Share(string iPersona, string iRoom, string iBody,
+                                      string? iAttachAbsolutePath = null, string? iTag = null)
     {
         var aArgs = new Dictionary<string, string>
         {
@@ -193,12 +204,18 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
             ["body"] = iBody,
             ["persona"] = iPersona,
         };
+        if (!string.IsNullOrEmpty(iTag)) aArgs["meta"] = "tag:" + iTag;
+
+        string aAttach = iAttachAbsolutePath ?? "";
+        if (aAttach.Length > 0) aArgs["refs"] = aAttach.Replace('\\', '/');
+
         if (!TryRun("Tavern", iPersona, aArgs, AgentCmdClient.DefaultWaitTimeoutSec,
                     out List<KeyValuePair<string, string>> aValues, out string aWhy))
             // 分享失敗**不該讓放點失敗** —— 像素已經落盤、錢已經扣了，廣播是 best-effort。
             return SCP_CanvasGateResult.Bad("分享沒發出去（" + aWhy + "）—— 像素與帳不受影響");
         string aSeq = Value(aValues, "post_seq");
-        return SCP_CanvasGateResult.Good("已發" + (aSeq.Length > 0 ? "（seq " + aSeq + "）" : ""));
+        return SCP_CanvasGateResult.Good("已發" + (aSeq.Length > 0 ? "（seq " + aSeq + "）" : "")
+                                         + (aAttach.Length > 0 ? "，附預覽（相對化由收件端做）" : "，無附件"));
     }
 
     // ───────────────────────────── 底層：一次 round-trip ─────────────────────────────
