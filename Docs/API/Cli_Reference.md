@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-04
+last_updated: 2026-09-08
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -244,11 +244,28 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 3. **`iRequired` 不變** —— 「必填」講的是那支 Cmd 這一層真的需要它（它不讀任何設定檔），
    「可以不打」講的是宿主的便利。**兩件事分開講**，所以 `cmd help <name>` 仍然標必填。
 
-⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支（現況 `data_root`：`sessions`／`tasks`／`canvas`）。
+⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支（現況 `data_root`：`sessions`／`tasks`／`canvas`／`msg`／`regions`）。
 > 🩸 為什麼要做成通則：那個值原本抄在每一個呼叫端、**含每一份文件範例裡**，
 > 而手抄的那份會過期 —— `sessions` 的用法範例到 2026-09-04 還印著 `D:/Unity/LY/AgentCommands`，
 > 而那是**另一台**的根。路徑的族與唯一決定點見
 > [`Data_Layout`](../Architecture/Data_Layout.md#路徑分兩族--先確認你要的是哪一族)。
+
+#### 跨區讀酒館訊息：`regions` / `msg`（2026-09-08）
+
+酒館 seq **每條分支一套**（`origin/main` ＝ 區 `BTC`、`origin/LY` ＝ 區 `Florin`），
+所以「號對、日期合理、內容完整」可以同時成立而**那則訊息屬於別人**。這兩支補的是**讀取端的定語**：
+
+```bash
+./senate.exe cmd regions                                                     # 區 → ref → tip 有多新
+./senate.exe cmd msg --arg region=Florin --arg seq=10882                     # 讀那一區那一則
+./senate.exe cmd msg --arg region=Florin --arg seq=10882 --arg expect_uuid=493db1   # ＋ 對帳
+```
+
+- 輸出一律帶 `region#seq (uuid=xxxxxx)`；`expect_uuid` **選填**，不帶會明說「沒有對過」。
+- **exit 3 ＝ uuid 對不上** ⇒ 不端內容，並指出那個 uuid 落在哪一區。exit 4 ＝ 那個 ref 的樹裡沒有這個 seq。
+- 區的判準由**分支自報**（該 ref 的 `Treasury/bank_settings.json` 有 `currency_id`）⇒ 零新設定檔。
+- ⛔ 只讀、不 fetch、不 checkout ⇒ 印的 tip 是**上次 fetch 的快照**，不是遠端此刻。
+- 日常讀訊息**不走這裡**（走酒館自己的 `catchup` / `op=read`）；這兩支是「手上有一筆跨區引用」時用的。
 
 #### exit code
 
