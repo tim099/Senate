@@ -222,7 +222,7 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 | `--arg k=v` | 指令參數，可重複。⭐ **沒宣告的參數名會被擋下**，不會靜默取預設值 |
 | `--arg-file k=<路徑>` | 參數值從檔案讀（UTF-8）—— **長內文不經過 shell**，檔案不存在直接擋 |
 
-#### 便利：兩個根沒給就從設定檔補上（**而且印出來**）
+#### 便利：兩個根沒給就從設定檔補上（**而且印出來 —— 印在 stderr**）
 
 宣告了下列參數的 Cmd，沒給該參數時 CLI 會從**唯一那格設定**補上：
 
@@ -231,7 +231,14 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 | `letters_root` | `senate.local.json` 的 `awakening.lettersRoot` | `· letters_root 沒給 ⇒ 用設定檔的 awakening.lettersRoot：<路徑>` |
 | `data_root` | `SCP_PathId.AgentCommandsRoot`（＝「路徑管理」頁那一格，走 `SCP_PathRegistry.Resolve`） | `· data_root 沒給 ⇒ 用設定檔那一格（<算式>）：<路徑>` |
 
-⭐ **印出來、不靜默注入。** 靜默注入的症狀是「我明明沒指定，它卻讀了**另一棵資料樹**」——
+⭐ **印出來、不靜默注入 —— 而落點是 `stderr`（2026-09-09 起）。**
+這三行注入告示都走 **stderr**：它們是給**人**看的，而 **stdout 是值的通道**
+（`persona --arg json=1` / `--arg field=<欄>` 的消費端是程式）。
+🩸 TASK-0157 A：QA 拿 `json=1` 的 stdout 去 `json.loads` **當場炸**，第一行就是這句中文。
+⛔ 而 `🔢 k = v` **仍在 stdout**（全部 Cmd 共用的機器讀數通道，搬它要動每一個呼叫端）
+⇒ 契約是「**stdout ＝ 值 ＋ 不含大括號的 `🔢` 行**」，要挖 JSON 拿「第一個 `{` 到最後一個 `}`」。
+
+ 靜默注入的症狀是「我明明沒指定，它卻讀了**另一棵資料樹**」——
 而那種錯讀寫都會「成功」，只是對象不是你以為的那棵樹。`data_root` 那行連 **算式**一起印
 （`auto ⇒ 由 ProjectRoot 推導` 或 `手填`）⇒ 「我為什麼看這裡」看得出來。
 

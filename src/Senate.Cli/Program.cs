@@ -1146,6 +1146,17 @@ public static class Program
 
         // 便利：letters_root 沒給就用設定檔那一格。**印出來**，不靜默注入 ——
         // 靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」。
+        //
+        // ⚠ 落點是 **stderr 不是 stdout**（2026-09-09，TASK-0157 A）：
+        //   這兩行是給**人**看的注入告示，而 stdout 是**值的通道**
+        //   （`persona --arg json=1` / `--arg field=<欄>` 的消費端是程式）。
+        //   🩸 QA @calli 2026-09-07 的活體：`json.loads(stdout)` 當場炸，第一行就是這句中文
+        //     （`field=email` 的 stdout 276 bytes，而真值 26 字元）。
+        //     而那天沒有更廣的災情，唯一的理由是 python 接縫走 `_extract_json_object`
+        //     （第一個 `{` 到最後一個 `}`）—— **不是**這條規則。
+        //   ⇒ 改 stderr 兩邊都保住：**告示照印**（不靜默注入），**值的通道乾淨**。
+        //   ⛔ 而 `🔢 k = v` 刻意**不搬** —— 那是全部 Cmd 共用的機器讀數通道，
+        //     搬它要動每一個呼叫端；契約寫成「stdout ＝ 值 ＋ 不含大括號的 `🔢` 行」即可。
         SCP.Core.Cmd.SCP_Cmd? aCmd = SCP.Core.Cmd.SCP_CmdRegistry.Find(aName);
         if (aCmd != null && !aRawArgs.ContainsKey("letters_root") && DeclaresArg(aCmd, "letters_root"))
         {
@@ -1155,7 +1166,7 @@ public static class Program
             if (aRoot != null)
             {
                 aRawArgs["letters_root"] = aRoot;
-                Console.WriteLine($"· letters_root 沒給 ⇒ 用設定檔的 awakening.lettersRoot：{aRoot}");
+                Console.Error.WriteLine($"· letters_root 沒給 ⇒ 用設定檔的 awakening.lettersRoot：{aRoot}");
             }
         }
 
@@ -1166,6 +1177,7 @@ public static class Program
         //   而那是**另一台**的根。⇒ 唯一那格設定解得出來時，不該逼人重打一次。
         // ⛔ 仍然**印出來、不靜默注入**（同 letters_root 的理由）：
         //   靜默注入的症狀是「我明明沒指定，它卻讀了另一棵資料樹」。
+        //   ⚠ 同上，落點是 **stderr**：告示給人，stdout 給程式。
         // ⛔ 也不吞 Error：兩個啟用專案 ⇒ 資料根不唯一 ⇒ 這裡什麼都不填，讓 Cmd 自己用「缺必填參數」擋，
         //   並把不唯一的理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
         if (aCmd != null && !aRawArgs.ContainsKey("data_root") && DeclaresArg(aCmd, "data_root"))
@@ -1181,11 +1193,11 @@ public static class Program
                 if (aRes.Error == null && aRes.Value.Length > 0)
                 {
                     aRawArgs["data_root"] = aRes.Value;
-                    Console.WriteLine($"· data_root 沒給 ⇒ 用設定檔那一格（{aRes.Origin}）：{aRes.Value}");
+                    Console.Error.WriteLine($"· data_root 沒給 ⇒ 用設定檔那一格（{aRes.Origin}）：{aRes.Value}");
                 }
                 else
                 {
-                    Console.WriteLine($"· data_root 沒給，而設定檔那一格解不出來：{aRes.Error}");
+                    Console.Error.WriteLine($"· data_root 沒給，而設定檔那一格解不出來：{aRes.Error}");
                 }
             }
         }
