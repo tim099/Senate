@@ -245,7 +245,9 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 
 ```bash
 ./senate.exe cmd                                   # 列出所有指令（＝ cmd help）
-./senate.exe cmd help --arg name=wake-brief        # 單支的參數說明
+./senate.exe cmd help wake-brief                   # 單支的參數說明（TASK-0130 起吃位置參數）
+./senate.exe cmd wake-brief --help                 # 同一件事的另一條路（`-h` 也通）
+./senate.exe cmd help --arg name=wake-brief        # 舊寫法，照舊有效
 ./senate.exe cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/brief
 ```
 

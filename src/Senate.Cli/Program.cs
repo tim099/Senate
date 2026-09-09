@@ -1147,7 +1147,10 @@ public static class Program
                                 "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },
         ["ucmd"] = new[] { "--arg", "--arg-file", "--persona", "--project", "--timeout", "--lane", "--no-wait",
                            "--output-file", "--ack-timeout", "--poll-interval" },
-        ["cmd"] = new[] { "--arg", "--arg-file" },
+        // ⚠ `--help` 在名單上是 TASK-0130 的一半：它之前被本閘擋在 `CmdScp` 前面
+        //   ⇒ 一個正在找用法的人撞到的是拒絕。⛔ 只加在 `cmd` 底下，不順手做成全域旗標
+        //   （那要每支子命令各自處理它，而沒處理的那幾支會回一個看起來像壞掉的答案）。
+        ["cmd"] = new[] { "--arg", "--arg-file", "--help" },
         ["selftest"] = new[] { "--list", "--only", "--clipboard", "--width", "--scale", "--size" },
         ["server"] = new string[0],
     };
@@ -1214,6 +1217,7 @@ public static class Program
     static int CmdScp(string iRepoRoot, string[] iArgs)
     {
         string aName = "";
+        string? aPositionalName = null;   // `cmd help <name>` 的位置參數（見迴圈內的 TASK-0130 區塊）
         var aRawArgs = new Dictionary<string, string>(StringComparer.Ordinal);
 
         for (int i = 1; i < iArgs.Length; i++)
@@ -1235,21 +1239,65 @@ public static class Program
                 }
                 aRawArgs[aKey] = aValue;
             }
+            else if (aToken == "--help" || aToken == "-h")
+            {
+                // ── 同一個症狀的另外兩條死路（TASK-0130 的證據就列著它們）──
+                //   `--help` / `-h` 之前回「認不得的旗標」⇒ 一個**正在找用法的人**撞到的是拒絕，
+                //   而那一刻他手上唯一還沒試過的招是「故意打錯一個參數名」。
+                //   ⇒ 接到 help 那一支去（給了 cmd 名就印那一支，沒給就印清單）。
+                if (aName.Length > 0 && !string.Equals(aName, "help", StringComparison.OrdinalIgnoreCase))
+                { aPositionalName = aName; }
+                aName = "help";
+            }
             else if (aToken.StartsWith("--", StringComparison.Ordinal))
             {
-                return Usage(2, $"cmd 認不得的旗標 '{aToken}'");
+                return Usage(2, $"cmd 認不得的旗標 '{aToken}'"
+                                + "　▶ 想看這支吃什麼參數：`senate cmd help <name>`（或 `senate cmd <name> --help`）");
             }
             else if (aName.Length == 0)
             {
                 aName = aToken;
             }
+            else if (string.Equals(aName, "help", StringComparison.OrdinalIgnoreCase))
+            {
+                // ── `senate cmd help <name>`：**唯一**吃位置參數的那一支（TASK-0130）──
+                // 🩸 為什麼要開這個特例：`help` 自己印的最後一行是「單支詳細：senate cmd help <name>」，
+                //   而在此之前**那行指令跑不動**（exit 2「cmd 只吃一個指令名」）——
+                //   一個工具印出來的用法，照著打會失敗。而它出現的時機正是使用者已經卡住的那一刻
+                //   （同一條字串也印在 ArgSpec 預檢的錯誤訊息末行）。
+                //   ⇒ 在此之前唯一問得出一支 Cmd 吃什麼參數的方法，是**故意打錯一個參數名**讓預檢列出來。
+                // ⛔ 而這個特例**刻意不通用化成「所有 Cmd 都吃位置參數」**：
+                //   那會讓 `senate cmd tasks 5` 靜默把 5 填進第一個宣告的參數（多半是 `data_root`）——
+                //   失效樣子是「路徑全對，只是屬於別的東西」，而它不會叫。
+                //   help 是唯一一支「使用者此刻正因為不知道語法才在打它」的 Cmd ⇒ 只有它值得這個特例。
+                // ⚠ 衝突檢查**不能在這裡做** —— `--arg name=` 可能排在位置參數**後面**，
+                //   那時這一格還沒看到它 ⇒ 檢查會靜默通過，然後被後面那個覆蓋。
+                //   🩸 實測（2026-09-09）：第一版就是這樣寫的，`cmd help tasks --arg name=canvas`
+                //   印出 canvas，**而衝突訊息一個字都沒印** —— 一個「看起來有在防」的檢查。
+                //   ⇒ 留到迴圈跑完再比（順序無關）。
+                if (aPositionalName != null && aPositionalName != aToken)
+                    return Usage(2, $"cmd help 收到兩個名字（'{aPositionalName}' 與 '{aToken}'）⇒ **不猜**");
+                aPositionalName = aToken;
+            }
             else
             {
-                return Usage(2, $"cmd 只吃一個指令名（已經有 '{aName}'，又收到 '{aToken}'）");
+                return Usage(2, $"cmd 只吃一個指令名（已經有 '{aName}'，又收到 '{aToken}'）"
+                                + "　⚠ 例外只有 `cmd help <name>`（那一支吃一個位置參數）");
             }
         }
 
         if (aName.Length == 0) aName = "help";   // 不給名字 ＝ 印清單（那是使用者這時唯一想要的）
+
+        // ── `cmd help <name>` 的位置參數在**迴圈跑完之後**才落到 args（TASK-0130）──
+        //   順序無關才擋得住：`help tasks --arg name=canvas` 與 `help --arg name=canvas tasks`
+        //   要給同一個答案（都是衝突），⛔ 而不是「誰排後面誰贏」。
+        if (aPositionalName != null)
+        {
+            if (aRawArgs.TryGetValue("name", out string? aGiven) && aGiven != aPositionalName)
+                return Usage(2, $"cmd help 同時收到位置參數 '{aPositionalName}' 與 --arg name='{aGiven}'"
+                                + " ⇒ 兩者不一致，**不猜**（拿掉一個再跑）");
+            aRawArgs["name"] = aPositionalName;
+        }
 
         // 便利：letters_root 沒給就用設定檔那一格。**印出來**，不靜默注入 ——
         // 靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」。

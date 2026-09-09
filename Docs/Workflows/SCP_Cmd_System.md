@@ -43,7 +43,9 @@ queue 的存在理由是「呼叫端與執行端是兩個 process」。CLI 直�
 
 ```bash
 senate cmd                       # 列出所有指令（等同 senate cmd help）
-senate cmd help --arg name=wake-brief    # 單支的參數說明
+senate cmd help wake-brief               # 單支的參數說明（TASK-0130 起吃位置參數）
+senate cmd wake-brief --help             # 同一件事的另一條路（`-h` 也通）
+senate cmd help --arg name=wake-brief    # 舊寫法，照舊有效
 senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/brief
 ```
 
