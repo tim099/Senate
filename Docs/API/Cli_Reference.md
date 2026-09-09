@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-09
+last_updated: 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -16,6 +16,38 @@ dotnet run --project src/Senate.Cli -- <command>      # 開發中直接跑
 ```
 
 不給指令時預設 `doctor`。
+
+## 旗標紀律：**未宣告的旗標 ⇒ exit 2**
+
+每支子命令有自己吃的旗標清單。打了它沒宣告的 `--旗標`，CLI 在 dispatch **之前**就擋下來：
+
+```
+$ senate ucmd status --totally-bogus-flag zzz
+✗ `ucmd` 認不得的旗標 '--totally-bogus-flag'
+  `ucmd` 吃的是：--arg , --arg-file , --persona , --project , --timeout , --lane , --no-wait , --output-file , --ack-timeout , --poll-interval
+⇒ exit 2
+```
+
+**別的 client 有、這顆沒有的旗標會直接指出對應寫法**（照舊文件打的人最常撞這幾個）：
+
+| 打了這個 | 它屬於誰 | 這顆 exe 的寫法 |
+|---|---|---|
+| `--arg-stdin` | python `run_cmd.py` | `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）|
+| `--wait-reply` / `--wait-reply-from` | python `run_cmd.py` 的**阻塞等回覆** | 這顆沒有 client 端等待 ⇒ 走 Cmd 層 `--arg op=wait` ＋ `--arg op=wait_check` |
+
+> [!IMPORTANT]
+> 🩸 **為什麼是硬擋而不是印一行警告**：`HasFlag` / `ArgValue` 是「找得到就用」的掃描器 ——
+> 打錯的名字**不會有人問起它**，所以症狀不是報錯，是**安靜地取預設值**。
+> `--wait-reply 300` 打在這顆上，畫面一切正常而它從頭到尾沒等；
+> `--arg-stdin` 更狠：body 從未進入 Args，而擋下它的是 **Cmd 端的必填檢查**，不是 CLI
+> ⇒ 那次大聲失敗純屬運氣（`body` 剛好必填）。
+> **「我加了旗標」與「旗標生效了」在畫面上同形，而同形的東西沒有任何一層會喊。**（TASK-0125）
+
+⭐ 例外只有一個：`--no-cleanup` 是**已宣告**的旗標而只在 `ui` 底下生效 ——
+別的子命令帶它會**出聲說本次沒有生效**然後照跑（TASK-0123 拍板；那不是未宣告旗標）。
+
+⚠ 加新旗標時**要同時加進那張表**（`Program.cs` 的 `FlagsBySubcommand`）——
+漏加的失效樣子是大聲的（自己的新旗標被自己的閘擋下），不是安靜的。
 
 ---
 
@@ -545,7 +577,7 @@ Debug 當 Server、exe 當 CLI ⇒ `running_build_mismatch`，exe 照樣停得�
 |---|---|
 | 0 | 一切正常 |
 | 1 | 環境或設定有問題（doctor 不通過 / 開窗失敗 / selftest 有失敗項） |
-| 2 | 用法錯誤（未知指令、id 不存在、`--set` 格式錯） |
+| 2 | 用法錯誤（未知指令、**未宣告的旗標**、id 不存在、`--set` 格式錯） |
 | 3 | 設定檔存在但內容壞了 |
 
 「還沒設定」（0 或 1，看 doctor）與「設定壞了」（3）刻意分開 —— 那是兩種不同的處置。

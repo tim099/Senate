@@ -150,6 +150,10 @@ public static class Program
 
         string aCmd = iArgs.Length > 0 ? iArgs[0].ToLowerInvariant() : "doctor";
 
+        // 旗標閘（TASK-0125）：擋在 dispatch **前面**，不是每支子命令各補一次 ——
+        // 補在各支裡的話，下一支新加的子命令天生沒有這道閘，而那個漏是安靜的。
+        if (RejectUnknownFlags(aCmd, iArgs) is { } aFlagExit) return aFlagExit;
+
         try
         {
             return aCmd switch
@@ -1118,6 +1122,87 @@ public static class Program
 
     static string Rel(string iRoot, string iPath)
         => Path.GetRelativePath(iRoot, iPath).Replace('\\', '/');
+
+    // ── 未宣告的旗標 ⇒ 用法錯（TASK-0125）─────────────────────
+    // 區塊職責：在 dispatch **之前**擋下這顆 exe 沒宣告的 `--旗標`。
+    // 物理意義：`HasFlag` / `ArgValue` 是「找得到就用」的掃描器 ⇒ 打錯的名字**不會有人問起它**。
+    //           症狀因此不是報錯，是**安靜地取預設值**：`--wait-reply 300` 打在 senate 上，
+    //           畫面一切正常而它從頭到尾沒等；`--arg-stdin`（那是 python `run_cmd.py` 的旗標）
+    //           更狠 —— body 從未進入 Args，而擋下它的是 Cmd 端的必填檢查，不是 CLI。
+    //           ⇒ 「我加了旗標」與「旗標生效了」在畫面上同形，而同形的東西沒有任何一層會喊。
+    // 數值影響：exit 2（用法錯，沿用既有語意）＋ 印出**是哪一個**與那支吃的合法清單；
+    //           ⛔ 不是印警告後照跑 —— 照跑的話它仍然是「安靜取預設值」，只是多了一行字。
+    // ⚠ 名單是**機械抽出來的**（每支子命令實際 `HasFlag`／`ArgValue` 的那些字面），
+    //   ⛔ 不憑印象列 —— 列漏一個就是新擋掉一條本來合法的呼叫。
+    //   ⇒ 加新旗標時**這張表要跟著加**，而漏加的失效樣子是大聲的（exit 2），不是安靜的。
+    static readonly Dictionary<string, string[]> FlagsBySubcommand = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // 值型旗標（下一個 token 是值）標在 ValueFlags；這裡是「合法」的全集。
+        ["doctor"] = new[] { "--width", "--scale", "--size" },
+        ["init"] = new string[0],
+        ["ui"] = new[] { "--window", "--screenshot", "--soak", "--reset", "--click", "--set", "--toggle",
+                         "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--no-cleanup",
+                         "--width", "--scale", "--size" },
+        ["submodule"] = new[] { "--checkout", "--pull", "--push", "--dry-run", "--yes", "--branch", "--fetch",
+                                "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },
+        ["ucmd"] = new[] { "--arg", "--arg-file", "--persona", "--project", "--timeout", "--lane", "--no-wait",
+                           "--output-file", "--ack-timeout", "--poll-interval" },
+        ["cmd"] = new[] { "--arg", "--arg-file" },
+        ["selftest"] = new[] { "--list", "--only", "--clipboard", "--width", "--scale", "--size" },
+        ["server"] = new string[0],
+    };
+
+    // 值型旗標：它後面那一個 token 是**值**，不是旗標 ⇒ 不能拿去比對名單
+    // （`--page --window` 這種寫法下，第二個 token 是前者的值）。
+    static readonly HashSet<string> ValueFlags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "--screenshot", "--soak", "--click", "--set", "--toggle", "--fold", "--page",
+        "--width", "--scale", "--size", "--branch", "--only", "--set-branch", "--root", "--project",
+        "--arg", "--arg-file", "--persona", "--timeout", "--lane", "--output-file",
+        "--ack-timeout", "--poll-interval",
+    };
+
+    // 別的 client 有、這顆沒有的旗標 —— 照著舊文件打的人會撞到，所以直接指出對應寫法。
+    // 🩸 TASK-0107 把指令從 `run_cmd.py` 換成 `senate ucmd` 時旗標沒跟著換，
+    //   而三份 skill 教的是 `--arg-stdin`：**指路牌比它指的路活得更久。**
+    static readonly Dictionary<string, string> ForeignFlagHints = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["--arg-stdin"] = "那是 python `run_cmd.py` 的旗標。這顆 exe 走 `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）",
+        ["--wait-reply"] = "那是 python `run_cmd.py` 的**阻塞等回覆**。這顆 exe 沒有 client 端等待 ⇒ 要等回覆走 Cmd 層：`--arg op=wait` ＋ `--arg op=wait_check`",
+        ["--wait-reply-from"] = "同 `--wait-reply`：走 Cmd 層 `--arg op=wait --arg expect_from=<persona>`",
+    };
+
+    // 全域旗標：**已宣告**但只在某支底下生效的那些。它們照舊走「出聲說沒生效」那條路
+    // （`--no-cleanup` 見 Main，TASK-0123 拍板）—— 本閘修的是**未宣告**的旗標，
+    // ⛔ 不順手把別人拍過的行為改成硬擋（那超出本單的症狀範圍）。
+    static readonly string[] GlobalFlags = { "--no-cleanup" };
+
+    /// <summary>dispatch 前的旗標閘：未宣告的 `--旗標` ⇒ 回 exit 2（合法時回 null）。</summary>
+    static int? RejectUnknownFlags(string iSubcommand, string[] iArgs)
+    {
+        if (!FlagsBySubcommand.TryGetValue(iSubcommand, out string[]? aAllowed)) return null;   // 不管的子命令（--version／help）
+        var aSet = new HashSet<string>(aAllowed, StringComparer.OrdinalIgnoreCase);
+        foreach (string aGlobal in GlobalFlags) aSet.Add(aGlobal);
+        for (int i = 1; i < iArgs.Length; i++)
+        {
+            string aToken = iArgs[i];
+            if (!aToken.StartsWith("--", StringComparison.Ordinal)) continue;
+            if (aSet.Contains(aToken))
+            {
+                if (ValueFlags.Contains(aToken)) i++;   // 跳過它的值（值可能長得像旗標）
+                continue;
+            }
+            string aHint = ForeignFlagHints.TryGetValue(aToken, out string? h)
+                ? $"　⇒ {h}"
+                : "";
+            Console.Error.WriteLine($"✗ `{iSubcommand}` 認不得的旗標 '{aToken}'{aHint}");
+            Console.Error.WriteLine(aAllowed.Length == 0
+                ? $"  這支子命令**不吃任何旗標**（它只看子指令名）"
+                : $"  `{iSubcommand}` 吃的是：{string.Join(" , ", aAllowed)}");
+            return 2;
+        }
+        return null;
+    }
 
     // ── senate cmd ────────────────────────────────────────────
     // 區塊職責：**SCP_CMD 的 CLI 宿主** —— 把命令列的字串交給 SCP_Core 的指令目錄跑。
