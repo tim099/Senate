@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
 description: setup / build / check 三支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收四關（2026-09-07 起與 build 分離、可挑項目）、single-file 的真正判準（實測修正過一次）、產物與版控
-last_updated: 2026-09-07
+last_updated: 2026-09-09
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -114,6 +114,38 @@ senate selftest --list          # 有哪些項目與群
   🩸 這一格是必要的配套：2026-09-03／09-04 各撞一次 `GenerateBundle … Access to the path … is denied`，
   兩次佔住 exe 的都是一顆開著的視窗，而**錯誤訊息不會告訴你是誰**。
 - `nohup`／`Start-Process` 起，log 落在 `build/build_window.log`。
+
+#### 🩸 2026-09-09 加的判準：**stdout 不是終端機就一顆都不開**
+
+現象（Tim 報的）：**ClaudeCode 會被關閉，而且無法重啟（提示「被占用」），必須先關掉 Senate 才起得來。**
+
+⇒ 機制**假說**（⚠ 是假說不是量到的因果）：`nohup … &` 開出來的這顆是**呼叫端 shell 的子行程** ——
+呼叫端是 agent 的時候，它就是 **ClaudeCode 行程樹底下一顆永遠不會結束的 GUI 行程**，
+繼承了那條 shell 的 handle ⇒ 前者關不乾淨、重啟時鎖還被握著。
+從檔案總管雙擊開的那顆**不在那棵樹裡**，所以同一個動作只有「有時候」會壞。
+
+⇒ 判準因此不是「開或不開」，是**「我現在是不是站在一個人的終端機前面」**：
+
+| `build.sh` 的情況 | 行為 |
+|---|---|
+| `stdout` 是終端機（人在跑） | 照 Tim 2026-09-04 的拍板**開** |
+| `stdout` 不是終端機（agent／導向輸出） | **一顆都不開**，並印出理由與「要它就 `--window`」 |
+| `--window` | 強制開（不管有沒有 TTY） |
+| `--no-window` | 強制不開 |
+
+- ⛔ 刻意**不做**「開了再自己收掉」：那等於在 Claude 樹裡先種一顆再拔，
+  而拔的那一步只要失敗一次就回到原病。**不種就不必拔。**
+- ⛔ 刻意**不靜默**：三條路各印一行 —— 不然「這次沒開」與「開了但當掉」在畫面上同形。
+- ⚠ **`build.ps1` 還沒跟上**（兩邊行為已經不同，而那一格寫在它的註解裡）：
+  本環境的 agent 跑不了 PowerShell（enterprise policy 擋 sandbox）⇒ 那條路目前沒有這個病，
+  而改完的樣子**驗不了**。而「.ps1 與 .sh 等價」正是 2026-08-22 咬過的那一格
+  ⇒ 寧可留一個看得見的不對稱，也不塞一段沒有讀數的碼進人的主路。
+- ⚠ **未量的那一格**：`stdout` 是終端機那條路我**沒有讀數** —— 我是 agent，定義上就沒有 TTY
+  （`winpty` 也造不出來：這個 sandbox 沒有真的 console）。
+  ⇒ 決策邏輯我用 clean-room 逐字照抄跑過四支中的三支（`--no-window` / `--window` / auto+非TTY 全對），
+  **auto＋有 TTY 那支要人在自己的終端機跑一次 `./build.sh` 才有讀數。**
+  📌 而風險方向是對的：萬一 auto 判錯，失效樣子是「視窗沒開」，一個 `--window` 就解決 —— **不會是 Claude 被關掉**。
+
 
 > 🩸 **退場的那一格**：原本第 5 項是 `ui --soak 10`（開真視窗轉十秒、門檻 10 fps），
 > 2026-09-04 Tim 拍板換成常駐視窗、`--soak` 不再進 build。

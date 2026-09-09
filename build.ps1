@@ -166,6 +166,18 @@ else { Write-Host '. Server：本來就沒在跑，現在也沒有（⤷Server �
 
 # -- 收尾：開一顆常駐視窗（Tim 2026-09-04 拍板）-- 理由見 build.sh 同一段
 # 它會鎖住 publish/senate.exe ⇒ 下一次 build 開頭會自己收掉它。不是驗收格，不擋判定。
+#
+# 警告 2026-09-09：build.sh 那一半加了一道判準，**這一半刻意還沒加** -- 兩邊行為已經不同。
+#   現象（Tim 報的）：ClaudeCode 會被關閉且無法重啟（提示被占用），必須先關掉 Senate 才起得來。
+#   假說：nohup/Start-Process 開出來的這顆是**呼叫端行程樹底下一顆永不結束的 GUI 行程**，
+#         繼承了呼叫端的 handle；呼叫端是 agent 的時候那棵樹就是 ClaudeCode。
+#   build.sh 的修法：stdout 不是終端機（[ -t 1 ] 為假）就一顆都不開，並印出理由；
+#                    覆寫走 --window / --no-window。
+#   為什麼這一半沒跟上：本環境的 agent **跑不了 PowerShell**（enterprise policy 擋 sandbox），
+#     所以① 這條路目前沒有那個病 ② 我**驗不了**改完的樣子。
+#     而「.ps1 與 .sh 等價」正是 2026-08-22 咬過的那一格（等價性需要各自的讀數）
+#     ⇒ 寧可留一個看得見的不對稱，也不塞一段沒有讀數的碼進人的主路。
+#   要加的話對應寫法是 [Console]::IsOutputRedirected（真 ⇒ 不是終端機）＋一個覆寫開關。
 $winLog = Join-Path $root 'build/build_window.log'
 $win = Start-Process -FilePath $exe -ArgumentList 'ui', '--window' -RedirectStandardOutput $winLog -PassThru
 Write-Host (". 已開一顆常駐視窗（pid=" + $win.Id + "，log：build/build_window.log）-- 下次 build 會自己收掉它")

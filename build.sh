@@ -30,14 +30,19 @@ cd "$root"
 #   畫面會跟「我本來就沒要求驗收」一模一樣。
 do_check=0
 check_args=""
+# 收尾那顆常駐視窗要不要開：auto｜yes｜no（判準與血證見下面的 §常駐視窗）
+open_window=auto
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) do_check=1; shift ;;
     --only|--gates) do_check=1; check_args="$check_args $1 ${2:-}"; shift 2 ;;
     --only=*|--gates=*) do_check=1; check_args="$check_args $1"; shift ;;
-    -h|--help) echo "用法：./build.sh [--check] [--gates doctor,self,gui,server] [--only <selftest 篩選>]";
-               echo "  預設**只 build 不驗收**；驗收另外跑：./check.sh"; exit 0 ;;
-    *) echo "✗ 認不得的參數：$1（可用：--check / --gates / --only / --help）" >&2; exit 2 ;;
+    --window)    open_window=yes; shift ;;
+    --no-window) open_window=no;  shift ;;
+    -h|--help) echo "用法：./build.sh [--check] [--gates doctor,self,gui,server] [--only <selftest 篩選>] [--window|--no-window]";
+               echo "  預設**只 build 不驗收**；驗收另外跑：./check.sh";
+               echo "  收尾的常駐視窗預設 auto：**stdout 是終端機才開**（agent／導向輸出不開）"; exit 0 ;;
+    *) echo "✗ 認不得的參數：$1（可用：--check / --gates / --only / --window / --no-window / --help）" >&2; exit 2 ;;
   esac
 done
 
@@ -166,16 +171,49 @@ else
   check_rc=0
 fi
 
-# ── 開一顆**常駐**視窗（Tim 2026-09-04 拍板）──────────────
+# ── §常駐視窗：開一顆**常駐**視窗（Tim 2026-09-04 拍板）──────────────
 # 物理意義：build 之後你本來就要開它 —— 那一步交給腳本，人不用記得重開。
 #   ⚠ 這顆會**鎖住 publish/senate.exe** ⇒ 下一次 build 開頭會自己把它收掉。
 #   ⛔ 它不是驗收格：不看它的 exit code、不擋 build 判定。
 #   ⚠ 要 nohup：不然關掉這個終端機時 SIGHUP 會把它一起帶走 ——
 #     而「視窗自己消失」跟「它當掉了」同形。
+#
+# 🩸 而 2026-09-09 加了一道判準（Tim 報的現象）：
+#   **ClaudeCode 會被關閉，而且無法重啟（提示「被占用」），必須先關掉 Senate 才起得來。**
+#   ⇒ 機制假說（⚠ 是假說不是量到的因果）：`nohup … &` 開出來的這顆是**呼叫端 shell 的子行程**，
+#     而呼叫端是 agent 的時候，它就是 **ClaudeCode 行程樹底下一顆永遠不會結束的 GUI 行程**，
+#     繼承了那條 shell 的 handle ⇒ 前者關不乾淨、重啟時鎖還被握著。
+#     從檔案總管雙擊開的那顆**不在那棵樹裡**，所以同一個動作只有「有時候」會壞。
+#   ⇒ 所以判準不是「開或不開」，是**「我現在是不是站在一個人的終端機前面」**：
+#     `[ -t 1 ]`（stdout 是不是終端機）—— 人在的時候照 Tim 的拍板開，
+#     agent／導向輸出的時候**一顆都不開**（那條路上根本沒有人會去看那個視窗）。
+#   ⛔ 刻意**不做**「開了再自己收掉」：那等於在 Claude 樹裡先種一顆再拔，
+#     而拔的那一步只要失敗一次（Kill 失敗／腳本中途 abort）就回到原病。**不種就不必拔。**
+#   ⛔ 也刻意**不靜默** —— 三條路各印一行，說出「開了／沒開／為什麼」，
+#     不然「這次沒開」與「開了但當掉」在畫面上同形。
+#   📌 覆寫方式：`--window` 強制開（不管有沒有 TTY）／`--no-window` 強制不開。
 mkdir -p "$root/build"
-nohup "$exe" ui --window > "$root/build/build_window.log" 2>&1 &
-#   ⚠ 不印 pid：$! 給的是 Git Bash 的 MSYS pid，而工作管理員看到的是另一個號 ——
-#     印一個查不到的號比不印更糟。
-echo "· 已開一顆常駐視窗（log：build/build_window.log）—— 下次 build 會自己收掉它"
+if [ "$open_window" = "auto" ]; then
+  if [ -t 1 ]; then open_window=yes; else open_window=no; fi
+  window_reason="auto"
+else
+  window_reason="顯式指定"
+fi
+
+if [ "$open_window" = "yes" ]; then
+  nohup "$exe" ui --window > "$root/build/build_window.log" 2>&1 &
+  #   ⚠ 不印 pid：$! 給的是 Git Bash 的 MSYS pid，而工作管理員看到的是另一個號 ——
+  #     印一個查不到的號比不印更糟。
+  echo "· 已開一顆常駐視窗（$window_reason；log：build/build_window.log）—— 下次 build 會自己收掉它"
+else
+  if [ "$window_reason" = "auto" ]; then
+    echo '· **沒有**開常駐視窗 —— stdout 不是終端機（agent 或導向輸出）。'
+    echo '   🩸 理由：那顆會變成呼叫端行程樹底下一顆永不結束的 GUI 行程，而 2026-09-09 的現象是'
+    echo '      **ClaudeCode 被關閉且無法重啟（提示被占用），必須先關掉 Senate**。'
+    echo '   ⇒ 要它：./build.sh --window（或事後自己開：senate ui --window）'
+  else
+    echo '· **沒有**開常駐視窗（--no-window）—— 要它：senate ui --window'
+  fi
+fi
 
 exit "$check_rc"
