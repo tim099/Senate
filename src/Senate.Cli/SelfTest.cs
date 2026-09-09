@@ -750,6 +750,10 @@ public static class SelfTest
     //           而她 grep 完當時 28 格 selftest：沒有任何一格碰到這四態。
     //           ⇒ 那兩態當時由「讀 code 覺得對」保證。本格把分類搬到一個**不需要畫面也不需要活體**的地方：
     //           直接餵四筆記錄給 Validate。畫面呈現那半留給 Alive／Unknown（QA 驅動得到的那兩態）。
+    //           ⭐ 2026-09-09（TASK-0123）畫面那半也有路了：`senate ui --no-cleanup` 跳過渲染前的清理
+    //           ⇒ Dead 與 PidReused **真的畫得出來**（實測：`server start` → `taskkill /F` ⇒ `・DEAD`；
+    //           把 `start_time_utc` 回撥一小時 ⇒ `▲ PID 已易主`；兩態都**沒有** Kill 鈕，復原後回 ALIVE 且 Kill 鈕出現）。
+    //           ⛔ 本格仍然留著：它量的是**分類**，不需要活體也不需要畫面 —— 那兩件事不該綁在一起。
     // 數值影響：純讀 OS 的 process 表，不寫檔、不殺任何東西。
     static CheckRow ProcessStatusClassification()
     {

@@ -55,8 +55,30 @@ public static class Program
         SCP_ProcessRegistry.Warn = iMessage => Console.Error.WriteLine($"⚠ {iMessage}");
         // CLI 是「一次呼叫一顆 process」⇒ 每次啟動就是一個**一定會經過**的時機。
         // 不清的話殘檔會無聲累積，而堆積出來的畫面跟屍潮長得一樣，一樣會訓練人忽略那張表。
-        try { SCP_ProcessRegistry.CleanupStale(); }
-        catch (Exception e) { Console.Error.WriteLine($"⚠ process 登記清理失敗：{e.Message}"); }
+        //
+        // ⭐ `ui --no-cleanup` 是這條規矩**唯一**的出口（TASK-0123）：
+        //   🩸 QA 2026-09-03 造的活體 —— `server start` → `taskkill /F` → 記錄檔確實還在磁碟上，
+        //     而 `senate ui` 印出 0 筆：`Main` 每次先清，而 `--window` / `--screenshot` **也是一次新的 Main**
+        //     ⇒ **Dead／PidReused 在任何 QA 驅動得了的路徑上都到不了畫面**。
+        //     分類邏輯有 selftest 四態格（29／29），而「畫出來長什麼樣」一個讀數都沒有。
+        //   ⇒ 這條旗標只跳過**渲染前的清理**，⛔ 不改任何 kill 判準，並且
+        //     由頁面把代價印在表的上面（`SCP_ProcessRegistry.StartupCleanupSkipped`）。
+        //   ⛔ 只認 `ui` 底下的它：別的指令帶了會**出聲說沒有生效**，不靜默忽略
+        //     （靜默忽略會讓「我加了旗標」與「旗標生效了」同形 —— 那正是本單要修的那族）。
+        bool aNoCleanup = HasFlag(iArgs, "--no-cleanup");
+        bool aIsUi = iArgs.Length > 0 && string.Equals(iArgs[0], "ui", StringComparison.OrdinalIgnoreCase);
+        if (aNoCleanup && !aIsUi)
+            Console.Error.WriteLine("⚠ `--no-cleanup` 只在 `senate ui` 底下有效 —— 本次**照常清理**了失效記錄。");
+        if (aNoCleanup && aIsUi)
+        {
+            SCP_ProcessRegistry.StartupCleanupSkipped = true;
+            Console.Error.WriteLine("⚠ `--no-cleanup`：本次**沒有**清理失效記錄 ⇒ 畫面上那張表含殘留（頁面會再說一次）。");
+        }
+        else
+        {
+            try { SCP_ProcessRegistry.CleanupStale(); }
+            catch (Exception e) { Console.Error.WriteLine($"⚠ process 登記清理失敗：{e.Message}"); }
+        }
         // 退路：開不了檔案總管的宿主至少要能把類別名複製起來（見 SCP_GuiToolPage.ShowCopyClassButton）
         // ⭐ 兩個方向都走 SenateClipboard（Windows Win32、其他平台委給 SenateShell 的 process 路徑）。
         //   原本 Copy 走 clip.exe、Read 走 PowerShell，各要 300〜500ms —— 掛按鈕還可以，
@@ -1294,6 +1316,8 @@ public static class Program
                 --fold <id>       摺疊／展開一個區塊（收合時內容不會被建出來）
                 --reset           清空 session
                 --json            整棵畫面樹輸出成 JSON（給程式讀）
+                --no-cleanup      **跳過渲染前的失效記錄清理** —— 唯一能讓 Dead／PID 已易主那兩態走到畫面上的路
+                                （Process 管理頁會在表上明說「本次含殘留」）。⛔ 不改 kill 判準；⛔ 別的指令帶它會出聲說沒生效
               ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
                 --page <key>      開窗直接停在某一頁 —— 給截圖驗收用。⚠ **key 清單不寫在這裡**（寫死的那一行會在加頁時安靜過期）：
                                 打錯 key 會 exit 2 並把目錄裡的現有 key 全部印出來

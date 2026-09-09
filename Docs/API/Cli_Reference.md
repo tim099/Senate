@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-08
+last_updated: 2026-09-09
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -401,6 +401,7 @@ Debug 當 Server、exe 當 CLI ⇒ `running_build_mismatch`，exe 照樣停得�
 | `--fold <id>` | 摺疊／展開一個區塊。⚠ 收合時**內容不會被建出來**，所以 `--list` 也看不到那一段的欄位 |
 | `--json` | 整棵畫面樹輸出成 JSON（給程式讀；文字輸出是給人看的） |
 | `--reset` | 清空 session（欄位與勾選回到頁面預設） |
+| `--no-cleanup` | **跳過渲染前的失效記錄清理** ⇒ Process 管理頁的 `Dead`／`PID 已易主` 兩態才走得到畫面上。頁面會在表的上面明說「本次含殘留」（筆數**不是**「現在真的有這麼多 process 在跑」）。⛔ **不改 kill 判準**：Kill 鈕仍然只畫在 `Alive` 那幾列。⛔ 帶在別的指令上會**出聲說沒生效**，不靜默忽略 |
 | `--window` | 開原生 ImGui 視窗，關窗才結束 |
 | `--screenshot <path>` | 開窗、畫幾幀、存 PNG 後**自己關掉** |
 | `--soak <秒>` | 開窗**真的轉這麼多秒**再收工，印 `幀數 / 秒數 / 平均 fps / 第一幀 / 其餘最慢`（可跟 `--screenshot` 併用）。截圖證明畫得出來，這個證明畫得動 |
