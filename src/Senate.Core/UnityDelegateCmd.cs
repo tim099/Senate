@@ -36,8 +36,10 @@ public abstract class UnityDelegateCmd : SCP_Cmd
 
     /// <summary>
     /// 成功之後補一行「走 CLI 的話下一步是什麼」。預設空 ＝ 不印。
-    /// <para>⚠ 存在的理由：回傳檔裡的 <c>## next</c> 是 **Editor 端**寫的，教的是
-    /// <c>run_cmd.py</c> 那條路 —— 走 CLI 的人照著打會打到另一個入口。
+    /// <para>⚠ 存在的理由：回傳檔裡的 <c>## next</c> 是 **Editor 端**寫的，印的是
+    /// <c>senate ucmd</c>（底層直派）那一步 —— 走 <c>senate cmd</c> 的人少打參數、多印宿主定語，
+    /// 兩者是**不同粒度**不是兩套流程。（字面 2026-09-10 更新：舊註解寫 <c>run_cmd.py</c>，
+    /// 而那支已刪除、回傳檔也早改印 <c>senate ucmd</c>。）
     /// 這裡補一行對照，**但絕不改寫回傳檔的內容**：
     /// 改寫別人的產出，就沒有人知道那份檔真正說了什麼。</para>
     /// </summary>

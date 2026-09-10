@@ -1,6 +1,7 @@
 // 區塊職責：`cmd coding --arg op=end` 的**編譯閘（Senate 側那把尺）** —— 跑一次 `dotnet build`。
 // 物理意義：兩個宿主的尺**不同形，而且不可以合成一把**（TASK-0058 A/B/C 拍板附註）：
-//           Unity 側是 `check_compile`（tracker ＋ ErrorLog 對帳），這一側是 .NET 的編譯。
+//           Unity 側是 `unity-compile-status`（tracker ＋ ErrorLog 對帳），這一側是 .NET 的編譯。
+//           （2026-09-10 更名：舊名 `check_compile` 那支 python 已整支刪除。）
 //           硬湊一把共用的尺，會讓其中一邊量的**不是它自己的編譯**。
 // 數值影響：跑一次 `dotnet build`（秒級，`-v quiet`）。**不寫任何檔**、不動 session ——
 //           它只回一個判定，關場是呼叫端的事。

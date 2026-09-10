@@ -30,7 +30,9 @@ namespace Senate.Core;
 public abstract class GoodnightDelegateCmd : UnityDelegateCmd
 {
     /// <summary>
-    /// 回傳檔裡的 `## next` 是 **Editor 端**寫的，教的是 `run_cmd.py` 那條路。
+    /// 回傳檔裡的 `## next` 是 **Editor 端**寫的，印的是 `senate ucmd`（底層直派）那一步。
+    /// <para>⚠ 字面 2026-09-10 更新（同 `Cmd_Morning`）：`run_cmd.py` 已刪除，
+    /// 而回傳檔改印 `senate ucmd` ⇒ 差別是**粒度**不是兩套流程。</para>
     /// <para>⚠ 走 CLI 的人照著打會打到另一個入口 —— 所以這裡補一行對照，
     /// **但不改寫回傳檔的內容**：改寫別人的產出，就沒有人知道那份檔真正說了什麼。</para>
     /// </summary>

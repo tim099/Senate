@@ -5,6 +5,10 @@
 //           這支存在的理由：**沒有 python 的環境（Codex）也要能派 Cmd**。
 // 數值影響：只動目標專案 AgentCommands 底下的 queue/trigger 檔（append ＋ atomic replace）；
 //           不碰 Editor 端任何狀態。exit code 語意與 run_cmd.py 對齊：0 成功／2 失敗／3 逾時。
+// ⚠ **`run_cmd.py` 本身已刪除（2026-09-10 確認：檔案不存在）** —— 本檔通篇「與 run_cmd.py 同形／
+//   同律／對齊」是**出處敘述**，不是一個可以現場比對的活體。要看它去 git history；
+//   而那些樣板的**現行權威**是 Editor 端的 watcher（它掃 `queue*.json` / `pending*.trigger`）。
+//   ⛔ 別因為對不到那支檔就以為樣板沒人管：管它的那一端一直在，只是換了名字。
 // ⚠ 協議樣板（queue 路徑、queue entry 欄位、trigger 內容、result 檔判定）與 run_cmd.py／
 //   UCL_AgentCommandQueue.cs 是**同一份協議的三個端**——任一端改樣板，三端要一起改，
 //   落後的那端症狀是 trigger 寫在對方沒在看的地方，**靜默 pending 到 timeout**。
@@ -282,8 +286,13 @@ public static class AgentCmdClient
         {
             // ⚠ 順序是判準不是排版：**先看 mtime，再懷疑宿主**。
             //   反過來的話，第一個動作會是去檢查一個沒有問題的 Editor。
-            iErr("  ⚠ mtime **沒動**才輪到懷疑宿主：Editor 在不在 tick 用"
-                 + " `python <UCL_Core>/Tools~/AgentCommands/check_compile.py --editor-alive`（0＝在 tick）。");
+            iErr("  ⚠ mtime **沒動**才輪到懷疑宿主：Editor 在不在 tick ＝ stat 酒保 daemon 的心跳檔"
+                 + " `<data_root>/ChatTavern/bartender/_heartbeat.txt`（正常節拍 0.5s，>1.5s 未動＝沒在 tick）。");
+            // 🩸 這行原本教 `check_compile.py --editor-alive`，而那支 2026-09-10 整支刪除（TASK-0155）。
+            //   ⚠ 而「沒有替代品」是**窄報** —— 死掉的只是 python 包裝，它量的**資料源一直在**：
+            //   那支的實作是「純 stat 一個檔，不送 Cmd」（實測探針要 2.13s 空閒／13.13s 編譯中，所以才不送）。
+            // ⛔ 邊界照抄原實作，別把它讀成「正在編譯」：心跳停的原因還有 domain reload／
+            //   modal dialog／Editor 掛住／Editor 關閉。它證明的是「**沒在 tick**」而已。
         }
         iErr("  ⚠ 本筆未完成 ⇒ **回傳檔沒有被更新**。若下一步要讀它，先確認檔頭時間戳。");
         return AgentCmdWaitResult.Timeout;

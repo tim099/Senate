@@ -129,7 +129,8 @@ public static class Program
         SCP.Core.Session.SCP_ActivitySessionGatewayHost.Factory =
             (aDataRoot, aKind) => new SenateSessionCloseGateway(aDataRoot, aKind);
         // Coding 退場的編譯閘（TASK-0058 **A2**）：這一側的尺是 `dotnet build`，
-        // ⛔ 跟 Unity 側的 `check_compile` **不可以合成一把**（合了會讓其中一邊量的不是它自己的編譯）。
+        // ⛔ 跟 Unity 側的 `unity-compile-status` **不可以合成一把**（合了會讓其中一邊量的不是它自己的編譯）。
+        //   （名字 2026-09-10 更新：舊名 `check_compile` 那支 python 已整支刪除，Unity 側現在是本 exe 的兩支子命令。）
         // ⚠ 沒裝閘不是綠燈 —— `cmd coding --arg op=end` 沒閘時會明說「未驗編譯」。
         SenateCodingExitGate.Install(aRepoRoot);
         // 宿主能力④：酒館發文閘（`cmd rest` 的廣播那半）—— 同樣是**派給 Editor**：

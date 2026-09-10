@@ -19,7 +19,11 @@ namespace Senate.Core;
 public abstract class MorningDelegateCmd : UnityDelegateCmd
 {
     /// <summary>
-    /// 回傳檔裡的 `## next` 是 **Editor 端**寫的，教的是 `run_cmd.py` 那條路。
+    /// 回傳檔裡的 `## next` 是 **Editor 端**寫的，印的是 `senate ucmd`（底層直派）那一步。
+    /// <para>⚠ 字面 2026-09-10 更新：舊註解寫「教的是 `run_cmd.py` 那條路」，而 TASK-0107 之後
+    /// Editor 端已改印 `senate ucmd`（實測 `goodmorning_wake.md`：`run_cmd` 命中 0），
+    /// 且 `run_cmd.py` 本身已刪除。⇒ 本殼存在的理由**沒變**，變的是理由的內容：
+    /// 兩者不是兩套流程，是**不同粒度** —— 回傳檔給底層直派，`senate cmd` 給同一步的儀式包裝。</para>
     /// <para>⚠ 走 CLI 的人照著打會打到另一個入口 —— 所以這裡補一行對照，
     /// **但不改寫回傳檔的內容**：改寫別人的產出，就沒有人知道那份檔真正說了什麼。</para>
     /// </summary>
