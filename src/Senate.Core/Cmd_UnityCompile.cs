@@ -115,6 +115,22 @@ public sealed class Cmd_UnityRecompile : UnityDelegateCmd
         foreach (string aLine in SCP_UnityCompile.Render(aFresh, iWhere.ProjectRoot, iErrorsOnly: true, iMaxMessages: aMax))
             ioResult.Lines.Add(aLine);
 
+        // ⭐ TASK-0159：**「編譯有沒有錯」與「這一趟編到我改的檔了嗎」是兩題** ——
+        //   而它們原本共用同一句 `clean`。Unity 在沒有東西要編時照樣寫一份新狀態
+        //   ⇒ 時間戳晚於基準、in_progress=false、errors=0，跟真的編過**完全同形**。
+        //   ⇒ 這裡把第二題落成獨立讀數，⛔ 而**不改 `compile_verdict` 的語意**
+        //     （`clean` 但 stale>0 要不要改判是拍板題，見 TASK-0159 ③ —— 本層不自己挑）。
+        SCP_UnityCompile.SCP_UnityStaleResult aStale = SCP_UnityCompile.StaleSources(iWhere.ProjectRoot);
+        foreach (string aLine in SCP_UnityCompile.RenderStale(aStale)) ioResult.Lines.Add(aLine);
+        ioResult.AddValue("stale_sources", aStale.Measured
+            ? aStale.StaleCount.ToString(CultureInfo.InvariantCulture)
+            : "unmeasured");   // ⛔ 沒量到不寫 0：那兩件事的處置相反
+
+        // ⚠ `saw_in_progress` 是**輪詢期間**有沒有撞見 in_progress=true。
+        //   ⛔ 0 不等於「沒編」：編譯比輪詢間隔還快時就會整段錯過（本值刻意不當判準用，
+        //   只當 stale 那一格的旁證）。真正可靠的是上面那個 mtime 對帳。
+        ioResult.AddValue("saw_in_progress", aSawInProgress ? "1" : "0");
+
         int aErrors = aFresh.Status.total_errors;
         ioResult.AddValue("compile_errors", aErrors.ToString(CultureInfo.InvariantCulture));
         ioResult.AddValue("compile_warnings", aFresh.Status.total_warnings.ToString(CultureInfo.InvariantCulture));
@@ -190,6 +206,14 @@ public sealed class Cmd_UnityCompileStatus : SCP_Cmd
         // ⚠ 這一句是本 Cmd 與 `unity-recompile` 最重要的差別，所以它印在結論旁邊而不是說明裡。
         aResult.Lines.Add("⚠ 本 Cmd **不知道**這份是不是你這次改動的結果 —— 要那個答案走 "
                           + SCP_CmdRegistry.Invoke("unity-recompile --arg persona=<me>"));
+        // ⭐ TASK-0159：本 Cmd 更需要這一格 —— 它連「是不是你這一趟」都不知道，
+        //   而 stale 對帳至少答得出「磁碟上的組件有沒有落後原始碼」。
+        SCP_UnityCompile.SCP_UnityStaleResult aStale = SCP_UnityCompile.StaleSources(aWhere.ProjectRoot);
+        foreach (string aLine in SCP_UnityCompile.RenderStale(aStale)) aResult.Lines.Add(aLine);
+        aResult.AddValue("stale_sources", aStale.Measured
+            ? aStale.StaleCount.ToString(CultureInfo.InvariantCulture)
+            : "unmeasured");
+
         aResult.AddValue("compile_errors", aRead.Status.total_errors.ToString(CultureInfo.InvariantCulture));
         aResult.AddValue("compile_warnings", aRead.Status.total_warnings.ToString(CultureInfo.InvariantCulture));
         aResult.AddValue("compile_in_progress", aRead.Status.in_progress ? "1" : "0");
