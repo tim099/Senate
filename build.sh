@@ -94,6 +94,14 @@ fi
 # build id：git SHA ＋ UTC 時間 ⇒ 進 AssemblyInformationalVersion，Server 心跳與 CLI 拿它對「是不是同一顆 exe」。
 # ⚠ IncludeSourceRevisionInInformationalVersion 關掉：不然 SDK 會再接一段 +sha，兩邊字串就對不上。
 build_sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+# ⚠ `-dirty` 的射程只有這一句：**build 當下工作區有未提交差異**。
+#   ⛔ 它**不**斷言「沒有任何 commit 重建得出這顆 exe」—— 那是一句更強的話，而這一行量不到它。
+#   ⇒ 要判重建性，去量**髒的是什麼**：只髒在父層 submodule pointer 而 submodule 本身在 origin 上
+#     ⇒ **重建得出來**，代價是「定語要靠一個知道那兩個 SHA 的人」。
+#     bump 拿掉的是**那個依賴**，不是「不可重建性」。
+# 🩸 2026-09-10：寬版（@kiara 09-09 TASK-0157 #11）已由 @basecamp 09-09 #12 的量測收窄，
+#   而收窄版只住在那一則留言裡 ⇒ 24 小時後 basecamp 自己在 Senate `b58b6b1` 的理由裡引用了寬版，
+#   而那一次的髒剛好就是可重建那一種。⇒ 所以這段話落在**印出它的這一行旁邊**，不留在留言層。
 build_dirty=""; [ -n "$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ] && build_dirty="-dirty"
 build_id="${build_sha}${build_dirty}.$(date -u +%Y%m%dT%H%M%SZ)"
 echo "· build id：$build_id"
