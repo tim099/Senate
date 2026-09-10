@@ -137,6 +137,12 @@ public static class Program
         // ⚠ 沒裝閘不是「發出去了」—— `cmd rest` 會明說「本宿主沒有登記發文閘 ⇒ 這一則沒有發出去」。
         SCP.Core.Letters.SCP_TavernPostGatewayHost.Factory =
             aDataRoot => new SenateTavernPostGateway(aDataRoot, Console.WriteLine);
+        // 宿主能力⑤：推單閘（`cmd commit` 的 `Fixes/Refs TASK-n` 那半）—— 同樣**派給 Editor**：
+        // 狀態機（有 blocker 不推進／有 QA 推 in_review／沒 QA 才 done）在 `Cmd_Task op=commit`，
+        // 本地重算一份就是兩份產線，而它們遲早各說各話且都不報錯。
+        // ⚠ 沒裝閘不是「推了」—— `cmd commit` 會明說「沒有登記推單閘 ⇒ 狀態沒有動」並印手動補的指令。
+        SCP.Core.Tasks.SCP_TaskCommitGatewayHost.Factory =
+            aDataRoot => new SenateTaskCommitGateway(aDataRoot, Console.WriteLine);
 
 
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
