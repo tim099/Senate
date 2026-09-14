@@ -97,6 +97,8 @@ public static class SelfTest
         One(nameof(BookWritingFilter), "book", BookWritingFilter),
         One(nameof(BookChapterArcCleanRoom), "book", BookChapterArcCleanRoom),
 
+        One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
+
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
         Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
         Many(nameof(RealPersonaScan), "real", () => RealPersonaScan(iProjects)),
@@ -105,6 +107,7 @@ public static class SelfTest
         Many(nameof(RealWatchResolveFingerprint), "watch", () => RealWatchResolveFingerprint(iProjects)),
         Many(nameof(RealWatchChapterRebuild), "watch", () => RealWatchChapterRebuild(iProjects)),
         Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iProjects)),
+        Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iProjects)),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -1961,6 +1964,145 @@ public static class SelfTest
             $"存讀一致={aSame}／缺欄位用預設={aDefault}（{aEmpty.Scale:0.##}）／超範圍夾住={aClamped}",
             aSame && aDefault && aClamped ? CheckResult.Pass : CheckResult.Fail);
     }
+
+
+    // ═══════════════════════════════════════════════════════════
+    // 區塊職責：閱讀庫 JSON 版面的兩格 —— ① writer 的固定點（真閘）② 與磁碟的相符份數（讀數）。
+    //
+    // 物理意義：寫入端從 Unity 端搬進 SCP_Core 時，遷移期間**兩個寫入端並存**，
+    //           而「搬對了」的唯一可信讀數是同輸入兩邊輸出**逐位元組**相同。
+    //           版面不同的失敗樣子是「內容逐鍵相同、整批翻紅」—— 沒有任何一層會喊。
+    //
+    // ⚠ 為什麼 ② 是讀數不是閘：**磁碟不是規格。**（2026-09-14 calli 逐位元組量的）
+    //    `BookNotes/Library` 底下 596 份 JSON 是至少三支 writer、跨數個時代的沉積
+    //    （tab＋冒號無空格 426 份／2 空格 一批／tab＋冒號有空格 一批），
+    //    而**行尾那一根軸整根不算數** —— repo 的 core.autocrlf=true，checkout 會把整份換成 CRLF
+    //    （含結尾那一個 LF）⇒ 工作樹上的行尾是 git 的產物，不是 writer 的。
+    //    ⇒ 拿它當通過條件的話，這一格永遠紅，而紅得沒有資訊。它的正確用途是
+    //      **間接驗「UclLegacy 有沒有把舊 writer 抄對」**，所以印份數、不判生死。
+    //
+    // 🩸 這一格的由來：我 2026-09-11 列了「三根軸」就宣布量完了，今天逐位元組跑完發現是**六根**
+    //    （縮排／冒號空格／陣列括號位置／空容器渲染／行尾／結尾換行），其中最後兩根還是假的（git 的）。
+    //    ⇒ 一把只看得見自己列出那幾根軸的尺，在漏軸時的輸出跟「完全相同」一模一樣。
+    //      所以 ① 不用軸表斷言，用**一份把所有軸一次蓋掉的期望字串**。
+    // ═══════════════════════════════════════════════════════════
+    static CheckRow LibraryJsonStyleFixture()
+    {
+        // 一份刻意把每一根軸都踩到的樹：純量／巢狀物件／非空陣列／**空陣列**／非 ASCII。
+        var aData = SCP_JsonData.NewObject();
+        aData.Set("chapter_id", "0001");
+        aData.Set("title", "第 1 話");
+        var aProgress = SCP_JsonData.NewObject();
+        aProgress.Set("current_chapter_id", "0001");
+        aData.Set("progress", aProgress);
+        var aRounds = SCP_JsonData.NewArray();
+        var aRound = SCP_JsonData.NewObject();
+        aRound.Set("round", 1);
+        aRounds.Add(aRound);
+        aData.Set("rounds", aRounds);
+        aData.Set("facts", SCP_JsonData.NewArray());
+        aData.Set("schema_version", 2);
+
+        // 期望值＝`UCL_JsonData.SerializeValueBeautify` 的形狀，逐字抄自它
+        // （⛔ 不是抄磁碟上某一份檔 —— 那份檔的行尾是 git 給的）。
+        string aExpect = string.Join("\n", new[]
+        {
+            "{",
+            "\t\"chapter_id\":\"0001\",",
+            "\t\"title\":\"第 1 話\",",
+            "\t\"progress\":{",
+            "\t\t\"current_chapter_id\":\"0001\"",
+            "\t},",
+            "\t\"rounds\":",
+            "\t[",
+            "\t\t{",
+            "\t\t\t\"round\":1",
+            "\t\t}",
+            "\t],",
+            "\t\"facts\":",
+            "\t[",
+            "",
+            "\t],",
+            "\t\"schema_version\":2",
+            "}",
+        });
+
+        string aGot = SCP_JsonWriter.Write(aData, SCP_JsonStyle.UclLegacy);
+        bool aMatch = aGot == aExpect;
+
+        // writer 的固定點：寫出來的東西讀回去再寫，必須逐位元組相同。
+        // ⛔ 這一格跟上面那格治的不是同一種病：上面治「抄錯舊 writer」，這格治「writer 自己不穩」。
+        string aAgain = SCP_JsonWriter.Write(SCP_JsonData.Parse(aGot), SCP_JsonStyle.UclLegacy);
+        bool aStable = aAgain == aGot;
+
+        string aWhere = aMatch ? "—" : FirstDiffAt(aExpect, aGot);
+        return new CheckRow("閱讀庫 JSON 版面（UclLegacy 對舊 writer）",
+            $"與舊 writer 同形={aMatch}{(aMatch ? "" : "（首差 " + aWhere + "）")}／round-trip 穩定={aStable}",
+            aMatch && aStable ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    static string FirstDiffAt(string iExpect, string iGot)
+    {
+        int n = Math.Min(iExpect.Length, iGot.Length);
+        for (int i = 0; i < n; i++)
+            if (iExpect[i] != iGot[i])
+                return $"@{i}　期望「{Show(iExpect, i)}」／實得「{Show(iGot, i)}」";
+        return $"前 {n} 字元相同，長度 {iExpect.Length}／{iGot.Length}";
+    }
+
+    static string Show(string iS, int iAt)
+    {
+        int aFrom = Math.Max(0, iAt - 8), aTo = Math.Min(iS.Length, iAt + 10);
+        return iS.Substring(aFrom, aTo - aFrom).Replace("\n", "\n").Replace("\t", "\t");
+    }
+
+    /// <summary>
+    /// 拿**真的閱讀庫**逐位元組對拍：每一份都要 parse 得動，並印出 UclLegacy 寫回後
+    /// 與磁碟相符的份數（行尾無關）。
+    /// </summary>
+    /// <remarks>⚠ 相符份數是**讀數不是閘** —— 理由見本區塊上方註解（磁碟不是規格）。</remarks>
+    static IEnumerable<CheckRow> RealLibraryByteRoundTrip(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aLibrary = Path.Combine(p.AgentCommandsRoot, "BookNotes", "Library");
+            if (!Directory.Exists(aLibrary)) continue;
+            aAny = true;
+
+            string[] aFiles = Directory.GetFiles(aLibrary, "*.json", SearchOption.AllDirectories);
+            int aSame = 0, aBad = 0;
+            var aUtf8 = new UTF8Encoding(false);
+            foreach (string f in aFiles)
+            {
+                string aDisk;
+                SCP_JsonData aTree;
+                try
+                {
+                    aDisk = File.ReadAllText(f, aUtf8);
+                    aTree = SCP_JsonData.Parse(aDisk);
+                }
+                catch { aBad++; continue; }
+                string aBack = SCP_JsonWriter.Write(aTree, SCP_JsonStyle.UclLegacy) + "\n";
+                if (Eol(aDisk) == Eol(aBack)) aSame++;
+            }
+
+            yield return new CheckRow(
+                $"閱讀庫逐位元組對拍（{p.Name}）",
+                $"{aFiles.Length} 份／parse 不動 {aBad}／UclLegacy 寫回相符 {aSame}"
+                + $"（行尾無關；⚠ 相符份數是**讀數不是閘** —— 磁碟是三支 writer 的沉積，"
+                + "而行尾由 core.autocrlf 決定，不歸 writer 管）",
+                aBad == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+
+        if (!aAny)
+            yield return new CheckRow("閱讀庫逐位元組對拍",
+                "找不到樣本（沒有可用專案或該專案沒有 BookNotes/Library）—— **這是跳過，不是通過**",
+                CheckResult.Skipped);
+    }
+
+    static string Eol(string iS) { return iS.Replace("\r\n", "\n"); }
 
     /// <summary>
     /// 拿**真的、由 Unity 端 UCL JsonData 寫出來的檔**過一遍：讀 → 寫 → 再讀，
