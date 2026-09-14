@@ -99,6 +99,25 @@ public sealed class AwakeningSettings
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
 }
 
+/// <summary>
+/// 銀行設定。⚠ 只有一格，而那一格的**重點是它可以指到專案外面**。
+/// </summary>
+public sealed class BankSettings
+{
+    /// <summary>
+    /// 新版銀行帳本根（絕對路徑），例如 <c>D:/Unity/Bank</c>。
+    /// <para>空 ＝ 還沒設定；<c>auto</c> ＝ 本專案資料根底下的 <c>Bank</c>（**過渡形，不是終局**）。</para>
+    /// <para>⛔ 空字串**不是**某個猜出來的路徑 —— 跟 <see cref="AwakeningSettings.LettersRoot"/> 同一條規矩。</para>
+    /// </summary>
+    public string BankRoot { get; set; } = "";
+
+    /// <summary>本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。</summary>
+    /// <remarks>⚠ [SCP_Ignore]：不進畫面、不進自動序列化（同其他區塊）。</remarks>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+}
+
 /// <summary>senate.local.json 的根物件。</summary>
 public sealed class SenateConfig
 {
@@ -116,6 +135,16 @@ public sealed class SenateConfig
     /// <para>純新增欄位 ⇒ schemaVersion 不動（1）：舊檔讀得進來、寫回去會多這一段。</para>
     /// </summary>
     public AwakeningSettings Awakening { get; set; } = new();
+
+    /// <summary>
+    /// 銀行設定（新版帳本住哪）。
+    /// <para>⚠ **跨專案共用同一套**就是它存在的理由（Tim 2026-09-14）：LY／Bar／Senate 指到同一個根，
+    /// 錢才只有一份。舊 Treasury 從各專案自己的資料根推出來 ⇒ **一個區一本帳**，
+    /// 而「別區的綁定卻在本區有餘額」（`Codex` 246／`Luna` 84，2026-09-14 實測）
+    /// 沒有任何一層會喊。</para>
+    /// <para>純新增欄位 ⇒ schemaVersion 不動（1）：舊檔讀得進來、寫回去會多這一段。</para>
+    /// </summary>
+    public BankSettings Bank { get; set; } = new();
 
     /// <summary>
     /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。

@@ -1003,3 +1003,45 @@ D21 加它的理由就是 @basecamp 2026-08-28 那次 headless 全綠交付、Ti
 
 **落地**：`build.sh` / `build.ps1`（四格判定：doctor / selftest / gui / server）、
 `Docs/Workflows/Setup_And_Build.md`。`Cli_Reference` 的 `--soak` 條目不動。
+
+## D25 · Senate 全面改用 `SCP_Json`，`System.Text.Json` 退場（2026-09-14，Tim 拍板）
+
+**拍的是什麼**：`System.Text.Json` 在**整個 Senate repo** 退場，JSON 讀寫一律走
+`SCP_Core/Runtime/Json`（`SCP_JsonData` / `SCP_JsonParser` / `SCP_JsonWriter` / `SCP_JsonMapper`）。
+
+**這不是新規則，是取消一個例外。** `<SCP_Core>/Docs~/Coding_Standards.md` §2 從 2026-08-30 就寫著
+「JSON 一律走 `SCP_Json`」，而 §2.1 留了第三格：「**純宿主專屬、確定不會搬**（例：Senate 的 CLI 參數解析）⇒ 可用宿主自己的」。
+D25 收掉的就是那一格 —— **在 Senate 這一側**。
+
+**為什麼收（三格讀數，不是偏好）**：
+1. 🔴 **那一格的判準是一個預測，而預測會錯。** `ServerHost` / `ServerExecutor` 當初都落在「確定不會搬」那格，
+   而 2026-09-14 分析 Senate.Server 獨立 exe 時，卡住它們往下搬進 `SCP_Core` 的**就是 `System.Text.Json`**
+   （SCP_Core 是 `netstandard2.1` ＋ 零 `PackageReference`，csproj 有 `<Error>` 明著擋）。
+   ⇒ §2.1 自己那句「搬家時才換等於把移植成本延後並放大」，實測應驗在寫它的人身上。
+2. **兩套 JSON 寫入器對同一批磁碟檔。** 那些檔同時被 Unity（`SCP_Json`）與 python 讀寫 ——
+   兩個 writer 的跳脫、數字格式與鍵序不保證同形，而**位元組漂掉不會報錯**。
+3. 量到的成本很小（見下），沒有「太大所以不做」的理由。
+
+**射程（2026-09-14 實測，LY 這台）**：`src/**` 共 **7 檔**、~70 處。
+`AgentCmdClient.cs` 41／`ServerExecutor.cs` 17／`SenateConfig.cs` 5／`Program.cs` 3／
+`ServerCommand.cs` 2／`SenatePageStore.cs` 1／`SelfTest.cs` 1。
+API 形狀以 DOM 為主（`JsonObject` 38／`JsonArray` 24／`JsonNode` 6／`JsonValue` 3／`JsonElement` 3），
+`JsonSerializer.Serialize` 與 `Deserialize` **各只有 1 處** ⇒ 多數是機械替換。
+
+**⛔ 而有一格不是機械替換，動工前要先解**：
+`SenateConfig.cs` 有 **3 處 `[JsonExtensionData] Dictionary<string, JsonElement> Extra`** ——
+它接住「本版不認得的欄位」，理由寫在它自己的註解裡：
+> 「那不是格式化差異，是**寫入端省略不可逆**：projects 還在，所以看起來一切正常。
+>  ⇒ 反序列化丟掉的東西，序列化就再也寫不回來 —— 除非像這樣顯式接住。」
+
+而 `SCP_JsonMapper` 目前只有 `ToJson` / `Populate` / `Create`，**沒有 attribute 形式的未知鍵收容**。
+⇒ 兩條出路，**擇一前不要動那個檔**：
+(a) `SCP_JsonMapper` 補一個等價機制（新增能力，要一起想 Unity 那側）；
+(b) `Extra` 改存 `SCP_JsonData`，在讀寫兩端顯式 merge（不動共用碼，但那段 merge 要有反向對照）。
+🩸 **這一格做壞的樣子是「使用者的設定檔安靜地少一塊」，不是編譯錯誤。** 沒有反向對照就等於沒驗。
+
+**不在射程內**：`SCP_Core/**` 本來就沒有在用（兩處命中**都是註解**，說的正是「Unity 那側沒有它」）。
+
+**落地**：`Docs/Architecture/Overview.md`（把規則從「SCP_Core 的規矩」升成 Senate 全域）、
+`<SCP_Core>/Docs~/Coding_Standards.md` §2.1（標註消費端可自行收窄，Senate 已收）。
+⚠ 程式碼本身**尚未遷移** —— 本條只立規則與射程，實作是另一次改動。

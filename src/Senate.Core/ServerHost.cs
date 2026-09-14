@@ -107,6 +107,17 @@ public static class ServerHost
     /// <summary>stop 請求送出後等 Server 自己退的時間；等不到才 kill。</summary>
     public const int StopGraceMs = 5000;
 
+    // 區塊職責：收到停止請求之後，**等手上的 lane 跑完**再退（TASK-0209 A6，Tim 2026-09-14 選 (乙)）。
+    // 物理意義：被切掉的那條 lane 的 `.running` 會留著，下一顆 Server 啟動時翻回 pending **續跑**
+    //          ⇒ **那筆 cmd 會被再執行一次**。銀行搬進來之後，那可能正是一筆扣款。
+    //          ⇒ 所以上限到了不是「切掉就走」，是**拒絕退出並指名還在跑的 lane** ——
+    //            讓「誰擋著」變成讀數，而不是讓那一筆安靜地被做第二次。
+    // 數值影響：重啟變慢（最壞 ＝ 最久那條 lane 的執行時間）。這是刻意換來的。
+    // ⚠ 排乾期間**仍然跳心跳** —— 不跳的話 `server stop` 那側會判它掛了而去 kill，
+    //   那就把「排乾」變成「硬切」，比 (甲) 還糟。
+    /// <summary>收到 stop 請求後等 lane 跑完的上限；到了**不硬切**，改成拒絕退出並報告。</summary>
+    public const int DrainMaxSeconds = 30;
+
     /// <summary>
     /// 這顆執行檔的 build id ＝ AssemblyInformationalVersion（由 build.sh／build.ps1 在 publish 時塞入 git SHA＋時間）。
     /// <para>⚠ `dotnet run`（Debug DLL）沒有那個屬性或是 SDK 預設的 `1.0.0` ⇒ 回 <c>unversioned</c> ——
@@ -153,11 +164,61 @@ public static class ServerHost
     /// </summary>
     public static int RunForeground(string iRepoRoot, Action<string> iOut, Action<string> iErr)
     {
+        // 🩸 **自己的輸出自己落檔**（TASK-0209 A5，2026-09-14 兩次實測換來的形狀）：
+        //   ① 先是共用一份 `_server_start.log`，`WriteAllText` 互相**截斷覆蓋**。
+        //   ② 改成一顆一份之後仍然是空的：輸出原本接成 **parent 的管線**，
+        //      而 parent（CLI）跑完就退 ⇒ **非同步讀取器跟著死**，
+        //      輸掉單例鎖那幾顆的「拿不到單例鎖」一個字都沒留下。
+        //   ⇒ 兩次的症狀一模一樣：**要查「它為什麼沒起來」的時候，那幾行剛好不在。**
+        //   ⇒ 所以落檔的責任歸 child：它活多久 log 就寫多久，跟誰拉起它無關。
+        // ⚠ 手動 `senate server start` 也照寫（終端機看得到 ＋ 檔案留得住，兩者不互斥）。
+        string aStartLog = StartLogPath(iRepoRoot, Environment.ProcessId);
+        var aLogLock = new object();
+        void Tee(string iLine)
+        {
+            try { lock (aLogLock) File.AppendAllText(aStartLog, iLine + Environment.NewLine); }
+            catch (Exception) { /* log 寫不進去不該把 Server 拖下水 */ }
+        }
+        try
+        {
+            Directory.CreateDirectory(SenatePaths.RuntimeDir(iRepoRoot));
+            File.WriteAllText(aStartLog,
+                $"# senate server　pid={Environment.ProcessId}　{DateTime.Now:yyyy-MM-dd HH:mm:ss}"
+                + Environment.NewLine);
+        }
+        catch (Exception) { /* 建不起來就只剩終端機那一份；⛔ 不因此拒絕啟動 */ }
+        Action<string> aOut0 = iOut, aErr0 = iErr;
+        iOut = s => { aOut0(s); Tee(s); };
+        iErr = s => { aErr0(s); Tee("⚠ " + s); };
+
         if (!SCP_ProcessRegistry.Enabled)
         {
             iErr("✗ SCP_ProcessRegistry 沒有 Configure ⇒ Server 沒辦法登記自己，拒絕啟動（沒登記的常駐 ＝ 沒人管得到的孤兒）。");
             return 70;
         }
+
+        // ── 單例閘（TASK-0209 A2）────────────────────────────────────────
+        // 🩸 在這道鎖之前，唯一性靠的是下面那個 `Probe()` ⇒ 檢查 ⇒ `Register(iAllowMultiple: true)`，
+        //    而**中間沒有任何互斥**：兩顆同時起來會雙雙通過 Probe，然後雙雙登記成功。
+        //    手動啟動時幾乎踩不到（人不會在同一毫秒按兩次）——
+        //    ⚠ **而自動啟動（A4）會把它變成常態**：N 顆 CLI 同時發現「沒在跑」就 N 顆一起 start。
+        //    ⇒ 所以 A2 必須先落地並驗過，A4 才接得上去；反過來是自動製造我們要防的競態。
+        // 設計取捨：用 **OS advisory lock（獨佔開檔）**，不是 pid 鎖檔。
+        //    差別只有一格，而那一格是關鍵：**process 死掉 OS 自動放**。
+        //    pid 鎖檔要靠程式記得刪 ⇒ 當機／強制關掉就留下死鎖，而銀行搬進來之後，
+        //    被鎖住的是跨日保管費／領薪／發文計酬那些**沒有人在看**的自動流程。
+        //    ⛔ 也不用 Named Mutex：實務上 Windows-only，而這裡沒有非它不可的理由。
+        // ⚠ 鎖**握到 process 結束**（不是只包住 Probe+Register）：
+        //    「誰是唯一那顆」由鎖回答，「那顆是誰」由 registry 回答 —— 兩個不同的問題，各自一個機制。
+        FileStream? aSingleton = TryAcquireSingletonLock(iRepoRoot, out string aLockWhy);
+        if (aSingleton == null)
+        {
+            iErr($"✗ 拿不到單例鎖 ⇒ 拒絕啟動：{aLockWhy}");
+            iErr("  多半是另一顆 Server 正在啟動或已在跑：senate server status（看它）／senate server stop（收掉它）。");
+            return 1;
+        }
+        using FileStream aSingletonHold = aSingleton;
+
         ServerStatus aExisting = Probe(iRepoRoot);
         if (aExisting.Alive != null)
         {
@@ -182,8 +243,16 @@ public static class ServerHost
 
         using Process aSelf = Process.GetCurrentProcess();
         string aBuild = BuildId;
+        // ⚠ `registered_by` 要說**真的是誰起的**：現在有兩個入口（`senate server start` 與
+        //   `Senate.Server.exe`，TASK-0209 A1）。寫死一個的話，ProcessAdminPage 與 status 上
+        //   那一行會**指向一個沒有發生過的動作** —— 而它讀起來完全正常，
+        //   人會照著去 grep 一個不存在的呼叫端。⇒ 由執行檔名推導，不寫死。
+        string aEntry = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
+        string aBy = aEntry.Equals("Senate.Server", StringComparison.OrdinalIgnoreCase)
+                     ? "Senate.Server.exe"
+                     : "senate server start";
         SCP_ProcessRecord? aRec = SCP_ProcessRegistry.Register(aSelf, Tag,
-            $"Senate 常駐 Server（build {aBuild}）", "senate server start", iAllowMultiple: true);
+            $"Senate 常駐 Server（build {aBuild}）", aBy, iAllowMultiple: true);
         if (aRec == null)
         {
             iErr("✗ 登記失敗（Warn 那條有原因）⇒ 拒絕啟動：沒登記的 Server 沒人停得掉。");
@@ -227,7 +296,19 @@ public static class ServerHost
                 aHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
                 WriteAtomic(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
                 if (aCancel) { aExitWhy = "Ctrl+C"; break; }
-                if (File.Exists(aStopReq)) { aExitWhy = "收到 `senate server stop` 的請求"; break; }
+                if (File.Exists(aStopReq))
+                {
+                    // 先消費掉請求：不刪的話下一圈又命中，而使用者會看到同一段排乾訊息一直重印。
+                    TryDelete(aStopReq);
+                    if (DrainBeforeExit(aExecutor, aHb, aHbPath, iOut, iErr))
+                    {
+                        aExitWhy = "收到 `senate server stop` 的請求";
+                        break;
+                    }
+                    // (乙)：排不乾 ⇒ **拒絕退出**，回到服務迴圈繼續跑。
+                    // ⛔ 不硬切：被切的那條會在下一顆 Server 啟動時續跑 ＝ 那筆 cmd 做第二次。
+                    continue;
+                }
                 aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);
             }
@@ -235,8 +316,12 @@ public static class ServerHost
         finally
         {
             Console.CancelKeyPress -= aOnCancel;
-            // 先讓正在跑的 lane 收尾再收遺物 —— 心跳先消失的話，等它的 CLI 會在 lane 還沒寫 result 時就判逾時。
-            int aLeft = aExecutor.Drain(TimeSpan.FromSeconds(10));
+            // Ctrl+C 那條走到這裡時還沒排乾過（使用者要求立刻停，不能拒絕他）——
+            // 仍然給它同一個上限，**但排不乾就照實說**，不假裝收尾乾淨。
+            int aLeft = aExecutor.RunningLaneCount == 0
+                        ? 0
+                        : aExecutor.Drain(TimeSpan.FromSeconds(DrainMaxSeconds),
+                                          aLanes => BeatAndReport(aHb, aHbPath, aLanes, iOut));
             if (aLeft == 0 && aExecutor.Completed > 0) iOut($"· 執行器收尾：本次共跑 {aExecutor.Completed} 筆");
             ServerContext.InServer = false;
             // 三件遺物一起收；任何一件收不掉都要說 —— 留下來的心跳檔會讓下一次 status 讀到一個「剛剛還在跳」的假象。
@@ -247,6 +332,105 @@ public static class ServerHost
         iOut($"· Server 已停（{aExitWhy}）　pid={aSelf.Id}");
         return 0;
     }
+
+    /// <summary>單例鎖等多久（毫秒）。短 —— 這道鎖只保護「檢查＋登記」那一瞬間，等久了代表對方是**在跑**不是在啟動。</summary>
+    public const int SingletonLockWaitMs = 3000;
+
+    /// <summary>某顆 Server（pid）的啟動 log 路徑 —— 自動啟動那側要指得出**哪一份**。</summary>
+    public static string StartLogPath(string iRepoRoot, int iPid)
+        => Path.Combine(SenatePaths.RuntimeDir(iRepoRoot), $"_server_start_{iPid}.log");
+
+    /// <summary>
+    /// 拿單例鎖：獨佔開檔（<see cref="FileShare.None"/>），**握著 handle ＝ 持有鎖**，
+    /// process 死掉由 OS 釋放（⛔ 所以沒有 stale lock 要偵測，也不必猜 pid）。
+    /// <para>拿不到回 null，<paramref name="oWhy"/> 一定有話說。檔案本身留著沒關係 —— 鎖是 handle 不是檔案存在。</para>
+    /// </summary>
+    static FileStream? TryAcquireSingletonLock(string iRepoRoot, out string oWhy)
+    {
+        oWhy = "";
+        string aPath = Path.Combine(SenatePaths.RuntimeDir(iRepoRoot), "_server_singleton.lock");
+        try { Directory.CreateDirectory(SenatePaths.RuntimeDir(iRepoRoot)); }
+        catch (Exception e) { oWhy = $"建不了 runtime 目錄：{e.Message}"; return null; }
+
+        var aSw = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                var aFs = new FileStream(aPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                // 寫 pid 純粹是給人看的（誰握著）—— ⛔ 互斥不靠它，靠的是這個 handle。
+                try
+                {
+                    byte[] aBytes = System.Text.Encoding.UTF8.GetBytes(
+                        Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + "\n");
+                    aFs.SetLength(0);
+                    aFs.Write(aBytes, 0, aBytes.Length);
+                    aFs.Flush();
+                }
+                catch (Exception) { /* 寫不進去不影響互斥；不要為了一行註解放掉鎖 */ }
+                return aFs;
+            }
+            catch (IOException e)
+            {
+                if (aSw.ElapsedMilliseconds >= SingletonLockWaitMs)
+                {
+                    oWhy = $"{aPath} 被占用超過 {SingletonLockWaitMs} ms（{e.GetType().Name}）";
+                    return null;
+                }
+                Thread.Sleep(50);
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                oWhy = $"沒有權限開 {aPath}：{e.Message}";
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 收到 stop 請求後排乾。排乾了回 true（可以退）；上限到了還沒排乾回 false（**拒絕退出**）。
+    /// </summary>
+    static bool DrainBeforeExit(ServerExecutor iExecutor, ServerHeartbeat iHb, string iHbPath,
+                                Action<string> iOut, Action<string> iErr)
+    {
+        if (iExecutor.RunningLaneCount == 0) return true;
+
+        iOut($"· 收到停止請求 ⇒ **停止收新工作**，等手上的 {iExecutor.RunningLaneCount} 條 lane 跑完"
+             + $"（上限 {DrainMaxSeconds}s）…");
+        int aLeft = iExecutor.Drain(TimeSpan.FromSeconds(DrainMaxSeconds),
+                                    aLanes => BeatAndReport(iHb, iHbPath, aLanes, iOut));
+        if (aLeft == 0)
+        {
+            iOut("· 已排乾（0 lane 在跑）⇒ 退出");
+            return true;
+        }
+
+        // ⛔ 這裡**刻意不退**。硬切的話那條 lane 的 .running 會留著、下一顆 Server 翻回 pending 續跑
+        //    ⇒ 同一筆 cmd 被執行第二次；若它是扣款而且沒帶冪等鍵，那就是扣兩次。
+        iErr($"✗ **拒絕退出**：{aLeft} 條 lane 還在跑 —— {string.Join(", ", iExecutor.RunningLanes)}");
+        iErr("  Server 仍在服務（已重新開始收工作）。出口三選一：");
+        iErr("   ① 等那幾條跑完，再送一次 `senate server stop`");
+        iErr("   ② 去看它們在跑什麼：`<Server 根>/queues/<lane>/*.running`");
+        iErr("   ③ 真的要現在停 ⇒ `senate server stop` 等不到會 kill（⚠ 被切的那筆下次會**再跑一次**）");
+        return false;
+    }
+
+    /// <summary>排乾期間每一圈：跳心跳（不跳會被 stop 那側判掛掉而 kill）＋ 每 2 秒印一次還在跑的是誰。</summary>
+    static void BeatAndReport(ServerHeartbeat iHb, string iHbPath, IReadOnlyList<string> iLanes,
+                              Action<string> iOut)
+    {
+        iHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        try { WriteAtomic(iHbPath, SCP_JsonWriter.Write(iHb.ToJson()) + "\n"); }
+        catch (Exception) { /* 排乾期間心跳寫不出去不該打斷排乾；stop 那側會自己判過期 */ }
+
+        // 印得太密會把真正的訊息洗掉；2 秒一次夠人看見「它在動，不是卡住」。
+        DateTime aNow = DateTime.UtcNow;
+        if ((aNow - s_LastDrainReportUtc).TotalSeconds < 2.0) return;
+        s_LastDrainReportUtc = aNow;
+        iOut($"  … 還在跑 {iLanes.Count} 條：{string.Join(", ", iLanes)}");
+    }
+
+    static DateTime s_LastDrainReportUtc = DateTime.MinValue;
 
     // ── stop ──────────────────────────────────────────────────────────
 
@@ -279,8 +463,18 @@ public static class ServerHost
         WriteAtomic(aStopReq, DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) + "\n");
         iOut($"· 已送出停止請求 → pid={aRec.Pid}，等最多 {StopGraceMs / 1000} 秒…");
 
+        // 🩸 (乙) 的代價落在這裡（TASK-0209 A6）：Server 那側收到請求後會**先排乾**（上限
+        //    DrainMaxSeconds），而排乾期間它是活的、心跳照跳。若這裡照舊只等 StopGraceMs 就 kill，
+        //    **排乾會被自己的 stop 指令硬切掉** —— 那比不排乾更糟（下一顆 Server 會把那筆重跑一次）。
+        //    ⇒ 判準改成「**它還在跳心跳就繼續等**」，而不是「等夠 N 秒就砍」：
+        //      · 心跳新鮮 ＝ 它活著而且在做事 ⇒ 等（最多 StopGraceMs + 排乾上限，留一點餘裕）
+        //      · 心跳過期 ＝ 它真的卡死了 ⇒ 才 kill
+        //    ⚠ 「還在排乾」與「卡死了」在 registry 那一層**同形**（兩者都是 Alive）——
+        //      分得開它們的只有心跳的新鮮度。
+        int aMaxWaitMs = StopGraceMs + (DrainMaxSeconds + 5) * 1000;
         var aSw = Stopwatch.StartNew();
-        while (aSw.ElapsedMilliseconds < StopGraceMs)
+        bool aSaidDraining = false;
+        while (aSw.ElapsedMilliseconds < aMaxWaitMs)
         {
             Thread.Sleep(200);
             if (SCP_ProcessRegistry.Validate(aRec) == SCP_ProcessStatus.Dead)
@@ -289,12 +483,32 @@ public static class ServerHost
                 TryDelete(aStopReq);
                 return 0;
             }
+            if (aSw.ElapsedMilliseconds < StopGraceMs) continue;
+
+            // 過了基本寬限還沒退 ⇒ 看它是不是還在跳（在排乾），而不是直接砍。
+            ServerStatus aNow = Probe(iRepoRoot);
+            double? aAge = aNow.Heartbeat?.AgeSeconds();
+            if (aAge != null && aAge.Value <= HeartbeatStaleSeconds)
+            {
+                if (!aSaidDraining)
+                {
+                    aSaidDraining = true;
+                    iOut($"· 它還在跳心跳（{aAge.Value:0.0}s 前）⇒ 判定**正在排乾**，繼續等"
+                         + $"（最多再 {(aMaxWaitMs - StopGraceMs) / 1000} 秒；那一側會印還在跑的 lane）");
+                }
+                continue;
+            }
+            iErr($"⚠ 心跳{(aAge == null ? "讀不到" : $"已過期 {aAge.Value:0.0}s")} ⇒ 不是在排乾，是停住了。");
+            break;
         }
 
         // 等不到 ⇒ kill。KillRegistered 會再做一次身分複驗，PID 易主就拒絕。
+        // ⚠ 被 kill 的那條 lane 的 `.running` 會留著 ⇒ 下一顆 Server 啟動時翻回 pending **續跑**
+        //   ＝ 那筆 cmd 會被執行第二次。沒帶冪等鍵的寫入端要當成「可能做了兩次」處理。
         if (SCP_ProcessRegistry.KillRegistered(aRec, out string aErr))
         {
-            iOut($"✓ Server 沒在 {StopGraceMs / 1000} 秒內自退，已 kill（pid={aRec.Pid}）");
+            iOut($"✓ Server 沒在 {aSw.ElapsedMilliseconds / 1000} 秒內自退，已 kill（pid={aRec.Pid}）"
+                 + "　⚠ 手上那筆 cmd 會在下一顆 Server 啟動時**再跑一次**");
             TryDelete(SenatePaths.ServerHeartbeat(iRepoRoot), iErr);
             TryDelete(aStopReq);
             return 0;

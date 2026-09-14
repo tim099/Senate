@@ -40,6 +40,25 @@ public sealed class ServerExecutor
 
     public int RunningLaneCount { get { lock (m_Lock) return m_Running.Count; } }
 
+    /// <summary>
+    /// 此刻還在跑的 lane 名字（快照，已排序）。
+    /// <para>⚠ 存在的理由不是好看：收尾時只印「還有 N 條」的話，**看的人沒有下一步可做** ——
+    /// 他不知道在等誰、也判不出該不該硬停。名字才是拿得去查 queue 的那個東西。</para>
+    /// </summary>
+    public IReadOnlyList<string> RunningLanes
+    {
+        get
+        {
+            lock (m_Lock)
+            {
+                var aList = new List<string>(m_Running.Count);
+                foreach (string aLane in m_Running.Keys) aList.Add(aLane);
+                aList.Sort(StringComparer.Ordinal);
+                return aList;
+            }
+        }
+    }
+
     string QueuesDir => SCP_DataPaths.Queues(new SCP_DataRoot(m_Root));
 
     /// <summary>啟動時呼叫一次：把孤兒 `.running` 翻回 pending。回傳翻了幾條。</summary>
@@ -92,18 +111,27 @@ public sealed class ServerExecutor
     }
 
     /// <summary>停機前等正在跑的 lane 收尾；回傳等完之後還在跑的數量（0 ＝ 乾淨）。</summary>
-    public int Drain(TimeSpan iGrace)
+    // ⚠ 排乾期間**不呼叫 Tick()** —— 這是 quiesce 的語意：不收新工作，只等手上的做完。
+    //   呼叫端要每一圈跳一次心跳（<paramref name="iOnPoll"/>），否則 `server stop` 那側會判心跳過期
+    //   而去 kill 它 —— **那就把「排乾」變成了「硬切」，比不排還糟**。
+    /// <param name="iOnPoll">每一圈呼叫一次（跳心跳／印進度）。參數是「還在跑的 lane」。</param>
+    /// <returns>還沒跑完的 lane 數（0 ＝ 排乾了）。</returns>
+    public int Drain(TimeSpan iGrace, Action<IReadOnlyList<string>>? iOnPoll = null)
     {
         var aDeadline = DateTime.UtcNow + iGrace;
         while (DateTime.UtcNow < aDeadline)
         {
-            if (RunningLaneCount == 0) return 0;
+            IReadOnlyList<string> aLanes = RunningLanes;
+            if (aLanes.Count == 0) return 0;
+            iOnPoll?.Invoke(aLanes);
             Thread.Sleep(100);
         }
-        int aLeft = RunningLaneCount;
-        if (aLeft > 0)
-            m_Err($"⚠ {aLeft} 條 lane 在 {iGrace.TotalSeconds:0} 秒內沒跑完 —— 它們的 .running 會留著，下一顆 Server 啟動時翻回 pending 續跑");
-        return aLeft;
+        IReadOnlyList<string> aLeft = RunningLanes;
+        if (aLeft.Count > 0)
+            m_Err($"⚠ {aLeft.Count} 條 lane 在 {iGrace.TotalSeconds:0} 秒內沒跑完（{string.Join(", ", aLeft)}）"
+                  + " —— 它們的 .running 會留著，下一顆 Server 啟動時翻回 pending 續跑。"
+                  + " ⚠ **續跑 ＝ 那筆 cmd 會被再執行一次** ⇒ 沒有冪等鍵的寫入端會做第二次。");
+        return aLeft.Count;
     }
 
     // ── lane ──────────────────────────────────────────────────────────

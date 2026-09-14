@@ -3,6 +3,7 @@
     <Project Path="src/Senate.Cli/Senate.Cli.csproj" />
     <Project Path="src/Senate.Core/Senate.Core.csproj" />
     <Project Path="src/Senate.Desktop/Senate.Desktop.csproj" />
+    <Project Path="src/Senate.Server/Senate.Server.csproj" />
   </Folder>
   <Folder Name="/submodule/">
     <Project Path="SCP_Core/SCP_Core.csproj" />

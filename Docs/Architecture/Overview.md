@@ -1,7 +1,7 @@
 ---
 title: Senate 架構總覽
 description: 四層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli）、共用碼的邊界與方言限制、Unity 從宿主降級成 client 的過渡規矩
-last_updated: 2026-08-22
+last_updated: 2026-09-14
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -49,6 +49,27 @@ src/
 
 ⇒ 判準一句話：**它開始長出「服務」就是越界了。**
 共用一個純函式的成本是零；共用一個會碰 IO 的東西，成本是兩邊的生命週期、執行緒模型與錯誤處理全綁在一起。
+
+---
+
+## Senate 全域規則：JSON 一律走 `SCP_Json`（D25，Tim 2026-09-14 拍板）
+
+上面 §① 那句「`System.Text.Json` 就是因此不能用」原本**只綁 `SCP_Core/**`**。
+D25 把它升成**整個 repo 的規則**：`src/Senate.Core` / `Senate.Desktop` / `Senate.Cli` 一樣不得用。
+
+> ⛔ **取消的是「純宿主專屬、確定不會搬 ⇒ 可用宿主自己的」那個例外**
+> （`<SCP_Core>/Docs~/Coding_Standards.md` §2.1 第三格）。
+
+**為什麼取消**：那一格的判準是**一個預測**，而預測會錯。
+`ServerHost` / `ServerExecutor` 當初都落在「確定不會搬」那格 ——
+2026-09-14 要把常駐 Server 拆成獨立 exe 時，卡住它們往下搬進 `SCP_Core` 的正是 `System.Text.Json`。
+⇒ §2.1 自己那句「**搬家時才換等於把移植成本延後並放大**」，應驗在寫它的人身上。
+
+第二個理由跟依賴無關：**同一批磁碟檔同時被 Unity（`SCP_Json`）與 python 讀寫**，
+兩套 writer 的跳脫／數字格式／鍵序不保證同形，而**位元組漂掉不會報錯**。
+
+📌 射程、逐檔讀數、以及 `SenateConfig.cs` 那三處 `[JsonExtensionData]` 為什麼**不是機械替換** → 見 [D25](../Logs/Decisions.md)。
+⚠ 規則已立，**程式碼尚未遷移**（7 檔 ~70 處）。新寫的碼從現在起就照這條。
 
 ---
 

@@ -1,0 +1,30 @@
+<!--
+  區塊職責：常駐 Server 的**獨立執行檔** —— 只參照 Senate.Core（→ SCP_Core）。
+  物理意義：TASK-0209 A1。`Senate.Cli` 為了後台頁參照 `Senate.Desktop` ⇒ 拖著
+            Silk.NET / ImGui / GLFW（publish 實測 78MB，含 cimgui.dll + glfw3.dll），
+            而常駐那顆一格 UI 都不畫。⇒ 分出來之後，跑一整天的那顆不再載著 OpenGL。
+  數值影響：純打包邊界，不改任何執行期行為（前置與本體都在 Senate.Core，兩個入口共用一份）。
+  ⛔ **不准**加 ProjectReference 到 Senate.Desktop —— 那正是本專案存在的理由。
+     加了不會編譯失敗，只會讓這顆 exe 悄悄胖回去。
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Senate.Server</AssemblyName>
+    <RootNamespace>Senate.Server</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Senate.Core\Senate.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 護欄：把「不准依賴 Desktop」從註解變成會紅的東西。
+       🩸 理由同 SCP_Core.csproj 那道：**靠記得的規矩，遲早有一次沒記得**，
+          而這一條沒記得的症狀是「它還是會動，只是胖了 70MB」——沒有人會因此回報。 -->
+  <Target Name="GuardNoDesktopReference" BeforeTargets="Build">
+    <Error Condition="'%(ProjectReference.Filename)' == 'Senate.Desktop'"
+           Text="Senate.Server 不准參照 Senate.Desktop —— 這顆 exe 存在的理由就是不要載 GUI 那一套（TASK-0209 A1）。" />
+  </Target>
+
+</Project>

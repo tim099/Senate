@@ -1342,25 +1342,21 @@ public static class Program
         //   ⚠ 同上，落點是 **stderr**：告示給人，stdout 給程式。
         // ⛔ 也不吞 Error：兩個啟用專案 ⇒ 資料根不唯一 ⇒ 這裡什麼都不填，讓 Cmd 自己用「缺必填參數」擋，
         //   並把不唯一的理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
-        if (aCmd != null && !aRawArgs.ContainsKey("data_root") && DeclaresArg(aCmd, "data_root"))
+        // ⚠ 兩格用**同一支**（TASK-0209）：原本只有 data_root 一格，加 bank_root 時複製一份的話
+        //   就是「同一段邏輯兩份」—— 而兩份會漂，漂掉時兩邊都不報錯。
+        if (aCmd != null)
         {
             SenateConfig? aCfg = null;
             try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot)); }
             catch (InvalidDataException e) { Console.Error.WriteLine($"✗ 設定檔有問題：{e.Message}"); return 3; }
             if (aCfg != null)
             {
-                SCP.Core.Paths.SCP_PathResolution aRes = SCP.Core.Paths.SCP_PathRegistry.Resolve(
-                    SCP.Core.Paths.SCP_PathId.AgentCommandsRoot,
-                    iId => SenatePathBinding.StoredOf(aCfg, iId));
-                if (aRes.Error == null && aRes.Value.Length > 0)
-                {
-                    aRawArgs["data_root"] = aRes.Value;
-                    Console.Error.WriteLine($"· data_root 沒給 ⇒ 用設定檔那一格（{aRes.Origin}）：{aRes.Value}");
-                }
-                else
-                {
-                    Console.Error.WriteLine($"· data_root 沒給，而設定檔那一格解不出來：{aRes.Error}");
-                }
+                FillRootArg(aCmd, aRawArgs, aCfg, "data_root", SCP.Core.Paths.SCP_PathId.AgentCommandsRoot);
+                // ⚠ bank_root 多一層**宿主預設**：設定檔留空時落 `<repo>/SenateData/Bank`（已 gitignore）。
+                //   ⛔ 刻意不在描述表裡做 `auto` 推導 —— 能推的只有「本專案底下」，
+                //     而「不要跟著專案漂」正是這一格存在的理由（Tim 2026-09-14）。
+                FillRootArg(aCmd, aRawArgs, aCfg, "bank_root", SCP.Core.Paths.SCP_PathId.BankRoot,
+                            () => SenatePaths.BankRootDefault(iRepoRoot));
             }
         }
 
@@ -1413,6 +1409,40 @@ public static class Program
         if (iArgs.ContainsKey("_caller_client")) return iArgs;
         var aCopy = new Dictionary<string, string>(iArgs, StringComparer.Ordinal) { ["_caller_client"] = AgentCmdClient.ClientId };
         return aCopy;
+    }
+
+    // 便利：某個 root 參數沒給就用**設定檔那一格**（＝「路徑管理」頁的同一格）。
+    // ⚠ 適用範圍是「凡宣告這個參數的 Cmd」不是某一支 —— 否則同一個值要抄在 N 個呼叫端
+    //   （含每一份文件範例裡），🩸 而手抄的那份會過期：`SCP_Cmd_Sessions` 的範例到今天還印著
+    //   另一台機器的根。
+    // ⛔ 仍然**印出來、不靜默注入**：靜默注入的症狀是「我明明沒指定，它卻讀了另一棵資料樹」。
+    //   ⚠ 落點是 **stderr**：告示給人，stdout 給程式。
+    // ⛔ 也不吞 Error：解不出來就什麼都不填，讓 Cmd 自己用「缺必填參數」擋，
+    //   並把理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
+    static void FillRootArg(SCP.Core.Cmd.SCP_Cmd iCmd, Dictionary<string, string> ioArgs,
+                            SenateConfig iCfg, string iArgName, SCP.Core.Paths.SCP_PathId iPathId,
+                            Func<string>? iHostDefault = null)
+    {
+        if (ioArgs.ContainsKey(iArgName) || !DeclaresArg(iCmd, iArgName)) return;
+
+        SCP.Core.Paths.SCP_PathResolution aRes = SCP.Core.Paths.SCP_PathRegistry.Resolve(
+            iPathId, iId => SenatePathBinding.StoredOf(iCfg, iId));
+        if (aRes.Error == null && aRes.Value.Length > 0)
+        {
+            ioArgs[iArgName] = aRes.Value;
+            Console.Error.WriteLine($"· {iArgName} 沒給 ⇒ 用設定檔那一格（{aRes.Origin}）：{aRes.Value}");
+            return;
+        }
+        if (iHostDefault != null)
+        {
+            string aDefault = iHostDefault();
+            ioArgs[iArgName] = aDefault;
+            // ⚠ 一樣**印出來**：「設定檔沒填 ⇒ 用宿主預設」與「設定檔填了」是兩件事，
+            //   而它們產生的路徑長得一樣 —— 不說的話，改了設定卻沒生效時沒有人分得出來。
+            Console.Error.WriteLine($"· {iArgName} 沒給、設定檔也沒填 ⇒ 用宿主預設：{aDefault}");
+            return;
+        }
+        Console.Error.WriteLine($"· {iArgName} 沒給，而設定檔那一格解不出來：{aRes.Error}");
     }
 
     static bool DeclaresArg(SCP.Core.Cmd.SCP_Cmd iCmd, string iName)
