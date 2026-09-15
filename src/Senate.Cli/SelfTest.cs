@@ -20,6 +20,7 @@ using System.Text.RegularExpressions;
 using SCP.Core.Watch;
 using SCP.Core.Books;
 using SCP.Core.Cmd;
+using SCP.Core.Bank;
 using System.Globalization;
 
 using Senate.Cli.Pages;
@@ -98,6 +99,11 @@ public static class SelfTest
         One(nameof(BookChapterArcCleanRoom), "book", BookChapterArcCleanRoom),
 
         One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
+
+        One(nameof(BankIdRules), "bank", BankIdRules),
+        One(nameof(BankAccountCleanRoom), "bank", BankAccountCleanRoom),
+        One(nameof(BankLedgerConcurrentDebit), "bank", BankLedgerConcurrentDebit),
+        One(nameof(JsonExtensionDataRoundTrip), "bank", JsonExtensionDataRoundTrip),
 
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
         Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
@@ -3145,4 +3151,227 @@ public static class SelfTest
         return new CheckRow("路徑描述表", string.Join("／", aReadings),
             aProblems.Count == 0 && aCount > 0 ? CheckResult.Pass : CheckResult.Fail);
     }
+
+    // ===========================================================
+    // 區塊職責：銀行三層（id 正規化／帳戶／帳本）與 `[SCP_JsonExtensionData]` 的**常駐**守衛。
+    //
+    // 🩸 為什麼這四格在這裡而不是留在單子上：TASK-0209 A/B 段每一格都驗過，
+    //   **而那些驗證全部是丟棄式探針** —— 跑完就沒了。下一個人把互斥拿掉、把正規化改成
+    //   「不合法就替你換字元」、把未知鍵的收容所拆掉，**不會有任何一層喊**，
+    //   而失效樣子分別是：超扣／兩個帳號靜默併成一個／別人的設定欄位安靜消失。
+    //
+    // ⚠ 射程（這幾格量不到什麼）：
+    //   · 這裡驗的是**行程內**的互斥。跨行程的唯一寫入端由 Server 單例鎖保證，
+    //     那一格要起子行程 ⇒ 刻意不收進來（flaky 的成本每個人每天付），重現指令寫在 TASK-0209 上。
+    //   · ⛔ 沒有「把鎖拿掉必須超扣」的反向對照 —— 那要改產品碼。
+    //     ⭐ 但它不必在這裡：**互斥被拿掉時，下面那一格會自己變紅**（20/20 成功、餘額負值）。
+    //     ⇒ 這一格是回歸閘，不是存在性證明。
+    // ===========================================================
+    static CheckRow BankIdRules()
+    {
+        const string aName = "銀行 id 正規化（大小寫／拒絕不替換／撞名分組）";
+        try
+        {
+            // ① 大小寫：正規化成小寫，且 Changed 說得出「我動過它」
+            SCP_BankIdResult aUpper = SCP_BankId.Normalize("  FRS  ");
+            bool aCase = aUpper.Ok && aUpper.Id == "frs" && aUpper.Changed;
+
+            // ② ⛔ 不合法就拒絕，**不替你換掉** —— 換字元＝靜默把兩個帳號併成一個，而那是錢
+            string[] aBadOnes = { "discord:123", "Federal Reserve System", "-leading", "", new string('x', 65) };
+            int aRejected = 0;
+            foreach (string aBad in aBadOnes)
+            {
+                SCP_BankIdResult r = SCP_BankId.Normalize(aBad);
+                if (!r.Ok && r.Id.Length == 0) aRejected++;
+            }
+
+            // ③ 合法字元集
+            bool aGood = SCP_BankId.Normalize("a.b_c-9").Ok && SCP_BankId.Normalize("9lives").Ok;
+
+            // ④ SameAccount 只回答「這兩個字串指同一個帳號嗎」
+            bool aSame = SCP_BankId.SameAccount("Zeta", "zeta") && !SCP_BankId.SameAccount("zeta", "zeta-da-xiaojie");
+
+            // ⑤ 撞名分組 —— 餵的是**舊帳本真的那四組**（TASK-0209 B1 的活體讀數）
+            var aCollide = SCP_BankId.GroupCollisions(new[]
+            {
+                "antigravity", "Antigravity", "gemini-da-xiaojie", "Gemini-da-xiaojie",
+                "zeta", "Zeta", "zeta-da-xiaojie", "Zeta-da-xiaojie",
+                "cc", "Myth", "Template",          // 沒有變體的那些不該進表
+                "discord:123",                     // 不合法的不混進撞名表
+            });
+            bool aGroups = aCollide.Count == 4
+                           && aCollide.ContainsKey("antigravity") && aCollide["antigravity"].Count == 2
+                           && aCollide.ContainsKey("zeta") && !aCollide.ContainsKey("cc");
+
+            bool aOk = aCase && aRejected == aBadOnes.Length && aGood && aSame && aGroups;
+            string aReading =
+                $"大小寫：{(aCase ? "'  FRS  ' ⇒ 'frs'（Changed=true）" : "**沒正規化或沒標 Changed**")}"
+                + $"；拒絕不替換：{aRejected}/{aBadOnes.Length} 筆被擋且 Id 為空"
+                + $"；合法字元：{(aGood ? "a.b_c-9／9lives 都收" : "**誤擋合法 id**")}"
+                + $"；SameAccount：{(aSame ? "Zeta≡zeta 且 zeta≢zeta-da-xiaojie" : "**判錯**")}"
+                + $"；撞名分組：{aCollide.Count} 組（真帳本那 4 組{(aGroups ? "，且無變體者與不合法者都不入表" : "**，內容不對**")}）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    static CheckRow BankAccountCleanRoom()
+    {
+        const string aName = "銀行帳戶（開戶是顯式動作／撞名擋下／壞欄位走安全側）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bankacct_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+
+            // ① 開戶：id 正規化落檔，DisplayName 原樣保留（改顯示名不等於換帳號）
+            bool aOpened = SCP_BankAccounts.TryOpen(aTmp, "FRS", "Federal Reserve System", "basecamp", out _, out string aWhy1);
+            string aPath = Path.Combine(aTmp, "accounts", "frs.json");
+            bool aFile = File.Exists(aPath);
+            SCP_BankAccount? aLoaded = aFile ? SCP_BankAccounts.TryLoad(aTmp, "frs", out _) : null;
+            bool aDisplay = aLoaded != null && aLoaded.DisplayName == "Federal Reserve System";
+
+            // ② 撞名：`Frs` 指的就是 `frs` ⇒ 擋下，且**不覆寫**既有檔
+            byte[] aBefore = aFile ? File.ReadAllBytes(aPath) : new byte[0];
+            bool aDup = !SCP_BankAccounts.TryOpen(aTmp, "Frs", "冒名", "someone", out _, out _);
+            bool aIntact = aFile && ByteEqual(aBefore, File.ReadAllBytes(aPath));
+            // 反向對照：擋的是撞名，不是全擋
+            bool aOther = SCP_BankAccounts.TryOpen(aTmp, "frs2", "", "basecamp", out _, out _);
+
+            // ③ 沒開戶不能收付（舊系統那 42 個幽靈帳戶就是從這裡長出來的）
+            bool aGhost = SCP_BankAccounts.CheckUsable(aTmp, "nobody").Result == SCP_BankAccountCheck.Kind.NotOpened;
+            bool aInvalid = SCP_BankAccounts.CheckUsable(aTmp, "discord:123").Result == SCP_BankAccountCheck.Kind.Invalid;
+
+            // ④ 🔴 壞掉的 status 走**安全側**（不可用）——
+            //    反過來的話，一個壞欄位會讓帳號變成可以動錢的
+            string aBadPath = Path.Combine(aTmp, "accounts", "frs2.json");
+            bool aSafeSide = false;
+            var aBadKind = SCP_BankAccountCheck.Kind.Usable;
+            if (File.Exists(aBadPath))
+            {
+                File.WriteAllText(aBadPath, File.ReadAllText(aBadPath).Replace("\"Open\"", "\"???\"").Replace("\"open\"", "\"???\""));
+                aBadKind = SCP_BankAccounts.CheckUsable(aTmp, "frs2").Result;
+                aSafeSide = aBadKind != SCP_BankAccountCheck.Kind.Usable;
+            }
+
+            bool aOk = aOpened && aFile && aDisplay && aDup && aIntact && aOther && aGhost && aInvalid && aSafeSide;
+            string aReading =
+                $"開戶：{(aOpened && aFile ? "'FRS' ⇒ accounts/frs.json" : $"**失敗（{aWhy1}）**")}"
+                + $"；顯示名：{(aDisplay ? "保留 'Federal Reserve System'" : "**被正規化吃掉**")}"
+                + $"；撞名 'Frs'：{(aDup ? "擋下" : "**放行**")}，既有檔逐位元組{(aIntact ? "不變" : "**被覆寫**")}"
+                + $"；反向對照 'frs2'：{(aOther ? "開得成（擋的是撞名不是全擋）" : "**被誤擋**")}"
+                + $"；沒開戶：{(aGhost ? "NotOpened" : "**沒擋**")}／不合法 id：{(aInvalid ? "Invalid" : "**沒擋**")}"
+                + $"；壞 status：{(aSafeSide ? $"{aBadKind}（安全側）" : "**判成 Usable —— 一個壞欄位就能動錢**")}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ } }
+    }
+
+    static CheckRow BankLedgerConcurrentDebit()
+    {
+        const string aName = "銀行帳本：20 筆併發 debit 只夠 10 筆 ⇒ 不超扣（＋冪等先於餘額）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bankledger_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            SCP_BankAccounts.TryOpen(aTmp, "probe", "", "selftest", out _, out _);
+            SCP_BankLedger.Credit(aTmp, "probe", 100, "selftest_seed");
+
+            // 20 執行緒同時各扣 10，而餘額只夠 10 筆 —— 互斥被拿掉時這一格會變成 20/20、餘額 −100
+            var aResults = new SCP_BankPostResult[20];
+            var aThreads = new Thread[20];
+            using (var aGate = new ManualResetEventSlim(false))
+            {
+                for (int i = 0; i < aThreads.Length; i++)
+                {
+                    int aIdx = i;
+                    aThreads[i] = new Thread(() =>
+                    {
+                        aGate.Wait();
+                        aResults[aIdx] = SCP_BankLedger.Debit(aTmp, "probe", 10, "selftest_race");
+                    });
+                    aThreads[i].Start();
+                }
+                aGate.Set();
+                foreach (Thread t in aThreads) t.Join(TimeSpan.FromSeconds(30));
+            }
+
+            int aWon = 0;
+            foreach (SCP_BankPostResult r in aResults) if (r.Ok) aWon++;
+            int aBalance = SCP_BankLedger.GetBalance(aTmp, "probe");
+
+            // ⛔ 讀數用**檔名列舉**，不信上面那個回傳計數（它跟被測物同源）
+            int aFiles = Directory.GetFiles(Path.Combine(aTmp, "ledger"), "*.json", SearchOption.AllDirectories).Length;
+
+            // 冪等：同一把 key 送兩次 ⇒ 同一個 entry、只扣一次
+            SCP_BankLedger.Credit(aTmp, "probe", 50, "selftest_seed2");
+            SCP_BankPostResult aI1 = SCP_BankLedger.Debit(aTmp, "probe", 20, "selftest_idem", iIdempotencyKey: "k-1");
+            SCP_BankPostResult aI2 = SCP_BankLedger.Debit(aTmp, "probe", 20, "selftest_idem", iIdempotencyKey: "k-1");
+            bool aIdem = aI1.Ok && aI2.Ok && aI2.Duplicate && aI1.Entry!.Id == aI2.Entry!.Id
+                         && SCP_BankLedger.GetBalance(aTmp, "probe") == 30;
+
+            // 🩸 冪等**先於**餘額檢查：餘額歸零後重送同一把 key，要回既有 entry，
+            //    ⛔ 不是「餘額不足」（那句話是假的 —— 錢早就扣過了）
+            SCP_BankLedger.Debit(aTmp, "probe", 30, "selftest_drain");
+            SCP_BankPostResult aI3 = SCP_BankLedger.Debit(aTmp, "probe", 20, "selftest_idem", iIdempotencyKey: "k-1");
+            bool aIdemFirst = aI3.Ok && aI3.Duplicate && aI1.Entry != null && aI3.Entry!.Id == aI1.Entry!.Id;
+
+            bool aOk = aWon == 10 && aBalance == 0 && aFiles == 11 && aIdem && aIdemFirst;
+            string aReading =
+                $"併發：{aWon}/20 成功（期望 10）、重放求和餘額 {aBalance}（期望 0）、"
+                + $"entry 檔 {aFiles} 個（期望 11 ＝ 1 credit ＋ 10 debit，**檔名列舉**非回傳計數）"
+                + $"；冪等：{(aIdem ? "同 key 兩次回同一個 entry 且只扣一次" : "**扣了兩次或 entry 不同**")}"
+                + $"；冪等先於餘額：{(aIdemFirst ? "餘額 0 時重送仍回既有 entry" : "**噴了餘額不足 —— 那句話是假的**")}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ } }
+    }
+
+    // ⚠ 這兩個型別**只差一個 attribute** —— 反向對照要真的把 X 拿掉，
+    //   不能寫一個「看起來像沒有 X」的替身（TASK-0209 留言 #9 的血證）。
+    sealed class ExtBagType
+    {
+        public string Name = "";
+        [SCP_JsonExtensionData] public Dictionary<string, SCP_JsonData> Extra = new Dictionary<string, SCP_JsonData>();
+    }
+
+    sealed class NoExtBagType
+    {
+        public string Name = "";
+    }
+
+    static CheckRow JsonExtensionDataRoundTrip()
+    {
+        const string aName = "[SCP_JsonExtensionData]：本版不認得的 key 原樣寫回（＋沒掛 attribute 必須消失）";
+        try
+        {
+            const string aSrc = "{\"Name\":\"frs\",\"future_field\":42,\"//\":\"註解行\",\"nested\":{\"a\":[1,2]}}";
+            // ⚠ key 是 `Name` 不是 `name`：成員比對是**逐字**的（`SCP_TypeSchema.Find`）。
+            //   🩸 我第一版寫小寫 ⇒ 它被當成未知鍵收進收容所（4 個而不是 3 個），而 `Name` 留空 ——
+            //   失效樣子是「這一格紅了」，⛔ 不是產品壞了。記在這裡免得下一個人去改產品碼。
+
+            var aKept = new ExtBagType();
+            SCP_JsonMapper.Populate(aKept, SCP_JsonData.Parse(aSrc));
+            string aOut = SCP_JsonWriter.Write(SCP_JsonMapper.ToJson(aKept));
+            bool aRound = aKept.Name == "frs"
+                          && aKept.Extra.Count == 3
+                          && aOut.Contains("future_field") && aOut.Contains("\"//\"") && aOut.Contains("nested");
+
+            // 🔴 反向對照：同一份輸入餵給**沒掛 attribute** 的孿生型別 ⇒ 未知鍵必須不見
+            var aLost = new NoExtBagType();
+            SCP_JsonMapper.Populate(aLost, SCP_JsonData.Parse(aSrc));
+            string aOutLost = SCP_JsonWriter.Write(SCP_JsonMapper.ToJson(aLost));
+            bool aDropped = aLost.Name == "frs" && !aOutLost.Contains("future_field") && !aOutLost.Contains("nested");
+
+            bool aOk = aRound && aDropped;
+            string aReading =
+                $"有收容所：未知鍵 {aKept.Extra.Count} 個（future_field／\"//\"／nested）"
+                + $"{(aRound ? "全數原樣寫回" : "**掉了或沒寫回**")}"
+                + $"；🔴 反向對照（拿掉 attribute）：{(aDropped ? "未知鍵確實消失 ⇒ 這一格量到的是 attribute 本身" : "**沒掉 —— 那上面那格什麼都沒證明**")}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
 }
