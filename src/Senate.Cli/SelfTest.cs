@@ -112,6 +112,7 @@ public static class SelfTest
         Many(nameof(RealWatchLedgerRead), "watch", () => RealWatchLedgerRead(iProjects)),
         Many(nameof(RealWatchResolveFingerprint), "watch", () => RealWatchResolveFingerprint(iProjects)),
         Many(nameof(RealWatchChapterRebuild), "watch", () => RealWatchChapterRebuild(iProjects)),
+        One(nameof(WatchIdentityGuard), "watch", WatchIdentityGuard),
         Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iProjects)),
         Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iProjects)),
     };
@@ -2769,6 +2770,83 @@ public static class SelfTest
     static string ReadChapterNormalized(string iPath)
         => string.Join(s_Lf, File.ReadAllLines(iPath, Encoding.UTF8));
 
+
+    // ===========================================================
+    // 區塊職責：TASK-0217 的常駐守衛 —— **這一章的 seq 現在還指著同一批訊息嗎**。
+    //
+    // 🩸 為什麼要它：章檔表頭只記 `seq A – B`，**沒記是哪一區的 seq**，而酒館 seq 隨區域分岔。
+    //   2026-09-15 逐章量：有實錄段的 39 章裡**本文對得上 0 章**、對不上 27、seq 根本不存在 12。
+    //   ⇒ 在這道閘之前，重出任一章都會產出**格式完整、seq 連續、回讀驗證全過**而內容是別人工作公告的東西。
+    //
+    // ⚠ 本格**不依賴真專案的資料**：自己造訊息、自己造章檔 ⇒ 它不會因為某一區沒有樣本而跳過。
+    //   （那正是 `WatchWriteCleanRoom` 的老毛病：它在 LY 每次都跳過，而跳過跟通過在看板上同形。）
+    // ===========================================================
+    static CheckRow WatchIdentityGuard()
+    {
+        const string aName = "章身分核對（seq 還指著同一批訊息嗎）＋ 對不上一個檔都不生";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_watchid_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            const string aRoom = "tavern";
+            const string aBook = "watch-identity-probe";
+            string aMsgDir = Path.Combine(SCP_WatchExport.MessagesDir(aTmp, aRoom), "2026-01-01");
+            Directory.CreateDirectory(aMsgDir);
+            string aMsgPath = Path.Combine(aMsgDir, "00000042.json");
+            void WriteMsg(string iBody) => File.WriteAllText(aMsgPath,
+                "{\"ts\":\"2026-01-01T00:00:00.000Z\",\"sender_persona\":\"summit\",\"body\":"
+                + SCP_JsonWriter.Write(SCP_JsonData.NewString(iBody), iIndented: false) + "}",
+                new UTF8Encoding(false));
+
+            string aBookDir = Path.Combine(aTmp, "Books", aBook);
+            Directory.CreateDirectory(aBookDir);
+            string aChapter = Path.Combine(aBookDir, "001.txt");
+            void WriteChapterFile(string iEntryBody) => File.WriteAllText(aChapter,
+                "# 第 1 章 · 探針\n\n> 機械匯出 —— 內容為聊天酒館 seq 42 – 42 原文。\n\n## 實錄\n\n"
+                + "### [seq 42] 00:00 · summit\n\n" + iEntryBody + "\n", new UTF8Encoding(false));
+
+            // ① 身分對得上（訊息與章檔同一則）
+            WriteMsg("📺 開播觀影 —— 這是那一則的本文");
+            WriteChapterFile("📺 開播觀影 —— 這是那一則的本文");
+            bool aMatch = SCP_WatchWriter.VerifyChapterIdentity(aTmp, aRoom, aChapter, out string aWhy1);
+
+            // ② 🔴 反向對照 A：同一個 seq 現在是**別的訊息** ⇒ 對不上，而且說得出兩邊各是什麼
+            WriteMsg("📦 WorkMemory f86f0c8 —— 完全不同的一則工作公告");
+            bool aDiff = !SCP_WatchWriter.VerifyChapterIdentity(aTmp, aRoom, aChapter, out string aWhy2);
+            bool aWhySide = aWhy2.Contains("開播觀影") && aWhy2.Contains("WorkMemory");
+
+            // ③ 🔴 對不上時 `WriteChapter` 要**整個拒絕**，而且**一個檔都不生**（含 `_vN`）
+            int aBefore = Directory.GetFiles(aBookDir).Length;
+            var aLines = new List<string>();
+            SCP_WatchWriteResult aW = SCP_WatchWriter.WriteChapter(
+                aTmp, aRoom, new[] { new SCP_SeqRange(42, 42) }, "probe-media",
+                aBook, "001", "探針", null, null, null, null, null, null,
+                iForce: true, iAllowOverlap: true, iAllowZeroStripped: true, aLines);
+            int aAfter = Directory.GetFiles(aBookDir).Length;
+            bool aRefused = aW.Error.Contains("拒絕重出") && aAfter == aBefore;
+
+            // ④ 反向對照 B：那個 seq **現在不存在** ⇒ 也要對不上（⛔ 不能回「對得上」）
+            File.Delete(aMsgPath);
+            bool aGone = !SCP_WatchWriter.VerifyChapterIdentity(aTmp, aRoom, aChapter, out string aWhy3)
+                         && aWhy3.Contains("不存在");
+
+            // ⑤ 反向對照 C：章檔沒有任何實錄段 ⇒ **無從核對**，⛔ 不是「對得上」
+            File.WriteAllText(aChapter, "# 第 1 章 · 沒有實錄段\n", new UTF8Encoding(false));
+            bool aNoEntry = !SCP_WatchWriter.VerifyChapterIdentity(aTmp, aRoom, aChapter, out string aWhy4)
+                            && aWhy4.Contains("無從核對");
+
+            bool aOk = aMatch && aDiff && aWhySide && aRefused && aGone && aNoEntry;
+            string aReading =
+                $"同一則 ⇒ 對得上={aMatch}{(aMatch ? "" : "（" + aWhy1 + "）")}"
+                + $"；🔴 換成別的訊息 ⇒ 對不上={aDiff}，訊息並排兩邊都印={aWhySide}"
+                + $"；🔴 對不上時 WriteChapter 拒絕={aW.Error.Contains("拒絕重出")}"
+                + $" 且目錄檔數 {aBefore}→{aAfter} 不變={aAfter == aBefore}"
+                + $"；seq 不存在 ⇒ 對不上={aGone}；沒有實錄段 ⇒ 無從核對={aNoEntry}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ } }
+    }
+
     static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
@@ -2800,16 +2878,27 @@ public static class SelfTest
             string aMedia = "", aTitle = "", aSub = "", aWork = "", aSessions = "", aNote = "";
             List<SCP_SeqRange> aRanges = new List<SCP_SeqRange>();
             string aLastWhy = "（沒有候選）";
-            int aTried = 0;
+            int aTried = 0, aBadHead = 0, aOutRegion = 0, aIdMiss = 0, aSeqGone = 0;
+
             foreach ((string aF, DateTime _) in aCands)
             {
                 ++aTried;
                 string aTxt = ReadChapterNormalized(aF);
                 if (!TryParseChapterHeader(aTxt, out aMedia, out aRanges,
                                            out aTitle, out aSub, out aWork, out aSessions, out aNote))
-                { aLastWhy = "表頭解析不出來"; continue; }
+                { aLastWhy = "表頭解析不出來"; ++aBadHead; continue; }
                 string? aWhy = WhyOutOfThisRegion(aSrc, aRanges);
-                if (aWhy != null) { aLastWhy = aWhy; continue; }
+                if (aWhy != null) { aLastWhy = aWhy; ++aOutRegion; continue; }
+                // 🔴 TASK-0217：上面那把尺只比**上界**（號碼在不在本區的範圍內），
+                //   它答不了「這些號碼**還指著同一批訊息**嗎」。2026-09-15 逐章量：39 章裡 0 章對得上。
+                //   ⇒ 不加這一格的話，一個跨區的樣本會被挑來當「重出逐位元組相同」的受測體，
+                //     而那一格必紅 —— 紅的是**挑法**，不是排版器。
+                if (!SCP_WatchWriter.VerifyChapterIdentity(aSrc, "tavern", aF, out string aIdWhy))
+                {
+                    aLastWhy = aIdWhy;
+                    if (aIdWhy.Contains("不存在")) ++aSeqGone; else ++aIdMiss;
+                    continue;
+                }
                 aPick = aF; break;
             }
             // ⚠ 原版靠「一定挑最新那章」來保證受測體來自**現行排版器** ——
@@ -2822,8 +2911,12 @@ public static class SelfTest
             if (aPick == null)
             {
                 yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
-                    $"逐個試了 **{aTried}** 章都不能當受測體（最後一個的理由：{aLastWhy}）"
-                    + " ⇒ **跳過**（⛔ 不當成通過）",
+                    $"逐個試了 **{aTried}** 章，沒有一章能當受測體 ⇒ **跳過**（⛔ 不當成通過）"
+                    // ⚠ 只印「最後一個的理由」會讓 40 章長得像同一種壞法 —— 逐類數出來才是讀數。
+                    + $"　逐類：**身分對不上 {aIdMiss}**／**那個 seq 現在不存在 {aSeqGone}**"
+                    + $"／超出本區 {aOutRegion}／表頭解不開 {aBadHead}"
+                    + $"　（TASK-0217：章檔的 seq 沒有區域定語，而酒館 seq 隨區域分岔）"
+                    + $"　最後一個的理由：{aLastWhy}",
                     CheckResult.Skipped);
                 continue;
             }
