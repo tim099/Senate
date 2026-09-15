@@ -281,6 +281,21 @@ public static class Program
         var aStyle = StyleFrom(iArgs, aModel);
         var aCatalog = SenatePages.BuildCatalog(aModel);
 
+        // `--page <key>`：文字模式也吃它（TASK-0213）。走的是**視窗模式同一份**解析（TryResolvePage）——
+        //   ⛔ 不在這裡再寫一次那段判斷：兩份判斷會漂，而這支旗標今天的病就是「只有一條路有」。
+        // ⚠ 語意在這一側是「把導覽切到那一頁」，而導覽是**狀態**（存在 session 的 Nav）不是事件
+        //   ⇒ 直接改 aState.Nav，讓底下的 probe／click／render 全都落在新頁上。
+        //   ⛔ 必須在 probe 之前設 —— 不然 `--page X --click <X 上的鈕>` 會拿舊頁的樹去驗 id，
+        //      而那個失敗長得像「畫面上沒有這個 id」。
+        string? aPageArg = ArgValue(iArgs, "--page");
+        if (aPageArg != null)
+        {
+            if (!TryResolvePage(aCatalog, aPageArg, out SCP_GuiPage? aPageTarget)) return 2;
+            aState.Nav = aPageTarget!.Key == SenatePages.RootKey
+                ? new List<string> { SenatePages.RootKey }
+                : new List<string> { SenatePages.RootKey, aPageTarget.Key };
+        }
+
         // 先畫一趟拿到當前的樹（用來驗 id 是否存在）—— 對不存在的 id 下指令必須擋下
         var (aProbeTree, _) = UiDriver.Apply(aCatalog, aState, null, aStyle);
 
@@ -342,6 +357,28 @@ public static class Program
         return 0;
     }
 
+    // ── `--page <key>` 的解析（**兩條路共用的那一份**）────────
+    // 區塊職責：把 `--page` 的 key 解成一頁，解不出來就印清單並要呼叫端 exit 2。
+    // 物理意義：⭐ 這一段之所以獨立成函式，是因為它**曾經只長在視窗模式那條路上** ——
+    //           於是同一顆 exe 上同一個旗標有兩種語意：視窗模式打錯 key 會 exit 2，
+    //           文字模式**給什麼 key 都靜默畫首頁那一頁**（沒有 exit code、沒有 stderr）。
+    // 🩸 血證（TASK-0213，2026-09-15 summit）：我要驗自己剛改的 `sessions` 頁，
+    //   連下兩次 `ui --page sessions` 都拿到 `paths` 頁的內容，第一反應是「我的頁改壞了」——
+    //   而它好好註冊著。擋下我的是餵一個**保證不存在的 key**（`zzz-not-a-page` 也回首頁），
+    //   不是我更仔細。⇒ 修法不是在文字模式再寫一次這段判斷（那正是它變成這樣的成因），
+    //   是讓兩條路**呼叫同一份**。
+    // 數值影響：純查目錄（`Create` 會真的建一頁），零 IO、零狀態變更。
+    /// <summary>解 `--page` 的 key；解不出來時印出清單並回 false（呼叫端負責 exit 2）。</summary>
+    static bool TryResolvePage(SCP_GuiPageCatalog iCatalog, string iKey, out SCP_GuiPage? oPage)
+    {
+        oPage = iCatalog.Create(iKey);
+        if (oPage != null) return true;
+        Console.Error.WriteLine($"✗ 認不得的頁面 key：{iKey}");
+        // 清單從目錄印，不寫死 —— 寫死的那一行會在加頁的時候安靜地過期
+        Console.Error.WriteLine($"  現有：{string.Join(" / ", iCatalog.AllKeys)}");
+        return false;   // 靜默開在首頁會讓「打錯 key」與「那頁是空的」同形
+    }
+
     // ── senate ui --window / --screenshot <path> ──────────────
     // 物理意義：**同一份頁面碼**餵給 ImGui renderer —— 頁面一行都沒改。
     //           --screenshot 是給沒有眼睛的人（CI／agent）用的驗收出口：
@@ -363,15 +400,8 @@ public static class Program
         string? aPage = ArgValue(iArgs, "--page");
         if (aPage != null)
         {
-            SCP_GuiPage? aTarget = aCatalog.Create(aPage);
-            if (aTarget == null)
-            {
-                Console.Error.WriteLine($"✗ 認不得的頁面 key：{aPage}");
-                // 清單從目錄印，不寫死 —— 寫死的那一行會在加頁的時候安靜地過期
-                Console.Error.WriteLine($"  現有：{string.Join(" / ", aCatalog.AllKeys)}");
-                return 2;   // 靜默開在首頁會讓「打錯 key」與「那頁是空的」同形
-            }
-            if (aTarget.Key != SenatePages.RootKey) aCtrl.Push(aTarget);
+            if (!TryResolvePage(aCatalog, aPage, out SCP_GuiPage? aTarget)) return 2;
+            if (aTarget!.Key != SenatePages.RootKey) aCtrl.Push(aTarget);
         }
 
         // ⚠ 傳的是**同一顆 style 物件**（不是複本）—— 使用者在頁面上換尺寸時，
