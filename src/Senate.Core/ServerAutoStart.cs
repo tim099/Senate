@@ -124,6 +124,17 @@ public static class ServerAutoStart
         string? aExe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(aExe)) { oErr = "拿不到自己的執行檔路徑（Environment.ProcessPath 是空的）"; return false; }
 
+        // ⭐ TASK-0209 A7：出貨時 `publish/server/senate-server.exe` 就在旁邊 ⇒ **優先起那顆**。
+        //   理由：常駐一整天的那顆不該載著 Silk.NET／cimgui／glfw3（CLI 那顆為了後台頁拖著它們）。
+        //   ⚠ 而「起錯一顆」的風險沒有被這一行消掉，它只是**變成看得見的**：
+        //     兩顆的 build id 由同一次 build.sh 蓋成同一個值；不一致時 `BuildMatches` 會擋下
+        //     並印 build_mismatch（A6 那道閘），⛔ 不是靜默用一顆舊的。
+        //   ⛔ 找不到就退回用自己起（開發樹、或還沒跑過 build.sh 的環境）—— 那是降級**路徑**，
+        //     不是降級**行為**：兩個入口共用同一份前置與本體（A1）。
+        string aSibling = Path.Combine(Path.GetDirectoryName(aExe) ?? "", "server", "senate-server.exe");
+        bool aUseSibling = File.Exists(aSibling);
+        if (aUseSibling) aExe = aSibling;
+
         var aInfo = new ProcessStartInfo
         {
             FileName = aExe,
@@ -135,7 +146,9 @@ public static class ServerAutoStart
         };
 
         // `dotnet senate.dll …` 這條路：ProcessPath 是 dotnet 本身 ⇒ 第一個參數要把 dll 帶回去。
-        bool aViaDotnet = Path.GetFileNameWithoutExtension(aExe)
+        // ⚠ 走 sibling 那條時 aExe 已經是真的 exe ⇒ 不可能是 dotnet；這一格只服務「用自己起」那條。
+        bool aViaDotnet = !aUseSibling
+                          && Path.GetFileNameWithoutExtension(aExe)
                               .Equals("dotnet", StringComparison.OrdinalIgnoreCase);
         if (aViaDotnet)
         {

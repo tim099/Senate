@@ -94,7 +94,13 @@ if has_gate server; then
     server=-
   else
     set +e
-    "$exe" server start > "$root/build/build_server.log" 2>&1 &
+    # ⭐ TASK-0209 A7：出貨之後自動啟動優先起 publish/server/senate-server.exe
+    #   ⇒ 這一關要驗**出貨那顆**，不然驗過的跟真正跑起來的是兩顆 exe。
+    #   ⛔ 不存在就退回用 CLI 自己起，而且**說出來** —— 「驗的是哪一顆」不可以靠猜。
+    server_exe="$root/publish/server/senate-server.exe"
+    if [ -f "$server_exe" ]; then echo "· 起的是出貨的 Server exe：publish/server/senate-server.exe"
+    else server_exe="$exe"; echo "· publish/server/senate-server.exe 不在 ⇒ 改用 CLI 自己起（還沒跑過新版 build.sh？）"; fi
+    "$server_exe" server start > "$root/build/build_server.log" 2>&1 &
     server_pid=$!
     for _ in 1 2 3 4 5 6; do
       "$exe" server status > /dev/null 2>&1 && break

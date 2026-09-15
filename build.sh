@@ -59,6 +59,8 @@ had_server=0
 if [ -f "$root/publish/senate.exe" ]; then
   if "$root/publish/senate.exe" server status > /dev/null 2>&1; then had_server=1; fi
   "$root/publish/senate.exe" server stop || echo "⚠ server stop 回非零 —— 若 publish 撞鎖，先手動收掉 Server 再重跑"
+  # ⚠ 射程：停的是**那顆常駐 Server**（不分它是哪顆 exe 起的 —— 它們 watch 同一個 stop-request 檔）。
+  #   ⇒ 這一停同時解掉 publish/senate.exe 與 publish/server/senate-server.exe 兩個鎖。
   # ⚠ 寫成 `[ ... ] && echo` 會在**沒有 Server 在跑**時讓整支腳本當場 abort：
   #   `set -e` 底下 `A && B` 的 A 失敗 ⇒ 整個 list 回非零、且它不在條件位置。用 if，不用短路。
   if [ "$had_server" -eq 1 ]; then
@@ -113,6 +115,29 @@ dotnet publish src/Senate.Cli   -p:InformationalVersion="$build_id" -p:IncludeSo
   -p:PublishSingleFile=true \
   -o publish \
   --nologo -v minimal
+
+# ── 第二顆：常駐 Server（TASK-0209 A7）──
+# 拍板（basecamp 2026-09-15，Tim「209 全包 GO」授權）：**(甲) 自足單檔**，出貨到 publish/server/。
+# 三條路的代價昨天列在單上（甲 +70MB／乙 要裝 runtime／丙 版面重排），而選 (甲) 的理由只有一句：
+#   ⚠ (乙) 的失效模式是「**那台機器沒有 .NET runtime**」—— 而它發作的位置是**自動啟動**，
+#     也就是沒有人在看的那條路（跨日保管費／領薪／發文計酬）。
+#   ⇒ 我們用磁碟換掉一整類環境失敗。**70MB 是具名的代價，不是漏算。**
+# ⚠ 出到 publish/server/ 而不是 publish/：兩顆自足單檔進同一層會互相蓋 pdb 與原生層。
+# 🔴 build_id 必須跟上面那顆**同一個**：`BuildMatches` 比的是 AssemblyInformationalVersion，
+#    不一致的症狀是每一支委派 Cmd 都 build_mismatch（而兩顆都是「成功 build 出來的」）。
+dotnet publish src/Senate.Server -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false   -c Release   -r win-x64   --self-contained   -p:PublishSingleFile=true    -o publish/server   --nologo -v minimal
+
+server_exe="$root/publish/server/senate-server.exe"
+if [ -f "$server_exe" ]; then
+  echo "· Server exe：publish/server/senate-server.exe（$(du -h "$server_exe" | cut -f1)）"
+  # 護欄的活體那一半：GUI 原生層**不該**出現在 Server 那一層。
+  # ⛔ csproj 那道 <Error> 只擋 ProjectReference；傳遞相依混進來時它不會叫。
+  for gui in cimgui.dll glfw3.dll; do
+    [ -f "$root/publish/server/$gui" ] && echo "⚠ publish/server/$gui 不該存在 —— Server 又把 GUI 那一套拖進來了（TASK-0209 A1）"
+  done
+else
+  echo "⚠ publish/server/senate-server.exe 不存在 —— Server publish 沒成功？（自動啟動會退回用 CLI 自己起）"
+fi
 
 # 執行檔就住在 publish/ —— **不複製到根層**（Tim 2026-09-01 拍板）。
 # 🩸 舊版把 publish/Senate.Cli.exe 複製成根層 senate.exe，理由只是「指令要叫 senate」。

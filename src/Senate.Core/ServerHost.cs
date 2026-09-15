@@ -247,10 +247,17 @@ public static class ServerHost
         //   `Senate.Server.exe`，TASK-0209 A1）。寫死一個的話，ProcessAdminPage 與 status 上
         //   那一行會**指向一個沒有發生過的動作** —— 而它讀起來完全正常，
         //   人會照著去 grep 一個不存在的呼叫端。⇒ 由執行檔名推導，不寫死。
+        //   🩸 2026-09-15：這裡本來比對的是寫死的 `"Senate.Server"`，而 A7 把出貨名改成
+        //     `senate-server` ⇒ **比對當場失效，登記行又開始說謊**（它回「senate server start」，
+        //     而真的起它的是那顆獨立 exe）。⚠ 改名不會讓任何一層報錯，只會讓定語安靜地錯。
+        //   ⇒ 判準倒過來寫：**只認 CLI 自己那個名字**，其餘一律報「實際的檔名」——
+        //     那樣未來再改名時，最壞情況是印出一個新名字（真的），而不是印出一個舊動作（假的）。
         string aEntry = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
-        string aBy = aEntry.Equals("Senate.Server", StringComparison.OrdinalIgnoreCase)
-                     ? "Senate.Server.exe"
-                     : "senate server start";
+        string aBy = aEntry.Equals("senate", StringComparison.OrdinalIgnoreCase)
+                     ? "senate server start"
+                     : (Path.GetFileName(Environment.ProcessPath ?? "") is { Length: > 0 } aFile
+                        ? aFile
+                        : "（拿不到執行檔名）");
         SCP_ProcessRecord? aRec = SCP_ProcessRegistry.Register(aSelf, Tag,
             $"Senate 常駐 Server（build {aBuild}）", aBy, iAllowMultiple: true);
         if (aRec == null)

@@ -11,7 +11,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <AssemblyName>Senate.Server</AssemblyName>
+    <!-- ⚠ 檔名就是出貨名（TASK-0209 A7）：publish/server/senate-server.exe。
+         ⛔ 不要改成在 build.sh 用 -p:AssemblyName 蓋 —— 那會讓 restore 撞
+         『Ambiguous project name』（實測），而且開發樹與出貨樹會叫兩個名字。 -->
+    <AssemblyName>senate-server</AssemblyName>
     <RootNamespace>Senate.Server</RootNamespace>
   </PropertyGroup>
 
