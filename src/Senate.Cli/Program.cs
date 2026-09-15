@@ -266,7 +266,27 @@ public static class Program
         //   印出一張文字畫面、`exit 0`、**一個讀數都沒有**。
         //   ⇒ 那正是它要抓的形狀（成功與沒做同形），而它發生在這支工具自己身上。
         bool aSoak = ArgValue(iArgs, "--soak") != null;
+
+        // ⭐ 有常駐窗在跑時，`--screenshot` 拍的是**那顆窗**（Tim 2026-09-15「需要時截圖看一下視窗」）。
+        //   🩸 不接橋的話它會另外開一顆全新的窗拍完就關 ⇒ 圖裡**不含你剛剛在常駐窗上做的操作**，
+        //   而那張圖看起來完全正常。⇒ 「拍到的是哪一顆窗」必須是讀數，不能靠使用者記得。
+        //   ⛔ 顯式帶 `--window --screenshot` ＝ 我就是要一顆新的，照舊。
+        if (aShot != null && !aWindow && !aSoak && GuiBridge.Probe(iRepoRoot).Alive)
+        {
+            if (TryBridgeRequest(iRepoRoot, iArgs, out int aShotExit)) return aShotExit;
+        }
+
         if (aWindow || aSoak || aShot != null) return RunWindow(iRepoRoot, iArgs, aShot);
+
+        // ── 問那顆常駐窗（TASK-0214）──────────────────────────────
+        // ⭐ Tim 2026-09-15 拍板：**文字模式主要用來知道視窗上有哪些可互動項目**。
+        //   ⇒ 那就不該是「CLI 自己再畫一次」——同一棵樹兩個產生者，
+        //     而「文字說有、窗上沒有」的失效在畫面上看起來完全正常。
+        //   ⇒ 這六道操作一律送去問那顆真窗；窗沒在跑就 exit 3，⛔ 不降級。
+        //     （照 Tim 2026-09-02 ⑦ 對 Server 的既有拍板：不降級、印怎麼啟動、到此為止。）
+        // ⚠ `--local` 是**顯式**的退路（headless／CI）：它會在輸出開頭說自己不是窗上的畫面。
+        //   ⛔ 不要把它做成自動退回 —— 自動退回的輸出跟真的一模一樣，那正是本單要殺掉的東西。
+        if (TryBridgeRequest(iRepoRoot, iArgs, out int aBridgeExit)) return aBridgeExit;
 
         var aState = UiDriver.Load(iRepoRoot);
 
@@ -355,6 +375,72 @@ public static class Program
         Console.Write(aText);
         if (aClick != null) Console.WriteLine($"（已按下：{aClick}）");
         return 0;
+    }
+
+    // ── 常駐窗的 client（TASK-0214）───────────────────────────
+    // 回傳 true ＝ 這一道指令已經由本函式處理完（`oExit` 是它的退出碼）。
+    // 回傳 false ＝ 不是要問窗的指令（或呼叫端顯式要 `--local`）⇒ 走原本的文字路徑。
+    static bool TryBridgeRequest(string iRepoRoot, string[] iArgs, out int oExit)
+    {
+        oExit = 0;
+
+        var aReq = BuildBridgeRequest(iArgs);
+        if (aReq == null) return false;                      // 不是這六道之一 ⇒ 不歸我管
+
+        if (HasFlag(iArgs, "--local"))
+        {
+            // ⚠ 這一行**必須印** —— 它是「這棵樹不是窗上那棵」唯一的區別。
+            //   沒有它的話 `--local` 的輸出跟問窗的輸出長得一模一樣。
+            Console.WriteLine("⚠ --local：以下是 CLI 自己畫的一棵樹，**不是**那顆常駐窗上的畫面。");
+            return false;
+        }
+
+        var aStatus = GuiBridge.Probe(iRepoRoot);
+        if (!aStatus.Alive)
+        {
+            GuiBridge.PrintNotRunning(aStatus, Console.Error.WriteLine);
+            oExit = 3;                                       // 3 ＝ 沒有結果（同 ServerDelegateCmd 的語意）
+            return true;
+        }
+
+        GuiResponse? aRes = GuiBridge.Send(iRepoRoot, aReq);
+        if (aRes == null)
+        {
+            Console.Error.WriteLine($"✗ 窗沒有在 {GuiBridge.RequestTimeoutMs / 1000} 秒內回應"
+                + $"（pid={aStatus.Heartbeat?.Pid}）—— 它可能正卡在一幀很重的東西上。");
+            Console.Error.WriteLine($"  最近的 fps：{aStatus.Heartbeat?.FpsRecent}");
+            Console.Error.WriteLine("  ⛔ 逾時**不會**改用本地畫一次 —— 那份輸出跟窗上的畫面沒有關係。");
+            oExit = 3;
+            return true;
+        }
+
+        if (!aRes.Ok)
+        {
+            Console.Error.WriteLine($"✗ {aRes.Error}");
+            oExit = 2;                                       // 2 ＝ 呼叫端的錯（打錯 id／打錯 op）
+            return true;
+        }
+
+        // 定語：這份讀數是**哪一顆窗、哪一頁、當時多順**。沒有定語的樹跟任何一棵樹長得一樣。
+        Console.WriteLine($"⤷ 由常駐視窗回答　pid={aStatus.Heartbeat?.Pid}　頁={aRes.PageKey}");
+        Console.WriteLine($"　 fps 最近：{aRes.FpsRecent}");
+        Console.WriteLine($"　 fps 累積：{aRes.FpsTotal}");
+        Console.Write(aRes.Text);
+        if (!aRes.Text.EndsWith("\n", StringComparison.Ordinal)) Console.WriteLine();
+        return true;
+    }
+
+    /// <summary>把旗標翻成一筆請求；不是那六道之一就回 null。</summary>
+    static GuiRequest? BuildBridgeRequest(string[] iArgs)
+    {
+        if (ArgValue(iArgs, "--click") is { } aClick) return new GuiRequest { Op = "click", TargetId = aClick };
+        if (ArgValue(iArgs, "--set") is { } aSet) return new GuiRequest { Op = "set", Value = aSet };
+        if (ArgValue(iArgs, "--toggle") is { } aToggle) return new GuiRequest { Op = "toggle", TargetId = aToggle };
+        if (ArgValue(iArgs, "--fold") is { } aFold) return new GuiRequest { Op = "fold", TargetId = aFold };
+        if (ArgValue(iArgs, "--screenshot") is { } aShot) return new GuiRequest { Op = "screenshot", Value = aShot };
+        if (HasFlag(iArgs, "--json")) return new GuiRequest { Op = "json" };
+        if (HasFlag(iArgs, "--list")) return new GuiRequest { Op = "list" };
+        return null;
     }
 
     // ── `--page <key>` 的解析（**兩條路共用的那一份**）────────
@@ -457,6 +543,20 @@ public static class Program
 
         if (SenateWindow.FindCjkFont() == null)
             Console.WriteLine("⚠ 找不到中文字型 —— 中文會顯示為方塊（不是字型壞了，是沒載到）");
+
+        // ── 常駐窗的橋（TASK-0214）────────────────────────────────
+        // ⭐ **所有視窗模式都掛**（含 soak）—— 不掛的話 `--soak` 量到的是「沒有橋的窗」，
+        //   而驗收 ⑧ 問的正是「掛上橋之後閒置有沒有變慢」。只在會自己關的模式下量一顆
+        //   不含待測物的窗，那個綠燈跟沒量過一模一樣。
+        // ⚠ 但**只有互動模式對外宣告自己是那顆常駐窗**（寫心跳）：
+        //   截圖／soak 的窗活幾百毫秒就沒了，讓 CLI 指到它等於指到一個正在消失的宿主。
+        bool aAdvertise = iShot == null && ArgValue(iArgs, "--soak") == null;
+        using var aBridge = new GuiBridgeHost(iRepoRoot, aWin, aStyle,
+            () => aCtrl.TopPage?.Key ?? "", aAdvertise);
+        aBridge.Start();
+        if (aAdvertise)
+            Console.WriteLine($"・常駐橋已開：{SenatePaths.GuiBridgeDir(iRepoRoot)}"
+                + "　⇒ `senate ui --list` 從此描述的是**這顆窗**");
 
         try
         {
@@ -1179,7 +1279,7 @@ public static class Program
         ["init"] = new string[0],
         ["ui"] = new[] { "--window", "--screenshot", "--soak", "--reset", "--click", "--set", "--toggle",
                          "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--no-cleanup",
-                         "--width", "--scale", "--size" },
+                         "--width", "--scale", "--size", "--local" },
         ["submodule"] = new[] { "--checkout", "--pull", "--push", "--dry-run", "--yes", "--branch", "--fetch",
                                 "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },
         ["ucmd"] = new[] { "--arg", "--arg-file", "--persona", "--project", "--timeout", "--lane", "--no-wait",
@@ -1518,6 +1618,10 @@ public static class Program
                 --json            整棵畫面樹輸出成 JSON（給程式讀）
                 --no-cleanup      **跳過渲染前的失效記錄清理** —— 唯一能讓 Dead／PID 已易主那兩態走到畫面上的路
                                 （Process 管理頁會在表上明說「本次含殘留」）。⛔ 不改 kill 判準；⛔ 別的指令帶它會出聲說沒生效
+                ⭐ 上面 --list / --json / --click / --set / --toggle / --fold 這六道**問的是那顆常駐視窗**
+                   （TASK-0214）：同一棵樹只有一個產生者 ⇒ 不會有「文字說有、窗上沒有」。
+                   窗沒在跑 ⇒ **exit 3 並印怎麼開窗**，⛔ 不會自動改用 CLI 自己畫一次。
+                --local           顯式改用 CLI 自己畫的那一棵（headless／CI）—— 輸出開頭會說明它**不是**窗上的畫面
               ui --window         開原生視窗（ImGui）—— 同一份頁面碼，換一個 renderer
                 --page <key>      開窗直接停在某一頁 —— 給截圖驗收用。⚠ **key 清單不寫在這裡**（寫死的那一行會在加頁時安靜過期）：
                                 打錯 key 會 exit 2 並把目錄裡的現有 key 全部印出來

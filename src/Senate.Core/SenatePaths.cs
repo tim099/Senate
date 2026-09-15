@@ -73,6 +73,16 @@ public static class SenatePaths
     /// <summary>`senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉它）。</summary>
     public static string ServerStopRequest(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop.request");
 
+    /// <summary>常駐視窗的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ 窗沒在跑。</summary>
+    public static string GuiHeartbeat(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_gui_heartbeat.json");
+
+    /// <summary>
+    /// CLI ↔ 常駐視窗的交換所（`&lt;id&gt;.req` 進、`&lt;id&gt;.res` 出）。
+    /// <para>⚠ 刻意**不放** <see cref="ServerRoot"/> 底下：那棵樹有自己的 Watcher，
+    /// 同一棵樹兩個 Watcher 會互搶 trigger（見 ServerRoot 的註解，同一句話換一個宿主）。</para>
+    /// </summary>
+    public static string GuiBridgeDir(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "gui_bridge");
+
     /// <summary>
     /// 常駐 Server 自己的**資料根**（版面同 AgentCommands：`queues/&lt;lane&gt;/`、`_cmd_results/`、`_cmd_errors/`），
     /// 由 <c>SCP_DataPaths</c> 解析底下的路徑 —— 這裡只決定根在哪。

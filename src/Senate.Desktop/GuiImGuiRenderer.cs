@@ -29,6 +29,13 @@ public sealed class GuiImGuiRenderer
     /// <summary>這一幀被按下的按鈕 id（下一幀餵回頁面）。</summary>
     public string? ClickedId { get; private set; }
 
+    /// <summary>
+    /// 由宿主注入一次點擊（TASK-0214：CLI 的 `--click` 作用在**真窗**上）。
+    /// <para>⚠ 走的是 <see cref="ClickedId"/> 同一格 ⇒ 下一次 <see cref="TakeInput"/> 送出去之後就清掉，
+    /// 跟滑鼠按下去**無法區分**。那正是要的：一條路，不是兩條。</para>
+    /// </summary>
+    public void InjectClick(string iId) => ClickedId = iId;
+
     /// <summary>欄位／勾選的當前值（跨幀狀態住在 renderer 這邊，頁面不必自己存）。</summary>
     public Dictionary<string, string> Fields { get; } = new();
     public Dictionary<string, bool> Toggles { get; } = new();

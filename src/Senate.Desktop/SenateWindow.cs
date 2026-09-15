@@ -60,6 +60,69 @@ public sealed class SenateWindow : IDisposable
     /// <summary>soak 跑完的讀數（幀數／秒數／平均 fps／最慢一幀）。沒跑 soak 就是 null。</summary>
     public string? SoakReading { get; private set; }
 
+    // ── 常駐窗的對外接點（TASK-0214）──────────────────────────────────
+    // 區塊職責：讓宿主在**每一幀畫完之後**插手一次 —— 拿到這一幀真的畫出來的那棵樹。
+    // 數值影響：⭐ 每幀的固定成本＝**一次 null 檢查**（OnFrameServed?.Invoke）＋ 幾個數的累加。
+    //           ⛔ 這裡**不做** IO、不序列化樹、也不保存樹 —— 那些只在宿主真的要用時才發生，
+    //           而宿主自己靠 FileSystemWatcher 決定要不要動（Tim 2026-09-15：文字樹要走額外指令）。
+
+    /// <summary>
+    /// 每幀畫完之後叫一次，參數是**這一幀真的畫出來的那棵樹**。
+    /// <para>⚠ 給的是畫完的樹不是畫之前的 —— 這正是「文字要描述窗上現在長什麼樣」那一格；
+    /// 給畫之前的樹會讓 --list 永遠慢一幀，而慢一幀的清單跟正確的清單長得一模一樣。</para>
+    /// </summary>
+    public Action<SCP_GuiNode>? OnFrameServed { get; set; }
+
+    /// <summary>注入一次點擊（下一幀生效）—— 走 renderer 的同一格，跟真的用滑鼠按下去無法區分。</summary>
+    public void InjectClick(string iId) => m_Renderer.InjectClick(iId);
+
+    /// <summary>注入欄位寫入／勾選／摺疊（立刻寫進 renderer 的跨幀狀態，下一幀畫出來）。</summary>
+    public void InjectField(string iId, string iValue) => m_Renderer.Fields[iId] = iValue;
+    public void InjectToggle(string iId, bool iOn) => m_Renderer.Toggles[iId] = iOn;
+    public void InjectFold(string iId, bool iOpen) => m_Renderer.Folds[iId] = iOpen;
+    public bool TryGetToggle(string iId, out bool oOn) => m_Renderer.Toggles.TryGetValue(iId, out oOn);
+    public bool TryGetFold(string iId, out bool oOpen) => m_Renderer.Folds.TryGetValue(iId, out oOpen);
+
+    /// <summary>截圖出口 —— 常駐模式下由宿主隨時呼叫（--screenshot 那條路是開窗時就決定的，不共用）。</summary>
+    public void CaptureTo(string iPath)
+    {
+        if (m_Gl == null || m_Window == null) return;
+        SenateScreenshot.Capture(m_Gl, m_Window.FramebufferSize.X, m_Window.FramebufferSize.Y, iPath);
+    }
+
+    // ── 常駐 fps（永遠在量，不必開 soak）───────────────────────────────
+    // 🩸 為什麼要兩個讀數：累積值會被開窗那幾秒稀釋 ——
+    //   一顆開了兩小時的窗剛剛凍了 3 秒，累積 fps 幾乎不動，**而那 3 秒正是要抓的東西**。
+    //   ⇒ 只印一個的話，「一直很順」與「剛剛凍了一下」在讀數上同形。
+    System.Diagnostics.Stopwatch? m_LiveClock;
+    int m_LiveFrames;
+    double m_LiveWorstMs;
+    double m_LiveFirstFrameMs;
+    int m_RecentFrames;
+    double m_RecentWorstMs;
+    double m_RecentStartSec;
+    string m_FpsRecent = "（還沒滿一個取樣窗）";
+
+    /// <summary>最近一個取樣窗的長度（秒）。短到抓得到一次凍結，長到不會被單幀抖動洗掉。</summary>
+    public const double RecentWindowSeconds = 5.0;
+
+    /// <summary>自開窗以來的 fps 讀數（第一幀分開印，理由同 soak）。</summary>
+    public string FpsTotal
+    {
+        get
+        {
+            if (m_LiveClock is not { } aClock || m_LiveFrames <= 0) return "（還沒有幀）";
+            double aSec = aClock.Elapsed.TotalSeconds;
+            if (aSec <= 0) return "（還沒有幀）";
+            return $"{m_LiveFrames} 幀 / {aSec:0.0} 秒 ⇒ 平均 {m_LiveFrames / aSec:0.0} fps"
+                 + $"，第一幀 {m_LiveFirstFrameMs:0.0} ms"
+                 + (m_LiveFrames > 1 ? $"，其餘最慢 {m_LiveWorstMs:0.0} ms" : "，其餘：沒有第二幀");
+        }
+    }
+
+    /// <summary>最近 <see cref="RecentWindowSeconds"/> 秒的 fps 讀數。</summary>
+    public string FpsRecent => m_FpsRecent;
+
     /// <summary>
     /// ImGui 版面檔（`imgui.ini`）要寫到哪。null ＝ 用 ImGui 預設。
     /// <para>⚠ ImGui 的預設是**相對 cwd 的 `imgui.ini`** —— 不是相對執行檔、也不是相對 repo。
@@ -335,6 +398,33 @@ public sealed class SenateWindow : IDisposable
             if (m_Frame > 1) m_SoakWorstFrameMs = Math.Max(m_SoakWorstFrameMs, iDelta * 1000.0);
         }
 
+        // 常駐 fps：⭐ **永遠在量**，不必開 soak（TASK-0214 ④）——
+        //   這顆窗就是大家日常在用的那顆，所以它的 fps 才是「實際流程」的讀數。
+        //   ⚠ 成本＝幾個數的累加，⛔ 沒有 IO、沒有字串（字串只在換取樣窗時做一次）。
+        m_LiveClock ??= System.Diagnostics.Stopwatch.StartNew();
+        m_LiveFrames++;
+        m_RecentFrames++;
+        double aNowSec = m_LiveClock.Elapsed.TotalSeconds;
+        // 🩸 第一幀的長度**要在幀尾量**（見 OnRender 末段）——
+        //   第一版我在這裡（幀首）讀 Elapsed，而碼錶就是這一幀剛起的 ⇒ 永遠印 0.0 ms。
+        //   ⚠ 那正是 D21 那條血證的形狀：**一個全綠的數字在描述一個還沒被量的東西**，
+        //   而它跟「第一幀真的很快」印出來一模一樣。活體抓到的（2026-09-15 kiara）。
+        if (m_Frame > 1)
+        {
+            double aMs = iDelta * 1000.0;
+            m_LiveWorstMs = Math.Max(m_LiveWorstMs, aMs);
+            m_RecentWorstMs = Math.Max(m_RecentWorstMs, aMs);
+        }
+        if (aNowSec - m_RecentStartSec >= RecentWindowSeconds)
+        {
+            double aSpan = aNowSec - m_RecentStartSec;
+            m_FpsRecent = $"{m_RecentFrames} 幀 / {aSpan:0.0} 秒 ⇒ 平均 {m_RecentFrames / aSpan:0.0} fps"
+                        + $"，最慢一幀 {m_RecentWorstMs:0.0} ms";
+            m_RecentStartSec = aNowSec;
+            m_RecentFrames = 0;
+            m_RecentWorstMs = 0;
+        }
+
         // ⚠ 補鍵盤 modifier **必須在 Update 之前**：`Update` 內部會呼叫 `ImGui.NewFrame`，
         //   而 NewFrame 才會消化 AddKeyEvent 的事件佇列。放在後面的話 Ctrl 會慢一幀到，
         //   於是 ImGui 看到 V 的那一幀 Ctrl 還是 false ⇒ 快捷鍵永遠差一步，而它不會報錯。
@@ -381,10 +471,24 @@ public sealed class SenateWindow : IDisposable
         ImGui.End();
         m_Controller.Render();
 
+        // ⭐ 常駐窗對外的唯一出口（TASK-0214 ②③）：這一幀的樹交給宿主。
+        // 🩸 **位置是 `m_Controller.Render()` 之後，不是之前** —— 第一版我放在 ApplyWrites 旁邊，
+        //   那裡 ImGui 還沒把這一幀畫進 framebuffer ⇒ 宿主在那裡截圖，拍到的是**上一幀之前**的畫面。
+        //   ⚠ 而失效的樣子是：截圖回 `✓ 已落檔`、檔案大小正常、圖看起來就是一張正常的截圖 ——
+        //   抓到它的不是眼睛，是驗收 ③ 那句「操作前後兩張要**不同**」：
+        //   下拉明明開了（--list 從 0 個 pick 變 3 個），兩張圖的 md5 **一字不差**。
+        //   ⇒ 成功與沒做同形，而這正是本張單存在的理由。（活體：kiara 2026-09-15）
+        //   📌 所以它跟下面那段截圖走**同一個位置**，不是巧合：能拍到的地方才是能交出去的地方。
+        OnFrameServed?.Invoke(aUi.Root);
+
         // ⚠ soak 開著時，收工的判準從「幀數」換成「時間」——
         //   兩個判準同時成立會讓視窗在第 8 幀就關掉，而那正是 soak 要避免的事。
         if (SoakSeconds > 0 && m_Frame == 1 && m_SoakClock != null)
             m_SoakFirstFrameMs = m_SoakClock.Elapsed.TotalMilliseconds;
+
+        // 常駐 fps 的第一幀，同一個道理、同一個位置（幀尾才量得到這一幀有多長）。
+        if (m_Frame == 1 && m_LiveClock != null)
+            m_LiveFirstFrameMs = m_LiveClock.Elapsed.TotalMilliseconds;
 
         // ⚠ **先判「這個模式會不會自己收工」，再判「收工了沒」。** 只有兩種模式會自己關窗：
         //   `--screenshot`（拍完關）與 `--soak`（轉完關）。互動模式兩者皆無 ⇒ 永遠不從這裡關窗。
