@@ -2762,6 +2762,13 @@ public static class SelfTest
         return null;
     }
 
+    /// <summary>讀一章並把行尾正規化成 LF —— **只給表頭解析用**。
+    /// ⛔ 「一樣／不一樣」一律用位元組比，⛔ 不准先正規化再比（那會把唯一的差異抹掉）。</summary>
+    static readonly string s_Lf = ((char)10).ToString();
+
+    static string ReadChapterNormalized(string iPath)
+        => string.Join(s_Lf, File.ReadAllLines(iPath, Encoding.UTF8));
+
     static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
@@ -2773,34 +2780,50 @@ public static class SelfTest
             if (!Directory.Exists(aBooksSrc)) continue;
 
             // 取「最新那章」當受測體 —— 它保證來自現行實作。
-            string? aPick = null; DateTime aBest = DateTime.MinValue;
+            // 🩸 2026-09-15：原版只挑**一個**（最新那份），而它的 seq 落在別區 ⇒ 這一格在 LY
+            //   **每次都跳過**。「跳過」不是通過，所以那等於這條路上沒有任何守衛在跑。
+            //   ⇒ 改成由新到舊逐個試，挑**第一個在本區、表頭又解得開**的；全部不合才跳過，
+            //     而跳過時要說**試了幾個**（⛔ 不讓「沒有樣本」跟「我只看了一個」同形）。
+            var aCands = new List<(string File, DateTime T)>();
             foreach (string d in Directory.GetDirectories(aBooksSrc, "watch-*"))
                 foreach (string f in Directory.GetFiles(d, "???.txt"))
                 {
                     string aStem = Path.GetFileNameWithoutExtension(f);
                     if (aStem.Length != 3 || !int.TryParse(aStem, out _)) continue;
-                    DateTime t = File.GetLastWriteTimeUtc(f);
-                    if (t > aBest) { aBest = t; aPick = f; }
+                    aCands.Add((f, File.GetLastWriteTimeUtc(f)));
                 }
-            if (aPick == null) continue;
+            if (aCands.Count == 0) continue;
+            aCands.Sort((x, y) => y.T.CompareTo(x.T));
             aAny = true;
 
-            string aWant = File.ReadAllText(aPick, Encoding.UTF8).Replace("\r\n", "\n");
-            if (!TryParseChapterHeader(aWant, out string aMedia, out List<SCP_SeqRange> aRanges,
-                                       out string aTitle, out string aSub, out string aWork,
-                                       out string aSessions, out string aNote))
+            string? aPick = null;
+            string aMedia = "", aTitle = "", aSub = "", aWork = "", aSessions = "", aNote = "";
+            List<SCP_SeqRange> aRanges = new List<SCP_SeqRange>();
+            string aLastWhy = "（沒有候選）";
+            int aTried = 0;
+            foreach ((string aF, DateTime _) in aCands)
             {
-                yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
-                    $"受測體 `{Path.GetFileName(aPick)}` 的表頭解析不出來 ⇒ **跳過**（⛔ 不當成通過）",
-                    CheckResult.Skipped);
-                continue;
+                ++aTried;
+                string aTxt = ReadChapterNormalized(aF);
+                if (!TryParseChapterHeader(aTxt, out aMedia, out aRanges,
+                                           out aTitle, out aSub, out aWork, out aSessions, out aNote))
+                { aLastWhy = "表頭解析不出來"; continue; }
+                string? aWhy = WhyOutOfThisRegion(aSrc, aRanges);
+                if (aWhy != null) { aLastWhy = aWhy; continue; }
+                aPick = aF; break;
             }
-
-            string? aOut = WhyOutOfThisRegion(aSrc, aRanges);
-            if (aOut != null)
+            // ⚠ 原版靠「一定挑最新那章」來保證受測體來自**現行排版器** ——
+            //   我把挑法放寬成「第一個在本區的」之後，那個保證就沒了。
+            //   ⇒ 逐位元組相同這一格**只有在受測體真的是最新那章時才是閘**；
+            //     退而求其次挑到舊章時它降級成**讀數**（照印差在哪，⛔ 但不判失敗）。
+            //   🩸 不這樣分的話，只有兩條路：讓它長紅（別人的 build 閘替我扛）
+            //     或把檢查拔掉（為綠燈改共用狀態）。兩個都不行。
+            bool aIsNewest = aPick != null && string.Equals(aPick, aCands[0].File, StringComparison.Ordinal);
+            if (aPick == null)
             {
                 yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
-                    $"受測體 `{Path.GetFileName(aPick)}`：{aOut} ⇒ **跳過**（⛔ 不當成通過）",
+                    $"逐個試了 **{aTried}** 章都不能當受測體（最後一個的理由：{aLastWhy}）"
+                    + " ⇒ **跳過**（⛔ 不當成通過）",
                     CheckResult.Skipped);
                 continue;
             }
@@ -2857,6 +2880,24 @@ public static class SelfTest
                 //   ⇒ 「一樣／不一樣」的問題只能用**位元組**回答，⛔ 不准在比之前先整理。
                 bool aSame = aWrote
                     && ByteEqual(File.ReadAllBytes(aW1.OutPath), File.ReadAllBytes(aPick));
+                // ⚠ 一個 False 而不說**差在哪**，就是「沒有讀數」的那種形狀 ——
+                //   讀的人會去猜（格式改過？行尾？手改過？），而猜要花的時間比印出來貴得多。
+                string aDiffWhere = "";
+                if (aWrote && !aSame)
+                {
+                    byte[] aA = File.ReadAllBytes(aW1.OutPath), aB = File.ReadAllBytes(aPick);
+                    int aN = Math.Min(aA.Length, aB.Length), aAt = -1;
+                    for (int k = 0; k < aN; k++) if (aA[k] != aB[k]) { aAt = k; break; }
+                    if (aAt < 0) aDiffWhere = $"前 {aN} 位元組相同，長度不同（重出 {aA.Length} vs 磁碟 {aB.Length}）";
+                    else
+                    {
+                        int aFrom = Math.Max(0, aAt - 30), aLen = Math.Min(60, aN - aFrom);
+                        string aCtxA = Encoding.UTF8.GetString(aA, aFrom, aLen).Replace(s_Lf, "⏎");
+                        string aCtxB = Encoding.UTF8.GetString(aB, aFrom, aLen).Replace(s_Lf, "⏎");
+                        aDiffWhere = $"第 {aAt} 位元組起不同（重出 {aA.Length}B／磁碟 {aB.Length}B）"
+                                     + $"　重出「{aCtxA}」／磁碟「{aCtxB}」";
+                    }
+                }
                 bool aBackOk = aWrote && aW1.BackEntries == aW1.Chapterized!.Kept.Count;
 
                 // ── ② 反向：不給 force 再跑一次 ⇒ 擋下且檔案不變 ──
@@ -2868,8 +2909,33 @@ public static class SelfTest
                     Path.GetFileNameWithoutExtension(aPick),
                     aTitle, aSub, aWork, aSessions, aNote, null, null,
                     iForce: false, iAllowOverlap: false, iAllowZeroStripped: true, aL2);
-                bool aRefused = aW2.Error.Contains("拒絕覆寫");
+                bool aRefused = aW2.Error.Contains("拒絕重出");
                 bool aUnchanged = aWrote && string.Equals(aMd5Before, Md5OfFile(aW1.OutPath), StringComparison.Ordinal);
+
+                // ── ⑤ TASK-0152：給 force ⇒ **不覆蓋**，出成 `NNN_v2.txt`，正本一個位元組都不動 ──
+                //   ⚠ 這一格要同時量三件事，少一件就有一種壞法會全綠：
+                //     (a) 真的寫出了 v2（否則「擋下來什麼都沒做」也會過）
+                //     (b) **正本 md5 不變**（否則「回了 v2 路徑但照樣覆寫」也會過）
+                //     (c) v2 **不被算成新的一章**（`???.txt` 數不變）—— 版本不是章
+                var aL5 = new List<string>();
+                string aBaseMd5 = aWrote ? Md5OfFile(aW1.OutPath) : "";
+                string aBookDir = aWrote ? Path.GetDirectoryName(aW1.OutPath)! : aTmp;
+                int aChaptersBefore = Directory.Exists(aBookDir)
+                    ? Directory.GetFiles(aBookDir, "???.txt").Length : 0;
+                var aW5 = SCP_WatchWriter.WriteChapter(
+                    aTmp, "tavern", aRanges, aMedia,
+                    Path.GetFileName(Path.GetDirectoryName(aPick)),
+                    Path.GetFileNameWithoutExtension(aPick),
+                    aTitle, aSub, aWork, aSessions, aNote, null, null,
+                    iForce: true, iAllowOverlap: false, iAllowZeroStripped: true, aL5);
+                bool aV2Wrote = aW5.Error.Length == 0 && aW5.Version == 2
+                                && aW5.OutPath.EndsWith("_v2.txt", StringComparison.Ordinal)
+                                && File.Exists(aW5.OutPath);
+                bool aBaseIntact = aWrote
+                                   && string.Equals(aBaseMd5, Md5OfFile(aW1.OutPath), StringComparison.Ordinal);
+                int aChaptersAfter = Directory.Exists(aBookDir)
+                    ? Directory.GetFiles(aBookDir, "???.txt").Length : 0;
+                bool aNotAChapter = aChaptersAfter == aChaptersBefore;
 
                 // ── ③ 反向：另一章號但區間重疊 ⇒ 擋下 ──
                 var aL3 = new List<string>();
@@ -2888,13 +2954,16 @@ public static class SelfTest
                 bool aAppendOnly = aLedgerAfter >= aLedgerBefore
                                    && string.Equals(aLedgerHeadBefore, aLedgerHeadAfter, StringComparison.Ordinal);
 
-                bool aOk = aSame && aBackOk && aRefused && aUnchanged && aOverlapBlocked && aAppendOnly;
+                bool aOk = (aSame || !aIsNewest) && aBackOk && aRefused && aUnchanged && aOverlapBlocked && aAppendOnly
+                           && aV2Wrote && aBaseIntact && aNotAChapter;
                 yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
                     $"受測體 `{Path.GetFileName(Path.GetDirectoryName(aPick))}/{Path.GetFileName(aPick)}`"
                     + $"（複製 {aCopied} 則訊息進暫存根）"
-                    + $"／**重出逐位元組相同={aSame}**／回讀段數＝收錄數={aBackOk}"
+                    + $"／**重出逐位元組相同={aSame}**（{(aIsNewest ? "受測體＝最新那章 ⇒ **這一格是閘**" : "⚠ 最新那章不在本區 ⇒ 退而挑舊章，**這一格降級成讀數不判失敗**")}）{(aDiffWhere.Length > 0 ? "　⚠ " + aDiffWhere : "")}／回讀段數＝收錄數={aBackOk}"
                     + $"／**沒給 force 擋下={aRefused}** 且檔案 md5 不變={aUnchanged}"
                     + $"／**區間重疊擋下且沒生出 777.txt={aOverlapBlocked}**"
+                    + $"／**force ⇒ 出 v2 不覆蓋={aV2Wrote}**（正本 md5 不變={aBaseIntact}、"
+                    + $"`???.txt` 章數 {aChaptersBefore}→{aChaptersAfter} 不變={aNotAChapter}）"
                     + $"／台帳 append-only（{aLedgerBefore}→{aLedgerAfter} 行、既有行不變={aAppendOnly}）"
                     + "　⚠ 全程在暫存根，**來源一個位元組都沒動**",
                     aOk ? CheckResult.Pass : CheckResult.Fail);
