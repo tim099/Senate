@@ -22,10 +22,12 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     public override string Name => "bank";
 
     public override string Summary =>
-        "新版銀行：開戶／查餘額／入帳／扣款 —— 由 Senate Server 執行（**單一寫入端**）";
+        "新版銀行：開戶／查餘額／入帳／扣款 —— 由 Senate Server 執行（**單一寫入端**）"
+        + "　⚠ 遷移前＝**測試用**，實際餘額以舊 Treasury 為準（D27）";
 
     public override string PortNote =>
-        "終局形。⚠ 舊的 `Treasury/`（python + Editor）**不在這支的射程內**，它凍結為唯讀歷史";
+        "⚠ **不是終局形**：舊的 `Treasury/`（python + Editor）2026-09-15（D27）拍板"
+        + "**不是唯讀歷史，是仍在服役的權威** —— 兩套長期並存，遷移前新銀行只是測試用，錢以舊的為準";
 
     public override string Example => SCP_CmdRegistry.Invoke("bank --arg op=balance --arg account=cc");
 
@@ -70,13 +72,25 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         string aOp = iArgs.Get("op");
         switch (aOp)
         {
-            case "accounts": return OpAccounts(aRoot);
-            case "open": return OpOpen(aRoot, iArgs);
-            case "balance": return OpBalance(aRoot, iArgs);
+            case "accounts": return Stamp(OpAccounts(aRoot));
+            case "open": return Stamp(OpOpen(aRoot, iArgs));
+            case "balance": return Stamp(OpBalance(aRoot, iArgs));
             case "credit":
-            case "debit": return OpPost(aRoot, iArgs, aOp == "debit");
+            case "debit": return Stamp(OpPost(aRoot, iArgs, aOp == "debit"));
             default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit）");
         }
+    }
+
+    // 區塊職責：D27 的定語 —— 每一次輸出都說一次「這不是那本帳」。
+    // 物理意義：新銀行與舊 `Treasury/` **長期並存**，⇒「我有多少錢」有兩個答案，
+    //          而**兩邊都不會報錯**（它們各自都對，只是在回答不同的問題）。
+    // 🩸 為什麼掛在這裡而不是寫進文件：文件要有人去讀，而這一行長在**每一個看到數字的人**的必經路上。
+    //    ⛔ 也不靠「大家記得」—— 記得是這個系統最不能依賴的東西。
+    // ⚠ 遷移那天要回來把這一行拿掉（它屆時會變成一句過期的真話，而過期不會叫）。
+    static SCP_CmdResult Stamp(SCP_CmdResult ioResult)
+    {
+        ioResult.Lines.Add("⚠ **遷移前新銀行＝測試用** —— 實際餘額以舊系統（`Treasury/`，酒館領薪那本）為準（D27）");
+        return ioResult;
     }
 
     static SCP_CmdResult OpAccounts(string iRoot)

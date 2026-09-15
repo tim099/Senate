@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
 description: setup / build / check 三支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收四關（2026-09-07 起與 build 分離、可挑項目）、single-file 的真正判準（實測修正過一次）、產物與版控
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -12,7 +12,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 腳本 | 做什麼 |
 |---|---|
 | `install.ps1` / `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
-| `build.ps1` / `build.sh` | `dotnet publish`（self-contained，直接產出 `publish/senate.exe`）→ 在根層放雙擊用的 `senate.lnk`。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
+| `build.ps1` / `build.sh` | `dotnet publish` **兩次**（self-contained）：`publish/senate.exe` ＋ `publish/server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）→ 在根層放雙擊用的 `senate.lnk`。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
 | `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
 
 > ⛔ **build 只有一個入口。** install 不准自己另寫一條 `dotnet build`。
@@ -85,9 +85,13 @@ senate selftest --list          # 有哪些項目與群
 
 
 1. `senate doctor` —— 證明那顆 exe 起得來、路徑解析對、設定讀得到
-2. `senate selftest` —— 24 項自我對拍。**失敗回 exit 1，會讓整個 build 判未過**
+2. `senate selftest` —— 自我對拍（2026-09-15 讀數：**46 過／0 失敗／4 跳過**；⚠ 跳過的沒有讀數，不算通過）。
+   **失敗回 exit 1，會讓整個 build 判未過**
 3. `senate ui --screenshot build/build_check.png` —— **真的開一次窗**
-4. **Server round-trip**（TASK-0100）—— 起一顆臨時 `senate server start`（背景）、`senate cmd server-ping --arg echo=build-check`、
+4. **Server round-trip**（TASK-0100）—— 起一顆臨時 Server（背景）。
+   ⭐ **起的是出貨那顆** `publish/server/senate-server.exe`（TASK-0209 A7）——
+   那也是自動啟動優先起的那顆；不存在就退回用 CLI 自己起，而且**會印出來說它退回了**
+   （「驗的是哪一顆」不可以靠猜）。接著 `senate cmd server-ping --arg echo=build-check`、
    `server stop` 收掉。selftest 對拍的是 result 檔的 schema，這一格驗的是「一顆 CLI 送、一顆 Server 接、result 回來」那條路本身。
    ⚠ 它起的 Server 是驗收用的臨時 process，log 在 `build/build_server.log`／`build/build_ping.log`；publish 前的 `server stop` 保證沒有別顆在跑。
 

@@ -1,7 +1,7 @@
 ---
 title: Senate 架構總覽
-description: 四層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli）、共用碼的邊界與方言限制、Unity 從宿主降級成 client 的過渡規矩
-last_updated: 2026-09-14
+description: 五層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli / Senate.Server）、共用碼的邊界與方言限制、Unity 從宿主降級成 client 的過渡規矩
+last_updated: 2026-09-15
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -15,13 +15,30 @@ SCP_Core/            submodule —— Unity 與 .NET **共用**（C# 9 / netstan
     ├── Json/        JSON 值樹＋parser＋writer
     └── Gui/         UI 中間層：節點樹、撰寫 API、文字 renderer、非 UI 操控介面
 src/
-├── Senate.Core/     設定、git CLI、專案探測（零 UI 依賴）
+├── Senate.Core/     設定、git CLI、專案探測、常駐 Server 本體（零 UI 依賴）
 ├── Senate.Desktop/  ImGui renderer、視窗、字型、截圖（碰得到硬體的那半）
-└── Senate.Cli/      headless 入口 ＋ 後台頁面
+├── Senate.Cli/      headless 入口 ＋ 後台頁面（**會拖著 Desktop** ⇒ 含 Silk.NET／cimgui／glfw3）
+└── Senate.Server/   常駐 Server 的**獨立執行檔** —— 只參照 Senate.Core
+                     ⛔ 不准參照 Senate.Desktop（csproj 有 <Error> 擋，TASK-0209 A1）
 ```
 
-依賴方向單向：`Cli → Desktop → SCP_Core`、`Cli → Core → SCP_Core`。
+依賴方向單向：`Cli → Desktop → SCP_Core`、`Cli → Core → SCP_Core`、`Server → Core → SCP_Core`。
 **SCP_Core 不依賴任何人**（那是它能被 Unity 吃下去的前提）。
+
+### 為什麼 Server 要自己一顆 exe（TASK-0209 A7）
+`Senate.Cli` 為了後台頁參照 `Senate.Desktop` ⇒ publish 實測 **78MB**、含 `cimgui.dll` ＋ `glfw3.dll`，
+**而常駐那顆一格 UI 都不畫**。⇒ 分出來之後跑一整天的那顆不再載著 OpenGL。
+
+出貨形狀：`build.sh` 兩次 publish、**同一個 build_id**（不一致 ⇒ 每支委派 Cmd 都 `build_mismatch`）：
+
+| 產物 | 內容 |
+|---|---|
+| `publish/senate.exe` | CLI ＋ 後台頁（自足單檔，78MB） |
+| `publish/server/senate-server.exe` | 常駐 Server（自足單檔，72MB，**零 GUI 原生層**） |
+
+自動啟動優先起 `publish/server/senate-server.exe`；**找不到就退回用 CLI 自己起**
+（開發樹、或還沒跑過 `build.sh` 的環境）—— 那是降級**路徑**不是降級**行為**：
+兩個入口共用同一份前置（`ServerBootstrap`）與同一個本體（`ServerHost`）。
 
 ---
 
