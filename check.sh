@@ -102,10 +102,16 @@ if has_gate server; then
     else server_exe="$exe"; echo "· publish/server/senate-server.exe 不在 ⇒ 改用 CLI 自己起（還沒跑過新版 build.sh？）"; fi
     "$server_exe" server start > "$root/build/build_server.log" 2>&1 &
     server_pid=$!
+    # ⭐ TASK-0167：等待「等一個讀數」（`server status`），而**等不到要說出來** ——
+    #   舊版迴圈跑完就往下走，於是「等到了」與「等了 3 秒還沒起來」在輸出上完全同形。
+    #   📌 2026-09-16 量到的：server 從 start 到 ready 只要 **217 ms**，3 秒綽綽有餘
+    #      ⇒ ready=no 幾乎必然代表出事了，那更該印出來，⛔ 不是默默 ping 下去。
+    server_ready=no
     for _ in 1 2 3 4 5 6; do
-      "$exe" server status > /dev/null 2>&1 && break
+      if "$exe" server status > /dev/null 2>&1; then server_ready=yes; break; fi
       sleep 0.5
     done
+    [ "$server_ready" = yes ] || echo "⚠ 等了 3s 仍讀不到 server ready（server status 非 0）—— 照樣 ping，讀數留在下面"
     "$exe" cmd server-ping --arg echo=check > "$root/build/build_ping.log" 2>&1
     server=$?
     "$exe" server stop > /dev/null 2>&1
@@ -115,8 +121,28 @@ if has_gate server; then
       echo "✓ Server round-trip 通（$(grep -o 'server_pid = [0-9]*' "$root/build/build_ping.log" | head -1)）"
     else
       server=1
-      echo "✗ Server round-trip 失敗 —— build/build_ping.log 與 build/build_server.log："
-      tail -3 "$root/build/build_ping.log"; tail -3 "$root/build/build_server.log"
+      # ===========================================================
+      # TASK-0167：失敗要**帶得出理由**。
+      # 🩸 2026-09-07 的紅燈：`build_ping.log` 是**零位元組**，而這裡對它 `tail -3`
+      #    ⇒ 印出零行。**「空檔」與「沒有失敗」在畫面上長得一樣**，於是紅燈只說得出
+      #    「失敗，去看那兩個 log」，而其中一個是空的 —— 空 log 不是理由。
+      # ⇒ 所以先印**可以直接判讀的讀數**（各自的 exit code 與位元組數），再印內容；
+      #    檔案是空的就**明說它是空的**，⛔ 不要用一個安靜的 tail 假裝已經給過理由了。
+      # ⛔ 成因仍未確定（2026-09-16 兩組對照都沒重現：正常流程綠、零等待也綠）——
+      #    本段修的是「失敗時說得出話」，⛔ 不宣稱修好了那個不穩定。
+      # ===========================================================
+      echo "✗ Server round-trip 失敗"
+      echo "· 讀數：ping exit=$server／server_ready=$server_ready"
+      for f in build_ping build_server; do
+        p="$root/build/$f.log"
+        if [ ! -f "$p" ]; then echo "· $f.log：**檔案不存在**（重導向都沒發生 ⇒ 那一步沒跑到）"
+        elif [ ! -s "$p" ]; then echo "· $f.log：**0 bytes —— 一個字都沒印**（進程沒起來或立刻死，⛔ 不是「沒有錯誤」）"
+        else echo "· $f.log（$(wc -c < "$p" | tr -d ' ') bytes）末 5 行："; tail -5 "$p" | sed 's/^/    /'; fi
+      done
+      # 📌 已知會混淆讀數的一格：`server-ping` **自己也會拉起一顆 server**
+      #    （「Server 沒在跑 ⇒ 已拉起一顆」）⇒ 紅燈時要先分辨 pong 回的是哪一顆。
+      echo "· ⚠ 判讀提示：server-ping 在沒有 server 時會**自己拉一顆** ——"
+      echo "    對照 build_server.log 的 pid 與 build_ping.log 的 server_pid，不同就不是這一關起的那顆"
     fi
   fi
 fi
