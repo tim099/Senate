@@ -1,4 +1,4 @@
-// 區塊職責：把「這個 repo 的 submodule 現在是什麼狀態」收成一份可顯示、可批次的讀數 ——
+﻿// 區塊職責：把「這個 repo 的 submodule 現在是什麼狀態」收成一份可顯示、可批次的讀數 ——
 //           **頁面與 CLI 吃同一份**，不各寫一套。
 // 物理意義：多層 submodule 專案的日常痛點是「submodule update 之後全員 detached HEAD、
 //           分支跑掉、誰 ahead 誰 behind 沒人一眼看得到」。
@@ -15,7 +15,12 @@ namespace Senate.Core;
 /// <summary>目標 branch 是**哪一層**解析出來的 —— 顯示這個是因為「它為什麼想切到 X」一定會被問。</summary>
 public enum TargetBranchSource
 {
-    /// <summary>四層都空 ⇒ 沒有目標。這一顆會被跳過，不是「用目前所在」。</summary>
+    /// <summary>
+    /// 五層都給不出答案 ⇒ 沒有目標，這一顆會被跳過。
+    /// <para>⚠ 2026-09-16 之前這裡寫的是「不是『用目前所在』」——
+    /// TASK-0225 之後「目前所在」**成為其中一層**（只接手盲猜那一格）。
+    /// 現在真的落到 None 的只剩：detached HEAD、或問不到分支。</para>
+    /// </summary>
     None = 0,
 
     /// <summary>逐項覆寫（本次執行指定）。</summary>
@@ -26,6 +31,15 @@ public enum TargetBranchSource
 
     /// <summary>本次執行的全域預設。</summary>
     GlobalDefault,
+
+    /// <summary>
+    /// **目前所在的那條分支**（TASK-0225）。只在顯式三層都空時才輪到，⛔ 不贏任何顯式指定。
+    /// <para>它與 <see cref="Heuristic"/> 的關係**不是單純的先後**：兩者一致時記成啟發式
+    /// （保留「這是猜的」這個資訊）；**衝突、或啟發式猜不出來時才由它接手** ——
+    /// 因為衝突就代表啟發式猜錯了，而這一邊是讀到的事實。</para>
+    /// <para>⚠ detached HEAD 不算（那不是一條分支）⇒ 那種情況照舊走啟發式。</para>
+    /// </summary>
+    Current,
 
     /// <summary>啟發式（見 <see cref="SCP_GitSubmodule.HeuristicBranch"/>）。</summary>
     Heuristic,
@@ -155,7 +169,11 @@ public static class SubmoduleScan
 
             string? aOverride = null;
             iOverrides?.TryGetValue(aEntry.Path, out aOverride);
-            var (aTarget, aSource) = ResolveTarget(aEntry, aOverride, iGlobalDefault);
+            // ⚠ 只問一次 git：下面 `CurrentBranch` 那格用同一個值。
+            //   分兩次問的話，兩次之間 HEAD 可能已經動了 ⇒ 「目標」與「目前」會各自描述不同的時刻，
+            //   而畫面上它們並排、看起來像同一個瞬間的兩欄。
+            string? aCurrent = SCP_GitRepo.Branch(aAbs);
+            var (aTarget, aSource) = ResolveTarget(aEntry, aOverride, iGlobalDefault, aCurrent);
 
             DateTime? aLastFetch = SCP_GitRepo.LastFetchUtc(aAbs);
 
@@ -163,7 +181,7 @@ public static class SubmoduleScan
             {
                 Entry = aEntry,
                 AbsPath = aAbs,
-                CurrentBranch = SCP_GitRepo.Branch(aAbs),
+                CurrentBranch = aCurrent,
                 Dirty = SCP_GitRepo.DirtyState(aAbs),
                 AheadBehind = SCP_GitRepo.AheadBehind(aAbs),
                 Remotes = SCP_GitRepo.Remotes(aAbs),
@@ -186,14 +204,45 @@ public static class SubmoduleScan
     /// 而一個算好的答案不帶來源的話，人只能猜 —— 猜錯的代價是把別人的分支切掉。</para>
     /// </summary>
     public static (string Target, TargetBranchSource Source) ResolveTarget(
-        SCP_GitSubmoduleEntry iEntry, string? iOverride, string? iGlobalDefault)
+        SCP_GitSubmoduleEntry iEntry, string? iOverride, string? iGlobalDefault,
+        string? iCurrentBranch = null)
     {
         if (!string.IsNullOrEmpty(iOverride)) return (iOverride!, TargetBranchSource.Override);
         if (!string.IsNullOrEmpty(iEntry.GitmodulesBranch))
             return (iEntry.GitmodulesBranch, TargetBranchSource.Gitmodules);
         if (!string.IsNullOrEmpty(iGlobalDefault)) return (iGlobalDefault!, TargetBranchSource.GlobalDefault);
-        if (!string.IsNullOrEmpty(iEntry.HeuristicBranch))
+
+        // ⭐ TASK-0225：**目前所在**排在盲猜之前。
+        // 🩸 為什麼加這一層（2026-09-16 實測，掃 `D:\Unity\LY` 共 25 顆）：
+        //   24 顆「目前＝目標」，只有 `AgentCommands` 不符 —— 它在 `LY` 分支上，
+        //   而啟發式的規則是「只有一條分支就用它／否則 master／沒 master 才 main」
+        //   ⇒ 猜成 `main`，那一列的 push／pull 就打到錯的分支。
+        //   繞法都很貴：改全域預設會弄壞另外 24 顆，逐項覆寫要每次重打。
+        // ⚠ 它**只贏盲猜，不贏任何顯式指定**：上面三層都是人（或 git）明講的目標，
+        //   而本頁的用途正是「把 submodule **搬到**目標分支上」——
+        //   ⛔ 讓「目前所在」蓋過顯式指定等於把這個功能做沒，那正是原設計那句
+        //   「不拿目前所在頂替」擋的事。這一層只接手它**本來就要用猜的**那一格。
+        // ⚠ detached HEAD 不適用：那時 `SCP_GitRepo.Branch` 回的是 `DetachedHead` 哨兵，
+        //   它不是一條分支名 ⇒ 排除掉，讓它照舊落到「解析不到」。
+        //   🩸 不排除的話會拿一個哨兵字串當 branch 名去跑 git，而那種錯要到 git 指令才會叫。
+        bool aHasCurrent = !string.IsNullOrEmpty(iCurrentBranch)
+                           && iCurrentBranch != SCP_Git.DetachedHead;
+
+        // 啟發式猜得出來、而且**跟現況一致** ⇒ 照舊記成「啟發式」。
+        // 🩸 為什麼不讓「目前所在」無條件贏（2026-09-16 實測否證了我的第一版）：
+        //   第一版寫成「目前所在排在啟發式之前」，結果 25 列**全部**變成「目前所在」——
+        //   因為絕大多數 repo 的現況本來就等於啟發式猜的那條。
+        //   ⇒ 啟發式那層變成死碼，而畫面對每一列都說「目標＝你現在在的地方」，
+        //     那正是原設計那句「拿目前所在頂替 ＝ 等於沒有這個功能」在防的事。
+        //   ⇒ 所以收窄成：**只在兩者衝突時**才由現況接手（衝突＝啟發式猜錯了）。
+        if (!string.IsNullOrEmpty(iEntry.HeuristicBranch)
+            && (!aHasCurrent || iEntry.HeuristicBranch == iCurrentBranch))
             return (iEntry.HeuristicBranch, TargetBranchSource.Heuristic);
+
+        // 走到這裡有兩種：啟發式猜不出來，或它猜的跟現況不一樣。
+        // 兩種都由**讀到的事實**接手 —— 它至少保證 push／pull 打得到一條真的存在的分支。
+        if (aHasCurrent) return (iCurrentBranch!, TargetBranchSource.Current);
+
         return ("", TargetBranchSource.None);
     }
 
@@ -202,6 +251,7 @@ public static class SubmoduleScan
         TargetBranchSource.Override => "指定",
         TargetBranchSource.Gitmodules => ".gitmodules",
         TargetBranchSource.GlobalDefault => "全域預設",
+        TargetBranchSource.Current => "目前所在",
         TargetBranchSource.Heuristic => "啟發式",
         _ => "解析不到",
     };

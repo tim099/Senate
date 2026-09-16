@@ -1,4 +1,4 @@
-// 區塊職責：Git Submodule 狀態頁 —— **唯讀**，但把「這一輪打算怎麼做」完整表達得出來：
+﻿// 區塊職責：Git Submodule 狀態頁 —— **唯讀**，但把「這一輪打算怎麼做」完整表達得出來：
 //           哪些 submodule 納入、每一顆的目標 branch 是哪條（以及那個目標是哪一層解析出來的）、
 //           要不要含 root、要不要推所有 remote，最後**組出一條可以直接照抄去跑的指令**。
 // 物理意義：概念取自 Unity 端的 UCL_GitSubmoduleSyncPage —— 逐項設定 ＋ 工具列上會動手的三顆鈕。
@@ -448,9 +448,14 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         string aRootDraft = DrawTargetPicker(g, aAppliedRoot, out string? aApplyRoot);
         string aBranchDraft = g.TextField("全域預設 branch", aAppliedBranch, BranchFieldId);
 
-        g.Note("目標 branch 解析順序：**逐項指定 ＞ .gitmodules 的 branch 欄 ＞ 上面這格 ＞ 啟發式**"
-               + "（只有一條分支就用它／否則 master，沒 master 才 main）。四層都空 ⇒ 那一列跳過，"
-               + "**不會拿「目前所在」頂替**。");
+        g.Note("目標 branch 解析順序：**逐項指定 ＞ .gitmodules 的 branch 欄 ＞ 上面這格**（顯式三層）"
+               + "，都空的話才輪到推測那一格。");
+        g.Note("　推測那一格的規則：啟發式（只有一條分支就用它／否則 master，沒 master 才 main）"
+               + "**跟目前所在一致 ⇒ 記成「啟發式」**；**兩者衝突、或啟發式猜不出來 ⇒ 改用「目前所在」**。"
+               + "　⭐ 它只接手猜錯的那一格，⛔ 不贏任何顯式指定 —— "
+               + "本頁的用途是把 submodule **搬到**目標分支上，讓現況蓋過顯式指定等於把這功能做沒。");
+        g.Note("　⚠ detached HEAD **沒有「目前所在」可用**（那不是一條分支）⇒ 它照樣走啟發式；"
+               + "連啟發式都猜不出來時才真的解析不到、那一列跳過。");
 
         var aOptions = DrawOptionToggles(g);
         Dictionary<string, string> aOverrides = DrawPerItemSettings(g, out List<string> aExcluded);
