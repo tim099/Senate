@@ -121,6 +121,7 @@ public static class SelfTest
         Many(nameof(RealBookshelfPortMatchesEditor), "library", () => RealBookshelfPortMatchesEditor(iProjects)),
         Many(nameof(RealLibraryInitMatchesDisk), "library", () => RealLibraryInitMatchesDisk(iProjects)),
         One(nameof(LibraryBuilderGolden), "library", LibraryBuilderGolden),
+        One(nameof(LibraryNoteCleanRoom), "library", LibraryNoteCleanRoom),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -2467,6 +2468,96 @@ public static class SelfTest
             + $"／media={aMOk}／reader 初值={aROk}／RelationLabel={aLabelOk}"
             + "　⚠ reader 那段的鍵序取自真檔、值是初值（取樣那份已經在讀了）",
             aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：`SCP_LibraryNote.NoteChapter` 的 **clean room** —— 在暫存樹上真的跑一遍寫入，
+    //          把 chapter.json 的逐位元組形狀、續寫（segments）行為、與兩道拒絕寫入的閘全部釘住。
+    // ⭐ 為什麼這一支驗得比前幾刀好：`SCP_LibraryNote` **吃 iDataRoot**，所以它跑得進暫存樹；
+    //   而 Editor 那側的路徑寫死 `UCL_RepoPath.AgentCommandsDir`，同樣的事它做不到。
+    //   ⇒ 移植到 SCP_Core 這件事本身，讓這一層第一次有了「不污染真資料的實跑」。
+    // ⭐ chapter.json 的期望值**不是我編的**：形狀逐位元組取自
+    //   `media/anim-apocalypse-hotel/readers/basecamp/chapters/0001/chapter.json`（Editor 真產物）。
+    // 🩸 而續寫那一段**全庫零活體**（2026-09-16 實測：沒有任何一份 chapter.json 帶 `segments`）
+    //   ⇒ TASK-0121 的那條路從落地到今天沒有任何產物驗證過它。這一格是它的第一份讀數。
+    // 數值影響：只在暫存目錄建檔，跑完刪掉；⛔ 不碰任何真的資料樹。
+    static CheckRow LibraryNoteCleanRoom()
+    {
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_note_" + Guid.NewGuid().ToString("N")[..8]);
+        var aLetters = new SCP_LettersRoot(Path.Combine(aRoot, "letters"));
+        try
+        {
+            string aToday = SCP_LibraryIO.Today();
+            SCP_LibraryInit.MediaInit(aLetters, aRoot, "w1", "book-w1", "book", "tester",
+                "標題", "原題", "作者", 4, null, null, out string? aInitErr);
+
+            // ① 第一場：開 r1、寫索引、更新 reader
+            string? aLog1 = SCP_LibraryNote.NoteChapter(aLetters, aRoot, "book-w1", "tester", "0001",
+                "第 1 話", "照著做的一百年", "12:37-13:41", "正文一", "看法一", "書籤一",
+                false, 0, out string? aFile1, out int aRound1, out string? aErr1);
+            string aChapterJson = Path.Combine(SCP_LibraryStore.ChapterDir(aRoot, "book-w1", "tester", "0001"),
+                                               SCP_LibraryStore.ChapterJsonName);
+            string aExpectChapter =
+                "{\n\t\"chapter_id\":\"0001\",\n\t\"display_number\":\"第 1 話\",\n"
+                + "\t\"title\":\"照著做的一百年\",\n\t\"time_range\":\"12:37-13:41\",\n"
+                + "\t\"rounds\":\n\t[\n\t\t{\n\t\t\t\"round\":1,\n"
+                + $"\t\t\t\"reading_date\":\"{aToday}\",\n\t\t\t\"file\":\"r1_{aToday}.md\"\n"
+                + "\t\t}\n\t],\n\t\"schema_version\":2\n}\n";
+            bool aShapeOk = aInitErr == null && aErr1 == null && aRound1 == 1
+                            && Eol(File.ReadAllText(aChapterJson, new UTF8Encoding(false))) == Eol(aExpectChapter);
+            // round md ＝ 正文 TrimEnd ＋ 一個換行，⛔ 沒有任何頭尾裝飾
+            bool aBodyOk = aFile1 != null
+                           && Eol(File.ReadAllText(aFile1, new UTF8Encoding(false))) == Eol("正文一\n");
+            // 三個投影都要被帶起來（少任何一個都是「每一層都綠」的失效）
+            bool aProjOk = File.Exists(Path.Combine(
+                               SCP_LibraryStore.ReaderRoot(aRoot, "book-w1", "tester"),
+                               SCP_LibraryStore.BookshelfName))
+                           && File.Exists(SCP_LettersPaths.CmdPayload(aLetters, "tester", "reading_recall", "book-w1"));
+
+            // ② 續寫：追加進 r1、segments=2、⛔ **不開 r2**，且章層 time_range 接上去
+            string? aLog2 = SCP_LibraryNote.NoteChapter(aLetters, aRoot, "book-w1", "tester", "0001",
+                null, null, "30:00-52:00", "正文二", null, null,
+                true, 0, out string? aFile2, out int aRound2, out string? aErr2);
+            SCP_JsonData aCh = SCP_JsonData.Parse(File.ReadAllText(aChapterJson, new UTF8Encoding(false)));
+            bool aAppendOk = aErr2 == null && aRound2 == 1 && aFile2 == aFile1
+                             && aCh[SCP_LibraryIO.Key_Rounds].Count == 1
+                             && aCh[SCP_LibraryIO.Key_Rounds][0].GetInt(SCP_LibraryIO.Key_Segments, 0) == 2
+                             && aCh.GetString(SCP_LibraryIO.Key_TimeRange, "") == "12:37-13:41, 30:00-52:00";
+            string aRoundText = File.ReadAllText(aFile1!, new UTF8Encoding(false));
+            bool aAppendBodyOk = aRoundText.Contains("正文一", StringComparison.Ordinal)      // 舊字沒被動
+                                 && aRoundText.Contains("正文二", StringComparison.Ordinal)
+                                 && aRoundText.Contains("## 續寫・第 2 場", StringComparison.Ordinal)
+                                 && aRoundText.Contains("30:00-52:00", StringComparison.Ordinal);
+            // 續寫**不印** RelationLabel（那句話的答案永遠是「同一章」⇒ 不帶資訊）
+            bool aLabelOk = aLog1 != null && aLog1.Contains("續讀（+1）", StringComparison.Ordinal)
+                            && aLog2 != null && !aLog2.Contains("續讀（+1）", StringComparison.Ordinal)
+                            && aLog2.Contains("沒有開新的 round", StringComparison.Ordinal);
+
+            // ③ 反向對照：續寫一個索引裡沒有的 round ⇒ **拒絕**，且磁碟一個位元組都不動
+            string aBefore = File.ReadAllText(aChapterJson, new UTF8Encoding(false));
+            string? aLog3 = SCP_LibraryNote.NoteChapter(aLetters, aRoot, "book-w1", "tester", "0001",
+                null, null, null, "不該落地", null, null, true, 99,
+                out _, out _, out string? aErr3);
+            bool aRefuseOk = aLog3 == null && aErr3 != null && aErr3.Contains("不在 chapter.json 索引裡", StringComparison.Ordinal)
+                             && File.ReadAllText(aChapterJson, new UTF8Encoding(false)) == aBefore;
+
+            // ④ 反向對照：沒有 reader.json 的人 ⇒ 停下來，⛔ 不替他建檔
+            string? aLog4 = SCP_LibraryNote.NoteChapter(aLetters, aRoot, "book-w1", "nobody", "0001",
+                null, null, null, "不該落地", null, null, false, 0, out _, out _, out string? aErr4);
+            bool aLadderOk = aLog4 == null && aErr4 != null && aErr4.Contains("op=media_init", StringComparison.Ordinal)
+                             && !Directory.Exists(SCP_LibraryStore.ReaderRoot(aRoot, "book-w1", "nobody"));
+
+            bool aOk = aShapeOk && aBodyOk && aProjOk && aAppendOk && aAppendBodyOk
+                       && aLabelOk && aRefuseOk && aLadderOk;
+            return new CheckRow("note_chapter clean room（暫存樹實跑）",
+                $"chapter.json 逐位元組={aShapeOk}／round 正文無裝飾={aBodyOk}／書架＋追回檔都生出來={aProjOk}"
+                + $"／**續寫 segments=2 且不開 r2**={aAppendOk}／舊字未動＋續寫頭={aAppendBodyOk}"
+                + $"／續寫不印關係標籤={aLabelOk}"
+                + $"／🔴 續寫不存在的 round ⇒ 拒絕且磁碟零變動={aRefuseOk}"
+                + $"／🔴 無 reader ⇒ 停下來不代建={aLadderOk}"
+                + "　⚠ chapter.json 的期望值取自 Editor 真產物；續寫那段**全庫零活體**，這是它的第一份讀數",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
     }
 
     /// <summary>頂層鍵**順序**一不一樣 —— 用來判「這份是不是現行 builder 一次寫成的」。</summary>
