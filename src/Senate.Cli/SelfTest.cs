@@ -66,6 +66,7 @@ public static class SelfTest
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
         One(nameof(QueueSubLaneShape), "core", QueueSubLaneShape),
         One(nameof(ServerResultRoundTrip), "core", ServerResultRoundTrip),
+        One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
@@ -724,6 +725,57 @@ public static class SelfTest
             bool aOk = aOutOk && aValOk && aLineOk && aClientOk && aFailOk;
             return new CheckRow("Server result 檔 round-trip",
                 $"outputs 讀回={aOutOk}／同 key 兩筆 values 都在={aValOk}／lines 讀回={aLineOk}／client 欄={aClientOk}／Failed 落檔={aFailOk}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
+    }
+
+    // 區塊職責：逾時的成因描述必須**跟著 lane 的現況變**，三態各自不同形。
+    // 物理意義：逾時本身分不出「宿主不在」「宿主在跑」「跑完了我沒接到」，而這三種的下一步互斥
+    //          （開 Editor ／ 等它 ／ 去讀 result 檔）。三句話塌成一句的症狀是：讀的人照著
+    //          一句已知為假的診斷，去檢查一個沒有問題的宿主（2026-09-04／09-05 兩次血證）。
+    // 🩸 為什麼要這一格（TASK-0227）：`running` 與 `pending` 兩支我用活體對照驗過
+    //   （指向沒有 Editor 的空樹／trigger 出現後造 .running），⛔ 而 **`idle` 那一支造不出乾淨的活體**
+    //   —— 它要求「lane 空了而我沒接到 result」，那是一個競態。
+    //   ⇒ 沒有活體就把它做成可重跑的讀數；把空白留著才是讓「沒驗」跟「驗過」同形。
+    // 數值影響：純建／刪暫存檔＋字串比對，不派任何 Cmd、不碰真的資料根。
+    static CheckRow WaitTimeoutDescribesLane()
+    {
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_lane_" + Guid.NewGuid().ToString("N")[..8]);
+        const string aPersona = "selftest-persona";
+        try
+        {
+            string aTrigger = AgentCmdClient.TriggerPath(aRoot, aPersona);
+            string aRunning = AgentCmdClient.RunningPath(aRoot, aPersona);
+            Directory.CreateDirectory(Path.GetDirectoryName(aTrigger)!);
+
+            // ① lane 空 ⇒ 「很可能已經跑完了」，而且要把 result 檔的路徑交出來（不然「去看 mtime」是空話）
+            string aIdle = AgentCmdClient.DescribeWaitTimeout(aRoot, aPersona, "cid-1", 20);
+            bool aIdleOk = aIdle.Contains("'idle'", StringComparison.Ordinal)
+                           && aIdle.Contains("cid-1", StringComparison.Ordinal);
+
+            // ② trigger 還在 ⇒ 沒被取走，這時「宿主沒開？」才是一個合理的**假設**
+            File.WriteAllText(aTrigger, "x");
+            string aPending = AgentCmdClient.DescribeWaitTimeout(aRoot, aPersona, "cid-1", 20);
+            bool aPendingOk = aPending.Contains("'pending'", StringComparison.Ordinal)
+                              && aPending.Contains("還沒被取走", StringComparison.Ordinal);
+
+            // ③ .running 在 ⇒ 取走了還在跑。⛔ 這一支**不准**再提「沒開」——它已經被量掉了
+            File.WriteAllText(aRunning, "x");
+            string aRun = AgentCmdClient.DescribeWaitTimeout(aRoot, aPersona, "cid-1", 20);
+            bool aRunOk = aRun.Contains("'running'", StringComparison.Ordinal)
+                          && !aRun.Contains("沒開", StringComparison.Ordinal);
+
+            // ④ 三句必須互不相同 —— 「都有印東西」與「印的是對的那句」是兩件事
+            bool aDistinct = aIdle != aPending && aPending != aRun && aIdle != aRun;
+            // ⑤ 宿主標籤要吃得進去（Server 那條路的呼叫端會傳別的名字）
+            bool aHostOk = AgentCmdClient.DescribeWaitTimeout(aRoot, aPersona, "cid-1", 20, "Server")
+                           .Contains("Server", StringComparison.Ordinal);
+
+            bool aOk = aIdleOk && aPendingOk && aRunOk && aDistinct && aHostOk;
+            return new CheckRow("逾時成因跟著 lane 現況變（三態不同形）",
+                $"idle={aIdleOk}／pending={aPendingOk}／running 不再提「沒開」={aRunOk}"
+                + $"／三句互異={aDistinct}／宿主標籤={aHostOk}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }

@@ -73,9 +73,14 @@ public sealed class SenateSessionCloseGateway : SCP_IActivitySessionCloseGateway
             // ⛔ 順序寫死：**先判定，才准碰 result 檔**（逾時讀到的是上一輪，而它看起來完全正常）。
             if (aVerdict != AgentCmdWaitResult.Success)
             {
+                // ⛔ 不猜成因 —— 去量 lane 的現況（`AgentCmdClient.DescribeWaitTimeout`，TASK-0227）。
+                //   🩸 舊句把「Editor 沒開？」擺在第一句 ＝ 讀的人會把**猜測**讀成**診斷結果**，
+                //     然後去檢查一個沒有問題的 Editor（canvas 那條的活體：2026-09-16 TASK-0226）。
+                // ⚠ 尾巴那句必須留著，它不是排版：本閘是**寫入類**，逾時是「不知道」不是「沒做」——
+                //   而 `DescribeWaitTimeout` 只答「lane 現在什麼狀態」，⛔ 不答「這一筆有沒有生效」。
                 oError = aVerdict == AgentCmdWaitResult.Timeout
-                    ? "逾時 " + m_TimeoutSec.ToString("0.###", CultureInfo.InvariantCulture)
-                      + "s 沒等到 Editor 的 result —— Editor 沒開？（⚠ 那不代表它沒做，回讀磁碟才知道）"
+                    ? AgentCmdClient.DescribeWaitTimeout(m_DataRoot, aTarget, aCmdId, m_TimeoutSec)
+                      + "（⚠ 逾時不代表它沒做 —— 這一筆是寫入，回讀磁碟才知道）"
                     : "Editor 端回報失敗（詳見它的 _cmd_errors 報告）";
                 return false;
             }
