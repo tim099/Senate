@@ -220,6 +220,27 @@ public static class GuiBridge
         return null;
     }
 
+    // ── 「它還在不在」的第二條路徑（TASK-0229）────────────────────────
+    // 區塊職責：問**作業系統**那個 pid 在不在，而不是問窗自己寫的心跳檔。
+    // 物理意義：心跳檔是窗自己寫的 ⇒ 它停筆之後留下的最後一行，跟「它正忙著沒空寫」同形；
+    //           兩者的處置相反（重開 vs 等）。⇒ 要分開它們，讀數必須來自窗以外的地方。
+    // 🩸 血證（calli 2026-09-16 交的讀數，summit 重現）：`taskkill` 掉窗之後 `senate ui --list`
+    //   印的是「它可能正卡在一幀很重的東西上」，還附一行心跳裡的 fps —— 那行 fps 是**遺言**，
+    //   而它讀起來像「它還活著」的證據。
+    // 數值影響：一次 `Process.GetProcessById`，不啟動任何東西；查不到就照實回 null，⛔ 不猜。
+    /// <summary>那個 pid 現在還在不在：true＝在／false＝查無此行程／null＝問不到（⛔ 不是「不在」）。</summary>
+    public static bool? ProcessAlive(int iPid)
+    {
+        if (iPid <= 0) return null;
+        try
+        {
+            using var aProc = System.Diagnostics.Process.GetProcessById(iPid);
+            return !aProc.HasExited;
+        }
+        catch (ArgumentException) { return false; }   // 查無此 pid ＝ 它真的不在了
+        catch (Exception) { return null; }            // 權限等 ⇒ 我沒有答案，別假裝有
+    }
+
     static void TryDelete(string iPath)
     {
         try { if (File.Exists(iPath)) File.Delete(iPath); }

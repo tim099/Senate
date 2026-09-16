@@ -406,9 +406,29 @@ public static class Program
         GuiResponse? aRes = GuiBridge.Send(iRepoRoot, aReq);
         if (aRes == null)
         {
-            Console.Error.WriteLine($"✗ 窗沒有在 {GuiBridge.RequestTimeoutMs / 1000} 秒內回應"
-                + $"（pid={aStatus.Heartbeat?.Pid}）—— 它可能正卡在一幀很重的東西上。");
-            Console.Error.WriteLine($"  最近的 fps：{aStatus.Heartbeat?.FpsRecent}");
+            // 🩸 TASK-0229：逾時只說得出「沒答」。**為什麼沒答**有兩個成因而處置相反
+            //   （窗卡住 ⇒ 等／窗已經不在了 ⇒ 重開），而心跳檔分不出它們 ——
+            //   那是窗自己寫的，停筆後留下的最後一行跟「正忙著」長得一樣。
+            //   ⇒ 這裡問一次作業系統（窗以外的路徑），問不到就照實說問不到。
+            int aPid = aStatus.Heartbeat?.Pid ?? 0;
+            bool? aProcAlive = GuiBridge.ProcessAlive(aPid);
+            Console.Error.WriteLine($"✗ 窗沒有在 {GuiBridge.RequestTimeoutMs / 1000} 秒內回應（pid={aPid}）");
+            switch (aProcAlive)
+            {
+                case false:
+                    Console.Error.WriteLine("  ⇒ 那個 pid **查無此行程**（問的是作業系統，不是它自己寫的心跳檔）⇒ 窗已經不在了。");
+                    Console.Error.WriteLine("  處置：重開 —— `senate ui --window`");
+                    break;
+                case true:
+                    Console.Error.WriteLine("  ⇒ 行程還在，只是這一筆沒答 ⇒ 它可能正卡在一幀很重的東西上。");
+                    Console.Error.WriteLine("  處置：等一下再問一次；一直不答就關掉它（`taskkill /PID <pid> /F`）再重開。");
+                    break;
+                default:
+                    Console.Error.WriteLine("  ⇒ 那個 pid 在不在**問不到**（沒有 pid 或查詢被擋）⇒ ⛔ 這裡不猜是哪一種。");
+                    break;
+            }
+            // ⚠ 這一行是**心跳檔裡的最後一筆**，不是「它還活著」的證據 —— 窗死了它照樣印得出來。
+            Console.Error.WriteLine($"  心跳檔最後一筆 fps（窗停筆後仍讀得到，⛔ 不是活體證據）：{aStatus.Heartbeat?.FpsRecent}");
             Console.Error.WriteLine("  ⛔ 逾時**不會**改用本地畫一次 —— 那份輸出跟窗上的畫面沒有關係。");
             oExit = 3;
             return true;
@@ -1329,7 +1349,32 @@ public static class Program
             if (!aToken.StartsWith("--", StringComparison.Ordinal)) continue;
             if (aSet.Contains(aToken))
             {
-                if (ValueFlags.Contains(aToken)) i++;   // 跳過它的值（值可能長得像旗標）
+                // ── 取值旗標的「值」要先看一眼（TASK-0230）────────────────
+                // 🩸 血證（kaguya 2026-09-16）：`ui --window --screenshot --page sessions`
+                //   ⇒ `--screenshot` 把 `--page` 吃成檔名，在 repo 根生出一個**檔名叫 `--page` 的檔**，
+                //   印 `✓ 截圖已落檔：--page`、`exit 0` —— 而 `--page sessions` 那半有沒有生效，
+                //   從輸出上**當下無從判斷**。⇒ 失效樣子是「成功訊息裡印著旗標名當檔名」。
+                // ⛔ 判準只認**這支自己宣告過的旗標**（含全域與取值旗標），不是「任何以 -- 開頭的字」——
+                //   那樣會擋掉本來合法、剛好長得像旗標的值。
+                if (ValueFlags.Contains(aToken))
+                {
+                    if (i + 1 >= iArgs.Length)
+                    {
+                        Console.Error.WriteLine($"✗ `{aToken}` 後面沒有值 —— 它是取值旗標（下一個 token 是它的值）");
+                        Console.Error.WriteLine("  ⛔ 沒有值時**不會**靜默當成沒給 —— 那會讓「我加了旗標」與「旗標沒生效」同形");
+                        return 2;
+                    }
+                    string aValue = iArgs[i + 1];
+                    if (aValue.StartsWith("--", StringComparison.Ordinal)
+                        && (aSet.Contains(aValue) || ValueFlags.Contains(aValue)))
+                    {
+                        Console.Error.WriteLine($"✗ `{aToken}` 的值被寫成了另一個旗標：'{aValue}'");
+                        Console.Error.WriteLine($"  `{aToken}` 是取值旗標 ⇒ 它會把下一個 token 整個吃掉當值（這裡會拿 '{aValue}' 當值用）");
+                        Console.Error.WriteLine($"  修法：把 `{aToken}` 的值補上，或把它擺到最後 —— 例如 `{aToken} <值> {aValue} <值>`");
+                        return 2;
+                    }
+                    i++;   // 值確實是值 ⇒ 跳過它（值可能長得像旗標，但不是這支宣告過的那些）
+                }
                 continue;
             }
             string aHint = ForeignFlagHints.TryGetValue(aToken, out string? h)

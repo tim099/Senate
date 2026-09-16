@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
+last_updated: 2026-09-16 (旗標紀律補「取值旗標的值被寫成另一個旗標／沒有值 ⇒ exit 2」；`ui` 逾時的兩種成因分開印；TASK-0229／TASK-0230) | 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -48,6 +48,38 @@ $ senate ucmd status --totally-bogus-flag zzz
 
 ⚠ 加新旗標時**要同時加進那張表**（`Program.cs` 的 `FlagsBySubcommand`）——
 漏加的失效樣子是大聲的（自己的新旗標被自己的閘擋下），不是安靜的。
+
+---
+
+### 取值旗標：**值被寫成另一個旗標，或根本沒有值 ⇒ 一樣 exit 2**（TASK-0230）
+
+`--screenshot` / `--page` / `--arg` / `--persona`… 這些是**取值旗標**：它後面那一個 token 整個被當成值吃掉。
+於是順序打反時，錯誤會長成一個**成功**：
+
+```
+$ senate ui --window --screenshot --page sessions        # 修正前
+✓ 截圖已落檔：--page（126934 bytes）                      # ← 在 repo 根生出一個檔名叫 `--page` 的檔，exit 0
+```
+
+🩸 血證（kaguya 2026-09-16）：`--page sessions` 那半有沒有生效，**從輸出上當下無從判斷**。
+現在兩種寫法都在 dispatch 前擋下：
+
+```
+$ senate ui --window --screenshot --page sessions
+✗ `--screenshot` 的值被寫成了另一個旗標：'--page'
+  `--screenshot` 是取值旗標 ⇒ 它會把下一個 token 整個吃掉當值（這裡會拿 '--page' 當值用）
+  修法：把 `--screenshot` 的值補上，或把它擺到最後 —— 例如 `--screenshot <值> --page <值>`
+⇒ exit 2
+
+$ senate ui --screenshot                                  # 後面什麼都沒有
+✗ `--screenshot` 後面沒有值 —— 它是取值旗標（下一個 token 是它的值）
+⇒ exit 2
+```
+
+⛔ 判準只認**這支自己宣告過的旗標**（`FlagsBySubcommand` ∪ `ValueFlags`），
+不是「任何以 `--` 開頭的字」—— 那樣會擋掉本來合法、剛好長得像旗標的值。
+
+⚠ 加新的取值旗標時要同時加進 `ValueFlags`；漏加的失效樣子是**安靜的**（那個值會被拿去比對旗標名單）。
 
 ---
 
@@ -570,6 +602,13 @@ Debug 當 Server、exe 當 CLI ⇒ `running_build_mismatch`，exe 照樣停得�
 「你要的那頁不存在了」不可以長得像「你本來就在首頁」。
 
 **id 不存在時擋下並回 exit 2**，並指向 `--list` —— 靜默失敗會讓「按了沒反應」與「按錯了」同形。
+
+**問常駐窗而它沒答時，兩種成因分開印**（TASK-0229）：逾時一律 exit 3，而輸出會多一行說是哪一種 ——
+`pid` 查無此行程 ⇒ **窗已經不在了**（處置：重開）；行程還在 ⇒ **它卡住了**（處置：等）。
+⚠ 那一格讀數問的是**作業系統**，不是窗自己寫的心跳檔 —— 心跳檔在窗停筆之後仍讀得到，
+所以輸出裡那行 `心跳檔最後一筆 fps` 是**遺言，不是活體證據**（它明寫著這句）。
+🩸 血證（calli 2026-09-16）：`taskkill` 掉窗之後再問，舊版印的是「它可能正卡在一幀很重的東西上」
+—— 而兩種成因的處置相反（等 vs 重開）。
 
 ---
 
