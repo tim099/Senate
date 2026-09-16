@@ -46,7 +46,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 new SCP_CmdArgSpec("display_name", "顯示名（open 用；可以有大小寫與空白，⛔ 不當 id）", iDefault: ""),
                 new SCP_CmdArgSpec("amount", "金額（正整數；方向由 op 決定）", iDefault: "0"),
                 new SCP_CmdArgSpec("kind", "為什麼動這筆錢（credit／debit **必填**）", iDefault: ""),
-                new SCP_CmdArgSpec("ref", "指回現場（commit sha／seq／單號）", iDefault: ""),
+                new SCP_CmdArgSpec("ref", "指回現場（commit sha／seq／單號）—— credit／debit **必填**", iDefault: ""),
                 new SCP_CmdArgSpec("description", "人讀的一句話", iDefault: ""),
                 new SCP_CmdArgSpec("idem_key",
                     "冪等鍵：同一個鍵重送會回既有那一筆，⛔ 不會扣第二次", iDefault: ""),
@@ -55,7 +55,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 //  （「Cmd 取了一個自己沒宣告的參數 —— 規格與實作不同步」）。
                 //  ⇒ 那道守衛值得記：它擋的正是「ArgSpec 與實作各說各話」那一族，
                 //    而沒有它的話，`caller` 會靜默是空字串，錢就變成**沒有人簽名的**。
-                new SCP_CmdArgSpec("caller", "誰動的這筆錢（落進 entry，⛔ 沒簽名的錢日後查不出是誰）", iDefault: ""),
+                new SCP_CmdArgSpec("caller", "誰動的這筆錢（落進 entry，⛔ 沒簽名的錢日後查不出是誰）—— credit／debit **必填**", iDefault: ""),
                 new SCP_CmdArgSpec("cmd_id", "指回派這一筆的那個 cmd（追溯用）", iDefault: ""),
             };
             aSpecs.AddRange(CommonSpecs());
@@ -131,6 +131,19 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         aResult.AddValue("account_count", aAll.Count.ToString());
         aResult.AddValue("total", aSum.ToString());
         aResult.AddValue("orphan_count", aOrphans.Count.ToString());
+
+        // ⭐ 逐戶的機器可讀出口（TASK-0223）。上面那些 `Lines` 是給人看的、欄寬對齊過 ——
+        //    呼叫端（銀行後台頁）若去 parse 它，那把尺會在**顯示格式改動的那天**壞掉，
+        //    而症狀是「帳戶列表變空」或「餘額全變 0」，跟「真的沒有帳戶」同形。
+        //    ⇒ 給程式讀的就給欄位，⛔ 不要讓它從人讀的那一份反解。
+        // ⚠ 銷戶的帳戶**照樣列**（前綴 `closed:`）：藏起來的話「這個帳戶不存在」與
+        //    「它被銷了」在呼叫端同形，而那兩者的處置相反。
+        foreach (SCP_BankAccount a in aAll)
+        {
+            aBal.TryGetValue(a.Id, out int b);
+            string aFlag = a.Status == SCP_BankAccountStatus.Closed ? "closed:" : "open:";
+            aResult.AddValue("acc/" + a.Id, aFlag + b.ToString());
+        }
         return aResult;
     }
 
@@ -177,6 +190,22 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         if (!int.TryParse(iArgs.Get("amount"), out int aAmount))
             return SCP_CmdResult.Fail(2, $"✗ amount 讀不出來：'{iArgs.Get("amount")}'"
                                          + " —— ⛔ 這不是「沒帶」，是**帶了但解析不出**，不猜");
+
+        // ⭐ 署名三欄（TASK-0223）：`kind`（為什麼）／`ref`（指回現場）／`caller`（誰動的）。
+        // 物理意義：`SCP_BankLedger` 那層**只擋 `kind`** —— 那是刻意的，它要能被 SelfTest 與內部流程
+        //          用最小參數打。⇒ 擋在這裡，因為本 Cmd 是人與 agent 的**唯一入口**（檔頭那句）。
+        // 🩸 為什麼不是「建議填」：空字串會安靜落進 entry，而一筆 `caller=""` 的錢
+        //   與一筆真的由系統動的錢**在帳本上逐位元組同形** —— 日後查「這是誰動的」時，
+        //   查不到的原因有兩個（沒填／真的是系統），而它們共用同一個出口。
+        //   ⇒ 寫入端擋一次，勝過讀取端每次都要猜。
+        var aMissing = new List<string>();
+        if (string.IsNullOrWhiteSpace(iArgs.Get("kind"))) aMissing.Add("kind（為什麼動這筆錢）");
+        if (string.IsNullOrWhiteSpace(iArgs.Get("ref"))) aMissing.Add("ref（指回現場：commit sha／seq／單號）");
+        if (string.IsNullOrWhiteSpace(iArgs.Get("caller"))) aMissing.Add("caller（誰動的）");
+        if (aMissing.Count > 0)
+            return SCP_CmdResult.Fail(2, "✗ 動錢要署名，缺 " + aMissing.Count + " 欄：",
+                                      "  · " + string.Join("\n  · ", aMissing),
+                                      "  ⇒ 沒有署名的錢，日後查不出是誰、為什麼、指回哪裡。");
 
         SCP_BankPostResult aPost = iDebit
             ? SCP_BankLedger.Debit(iRoot, aAcct, aAmount, iArgs.Get("kind"), iArgs.Get("ref"),

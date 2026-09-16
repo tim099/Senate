@@ -72,12 +72,24 @@ if [ -f "$root/publish/senate.exe" ]; then
     # ⚠ 這段 PowerShell 整個住在 bash 的 '...' 裡 ⇒ **裡面一律只用雙引號**。
     #   🩸 2026-09-04：寫了 'Open', 'Write' ⇒ bash 在第一個單引號就把字串收掉，
     #     PS 拿到被切碎的碼、回非零、零輸出，而畫面上只有一行「收視窗那步回非零」。
+    # ⚠ 收的射程是**整個 repo 底下的 senate**，不只 `publish/` 那顆（2026-09-16 收窄前的缺口）：
+    #   🩸 血證：一顆從 `bin/Debug/net10.0/senate.exe` 起的 Server 壓著 `dotnet build` 的輸出
+    #     ⇒ MSBuild 回 `檔案鎖定者: senate (26440)`，而這一段照舊印「沒有要收的」——
+    #     因為它只比對 `Path -eq publish/senate.exe`。
+    #     ⇒ 那不是「沒收到」，是**它從一開始就不在清單上**，而那兩件事在畫面上同形。
+    #   ⛔ 仍然比對 Path 前綴而不是 process 名：別份 clone 的 senate 不干我的事。
     SENATE_EXE_WIN="$(cygpath -w "$root/publish/senate.exe" 2>/dev/null || echo "$root/publish/senate.exe")" \
+    SENATE_ROOT_WIN="$(cygpath -w "$root" 2>/dev/null || echo "$root")" \
     powershell.exe -NoProfile -NonInteractive -Command '
       $t = $env:SENATE_EXE_WIN
-      $ps = @(Get-Process -Name senate -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $t })
+      $r = $env:SENATE_ROOT_WIN
+      $ps = @(Get-Process -Name senate, senate-server -ErrorAction SilentlyContinue |
+              Where-Object { $_.Path -and $_.Path.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase) })
       if ($ps.Count -gt 0) {
-        Write-Host ("· 收掉 " + $ps.Count + " 顆還開著的 senate（它們鎖著 publish/senate.exe）")
+        Write-Host ("· 收掉 " + $ps.Count + " 顆還開著的 senate（它們鎖著要被覆寫的檔）")
+        # ⭐ **逐顆說出它是誰**：舊版只印顆數，於是「收掉 1 顆」可能是收掉使用者正開著在用的那顆，
+        #    而畫面上看不出來。🩸 2026-09-11 實測關了 Tim 五次，每次畫面都只有那一行。
+        foreach ($p in $ps) { Write-Host ("    · pid=" + $p.Id + "  " + $p.Path) }
         foreach ($p in $ps) { try { $null = $p.CloseMainWindow() } catch { } }
         foreach ($p in $ps) { try { $null = $p.WaitForExit(2000) } catch { } }
         foreach ($p in $ps) { try { if (-not $p.HasExited) { $p.Kill(); $null = $p.WaitForExit(3000) } } catch { } }
@@ -213,10 +225,23 @@ fi
 #
 # 🩸 而 2026-09-09 加了一道判準（Tim 報的現象）：
 #   **ClaudeCode 會被關閉，而且無法重啟（提示「被占用」），必須先關掉 Senate 才起得來。**
-#   ⇒ 機制假說（⚠ 是假說不是量到的因果）：`nohup … &` 開出來的這顆是**呼叫端 shell 的子行程**，
-#     而呼叫端是 agent 的時候，它就是 **ClaudeCode 行程樹底下一顆永遠不會結束的 GUI 行程**，
-#     繼承了那條 shell 的 handle ⇒ 前者關不乾淨、重啟時鎖還被握著。
+#   ⇒ 機制：`nohup … &` 開出來的這顆是**呼叫端 shell 的子行程**，
+#     而呼叫端是 agent 的時候，它就是 **ClaudeCode 行程樹底下一顆永遠不會結束的 GUI 行程**
+#     ⇒ 前者關不乾淨、重啟時鎖還被握著。
 #     從檔案總管雙擊開的那顆**不在那棵樹裡**，所以同一個動作只有「有時候」會壞。
+#
+#   ⭐ 2026-09-16 更新（TASK-0204）——**這段已經有一半是量到的，不再整段是假說**：
+#     ✅ 量到：親代鏈是 `Claude.exe(WindowsApps 封裝版) → claude-code → bash → agent 起的任何東西`。
+#     ✅ 量到：失敗有名字 —— MSIX 部署 `0x80073D02`「必須先關閉 Claude_<舊版>」，
+#        事件日誌 09-16 的時間軸是 `08:12 id=658 延後註冊 → 09:10 id=419/404 失敗 → 09:48 id=400 成功`
+#        （最後那一格是 Tim 關掉 senate 之後）。
+#     ⛔ **仍然沒量到**：那顆 senate 是不是真的帶著**封裝 app 的套件身分**。
+#        （要量它得讓它再擋一次 Claude 更新，而那筆帳落在使用者的機器上。）
+#     ⇒ 而**常駐 Server 那條路已經治掉了**：`ServerAutoStart` 改走 WMI `Win32_Process.Create`，
+#        新行程的親代是 `WmiPrvSE` ⇒ 不在任何人的行程樹底下（實測兩次，可重現）。
+#        ⭐ 脫樹對「handle 繼承」與「身分繼承」**兩種機制都有效**，所以它不必等那一格量到。
+#     ⇒ 本段這顆 **GUI 視窗**刻意**不**跟著改走脫樹：底下那條 `[ -t 1 ]` 判準已經讓 agent 一顆都不開，
+#        而「不種就不必拔」比「種了再脫樹」少一層會失敗的步驟。
 #   ⇒ 所以判準不是「開或不開」，是**「我現在是不是站在一個人的終端機前面」**：
 #     `[ -t 1 ]`（stdout 是不是終端機）—— 人在的時候照 Tim 的拍板開，
 #     agent／導向輸出的時候**一顆都不開**（那條路上根本沒有人會去看那個視窗）。

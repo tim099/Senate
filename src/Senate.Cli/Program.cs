@@ -1272,9 +1272,24 @@ public static class Program
 
     static string? ArgValue(string[] iArgs, string iName)
     {
+        string? aFirst = null;
+        int aCount = 0;
         for (int i = 0; i < iArgs.Length - 1; i++)
-            if (string.Equals(iArgs[i], iName, StringComparison.OrdinalIgnoreCase)) return iArgs[i + 1];
-        return null;
+            if (string.Equals(iArgs[i], iName, StringComparison.OrdinalIgnoreCase))
+            { if (aCount == 0) aFirst = iArgs[i + 1]; ++aCount; }
+
+        // ⚠ 本函式**只回第一個** —— 多給的那幾個原本被靜默吃掉。
+        // 🩸 2026-09-16 實測：`ui --set a=1 --set b=2 --set c=3` 只有 `a` 生效，
+        //   而沒有任何一層說話 ⇒ 「我設了三格」與「它只收了一格」同形。
+        //   症狀出現在很後面：下一顆按鈕拿到空欄位、報「amount 讀不出來」，
+        //   而真正的原因在三個參數之前 —— 那種距離是最貴的。
+        // ⇒ 這裡**不**改成收多個（那要動整個 request model，不是這一次的射程），
+        //   但被丟掉的東西不可以沒有人提起它。
+        if (aCount > 1)
+            Console.Error.WriteLine($"⚠ `{iName}` 給了 {aCount} 次，而這支**只收第一個**"
+                                    + $"（用的是 `{aFirst}`）—— 其餘 {aCount - 1} 個被丟掉了。"
+                                    + "⇒ 要設多格請分次呼叫。");
+        return aFirst;
     }
 
     static string Rel(string iRoot, string iPath)
