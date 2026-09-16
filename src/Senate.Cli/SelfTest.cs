@@ -119,6 +119,8 @@ public static class SelfTest
         Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iProjects)),
         Many(nameof(RealRecallPortMatchesEditor), "library", () => RealRecallPortMatchesEditor(iProjects)),
         Many(nameof(RealBookshelfPortMatchesEditor), "library", () => RealBookshelfPortMatchesEditor(iProjects)),
+        Many(nameof(RealLibraryInitMatchesDisk), "library", () => RealLibraryInitMatchesDisk(iProjects)),
+        One(nameof(LibraryBuilderGolden), "library", LibraryBuilderGolden),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -2251,6 +2253,238 @@ public static class SelfTest
         if (!aAny)
             yield return new CheckRow("閱讀卡渲染移植 vs Editor 真產物",
                 "找不到任何 `bookshelf.md` ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
+    }
+
+    // 區塊職責：建檔層（`SCP_LibraryInit` 的三個 Build）產出的形狀，與磁碟上 Editor 建的那些逐位元組對拍。
+    // ⚠ **這把尺量不到什麼，先講**（本格最重要的一行）：
+    //   輸入是**從輸出讀回來的** —— 我拿 work.json 裡的 title/author/aliases 去重建 work.json。
+    //   ⇒ 它驗得到：鍵序、JSON 版面（UclLegacy）、schema_version、陣列渲染、`SaveJson` 的結尾換行。
+    //   ⛔ 它**驗不到**：alias 合併語意（「title 有沒有被收進 aliases」那一格，因為輸入裡它已經在了）。
+    //     那一格結構上同源，要驗它得有一份「原始輸入」，而磁碟上沒有留。
+    // ⚠ 為什麼不開 clean room 對照 Editor：Editor 端的路徑寫死 `UCL_RepoPath.AgentCommandsDir`，
+    //   **吃不了 data_root** ⇒ 讓它寫進暫存樹這條路不存在，而讓它寫進真樹是污染。
+    // 🩸 受測體的判準落在**來源**不是**結果**（2026-09-16 第一次跑 work 29 相符／10 不符，而移植沒錯）：
+    //   那 10 份的**鍵集合**根本不同（6 份只有 4 個鍵、1 份多 `relations`/`_note`、
+    //   1 份是寫書線的 `author_persona`/`publish_status`…）⇒ 它們不是這支 builder 寫的。
+    //   ⇒ 判準：鍵**集合**（無序）相同才算受測體；⛔ 而**順序仍在受測範圍內** ——
+    //     集合是出身、順序是行為，把順序也排掉的話，一個把鍵寫反的移植 bug 會被判成「不是我寫的」。
+    //   ⚠ 而受測體數**要印出來**：它掉下去就是射程縮了，那件事必須看得見。
+    static IEnumerable<CheckRow> RealLibraryInitMatchesDisk(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aLibrary = Path.Combine(p.AgentCommandsRoot, "BookNotes", "Library");
+            if (!Directory.Exists(aLibrary)) continue;
+            aAny = true;
+            var aUtf8 = new UTF8Encoding(false);
+
+            int aWorkSame = 0, aWorkDiff = 0, aWorkObjAlias = 0, aWorkOther = 0, aWorkByteOnly = 0;
+            string aFirst = "", aFirstM = "";
+            foreach (string f in Directory.GetFiles(Path.Combine(aLibrary, SCP_LibraryStore.WorksDirName),
+                                                    SCP_LibraryStore.WorkJsonName, SearchOption.AllDirectories))
+            {
+                string aDisk; SCP_JsonData aTree;
+                try { aDisk = File.ReadAllText(f, aUtf8); aTree = SCP_JsonData.Parse(aDisk); }
+                catch { aWorkDiff++; continue; }
+                // 物件形狀的 alias 重建不回去（AliasToString 是單向的）⇒ 分桶，⛔ 不算進閘也不假裝相符
+                bool aObjAlias = false;
+                var aAliases = new List<string>();
+                SCP_JsonData aA = aTree[SCP_LibraryIO.Key_Aliases];
+                if (aA.Exists && aA.IsArray)
+                    for (int i = 0; i < aA.Count; i++)
+                    {
+                        if (aA[i].IsObject) { aObjAlias = true; break; }
+                        aAliases.Add(SCP_LibraryRecall.AliasToString(aA[i]));
+                    }
+                if (aObjAlias) { aWorkObjAlias++; continue; }
+                var aTags = new List<string>();
+                SCP_JsonData aG = aTree[SCP_LibraryIO.Key_GenreTags];
+                if (aG.Exists && aG.IsArray)
+                    for (int i = 0; i < aG.Count; i++) aTags.Add(SCP_LibraryRecall.AliasToString(aG[i]));
+
+                SCP_JsonData aMine = SCP_LibraryInit.BuildWorkJson(
+                    aTree.GetString(SCP_LibraryIO.Key_WorkId, ""),
+                    aTree.GetString(SCP_LibraryIO.Key_Title, ""),
+                    aTree.GetString(SCP_LibraryIO.Key_TitleOriginal, ""),
+                    aTree.GetString(SCP_LibraryIO.Key_Author, ""), aAliases, aTags);
+                // ⚠ 鍵**序**不同 ⇒ 這份不是現行 builder 一次寫成的（例：`apocalypse-hotel` 的
+                //   `title_original` 排在最末 ＝ 後來補上去的）⇒ 它的**原始輸入不可回復**
+                //   （當初那次 ToStringArray 的 alsoInclude 跟今天不同，aliases 陣列順序因此不同）。
+                //   ⇒ 分桶排除，⛔ 而鍵序本身不是就此不驗 —— 它由 `LibraryBuilderGolden` 的定值 fixture 釘住。
+                if (!SameKeySet(aTree, aMine) || !SameKeyOrder(aTree, aMine)) { aWorkOther++; continue; }
+                // 閘＝**語意相等**（逐鍵取值）：值寫錯／鍵漏掉／schema_version 錯，這一層抓得到。
+                if (!SameValues(aTree, aMine))
+                { aWorkDiff++; if (aFirst.Length == 0) aFirst = "　▸ work 首筆語意不符：" + Path.GetFileName(Path.GetDirectoryName(f)!); }
+                // 讀數＝逐位元組：它同時受**鍵序**與**版面**影響，而磁碟是多支 writer 的沉積
+                // ⇒ ⛔ 不當閘（那等於要求全庫都由現行 writer 產出，而那個前提為假）。
+                else if (Eol(aDisk) == Eol(SCP_JsonWriter.Write(aMine, SCP_JsonStyle.UclLegacy) + "\n")) aWorkSame++;
+                else aWorkByteOnly++;
+            }
+
+            int aMediaSame = 0, aMediaDiff = 0, aMediaOther = 0, aMediaByteOnly = 0;
+            foreach (string f in Directory.GetFiles(Path.Combine(aLibrary, SCP_LibraryStore.MediaDirName),
+                                                    SCP_LibraryStore.MediaJsonName, SearchOption.AllDirectories))
+            {
+                string aDisk; SCP_JsonData aTree;
+                try { aDisk = File.ReadAllText(f, aUtf8); aTree = SCP_JsonData.Parse(aDisk); }
+                catch { aMediaDiff++; continue; }
+                SCP_JsonData aMine = SCP_LibraryInit.BuildMediaJson(
+                    aTree.GetString(SCP_LibraryIO.Key_MediaId, ""),
+                    aTree.GetString(SCP_LibraryIO.Key_WorkId, ""),
+                    aTree.GetString(SCP_LibraryIO.Key_MediaKind, ""));
+                if (!SameKeySet(aTree, aMine)) { aMediaOther++; continue; }
+                if (!SameValues(aTree, aMine))
+                { aMediaDiff++; if (aFirstM.Length == 0) aFirstM = "　▸ media 首筆語意不符：" + Path.GetFileName(Path.GetDirectoryName(f)!); }
+                else if (Eol(aDisk) == Eol(SCP_JsonWriter.Write(aMine, SCP_JsonStyle.UclLegacy) + "\n")) aMediaSame++;
+                else aMediaByteOnly++;
+            }
+
+            // reader.json 只拿**還停在初值**的那些當受測體 —— 讀過幾章之後那份本來就該長得不一樣。
+            int aReaderSame = 0, aReaderDiff = 0, aReaderLive = 0;
+            foreach (string f in Directory.GetFiles(Path.Combine(aLibrary, SCP_LibraryStore.MediaDirName),
+                                                    SCP_LibraryStore.ReaderJsonName, SearchOption.AllDirectories))
+            {
+                string aDisk; SCP_JsonData aTree;
+                try { aDisk = File.ReadAllText(f, aUtf8); aTree = SCP_JsonData.Parse(aDisk); }
+                catch { aReaderDiff++; continue; }
+                SCP_JsonData aProg = aTree[SCP_LibraryIO.Key_Progress];
+                string aStarted = aTree.GetString(SCP_LibraryIO.Key_ReadingStartedAt, "");
+                bool aPristine = aProg.Exists
+                    && aProg.GetString(SCP_LibraryIO.Key_CurrentChapterId, "x") == ""
+                    && aProg.GetString(SCP_LibraryIO.Key_BookmarkNote, "") == "（尚未開始）"
+                    && aStarted.Length > 0
+                    && aProg.GetString(SCP_LibraryIO.Key_LastRead, "") == aStarted
+                    && aTree.GetString(SCP_LibraryIO.Key_UpdatedAt, "") == aStarted;
+                if (!aPristine) { aReaderLive++; continue; }
+                SCP_JsonData aMine = SCP_LibraryInit.BuildReaderJson(
+                    aTree.GetString(SCP_LibraryIO.Key_MediaId, ""),
+                    aTree.GetString(SCP_LibraryIO.Key_ReaderPersona, ""),
+                    aTree.GetInt(SCP_LibraryIO.Key_Anticipation, 0), aStarted);
+                if (Eol(aDisk) == Eol(SCP_JsonWriter.Write(aMine, SCP_JsonStyle.UclLegacy) + "\n")) aReaderSame++;
+                else aReaderDiff++;
+            }
+
+            // ⚠ 受測體歸零也是失敗 —— 「全部相符」與「一個都沒驗」⛔ 不可以同形。
+            bool aOk = aWorkDiff == 0 && aMediaDiff == 0 && aReaderDiff == 0
+                       && (aWorkSame + aWorkByteOnly) > 0 && (aMediaSame + aMediaByteOnly) > 0;
+            yield return new CheckRow(
+                $"建檔層形狀 vs 磁碟既有落檔（{p.Name}）",
+                $"work 受測 {aWorkSame + aWorkDiff + aWorkByteOnly} ⇒ **語意不符 {aWorkDiff}（閘）**"
+                + $"／逐位元組相符 {aWorkSame}、只差鍵序或版面 {aWorkByteOnly}（讀數）"
+                + $"（鍵集合不同 {aWorkOther}／物件形狀 alias {aWorkObjAlias}，兩者不當受測體）"
+                + $"　media 受測 {aMediaSame + aMediaDiff + aMediaByteOnly} ⇒ **語意不符 {aMediaDiff}（閘）**"
+                + $"／位元組相符 {aMediaSame}、只差鍵序或版面 {aMediaByteOnly}（鍵集合不同 {aMediaOther}）"
+                + $"　reader（只取停在初值的）**{aReaderSame}／{aReaderDiff}**（已在讀的 {aReaderLive} 不當受測體）"
+                + "　⚠ 輸入是從輸出讀回來的 ⇒ ⛔ **驗不到 alias 合併語意**（那一格結構上同源）；"
+                + "鍵序與版面由 `LibraryBuilderGolden` 的定值 fixture 釘住" + aFirst + aFirstM,
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+
+        if (!aAny)
+            yield return new CheckRow("建檔層形狀 vs 磁碟既有落檔",
+                "找不到 BookNotes/Library ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
+    }
+
+    /// <summary>
+    /// 逐鍵取值比對（頂層 ＋ 陣列逐格 ＋ 巢狀物件遞迴）—— **語意相等**，與鍵序、縮排、版面無關。
+    /// <para>🩸 為什麼閘要落在這裡而不是位元組（TASK-0166，2026-09-16）：磁碟是**多支 writer 的沉積**
+    /// （實測 40 份 work.json 有 7 種鍵形狀、media.json 有兩種縮排）⇒
+    /// 拿位元組相等當閘，等於要求全庫都是現行 writer 產出的，而那個前提為假 ——
+    /// 那種閘永遠紅，而紅得沒有資訊。值寫錯／鍵漏掉／schema_version 錯，這一層照樣抓得到。</para>
+    /// <para>⚠ 而它**量不到鍵序與版面** —— 那兩格由 <c>LibraryBuilderGolden</c> 的定值 fixture 釘住。</para>
+    /// </summary>
+    static bool SameValues(SCP_JsonData iA, SCP_JsonData iB)
+    {
+        if (iA.IsObject || iB.IsObject)
+        {
+            if (!iA.IsObject || !iB.IsObject) return false;
+            if (!SameKeySet(iA, iB)) return false;
+            foreach (string k in iA.Keys) if (!SameValues(iA[k], iB[k])) return false;
+            return true;
+        }
+        if (iA.IsArray || iB.IsArray)
+        {
+            if (!iA.IsArray || !iB.IsArray || iA.Count != iB.Count) return false;
+            for (int i = 0; i < iA.Count; i++) if (!SameValues(iA[i], iB[i])) return false;
+            return true;
+        }
+        return SCP_JsonWriter.Write(iA, false) == SCP_JsonWriter.Write(iB, false);
+    }
+
+    /// <summary>
+    /// 兩棵 JSON 的**鍵集合**（無序、僅頂層）相不相同 —— 用來判「這份是不是這支 builder 寫的」。
+    /// ⛔ 刻意不比順序：順序是**行為**，要留在受測範圍內。
+    /// </summary>
+    // 區塊職責：建檔層三個 builder 的**逐位元組定值** —— 鍵序、版面、結尾換行全部釘死。
+    // 物理意義：語料那一格的閘是**語意相等**（它必須如此：磁碟是多支 writer 的沉積），
+    //          ⇒ 鍵序與版面在那裡是**不受測的**。這一格補上它們。
+    // ⭐ 而這些定值**不是我自己編的**：三段都逐位元組取自磁碟上 Editor 真產物
+    //   （`works/kotoko-lamp-and-ledger`／`media/book-kotoko-lamp-and-ledger`／
+    //    該 media 底下 `readers/Sirius`，2026-09-16 取樣）⇒ 對照組仍然不同源。
+    // ⭐ 它還補上語料閘量不到的那一格：**alias 自動合併** ——
+    //   下面 work 的 `aliases` 是給 `null` 之後由 title ＋ title_original 自己長出來的。
+    // ⚠ reader 那一段是**初值形狀**（`BuildReaderJson`）：取樣那份已經在讀了，
+    //   所以定值只沿用它的**鍵序**，值改成初值。⇒ 這一段的鍵序不同源，值同源。照實標。
+    static CheckRow LibraryBuilderGolden()
+    {
+        const string aWork =
+            "{\n\t\"work_id\":\"kotoko-lamp-and-ledger\",\n\t\"title\":\"Lamp and Ledger\",\n"
+            + "\t\"title_original\":\"kotoko-lamp-and-ledger\",\n\t\"author\":\"kotoko\",\n"
+            + "\t\"aliases\":\n\t[\n\t\t\"Lamp and Ledger\",\n\t\t\"kotoko-lamp-and-ledger\"\n\t],\n"
+            + "\t\"genre_tags\":\n\t[\n\t\t\"original\",\n\t\t\"reflection\"\n\t],\n"
+            + "\t\"schema_version\":1\n}\n";
+        const string aMedia =
+            "{\n\t\"media_id\":\"book-kotoko-lamp-and-ledger\",\n\t\"work_id\":\"kotoko-lamp-and-ledger\",\n"
+            + "\t\"media_kind\":\"book\",\n\t\"schema_version\":1\n}\n";
+        const string aReader =
+            "{\n\t\"schema_version\":2,\n\t\"reader_persona\":\"Sirius\",\n"
+            + "\t\"media_id\":\"book-kotoko-lamp-and-ledger\",\n\t\"status\":\"reading\",\n"
+            + "\t\"anticipation\":4,\n\t\"reading_started_at\":\"2026-08-13\",\n"
+            + "\t\"progress\":{\n\t\t\"current_chapter_id\":\"\",\n\t\t\"last_read\":\"2026-08-13\",\n"
+            + "\t\t\"bookmark_note\":\"（尚未開始）\"\n\t},\n"
+            + "\t\"current_impression\":\"（尚未寫下第一筆心得）\",\n\t\"updated_at\":\"2026-08-13\"\n}\n";
+
+        string aW = SCP_JsonWriter.Write(SCP_LibraryInit.BuildWorkJson(
+            "kotoko-lamp-and-ledger", "Lamp and Ledger", "kotoko-lamp-and-ledger", "kotoko",
+            null, new List<string> { "original", "reflection" }), SCP_JsonStyle.UclLegacy) + "\n";
+        string aM = SCP_JsonWriter.Write(SCP_LibraryInit.BuildMediaJson(
+            "book-kotoko-lamp-and-ledger", "kotoko-lamp-and-ledger", "book"),
+            SCP_JsonStyle.UclLegacy) + "\n";
+        string aR = SCP_JsonWriter.Write(SCP_LibraryInit.BuildReaderJson(
+            "book-kotoko-lamp-and-ledger", "Sirius", 4, "2026-08-13"),
+            SCP_JsonStyle.UclLegacy) + "\n";
+
+        bool aWOk = aW == aWork, aMOk = aM == aMedia, aROk = aR == aReader;
+        // 章節關係標籤也釘一格：它是**寫進回傳檔給人讀**的字串，改掉不會有任何一層叫。
+        bool aLabelOk = SCP_LibraryInit.RelationLabel(SCP_ChapterRelation.Next) == "續讀（+1）"
+                        && SCP_LibraryInit.RelationLabel(SCP_ChapterRelation.Gap)
+                           == "⚠ 跳章（已在 chapter.json 記 gap，未靜默）";
+        bool aOk = aWOk && aMOk && aROk && aLabelOk;
+        return new CheckRow("建檔層逐位元組定值（鍵序＋版面，取自 Editor 真產物）",
+            $"work={aWOk}（含 **alias 自動合併**：輸入給 null，title ＋ title_original 自己長出來）"
+            + $"／media={aMOk}／reader 初值={aROk}／RelationLabel={aLabelOk}"
+            + "　⚠ reader 那段的鍵序取自真檔、值是初值（取樣那份已經在讀了）",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>頂層鍵**順序**一不一樣 —— 用來判「這份是不是現行 builder 一次寫成的」。</summary>
+    static bool SameKeyOrder(SCP_JsonData iA, SCP_JsonData iB)
+    {
+        if (iA.Keys.Count != iB.Keys.Count) return false;
+        for (int i = 0; i < iA.Keys.Count; i++)
+            if (!string.Equals(iA.Keys[i], iB.Keys[i], StringComparison.Ordinal)) return false;
+        return true;
+    }
+
+    static bool SameKeySet(SCP_JsonData iA, SCP_JsonData iB)
+    {
+        var aKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string k in iA.Keys) aKeys.Add(k);
+        var bKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string k in iB.Keys) bKeys.Add(k);
+        return aKeys.SetEquals(bKeys);
     }
 
     /// <summary>閱讀卡是不是比它的三個來源都新。判不出來 ⇒ 不當閘。</summary>
