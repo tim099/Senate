@@ -118,6 +118,7 @@ public static class SelfTest
         Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iProjects)),
         Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iProjects)),
         Many(nameof(RealRecallPortMatchesEditor), "library", () => RealRecallPortMatchesEditor(iProjects)),
+        Many(nameof(RealBookshelfPortMatchesEditor), "library", () => RealBookshelfPortMatchesEditor(iProjects)),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -2183,6 +2184,97 @@ public static class SelfTest
         if (!aAny)
             yield return new CheckRow("追回檔渲染移植 vs Editor 真產物",
                 "找不到任何 `reading_recall_*.md` ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
+    }
+
+    // 區塊職責：搬進 SCP_Core 的閱讀卡渲染（`SCP_LibraryBookshelf.RenderCard`），
+    //          與 **Editor 端真產物** `Library/media/<id>/readers/<p>/bookshelf.md` 逐位元組對拍。
+    // ⚠ 新鮮度判準跟追回檔那格**不一樣，而且要更窄**：閱讀卡只由 reader.json／media.json／work.json
+    //   三個檔決定（章節與人物**不影響**它）⇒ 拿整個 reader 目錄當來源會把「讀了新的一章」
+    //   誤判成「卡片過期」，而那是一個假的不新鮮。
+    // ⚠ 本格**不排除任何行**（卡片裡沒有逐次變動的時戳；`updated_at` 來自 reader.json）。
+    //   ⛔ 例外：reader.json 缺 `updated_at` 時渲染會落 `Today()` ⇒ 那種卡片跨日必然不符。
+    //   它會落在「不符」那一欄，而不是被悄悄排掉。
+    static IEnumerable<CheckRow> RealBookshelfPortMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aLibrary = Path.Combine(p.AgentCommandsRoot, "BookNotes", "Library");
+            if (!Directory.Exists(aLibrary)) continue;
+            string[] aFiles = Directory.GetFiles(aLibrary, "bookshelf.md", SearchOption.AllDirectories);
+            if (aFiles.Length == 0) continue;
+            aAny = true;
+
+            int aFreshSame = 0, aFreshDiff = 0, aStaleSame = 0, aStaleDiff = 0, aUnrenderable = 0, aOldWriter = 0;
+            string aFirstDiff = "";
+            foreach (string f in aFiles)
+            {
+                string aEditorText;
+                try { aEditorText = File.ReadAllText(f, new UTF8Encoding(false)); }
+                catch { aUnrenderable++; continue; }
+                string aPersona = FrontmatterValue(aEditorText, "reader_persona");
+                string aMediaId = FrontmatterValue(aEditorText, "media_id");
+                if (aPersona.Length == 0 || aMediaId.Length == 0) { aUnrenderable++; continue; }
+
+                // 🩸 「檔比來源新」**不蘊含**「檔是用現行 writer 產的」（2026-09-16 這一格咬了我一次）：
+                //   新鮮度尺回答的是「資料後來有沒有被改」，⛔ 不回答「這份是誰寫的」。
+                //   實測 102 份裡有 2 份的 `generated:` 是**裸的**（沒有後面那串註解）⇒ 舊版 writer 的產物，
+                //   而其中一份的 mtime 比 reader.json 新 ⇒ 被判成「新鮮」⇒ 閘紅，而移植沒有錯。
+                //   ⇒ 分一個桶，並且**把數字印出來** —— ⛔ 悄悄排掉的話，「驗過 42 份」與「驗過 41 份」同形。
+                if (!aEditorText.Contains("generated: mechanical   #", StringComparison.Ordinal))
+                { aOldWriter++; continue; }
+
+                string? aMine = SCP_LibraryBookshelf.RenderCard(p.AgentCommandsRoot, aMediaId, aPersona, out _);
+                if (aMine == null) { aUnrenderable++; continue; }
+
+                bool aSame = Eol(aEditorText) == Eol(aMine);
+                bool aFresh = CardIsFresh(p.AgentCommandsRoot, aMediaId, aPersona, f);
+                if (aFresh) { if (aSame) aFreshSame++; else aFreshDiff++; }
+                else { if (aSame) aStaleSame++; else aStaleDiff++; }
+                if (!aSame && aFresh && aFirstDiff.Length == 0)
+                    aFirstDiff = "　▸ 第一筆不符（新鮮）：" + aMediaId + "／" + aPersona;
+            }
+
+            int aFresh2 = aFreshSame + aFreshDiff;
+            yield return new CheckRow(
+                $"閱讀卡渲染移植 vs Editor 真產物（{p.Name}）",
+                $"受測 {aFiles.Length} 份／**新鮮 {aFresh2}：相符 {aFreshSame}／不符 {aFreshDiff}**（這 {aFresh2} 份是閘）"
+                + $"　過期 {aStaleSame + aStaleDiff}：相符 {aStaleSame}／不符 {aStaleDiff}（**只是讀數**）"
+                + $"／渲染不出來 {aUnrenderable}／**舊版 writer 產的 {aOldWriter}**（`generated:` 沒有註解 ⇒ 驗不了現行移植，不當閘）"
+                + "　⚠ 來源只算 reader/media/work.json 三個檔（章節與人物不影響卡片）" + aFirstDiff,
+                aFreshDiff == 0
+                    ? (aFresh2 > 0 ? CheckResult.Pass : CheckResult.Skipped)
+                    : CheckResult.Fail);
+        }
+
+        if (!aAny)
+            yield return new CheckRow("閱讀卡渲染移植 vs Editor 真產物",
+                "找不到任何 `bookshelf.md` ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
+    }
+
+    /// <summary>閱讀卡是不是比它的三個來源都新。判不出來 ⇒ 不當閘。</summary>
+    static bool CardIsFresh(string iDataRoot, string iMediaId, string iPersona, string iCardPath)
+    {
+        try
+        {
+            DateTime aCardAt = File.GetLastWriteTimeUtc(iCardPath);
+            DateTime aNewest = DateTime.MinValue;
+            void Bump(string iPath)
+            {
+                if (!File.Exists(iPath)) return;
+                DateTime t = File.GetLastWriteTimeUtc(iPath);
+                if (t > aNewest) aNewest = t;
+            }
+            Bump(SCP_LibraryStore.ReaderJsonPath(iDataRoot, iMediaId, iPersona));
+            string aMediaJson = SCP_LibraryStore.MediaJsonPath(iDataRoot, iMediaId);
+            Bump(aMediaJson);
+            SCP_JsonData? aMedia = SCP_LibraryIO.LoadJson(aMediaJson, out _);
+            string aWorkId = aMedia != null ? aMedia.GetString(SCP_LibraryIO.Key_WorkId, "") : "";
+            if (aWorkId.Length > 0) Bump(SCP_LibraryStore.WorkJsonPath(iDataRoot, aWorkId));
+            return aNewest != DateTime.MinValue && aCardAt >= aNewest;
+        }
+        catch { return false; }
     }
 
     /// <summary>讀 frontmatter 的一欄；缺欄回空字串（⛔ 不猜）。</summary>
