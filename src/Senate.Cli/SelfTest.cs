@@ -122,6 +122,7 @@ public static class SelfTest
         Many(nameof(RealLibraryInitMatchesDisk), "library", () => RealLibraryInitMatchesDisk(iProjects)),
         One(nameof(LibraryBuilderGolden), "library", LibraryBuilderGolden),
         One(nameof(LibraryNoteCleanRoom), "library", LibraryNoteCleanRoom),
+        One(nameof(LibraryCharacterCleanRoom), "library", LibraryCharacterCleanRoom),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -2555,6 +2556,91 @@ public static class SelfTest
                 + $"／🔴 續寫不存在的 round ⇒ 拒絕且磁碟零變動={aRefuseOk}"
                 + $"／🔴 無 reader ⇒ 停下來不代建={aLadderOk}"
                 + "　⚠ chapter.json 的期望值取自 Editor 真產物；續寫那段**全庫零活體**，這是它的第一份讀數",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
+    }
+
+    // 區塊職責：人物（facts／view 版本史）與書籤那一批的 clean room —— 暫存樹實跑。
+    // ⭐ view 檔的期望值取自 Editor 真產物的形狀
+    //   （`characters/Mujina/v1_2026-08-25.md`，2026-09-16 取樣）⇒ 對照組不同源。
+    // ⚠ 本格最該守的不是「寫得出來」，是**寫不進去的那兩格**：
+    //   人物已存在時 add_character 必須拒絕（覆寫 v1 抹掉的是「我當時還不知道」，事後補不回來），
+    //   人物不存在時 revise_view 必須拒絕（不代建，否則「還沒記」會變成「記過而沒內容」）。
+    static CheckRow LibraryCharacterCleanRoom()
+    {
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_char_" + Guid.NewGuid().ToString("N")[..8]);
+        var aLetters = new SCP_LettersRoot(Path.Combine(aRoot, "letters"));
+        try
+        {
+            string aToday = SCP_LibraryIO.Today();
+            SCP_LibraryInit.MediaInit(aLetters, aRoot, "w1", "book-w1", "book", "tester",
+                "標題", "原題", "作者", 3, null, null, out _);
+            string aCharDir = SCP_LibraryStore.CharacterDir(aRoot, "book-w1", "tester", "Mujina");
+
+            // ① 建人物：profile.json 的 facts 一律**陣列**，v1 檔逐位元組
+            string? aAdd = SCP_LibraryCharacter.AddCharacter(aLetters, aRoot, "book-w1", "tester",
+                "Mujina", "狸貓長老", "むじな", "第一條\n第二條", "初版看法", out string? aAddErr);
+            string aV1 = Path.Combine(aCharDir, $"v1_{aToday}.md");
+            string aExpectV1 =
+                "---\ncharacter_id: Mujina\nversion: 1\n" + $"date: {aToday}\n"
+                + "reader_persona: tester\n---\n\n## tester 的看法（v1）\n\n初版看法\n";
+            SCP_JsonData aProfile = SCP_JsonData.Parse(
+                File.ReadAllText(Path.Combine(aCharDir, SCP_LibraryStore.ProfileJsonName), new UTF8Encoding(false)));
+            bool aAddOk = aAdd != null && aAddErr == null && File.Exists(aV1)
+                          && Eol(File.ReadAllText(aV1, new UTF8Encoding(false))) == Eol(aExpectV1)
+                          && aProfile[SCP_LibraryIO.Key_Facts].IsArray
+                          && aProfile[SCP_LibraryIO.Key_Facts].Count == 2;
+
+            // ② 🔴 再建一次 ⇒ 拒絕，而且 v1 一個位元組都不動
+            string aV1Before = File.ReadAllText(aV1, new UTF8Encoding(false));
+            string? aDup = SCP_LibraryCharacter.AddCharacter(aLetters, aRoot, "book-w1", "tester",
+                "Mujina", "X", null, "X", "X", out string? aDupErr);
+            bool aDupOk = aDup == null && aDupErr != null
+                          && aDupErr.Contains("op=revise_view", StringComparison.Ordinal)
+                          && File.ReadAllText(aV1, new UTF8Encoding(false)) == aV1Before;
+
+            // ③ 改觀 ⇒ fork v2（含「改觀觸發」段），v1 保留不動，facts 同步
+            string? aRev = SCP_LibraryCharacter.ReviseView(aLetters, aRoot, "book-w1", "tester",
+                "Mujina", "第二版看法", "讀到第 5 話", "只剩一條", out string? aRevErr);
+            string aV2 = Path.Combine(aCharDir, $"v2_{aToday}.md");
+            string aV2Text = File.Exists(aV2) ? File.ReadAllText(aV2, new UTF8Encoding(false)) : "";
+            SCP_JsonData aProfile2 = SCP_JsonData.Parse(
+                File.ReadAllText(Path.Combine(aCharDir, SCP_LibraryStore.ProfileJsonName), new UTF8Encoding(false)));
+            bool aRevOk = aRev != null && aRevErr == null && File.Exists(aV2)
+                          && aV2Text.Contains("> **改觀觸發**：讀到第 5 話", StringComparison.Ordinal)
+                          && aV2Text.Contains("version: 2", StringComparison.Ordinal)
+                          && File.ReadAllText(aV1, new UTF8Encoding(false)) == aV1Before   // v1 未動
+                          && aProfile2[SCP_LibraryIO.Key_Facts].Count == 1;
+
+            // ④ 🔴 對不存在的人物改觀 ⇒ 拒絕、不代建
+            string? aGhost = SCP_LibraryCharacter.ReviseView(aLetters, aRoot, "book-w1", "tester",
+                "NoSuchOne", "x", null, null, out string? aGhostErr);
+            bool aGhostOk = aGhost == null && aGhostErr != null
+                            && aGhostErr.Contains("op=add_character", StringComparison.Ordinal)
+                            && !Directory.Exists(SCP_LibraryStore.CharacterDir(aRoot, "book-w1", "tester", "NoSuchOne"));
+
+            // ⑤ 書籤：reader 三欄更新 ＋ 兩個投影重生成
+            string aRecall = SCP_LettersPaths.CmdPayload(aLetters, "tester", "reading_recall", "book-w1");
+            File.Delete(aRecall);
+            string? aBm = SCP_LibraryCharacter.Bookmark(aLetters, aRoot, "book-w1", "tester",
+                "讀到 0003", "目前看法 X", "completed", out string? aBmErr);
+            SCP_JsonData aReader = SCP_JsonData.Parse(File.ReadAllText(
+                SCP_LibraryStore.ReaderJsonPath(aRoot, "book-w1", "tester"), new UTF8Encoding(false)));
+            bool aBmOk = aBm != null && aBmErr == null
+                         && aReader[SCP_LibraryIO.Key_Progress].GetString(SCP_LibraryIO.Key_BookmarkNote, "") == "讀到 0003"
+                         && aReader.GetString(SCP_LibraryIO.Key_CurrentImpression, "") == "目前看法 X"
+                         && aReader.GetString(SCP_LibraryIO.Key_Status, "") == "completed"
+                         && File.Exists(aRecall);   // 刪掉之後又被生回來 ⇒ 確實有重生成
+
+            bool aOk = aAddOk && aDupOk && aRevOk && aGhostOk && aBmOk;
+            return new CheckRow("人物／書籤 clean room（暫存樹實跑）",
+                $"建人物＋v1 逐位元組＋facts 是陣列={aAddOk}"
+                + $"／🔴 重建 ⇒ 拒絕且 v1 零變動={aDupOk}"
+                + $"／改觀 fork v2＋改觀觸發段＋v1 未動＋facts 同步={aRevOk}"
+                + $"／🔴 對不存在的人物改觀 ⇒ 拒絕不代建={aGhostOk}"
+                + $"／書籤三欄＋追回檔重生成={aBmOk}"
+                + "　⚠ v1 期望值取自 Editor 真產物 `characters/Mujina/v1_2026-08-25.md` 的形狀",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
