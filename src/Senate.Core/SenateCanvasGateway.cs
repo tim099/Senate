@@ -27,6 +27,24 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     readonly Action<string> m_Log;
     readonly double m_QueryTimeoutSec;
 
+    // 區塊職責：券餘額那一趟 round-trip 的**共用讀數** —— expiring 與 permanent 是
+    //           同一支 Cmd、同一個 op、**同一份回應的兩個欄位**，所以只該問一次。
+    // 🩸 為什麼（TASK-0226，2026-09-16 量的）：介面上是兩支方法，於是 SCP_CanvasPlace.TryPlan
+    //   照著呼叫兩次 ⇒ 每一次 place 都跑**兩趟**完全相同的 round-trip。
+    //   實測 `op=gateway`（3 趟）10.33／10.32s ⇒ 每趟約 3.4s，其中一趟是純重複的。
+    //   而代價不只是慢：兩趟是兩個時刻的讀數 ⇒ **同一份餘額的兩個欄位可以互相矛盾**，
+    //   apex-one 13:41 那次看到的正是 `expiring=-1（問不到）` 與 `permanent=120（查到了）`
+    //   並排 —— 讀的人會以為券系統壞了，而它只是被問了兩次、第二次撞上忙碌的 lane。
+    // 數值影響：命中時**零 round-trip**；oDetail 會說它來自哪一次、隔了多久（定語不可省）。
+    // ⚠ 失敗也進快取，而且是刻意的：第一趟問不到時，第二個欄位再問一次只是再賠一個
+    //   逾時（最壞 20s→40s），而答案必然相同。⛔ 但 TTL 必須短到一次 Cmd 之內 ——
+    //   快取的用途是「同一個問題不問兩次」，不是「記住餘額」。
+    static readonly TimeSpan k_VoucherEchoTtl = TimeSpan.FromSeconds(5);
+    string m_VoucherEchoPersona = "";
+    DateTime m_VoucherEchoAt = DateTime.MinValue;
+    List<KeyValuePair<string, string>>? m_VoucherEchoValues;
+    string m_VoucherEchoWhy = "";
+
     /// <summary>
     /// <paramref name="iLog"/> 給 null ＝ 靜音（本閘的 round-trip 細節不該蓋掉 Cmd 自己的輸出）。
     /// </summary>
@@ -95,11 +113,11 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
 
     int QueryVoucherField(string iPersona, string iField, out string oDetail)
     {
-        var aArgs = new Dictionary<string, string> { ["op"] = "balance", ["persona"] = iPersona };
-        if (!TryRun("CanvasVoucher", iPersona, aArgs, m_QueryTimeoutSec,
-                    out List<KeyValuePair<string, string>> aValues, out string aWhy))
+        (List<KeyValuePair<string, string>>? aValues, string aWhy, string aEcho) =
+            VoucherBalance(iPersona);
+        if (aValues == null)
         {
-            oDetail = "問不到（" + aWhy + "）⇒ -1 是「不知道」不是「沒有券」";
+            oDetail = "問不到（" + aWhy + "）" + aEcho + "⇒ -1 是「不知道」不是「沒有券」";
             return -1;
         }
         // 兩種欄名都試：Editor 那側的欄名還沒被本單驗過（②的已知缺口，不假裝知道）
@@ -112,8 +130,39 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
                       + aValues.Count + " 欄）⇒ 仍然是「不知道」";
             return -1;
         }
-        oDetail = "來源：Cmd CanvasVoucher 的 values 欄 " + iField + "=" + aN;
+        oDetail = "來源：Cmd CanvasVoucher 的 values 欄 " + iField + "=" + aN + aEcho;
         return aN;
+    }
+
+    /// <summary>
+    /// 券餘額那一趟 round-trip（<c>CanvasVoucher op=balance</c>）——
+    /// 同一個 persona 在 <see cref="k_VoucherEchoTtl"/> 內只問一次，兩個欄位共用那份回應。
+    /// </summary>
+    /// <returns>
+    /// values 給 null ＝ 問不到（why 說為什麼）；echo 是**定語**：
+    /// 這個讀數是現問的還是沿用的、沿用的話隔了多久。⛔ 不可省 —— 省掉之後
+    /// 「剛剛量到的」與「5 秒前量到的」在畫面上同形。
+    /// </returns>
+    (List<KeyValuePair<string, string>>? Values, string Why, string Echo) VoucherBalance(string iPersona)
+    {
+        TimeSpan aAge = DateTime.UtcNow - m_VoucherEchoAt;
+        if (m_VoucherEchoAt != DateTime.MinValue
+            && string.Equals(m_VoucherEchoPersona, iPersona, StringComparison.Ordinal)
+            && aAge >= TimeSpan.Zero && aAge <= k_VoucherEchoTtl)
+        {
+            string aEcho = "（與上一欄同一次 round-trip，+"
+                           + aAge.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + "s）";
+            return (m_VoucherEchoValues, m_VoucherEchoWhy, aEcho);
+        }
+
+        var aArgs = new Dictionary<string, string> { ["op"] = "balance", ["persona"] = iPersona };
+        bool aOk = TryRun("CanvasVoucher", iPersona, aArgs, m_QueryTimeoutSec,
+                          out List<KeyValuePair<string, string>> aValues, out string aWhy);
+        m_VoucherEchoPersona = iPersona;
+        m_VoucherEchoAt = DateTime.UtcNow;
+        m_VoucherEchoValues = aOk ? aValues : null;
+        m_VoucherEchoWhy = aWhy;
+        return (m_VoucherEchoValues, aWhy, "");
     }
 
     public long QueryTokenBalance(string iAccountId, out string oDetail)
@@ -239,8 +288,10 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
             // ⛔ 順序寫死：**先判定，才准碰 result 檔**（逾時讀到的是上一輪，而它看起來完全正常）
             if (aVerdict != AgentCmdWaitResult.Success)
             {
+                // ⛔ 不在這裡猜成因 —— 成因是**量**出來的，而量它的地方只有一個
+                //   （AgentCmdClient.DescribeWaitTimeout；理由見那支方法的血證註解）。
                 oWhy = aVerdict == AgentCmdWaitResult.Timeout
-                    ? "逾時 " + iTimeoutSec.ToString("0", CultureInfo.InvariantCulture) + "s —— Editor 沒開？"
+                    ? AgentCmdClient.DescribeWaitTimeout(m_DataRoot, iPersona, aCmdId, iTimeoutSec)
                     : "Editor 端回報失敗";
                 return false;
             }

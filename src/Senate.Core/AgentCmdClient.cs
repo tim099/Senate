@@ -71,6 +71,36 @@ public static class AgentCmdClient
         return "idle";
     }
 
+    // 區塊職責：逾時之後**去量 lane 的現況**，回一句給呼叫端貼進自己的錯誤訊息。
+    // 物理意義：逾時只說「我等到上限了」，它**分不出**三種完全不同的處境 ——
+    //           trigger 沒被取走（宿主真的不在）／取走了還在跑（宿主活著，只是忙）／
+    //           lane 已空而我沒接到 result（跑完了，收據落在別處）。
+    //           這三種的下一步互斥：開 Editor ／ 等它 ／ 去讀 result 檔。
+    // 🩸 為什麼是共用方法而不是各自寫一句（TASK-0226，2026-09-16）：
+    //   「Editor 沒開？」這句話在 2026-09-04 與 09-05 被判定**已知為假**並修過兩次，
+    //   而兩次修的都是 <see cref="Wait"/> **自己印的**那一句。各 gateway 在 Timeout 分支
+    //   **另外組的** oWhy 字串一格都沒被改到 —— 本檔 270 行那句「修法只套用在我記得的那半邊」
+    //   自己又應驗了一次。⇒ 修法得長在一個**只有一份**的地方，否則第四次還會發生。
+    // 數值影響：純讀兩個檔案是否存在（與 <see cref="TriggerState"/> 同一格讀數），不改任何狀態。
+    // ⚠ 這是**逾時那一刻**的快照 —— 它回答「現在 lane 是什麼狀態」，
+    //   ⛔ 不回答「這一筆有沒有跑完」。後者的唯一憑據是 result 檔，路徑一併印出來給讀的人自己看。
+    /// <summary>逾時的成因描述：**量** lane 的現況，⛔ 不猜「宿主沒開？」。</summary>
+    public static string DescribeWaitTimeout(string iDataRoot, string? iPersona, string iCmdId,
+        double iTimeoutSec, string iHostLabel = "Editor")
+    {
+        string aState = TriggerState(iDataRoot, iPersona);
+        string aHead = $"等了 {iTimeoutSec:0.###}s 沒等到 result（本端的等待上限，**不代表 {iHostLabel} 失敗**）";
+        return aState switch
+        {
+            "running" => $"{aHead} —— 而 lane 現在是 'running'：{iHostLabel} **取走了**這一筆、還在跑。"
+                         + $"⇒ 等它，⛔ 別重打（會多送一筆），也別去檢查一個沒有問題的 {iHostLabel}",
+            "pending" => $"{aHead} —— 而 lane 現在是 'pending'：trigger **還沒被取走**"
+                         + $"（{iHostLabel} 沒開？或 watcher 沒啟用？）",
+            _ => $"{aHead} —— 而 lane 現在是 'idle'：它很可能已經跑完了。"
+                 + $"先看 {ResultPath(iDataRoot, iCmdId)} 的 mtime，別重打",
+        };
+    }
+
     /// <summary>
     /// 寫新 trigger 前等前一批收乾淨。逾時回 false 並由 <paramref name="oWhy"/> 說明殘留檔在哪 ——
     /// Editor 沒開／crash 留下 .running 時，永遠等不到，**必須人工介入**，不替人刪。
