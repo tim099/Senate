@@ -19,6 +19,7 @@ using SCP.Core.Reflect;
 using System.Text.RegularExpressions;
 using SCP.Core.Watch;
 using SCP.Core.Books;
+using SCP.Core.Library;
 using SCP.Core.Cmd;
 using SCP.Core.Bank;
 using System.Globalization;
@@ -116,6 +117,7 @@ public static class SelfTest
         One(nameof(WatchIdentityGuard), "watch", WatchIdentityGuard),
         Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iProjects)),
         Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iProjects)),
+        Many(nameof(RealRecallPortMatchesEditor), "library", () => RealRecallPortMatchesEditor(iProjects)),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -2120,6 +2122,127 @@ public static class SelfTest
     /// 與磁碟相符的份數（行尾無關）。
     /// </summary>
     /// <remarks>⚠ 相符份數是**讀數不是閘** —— 理由見本區塊上方註解（磁碟不是規格）。</remarks>
+    // 區塊職責：搬進 SCP_Core 的追回檔渲染層（`SCP_LibraryRecall`），與 **Editor 端真產物**逐位元組對拍。
+    // 物理意義：受測體是磁碟上那些 `letters/<p>/cmd/reading_recall_<media>.md` ——
+    //          它們是 `UCL_ReadingLibraryIO.RenderRecall`（另一份實作、另一個 process）寫出來的，
+    //          ⇒ 對照組**不同源**，這正是 TASK-0166 ③ 要的那種讀數。
+    // ⚠ 而它們是**快照**：資料後來被改過的話，重新渲染出來不一樣是**合理的**，不是移植壞了。
+    //   🩸 拿它整批當閘的下場是「永遠紅，而紅得沒有資訊」（calli 2026-09-14 在隔壁那格踩過同一隻）。
+    //   ⇒ 判準：只有**檔比它全部來源都新**（mtime ≥ reader 目錄／media.json／work.json 的最大值）
+    //     那幾份才當閘；其餘只當讀數，並且把兩個數字**分開印**。
+    // ⚠ `generated_at:` 那一行逐次不同（本機時間）⇒ 比對時排除它，而**排除這件事要印出來**：
+    //   不說的話，「我比了全部」與「我比了除了那一行之外的全部」在畫面上同形。
+    static IEnumerable<CheckRow> RealRecallPortMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    {
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            string aLetters = Path.Combine(p.AgentCommandsRoot, "ChatTavern", "baton", "letters");
+            if (!Directory.Exists(aLetters)) continue;
+            string[] aFiles = Directory.GetFiles(aLetters, "reading_recall_*.md", SearchOption.AllDirectories);
+            if (aFiles.Length == 0) continue;
+            aAny = true;
+
+            int aFreshSame = 0, aFreshDiff = 0, aStaleSame = 0, aStaleDiff = 0, aUnrenderable = 0;
+            string aFirstDiff = "";
+            foreach (string f in aFiles)
+            {
+                string aEditorText;
+                try { aEditorText = File.ReadAllText(f, new UTF8Encoding(false)); }
+                catch { aUnrenderable++; continue; }
+                string aPersona = FrontmatterValue(aEditorText, "persona");
+                string aMediaId = FrontmatterValue(aEditorText, "media_id");
+                if (aPersona.Length == 0 || aMediaId.Length == 0) { aUnrenderable++; continue; }
+
+                string? aMine = SCP_LibraryRecall.RenderRecall(p.AgentCommandsRoot, aMediaId, aPersona,
+                                                               true, out _);
+                if (aMine == null) { aUnrenderable++; continue; }
+
+                bool aSame = Eol(StripGeneratedAt(aEditorText)) == Eol(StripGeneratedAt(aMine));
+                bool aFresh = RecallIsFresh(p.AgentCommandsRoot, aMediaId, aPersona, f);
+                if (aFresh) { if (aSame) aFreshSame++; else aFreshDiff++; }
+                else { if (aSame) aStaleSame++; else aStaleDiff++; }
+                if (!aSame && aFresh && aFirstDiff.Length == 0)
+                    aFirstDiff = "　▸ 第一筆不符（新鮮）：" + Path.GetFileName(f);
+            }
+
+            int aFresh2 = aFreshSame + aFreshDiff;
+            yield return new CheckRow(
+                $"追回檔渲染移植 vs Editor 真產物（{p.Name}）",
+                $"受測 {aFiles.Length} 份／**新鮮 {aFresh2}：相符 {aFreshSame}／不符 {aFreshDiff}**"
+                + $"（這 {aFresh2} 份是閘）　過期 {aStaleSame + aStaleDiff}：相符 {aStaleSame}／不符 {aStaleDiff}"
+                + "（**只是讀數** —— 資料在那之後改過，不符是合理的）"
+                + $"／渲染不出來 {aUnrenderable}"
+                + "　⚠ 比對**排除 `generated_at:` 那一行**（本機時間，逐次不同）" + aFirstDiff,
+                aFreshDiff == 0
+                    ? (aFresh2 > 0 ? CheckResult.Pass : CheckResult.Skipped)
+                    : CheckResult.Fail);
+        }
+
+        if (!aAny)
+            yield return new CheckRow("追回檔渲染移植 vs Editor 真產物",
+                "找不到任何 `reading_recall_*.md` ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
+    }
+
+    /// <summary>讀 frontmatter 的一欄；缺欄回空字串（⛔ 不猜）。</summary>
+    static string FrontmatterValue(string iText, string iKey)
+    {
+        foreach (string aLine in iText.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (aLine == "---") continue;
+            int aColon = aLine.IndexOf(':');
+            if (aColon <= 0) continue;
+            if (aLine.Substring(0, aColon).Trim() != iKey) continue;
+            return aLine.Substring(aColon + 1).Trim();
+        }
+        return "";
+    }
+
+    /// <summary>把 `generated_at:` 整行拿掉 —— 它是本機時間，兩次渲染必然不同。</summary>
+    static string StripGeneratedAt(string iText)
+    {
+        var aSb = new StringBuilder();
+        foreach (string aLine in iText.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (aLine.StartsWith("generated_at:", StringComparison.Ordinal)) continue;
+            aSb.Append(aLine).Append('\n');
+        }
+        return aSb.ToString();
+    }
+
+    /// <summary>
+    /// 這份追回檔是不是「比它全部來源都新」。
+    /// <para>來源＝該 reader 目錄（遞迴）＋ media.json ＋ work.json。任何一個比它新 ⇒ 不新鮮
+    /// ⇒ 重新渲染不一樣是**資料變了**，不是移植錯了。</para>
+    /// </summary>
+    static bool RecallIsFresh(string iDataRoot, string iMediaId, string iPersona, string iRecallPath)
+    {
+        try
+        {
+            DateTime aRecallAt = File.GetLastWriteTimeUtc(iRecallPath);
+            DateTime aNewest = DateTime.MinValue;
+            void Bump(string iPath)
+            {
+                if (File.Exists(iPath))
+                {
+                    DateTime t = File.GetLastWriteTimeUtc(iPath);
+                    if (t > aNewest) aNewest = t;
+                }
+            }
+            string aReaderRoot = SCP_LibraryStore.ReaderRoot(iDataRoot, iMediaId, iPersona);
+            if (Directory.Exists(aReaderRoot))
+                foreach (string s in Directory.GetFiles(aReaderRoot, "*", SearchOption.AllDirectories)) Bump(s);
+            string aMediaJson = SCP_LibraryStore.MediaJsonPath(iDataRoot, iMediaId);
+            Bump(aMediaJson);
+            SCP_JsonData? aMedia = SCP_LibraryIO.LoadJson(aMediaJson, out _);
+            string aWorkId = aMedia != null ? aMedia.GetString(SCP_LibraryIO.Key_WorkId, "") : "";
+            if (aWorkId.Length > 0) Bump(SCP_LibraryStore.WorkJsonPath(iDataRoot, aWorkId));
+            return aNewest != DateTime.MinValue && aRecallAt >= aNewest;
+        }
+        catch { return false; }   // 判不出來就**不當閘**（⛔ 不把「不知道」算成新鮮）
+    }
+
     static IEnumerable<CheckRow> RealLibraryByteRoundTrip(IReadOnlyList<ProjectReading> iProjects)
     {
         bool aAny = false;
