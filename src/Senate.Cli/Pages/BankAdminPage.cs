@@ -341,8 +341,12 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     // 區塊職責：上方的 **Persona 選單 ＋ 帳戶（Agent）選單**，形狀取自 Unity 的 `UCL_BankAdminPage`
     //          （Tim 2026-09-17：「其他操作都是根據選取的 Persona & Bank 操作」）。
     // 物理意義：選 persona ⇒ 帳戶**自動同步**到他在本區 resolve 到的那一個（同 Unity 那頁的手勢）。
-    // ⚠ 這裡沒有下拉選單這種東西（`SCP_Ui` 只有按鈕／表格／輸入框）⇒ 用「一列一顆選鈕」的表。
-    //   它同時也是清單：**看得到全部候選**，⛔ 不會像下拉一樣把沒展開的那幾個藏起來。
+    // ⚠ 下拉走 `SCP_GuiWidgets.Dropdown`（可搜尋＋分頁；Tim 指路 `SCP_GuiHomePage` 那頁的用法）。
+    //   🩸 我第一版寫成「一排選鈕」，理由是我斷定「`SCP_Ui` 沒有下拉」——
+    //     而那個結論來自**只 grep 了 `SCP_Ui.cs` 一個檔**，下拉其實是 `SCP_GuiWidgets.cs` 的擴充方法。
+    //   ⇒ 又一次「我量的那一格 ≠ 我宣稱的射程」：一個檔案的搜尋結果，被我講成整個 GUI 層的性質。
+    //   ⭐ 表格照樣留著（`●`／`○` 看得出誰被選到）—— 下拉收合時只有一顆鈕，
+    //     那時「有哪些候選」與「誰被選到」都要有地方看。
     // ⚠ 借用別區綁定的人照樣列且可選 —— 借用＝**在本區真的開戶並綁定**，那是本區可用的帳戶
     //   （Tim 2026-09-17 更正；我曾把它讀成「不屬於本區」而關掉了 @kaguya 的帳戶）。
     // ===========================================================
@@ -391,20 +395,19 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             }
             // ⚠ 摺起來的是**控制項不是資料**：上面那張表永遠展開（誰被選到看得見），
             //   摺的只是那一排按鈕 —— CLI 上 22 顆擠成一行會把後面的內容推到看不見。
-            using (g.Fold($"選 persona（{m_Rows.Count} 位）", "bank/sel/p/fold", true))
-            using (g.Row())
+            var aPersonaOpts = new List<SCP_GuiOption>(m_Rows.Count);
+            foreach (Row r in m_Rows)
+                aPersonaOpts.Add(new SCP_GuiOption(r.Persona,
+                    r.Persona + " → " + r.AccountId + (r.Borrowed ? "（借用 " + r.BindingRegion + "）" : "")));
+            string aPickP = g.Dropdown("Persona", aPersonaOpts, aSelP, "bank/sel/p");
+            if (aPickP != aSelP && aPickP.Length > 0)
             {
-                for (int i = 0; i < m_Rows.Count; ++i)
-                {
-                    Row r = m_Rows[i];
-                    if (!g.Button((r.Persona == aSelP ? "● " : "○ ") + r.Persona, "bank/sel/p/" + r.Persona)) continue;
-                    g.SetField(PersonaId, r.Persona);
-                    // 選 persona → 帳戶跟著同步（同 Unity 那頁）。⚠ 二段確認要清掉：
-                    //   換了人還留著上一個人的「待確認」，下一次按下去動的是**新選到的那一戶**。
-                    g.SetField(AccountId, r.AccountId);
-                    g.SetField(PendingId, "");
-                    m_Message = $"・已選 `{r.Persona}` ⇒ 帳戶同步到 `{r.AccountId}`";
-                }
+                g.SetField(PersonaId, aPickP);
+                // 選 persona → 帳戶跟著同步（同 Unity 那頁的手勢）。⚠ 二段確認要清掉：
+                //   換了人還留著上一個人的「待確認」，下一次按下去動的是**新選到的那一戶**。
+                g.SetField(AccountId, AccountOfPersona(aPickP));
+                g.SetField(PendingId, "");
+                m_Message = $"・已選 `{aPickP}` ⇒ 帳戶同步到 `{AccountOfPersona(aPickP)}`";
             }
         }
         g.Note("· 「未開戶」＝新銀行還沒有這一戶的帳戶檔。⛔ 那**不是**「他沒有錢」——"
@@ -430,23 +433,34 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         if (aIds.Count == 0) { g.Note("（沒有任何帳戶可選）"); return; }
 
         aIds.Sort(StringComparer.OrdinalIgnoreCase);
-        using (g.Fold($"選帳戶（{aIds.Count} 個）", "bank/sel/a/fold", true))
-        using (g.Row())
+        var aAcctOpts = new List<SCP_GuiOption>(aIds.Count);
+        foreach (string id in aIds)
         {
-            foreach (string id in aIds)
-            {
-                Acct? a = FindAcct(id);
-                string aTag = a == null ? "（未開戶）" : a.Closed ? "（已銷戶）" : "";
-                if (!g.Button((string.Equals(id, iSelected, StringComparison.OrdinalIgnoreCase) ? "● " : "○ ") + id + aTag,
-                              "bank/sel/a/" + id)) continue;
-                g.SetField(AccountId, id);
-                g.SetField(PendingId, "");
-                // ⚠ 直接選帳戶時**不去反推 persona**：一個帳戶可能掛好幾個人（`cc` 有七個），
-                //   替他挑一個等於替使用者決定了「這筆是誰動的」，而那一欄要進帳本。
-                g.SetField(PersonaId, "");
-                m_Message = $"・已選帳戶 `{id}`（persona 選取已清掉 —— 一戶可能掛好幾個人）";
-            }
+            Acct? a = FindAcct(id);
+            string aTag = a == null ? "（未開戶）" : a.Closed ? "（已銷戶）" : "（" + a.Balance + "）";
+            aAcctOpts.Add(new SCP_GuiOption(id, id + aTag + WhoUses(id)));
         }
+        string aPickA = g.Dropdown("帳戶（Agent）", aAcctOpts, iSelected, "bank/sel/a");
+        if (!string.Equals(aPickA, iSelected, StringComparison.Ordinal) && aPickA.Length > 0)
+        {
+            g.SetField(AccountId, aPickA);
+            g.SetField(PendingId, "");
+            // ⚠ 直接選帳戶時**不去反推 persona**：一個帳戶可能掛好幾個人（`cc` 有七個），
+            //   替他挑一個等於替使用者決定了「這筆是誰動的」，而那一欄要進帳本。
+            g.SetField(PersonaId, "");
+            m_Message = $"・已選帳戶 `{aPickA}`（persona 選取已清掉 —— 一戶可能掛好幾個人）";
+        }
+    }
+
+    /// <summary>誰在用這個帳號（⚠ 一戶可能掛好幾個人 —— 下拉的標籤要看得出來）。</summary>
+    string WhoUses(string iAccountId)
+    {
+        var aWho = new List<string>();
+        foreach (Row r in m_Rows)
+            if (string.Equals(r.AccountId, iAccountId, StringComparison.OrdinalIgnoreCase)) aWho.Add(r.Persona);
+        if (aWho.Count == 0) return "　（本區沒有人用它）";
+        if (aWho.Count <= 3) return "　" + string.Join("、", aWho);
+        return $"　{aWho[0]} 等 {aWho.Count} 人";
     }
 
     Row? FindRow(string iPersona)
