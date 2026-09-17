@@ -39,12 +39,16 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             var aSpecs = new List<SCP_CmdArgSpec>
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "accounts",
-                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "close", "reopen" }),
+                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "transfer", "close", "reopen" }),
                 new SCP_CmdArgSpec("bank_root",
                     "銀行帳本根（絕對路徑）。"
                     + "CLI 沒給時會用 `<AgentCommands 資料根>/Bank` 補上並印出來（推導值，不可設定）",
                     iRequired: true),
-                new SCP_CmdArgSpec("account", "帳號 id（大小寫不拘 —— 寫入端一律正規化成小寫）", iDefault: ""),
+                new SCP_CmdArgSpec("account", "帳號 id（大小寫不拘 —— 寫入端一律正規化成小寫）"
+                    + "；`transfer` 時它是**轉出方**", iDefault: ""),
+                // ⚠ 轉帳的收款方**另開一格**而不是重用 `account` —— 一格裝兩個角色的話，
+                //   「我填的是誰」要靠 op 才讀得出來，而錯填的代價是錢進了別人的帳。
+                new SCP_CmdArgSpec("to_account", "轉帳的**收款方**帳號 id（`transfer` 必填）", iDefault: ""),
                 new SCP_CmdArgSpec("display_name", "顯示名（open 用；可以有大小寫與空白，⛔ 不當 id）", iDefault: ""),
                 new SCP_CmdArgSpec("amount", "金額（正整數；方向由 op 決定）", iDefault: "0"),
                 new SCP_CmdArgSpec("kind", "為什麼動這筆錢（credit／debit **必填**）", iDefault: ""),
@@ -80,9 +84,10 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             case "balance": return Stamp(OpBalance(aRoot, iArgs));
             case "credit":
             case "debit": return Stamp(OpPost(aRoot, iArgs, aOp == "debit"));
+            case "transfer": return Stamp(OpTransfer(aRoot, iArgs));
             case "close": return Stamp(OpClose(aRoot, iArgs));
             case "reopen": return Stamp(OpReopen(aRoot, iArgs));
-            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|close|reopen）");
+            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|transfer|close|reopen）");
         }
     }
 
@@ -314,6 +319,126 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         aResult.AddValue("balance", aBal.ToString());
         // ⚠ 冪等要是**機器讀得到的值**，不只是一句話：呼叫端要分得出「扣了」與「本來就扣過了」。
         aResult.AddValue("duplicate", aPost.Duplicate ? "1" : "0");
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：轉帳 —— A 扣 N、B 增 N，**總量守恆**。
+    // 物理意義：兩腳共用一個 `tx_id`，收款腳失敗時**回捲轉出腳**。
+    // ⚠ 為什麼原子性做在這裡而不是頁面上：帳本沒有交易，⇒「兩腳都成功」不是天生的，
+    //   是**有人負責**的。做在頁面上的話，每一個呼叫端都得自己寫一次回捲，
+    //   而漏寫的那一個**不會報錯** —— 它只會讓錢停在半路，而兩邊的餘額各自看起來都正常。
+    // 🩸 這正是為什麼本 Cmd 是「單一寫入端」：守恆是寫入端的性質，不是使用者的紀律。
+    // ===========================================================
+    static SCP_CmdResult OpTransfer(string iRoot, SCP_CmdArgs iArgs)
+    {
+        string aFrom = iArgs.Get("account");
+        string aTo = iArgs.Get("to_account");
+        if (string.IsNullOrWhiteSpace(aFrom)) return SCP_CmdResult.Fail(2, "✗ 需要 `account`（轉出方）");
+        if (string.IsNullOrWhiteSpace(aTo)) return SCP_CmdResult.Fail(2, "✗ 需要 `to_account`（收款方）");
+        // ⚠ 自己轉給自己**擋下來**：它在帳本上會留兩筆相消的分錄、餘額不變 ——
+        //   ⇒ 「我轉錯了對象」與「我轉給自己」事後長得一樣，而前者要追、後者不用。
+        if (string.Equals(aFrom.Trim(), aTo.Trim(), StringComparison.OrdinalIgnoreCase))
+            return SCP_CmdResult.Fail(2, $"✗ 轉出方與收款方是同一戶（`{aFrom}`）—— 這不會改變任何餘額，"
+                                         + "⛔ 不寫兩筆相消的分錄把帳本弄髒");
+
+        if (!int.TryParse(iArgs.Get("amount"), out int aAmount))
+            return SCP_CmdResult.Fail(2, $"✗ amount 讀不出來：'{iArgs.Get("amount")}'"
+                                         + " —— ⛔ 這不是「沒帶」，是**帶了但解析不出**，不猜");
+        if (aAmount <= 0)
+            return SCP_CmdResult.Fail(2, $"✗ amount={aAmount} —— 轉帳金額要是正整數"
+                                         + "（負數轉帳＝反向轉帳，⛔ 那要顯式換成把兩個帳號對調）");
+
+        var aMissing = new List<string>();
+        if (string.IsNullOrWhiteSpace(iArgs.Get("kind"))) aMissing.Add("kind（為什麼動這筆錢）");
+        if (string.IsNullOrWhiteSpace(iArgs.Get("ref"))) aMissing.Add("ref（指回現場：commit sha／seq／單號）");
+        if (string.IsNullOrWhiteSpace(iArgs.Get("caller"))) aMissing.Add("caller（誰動的）");
+        if (aMissing.Count > 0)
+            return SCP_CmdResult.Fail(2, "✗ 動錢要署名，缺 " + aMissing.Count + " 欄：",
+                                      "  · " + string.Join("\n  · ", aMissing),
+                                      "  ⇒ 沒有署名的錢，日後查不出是誰、為什麼、指回哪裡。");
+
+        // ⭐ 兩腳共用的交易識別。呼叫端給 `idem_key` 就用它（⇒ 整筆轉帳可安全重送）；
+        //   沒給就現生一個 —— ⚠ 而那時**重送會轉第二次**，所以回傳值把它印出來，
+        //   讓「我有沒有給冪等鍵」看得見，不是一個要人記得的細節。
+        string aTx = iArgs.Get("idem_key");
+        bool aHasIdem = !string.IsNullOrWhiteSpace(aTx);
+        if (!aHasIdem) aTx = "tx-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+
+        string aDesc = iArgs.Get("description");
+        string aDescTx = (aDesc.Length > 0 ? aDesc + "　" : "") + "[tx=" + aTx + "]";
+
+        // ── 第一腳：轉出 ──
+        SCP_BankPostResult aOut = SCP_BankLedger.Debit(
+            iRoot, aFrom, aAmount, iArgs.Get("kind"), iArgs.Get("ref"),
+            aDescTx + " 轉出→" + aTo, iArgs.Get("caller"), iArgs.Get("cmd_id"), aTx + "/out");
+        if (!aOut.Ok)
+            return SCP_CmdResult.Fail(1, "✗ 轉出腳失敗，**整筆沒有發生**：" + aOut.Why,
+                                      $"  ・`{aFrom}` 餘額 = {SCP_BankLedger.GetBalance(iRoot, aFrom)}（未動）");
+
+        // ── 第二腳：收款 ──
+        SCP_BankPostResult aIn = SCP_BankLedger.Credit(
+            iRoot, aTo, aAmount, iArgs.Get("kind"), iArgs.Get("ref"),
+            aDescTx + " 轉入←" + aFrom, iArgs.Get("caller"), iArgs.Get("cmd_id"), aTx + "/in");
+
+        if (!aIn.Ok)
+        {
+            // ⚠ 回捲**不是靜默的**：它自己是一筆分錄，帳本上看得見「這裡發生過一次失敗的轉帳」。
+            //   ⛔ 不去刪掉轉出那一筆 —— 帳本是 append-only，而「沒發生過」與「發生了又撤銷」
+            //   是兩件事，抹掉前者會讓事後查帳的人看不到這裡出過事。
+            SCP_BankPostResult aBack = SCP_BankLedger.Credit(
+                iRoot, aFrom, aAmount, "transfer_rollback", iArgs.Get("ref"),
+                aDescTx + " 回捲（收款腳失敗：" + aIn.Why + "）", iArgs.Get("caller"), iArgs.Get("cmd_id"), aTx + "/rollback");
+
+            if (aBack.Ok)
+            {
+                var aRolled = SCP_CmdResult.Fail(1,
+                    "✗ 收款腳失敗，**已回捲**（總量守恆）：" + aIn.Why,
+                    $"  ・`{aFrom}` 餘額 = {SCP_BankLedger.GetBalance(iRoot, aFrom)}（扣了又補回）",
+                    $"  ・`{aTo}` 餘額 = {SCP_BankLedger.GetBalance(iRoot, aTo)}（沒有收到）",
+                    "  ・帳本留下三筆（轉出／回捲），⛔ 刻意不抹掉 —— 「沒發生過」與「發生了又撤銷」是兩件事");
+                aRolled.AddValue("tx_id", aTx);
+                aRolled.AddValue("rolled_back", "1");
+                return aRolled;
+            }
+
+            // 🔴 最壞的一格：錢停在半路。**大聲講出來並給處置**，⛔ 不吞掉。
+            var aStuck = SCP_CmdResult.Fail(5,
+                "🔴 **錢停在半路** —— 轉出成功、收款失敗、而回捲也失敗。",
+                "  ・收款失敗：" + aIn.Why,
+                "  ・回捲失敗：" + aBack.Why,
+                $"  ・`{aFrom}` 餘額 = {SCP_BankLedger.GetBalance(iRoot, aFrom)}（**已經被扣了**）",
+                $"  ・`{aTo}` 餘額 = {SCP_BankLedger.GetBalance(iRoot, aTo)}（**沒有收到**）",
+                $"  ⇒ 人工處置：`senate cmd bank --arg op=credit --arg account={aFrom} --arg amount={aAmount}"
+                + $" --arg kind=transfer_rollback --arg ref=<指回這裡> --arg caller=<你> --arg idem_key={aTx}/rollback`");
+            aStuck.AddValue("tx_id", aTx);
+            aStuck.AddValue("rolled_back", "0");
+            aStuck.AddValue("stuck", "1");
+            return aStuck;
+        }
+
+        // ⭐ 判準是**回讀兩邊的餘額**，不是上面兩個 Ok。
+        int aBalFrom = SCP_BankLedger.GetBalance(iRoot, aFrom);
+        int aBalTo = SCP_BankLedger.GetBalance(iRoot, aTo);
+        bool aDup = aOut.Duplicate && aIn.Duplicate;
+
+        var aResult = SCP_CmdResult.Success(
+            (aDup ? "↻ 冪等判重：兩腳都是既有那一筆，**這次沒有動錢**" : "✓ 已轉帳")
+            + $"　{aFrom} → {aTo}　{aAmount}（{iArgs.Get("kind")}）");
+        aResult.Lines.Add($"  tx：{aTx}" + (aHasIdem ? "（呼叫端給的冪等鍵 ⇒ 重送安全）"
+                                                    : "（**現生的** ⇒ ⚠ 同一道指令重送會再轉一次）"));
+        aResult.Lines.Add($"  ・`{aFrom}` 餘額 = {aBalFrom}");
+        aResult.Lines.Add($"  ・`{aTo}` 餘額 = {aBalTo}");
+        // ⚠ 兩腳的冪等狀態**分開印**：只有一腳判重代表上一次轉到一半，那跟「整筆重送」不同。
+        if (aOut.Duplicate != aIn.Duplicate)
+            aResult.Lines.Add($"  ⚠ 只有一腳判重（轉出 {(aOut.Duplicate ? "舊" : "新")}／收款 {(aIn.Duplicate ? "舊" : "新")}）"
+                              + " ⇒ 上一次這筆轉到一半，這次把它補完了");
+        aResult.AddValue("tx_id", aTx);
+        aResult.AddValue("from_account", aOut.Entry!.AccountId);
+        aResult.AddValue("to_account", aIn.Entry!.AccountId);
+        aResult.AddValue("from_balance", aBalFrom.ToString());
+        aResult.AddValue("to_balance", aBalTo.ToString());
+        aResult.AddValue("duplicate", aDup ? "1" : "0");
         return aResult;
     }
 }

@@ -298,7 +298,15 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         g.Separator();
         DrawPostPanel(g);
         g.Separator();
-        DrawMigrationPanel(g);
+        // ⭐ 遷移是本頁最長、也最少用的一段 ⇒ **預設收起來**（Tim 2026-09-17：大區塊加摺疊）。
+        // ⚠ 收合時仍要看得出「這裡有沒有事」—— 對照表取過沒、取的是哪一刻的讀數。
+        using (var aFold = g.Fold("🚚 遷移：把舊 Treasury 的餘額搬成開帳分錄", "bank/fold/migration", iDefaultOpen: false))
+        {
+            if (aFold.Open) DrawMigrationPanel(g);
+            else g.Note("　（收合中）" + (m_Mig == null
+                    ? "・還沒取舊餘額讀數"
+                    : "・已有對照表 " + m_Mig.Count + " 列（讀數時間見展開後那一行 —— **取出來就開始過期**）"));
+        }
 
         for (int i = 0; i < m_Problems.Count; ++i) g.Note("⚠ " + m_Problems[i]);
         if (m_Job != null) g.Note("⏳ 執行中：" + m_JobLabel + "（完成前不受理第二筆）");
@@ -391,51 +399,65 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         string aSelP = SelectedPersona(g);
         string aSelA = SelectedAccount(g);
 
-        using (g.Box("目前選取"))
+        // ⛔ 舊的「目前選取」區塊已移除（Tim 2026-09-17：「該欄位幾乎沒有作用」）。
+        // 🩸 為什麼它沒作用：選到誰**同一幀已經印在釘住的頂欄上**（Persona／帳戶兩格下拉
+        //   ＋餘額），而這個區塊是同一份事實的第二個投影 —— 兩處講同一件事時，
+        //   先過期的那一處不會叫。⇒ 留頂欄那一份（它釘著、捲不走），砍掉這一份。
+        // ⚠ 但它身上有兩件**不是重複**的事，往下搬而不是跟著砍：
+        //   ① 借用綁定的說明 ② 「還沒選帳戶」的警告 —— 後者搬進「動作」那一段
+        //   （警告要長在被它擋住的那件事旁邊，不是長在頁面上方等人記得）。
+        if (aSelP.Length > 0)
         {
-            g.Label("Persona：" + (aSelP.Length > 0 ? aSelP : "（未選）")
-                    + "　｜　帳戶：" + (aSelA.Length > 0 ? aSelA : "（未選）")
-                    + "　｜　餘額：" + BalanceText(aSelA));
-            if (aSelP.Length > 0)
-            {
-                Row? r = FindRow(aSelP);
-                if (r != null && r.Borrowed)
-                    g.Note($"・`{aSelP}` 在本區沒有自己的綁定，用的是 **{r.BindingRegion} 區的帳號 id**"
-                           + "（借用＝依那個 id 在本區開戶＋綁定 ⇒ 是本區可以正常運作的帳戶）");
-            }
-            if (aSelA.Length == 0)
-                g.Note("⚠ **還沒選帳戶** ⇒ 底下的動作會被擋下來。"
-                       + "⛔ 本頁不替你挑第一個 —— 「我沒選」與「我選了第一個」動的是不同人的錢。");
-            if (g.Button("清掉選取", "bank/sel/clear"))
-            { g.SetField(PersonaId, ""); g.SetField(AccountId, ""); g.SetField(PendingId, ""); }
+            Row? r = FindRow(aSelP);
+            if (r != null && r.Borrowed)
+                g.Note($"・`{aSelP}` 在本區沒有自己的綁定，用的是 **{r.BindingRegion} 區的帳號 id**"
+                       + "（借用＝依那個 id 在本區開戶＋綁定 ⇒ 是本區可以正常運作的帳戶）");
         }
 
-        g.Title("Persona 選單（這一區綁定得到的人）");
-        if (m_Rows.Count == 0)
+        // ⭐ 大區塊一律可摺（Tim 2026-09-17）。⚠ 預設**展開**：
+        //   這張表是「誰被選到」的唯一可見處，預設收起來的話，一開頁就看不到自己在對誰動錢。
+        using (var aFold = g.Fold("Persona 的帳號資訊（這一區綁定得到的人：" + m_Rows.Count + " 人）",
+                                  "bank/fold/rows"))
         {
-            g.Note("（這一區沒有任何 persona 綁定 —— 不是「沒有人」，是這一區沒人綁）");
-        }
-        else
-        {
-            using (g.Table("", "persona", "帳號 id", "新銀行", "餘額", "備註"))
+            if (aFold.Open)
             {
-                for (int i = 0; i < m_Rows.Count; ++i)
+                if (m_Rows.Count == 0)
                 {
-                    Row r = m_Rows[i];
-                    Acct? a = FindAcct(r.AccountId);
-                    string aState = a == null ? "未開戶" : a.Closed ? "⛔ 已銷戶" : "· 已開戶";
-                    string aBal = a == null ? "—" : a.Balance.ToString();
-                    string aNote = r.Borrowed ? "借用 " + r.BindingRegion + " 區的綁定" : "";
-                    g.TableRow(r.Persona == aSelP ? "●" : "○", r.Persona, r.AccountId, aState, aBal, aNote);
+                    g.Note("（這一區沒有任何 persona 綁定 —— 不是「沒有人」，是這一區沒人綁）");
                 }
+                else
+                {
+                    using (g.Table("", "persona", "帳號 id", "新銀行", "餘額", "備註"))
+                    {
+                        for (int i = 0; i < m_Rows.Count; ++i)
+                        {
+                            Row r = m_Rows[i];
+                            Acct? a = FindAcct(r.AccountId);
+                            string aState = a == null ? "未開戶" : a.Closed ? "⛔ 已銷戶" : "· 已開戶";
+                            string aBal = a == null ? "—" : a.Balance.ToString();
+                            string aNote = r.Borrowed ? "借用 " + r.BindingRegion + " 區的綁定" : "";
+                            g.TableRow(r.Persona == aSelP ? "●" : "○", r.Persona, r.AccountId, aState, aBal, aNote);
+                        }
+                    }
+                }
+                g.Note("· 「未開戶」＝新銀行還沒有這一戶的帳戶檔。⛔ 那**不是**「他沒有錢」——"
+                       + "遷移前錢都還在舊 `Treasury/`。");
+                g.Note("· 選人／選帳戶的兩格下拉**釘在最上面那一條**（跟著捲的話，"
+                       + "「我在對誰動錢」會在你捲到動錢鈕的那一刻離開畫面）。");
+                if (g.Button("清掉選取", "bank/sel/clear"))
+                { g.SetField(PersonaId, ""); g.SetField(AccountId, ""); g.SetField(PendingId, ""); }
             }
-            // ⚠ 摺起來的是**控制項不是資料**：上面那張表永遠展開（誰被選到看得見），
-            //   摺的只是那一排按鈕 —— CLI 上 22 顆擠成一行會把後面的內容推到看不見。
+            else
+            {
+                // ⚠ 收合時**仍然要看得出「這裡有沒有事」**（形狀取自 Unity `UCL_BankAdminPage`
+                //   的 FoldHeader：標題列即使收合也帶摘要）——
+                //   否則使用者得先展開才知道要不要展開。
+                int aNoAcct = 0;
+                for (int i = 0; i < m_Rows.Count; ++i) if (FindAcct(m_Rows[i].AccountId) == null) ++aNoAcct;
+                g.Note("　（收合中）選取：" + (aSelP.Length > 0 ? "**" + aSelP + "**" : "（未選）")
+                       + "　｜　" + (aNoAcct > 0 ? "⚠ 其中 **" + aNoAcct + "** 人在新銀行未開戶" : "全員已開戶"));
+            }
         }
-        g.Note("· 「未開戶」＝新銀行還沒有這一戶的帳戶檔。⛔ 那**不是**「他沒有錢」——"
-               + "遷移前錢都還在舊 `Treasury/`。");
-        g.Note("· 選人／選帳戶的兩格下拉**釘在最上面那一條**（跟著捲的話，"
-               + "「我在對誰動錢」會在你捲到動錢鈕的那一刻離開畫面）。");
     }
 
     /// <summary>帳戶（Agent）選單 —— 直接選帳號，⚠ 央行那種沒有人綁的只能從這裡選。</summary>
@@ -505,78 +527,211 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         return a == null ? "（新銀行還沒有這一戶）" : (a.Closed ? "⛔ 已銷戶／" : "") + a.Balance.ToString();
     }
 
-    // ── 開戶 / 入帳 / 扣款 ────────────────────────────────────
+    // ── 帳號操作：開戶 / 打款 / 轉帳（三格**各自摺疊**）────────────
+    // 形狀取自 Unity 的 `UCL_BankAdminPage.DrawTokenOpsPanel`（Tim 2026-09-17）。
+    // ⚠ 為什麼三格各自一個 Fold 而不是一個大 Fold 包三段：三件事的**危險程度不一樣**
+    //   （開戶不動錢／打款單向動一戶／轉帳同時動兩戶），而摺疊是使用者對「我現在要做哪一件」
+    //   的宣告 —— 合成一格就等於每次打開都把另外兩件的按鈕也擺到手邊。
+    // 🩸 而 `Fold` 收合時**不建子節點** ⇒ 三格各自帶自己的欄位，⛔ 不共用一份署名三欄：
+    //   共用的話，收起放欄位的那一格會讓另一格送出時**靜默少三欄**，
+    //   而少的那三欄正是 `cmd bank` 會擋的那三欄 —— 失效樣子是「按了沒反應」。
 
     void DrawPostPanel(SCP_Ui g)
     {
-        g.Title("動作（對**選取的**那一戶）");
+        g.Title("帳號操作（對**選取的**那一戶）");
 
-        // ⚠ 帳號**不再是一個自由輸入框**（Tim 2026-09-17：「其他操作都是根據選取的 Persona & Bank 操作」）。
+        // ⚠ 帳號**不是一個自由輸入框**（Tim 2026-09-17：「其他操作都是根據選取的 Persona & Bank 操作」）。
         // 🩸 自由輸入的症狀是打錯一個字就動到別人的錢，而那一層**不會叫** ——
         //   `cmd bank` 只驗這個 id 合不合法、開沒開戶，它無從知道你想動的是不是這一戶。
         string aAcct = SelectedAccount(g);
         string aSelP = SelectedPersona(g);
         if (aAcct.Length == 0)
         {
-            g.Note("⚠ **還沒選帳戶** —— 上面的兩格選單挑一個再回來。⛔ 本頁不提供手打帳號："
-                   + "打錯一個字會動到別人的錢，而沒有任何一層會喊。");
+            // ⭐ 這一段從已移除的「目前選取」搬過來 —— 警告要長在**被它擋住的那件事旁邊**，
+            //   不是長在頁面上方等人記得自己看過。
+            g.Note("⚠ **還沒選帳戶** —— 上面釘住的兩格選單挑一個再回來。⛔ 本頁不提供手打帳號："
+                   + "打錯一個字會動到別人的錢，而沒有任何一層會喊。"
+                   + "⛔ 也不替你挑第一個 ——「我沒選」與「我選了第一個」動的是不同人的錢。");
             return;
         }
         g.Label($"目標帳戶：**{aAcct}**（餘額 {BalanceText(aAcct)}）"
                 + (aSelP.Length > 0 ? $"　persona：**{aSelP}**" : "　persona：（未選）"));
 
-        using (g.Row())
+        DrawOpenFold(g, aAcct);
+        DrawDepositFold(g, aAcct, aSelP);
+        DrawTransferFold(g, aAcct, aSelP);
+    }
+
+    /// <summary>🏦 開戶 —— **不動錢**，所以不做二段確認。</summary>
+    void DrawOpenFold(SCP_Ui g, string iAcct)
+    {
+        bool aExists = FindAcct(iAcct) != null;
+        using (var aFold = g.Fold("🏦 開戶", "bank/fold/open", iDefaultOpen: false))
         {
-            string aName = g.TextField("顯示名（開戶用）", g.FieldValue("bank/f/name", ""), "bank/f/name");
-            if (g.Button("開戶", "bank/do/open"))
-                Start("開戶 " + aAcct, () =>
-                {
-                    var aArgs = new Dictionary<string, string> { ["account"] = aAcct, ["display_name"] = aName };
-                    return Describe(Dispatch("open", aArgs), aAcct);
-                });
-        }
-
-        string aAmount = g.TextField("金額", g.FieldValue("bank/f/amount", ""), "bank/f/amount");
-        string aKind = g.TextField("kind（為什麼）", g.FieldValue("bank/f/kind", ""), "bank/f/kind");
-        string aRef = g.TextField("ref（指回現場）", g.FieldValue("bank/f/ref", ""), "bank/f/ref");
-        // ⭐ `caller` 預設帶**選取的 persona** —— 那一欄會進帳本，是「誰動的這筆錢」的簽名。
-        //   ⚠ 仍然可以改：一戶掛好幾個人時（`cc` 有七個），簽名是人的決定，⛔ 不是選單替他決定的。
-        string aCaller = g.TextField("caller（誰動的；預設＝選取的 persona）",
-                                     g.FieldValue("bank/f/caller", aSelP), "bank/f/caller");
-
-        // ⚠ 三欄的擋是 `Cmd_Bank` 做的，本頁**不自己再驗一次** —— 兩份驗證遲早會不一樣，
-        //   而不一樣的那天，畫面會說可以、帳本會說不行（或反過來）。這裡只把它會擋的事先講出來。
-        g.Note("· `kind` / `ref` / `caller` 三欄**缺一就會被擋下**（擋在 `cmd bank`，不是這一頁）。");
-
-        string aPending = g.FieldValue(PendingId, "");
-        using (g.Row())
-        {
-            bool aArmedC = aPending == "credit";
-            if (g.Button(aArmedC ? "⚠ 再按一次確認入帳" : "入帳", "bank/do/credit"))
+            if (!aFold.Open)
             {
-                if (aArmedC)
-                {
-                    g.SetField(PendingId, "");
-                    Start("入帳 " + aAcct + " +" + aAmount, () => Describe(Post("credit", aAcct, aAmount, aKind, aRef, aCaller), aAcct));
-                }
-                else { g.SetField(PendingId, "credit"); m_Message = "⚠ 待確認：再按一次才會真的入帳"; }
+                g.Note("　（收合中）" + (aExists ? "・這一戶**已經開過了**" : "⚠ 這一戶在新銀行**還沒開戶**"));
+                return;
             }
-
-            bool aArmedD = aPending == "debit";
-            if (g.Button(aArmedD ? "⚠ 再按一次確認扣款" : "扣款", "bank/do/debit"))
+            g.Note("在新銀行替選取的那一戶建帳戶檔。⛔ **不動錢**（開戶不等於有餘額）。");
+            if (aExists)
+                g.Note("・`" + iAcct + "` 已經有帳戶檔了 —— 再按一次會被 `cmd bank` 擋下（那是對的，本頁不先攔）。");
+            using (g.Row())
             {
-                if (aArmedD)
-                {
-                    g.SetField(PendingId, "");
-                    Start("扣款 " + aAcct + " -" + aAmount, () => Describe(Post("debit", aAcct, aAmount, aKind, aRef, aCaller), aAcct));
-                }
-                else { g.SetField(PendingId, "debit"); m_Message = "⚠ 待確認：再按一次才會真的扣款"; }
+                string aName = g.TextField("顯示名（可以有大小寫與空白，⛔ 不當 id）",
+                                           g.FieldValue("bank/f/name", ""), "bank/f/name");
+                if (g.Button("開戶", "bank/do/open"))
+                    Start("開戶 " + iAcct, () =>
+                    {
+                        var aArgs = new Dictionary<string, string> { ["account"] = iAcct, ["display_name"] = aName };
+                        return Describe(Dispatch("open", aArgs), iAcct);
+                    });
             }
-
-            if (aPending.Length > 0 && g.Button("取消", "bank/do/cancel"))
-            { g.SetField(PendingId, ""); m_Message = "・已取消（沒有動任何錢）"; }
         }
     }
+
+    /// <summary>💵 打款 —— 單向動一戶（入帳／扣款）。二段確認。</summary>
+    void DrawDepositFold(SCP_Ui g, string iAcct, string iSelP)
+    {
+        using (var aFold = g.Fold("💵 打款（入帳 / 扣款）", "bank/fold/deposit", iDefaultOpen: false))
+        {
+            if (!aFold.Open)
+            {
+                g.Note("　（收合中）・單向動 **" + iAcct + "** 這一戶（餘額 " + BalanceText(iAcct) + "）");
+                return;
+            }
+
+            string aAmount = g.TextField("金額", g.FieldValue("bank/f/amount", ""), "bank/f/amount");
+            string aKind = g.TextField("kind（為什麼）", g.FieldValue("bank/f/kind", ""), "bank/f/kind");
+            string aRef = g.TextField("ref（指回現場）", g.FieldValue("bank/f/ref", ""), "bank/f/ref");
+            // ⭐ `caller` 預設帶**選取的 persona** —— 那一欄會進帳本，是「誰動的這筆錢」的簽名。
+            //   ⚠ 仍然可以改：一戶掛好幾個人時（`cc` 有七個），簽名是人的決定，⛔ 不是選單替他決定的。
+            string aCaller = g.TextField("caller（誰動的；預設＝選取的 persona）",
+                                         g.FieldValue("bank/f/caller", iSelP), "bank/f/caller");
+
+            // ⚠ 三欄的擋是 `Cmd_Bank` 做的，本頁**不自己再驗一次** —— 兩份驗證遲早會不一樣，
+            //   而不一樣的那天，畫面會說可以、帳本會說不行（或反過來）。這裡只把它會擋的事先講出來。
+            g.Note("· `kind` / `ref` / `caller` 三欄**缺一就會被擋下**（擋在 `cmd bank`，不是這一頁）。");
+
+            string aPending = g.FieldValue(PendingId, "");
+            using (g.Row())
+            {
+                bool aArmedC = aPending == "credit";
+                if (g.Button(aArmedC ? "⚠ 再按一次確認入帳" : "入帳", "bank/do/credit"))
+                {
+                    if (aArmedC)
+                    {
+                        g.SetField(PendingId, "");
+                        Start("入帳 " + iAcct + " +" + aAmount, () => Describe(Post("credit", iAcct, aAmount, aKind, aRef, aCaller), iAcct));
+                    }
+                    else { g.SetField(PendingId, "credit"); m_Message = "⚠ 待確認：再按一次才會真的入帳"; }
+                }
+
+                bool aArmedD = aPending == "debit";
+                if (g.Button(aArmedD ? "⚠ 再按一次確認扣款" : "扣款", "bank/do/debit"))
+                {
+                    if (aArmedD)
+                    {
+                        g.SetField(PendingId, "");
+                        Start("扣款 " + iAcct + " -" + aAmount, () => Describe(Post("debit", iAcct, aAmount, aKind, aRef, aCaller), iAcct));
+                    }
+                    else { g.SetField(PendingId, "debit"); m_Message = "⚠ 待確認：再按一次才會真的扣款"; }
+                }
+
+                if (aPending.Length > 0 && aPending != "transfer" && g.Button("取消", "bank/do/cancel"))
+                { g.SetField(PendingId, ""); m_Message = "・已取消（沒有動任何錢）"; }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 🔁 轉帳 —— **同時動兩戶**（A 扣 N、B 增 N，總量守恆）。二段確認。
+    /// <para>⚠ 原子性**不在這一頁**：它走 `cmd bank --arg op=transfer`，兩腳共用 tx_id、
+    /// 收款失敗自動回捲。⛔ 本頁刻意不用「扣款 + 入帳」兩次派遣拼一個轉帳 ——
+    /// 那樣的話每一個呼叫端都得自己寫一次回捲，而漏寫的那一個不會報錯，
+    /// 只會讓錢停在半路，而兩邊的餘額各自看起來都正常。</para>
+    /// </summary>
+    void DrawTransferFold(SCP_Ui g, string iFrom, string iSelP)
+    {
+        using (var aFold = g.Fold("🔁 轉帳（從選取的那一戶轉出）", "bank/fold/transfer", iDefaultOpen: false))
+        {
+            if (!aFold.Open)
+            {
+                g.Note("　（收合中）・**同時動兩戶**：" + iFrom + " → ?（總量守恆，收款失敗自動回捲）");
+                return;
+            }
+
+            // 收款方走下拉 —— ⛔ 不手打：轉帳打錯 id 的代價是錢進了別人的帳，而它不會報錯。
+            var aIds = new List<string>();
+            foreach (Row r in m_Rows) if (!aIds.Contains(r.AccountId)) aIds.Add(r.AccountId);
+            foreach (KeyValuePair<string, Acct> kv in m_Accounts)
+            {
+                bool aDup = false;
+                foreach (string id in aIds) if (string.Equals(id, kv.Key, StringComparison.OrdinalIgnoreCase)) { aDup = true; break; }
+                if (!aDup) aIds.Add(kv.Key);
+            }
+            // ⚠ 把轉出方自己從清單拿掉：自己轉給自己會被寫入端擋（餘額不變、帳本多兩筆相消分錄），
+            //   ⇒ 讓它根本選不到，比讓人選了再被擋好 —— 後者要跑一趟才知道。
+            aIds.RemoveAll(id => string.Equals(id, iFrom, StringComparison.OrdinalIgnoreCase));
+            if (aIds.Count == 0) { g.Note("⚠ 沒有其他帳戶可以當收款方。"); return; }
+
+            aIds.Sort(StringComparer.OrdinalIgnoreCase);
+            var aOpts = new List<SCP_GuiOption>(aIds.Count);
+            foreach (string id in aIds)
+            {
+                Acct? a = FindAcct(id);
+                string aTag = a == null ? "（未開戶）" : a.Closed ? "（已銷戶）" : "（" + a.Balance + "）";
+                aOpts.Add(new SCP_GuiOption(id, id + aTag + WhoUses(id)));
+            }
+            string aTo = g.Dropdown("收款方（to_account）", aOpts, g.FieldValue("bank/t/to", ""), "bank/t/to");
+
+            string aAmount = g.TextField("金額", g.FieldValue("bank/t/amount", ""), "bank/t/amount");
+            string aKind = g.TextField("kind（為什麼）", g.FieldValue("bank/t/kind", ""), "bank/t/kind");
+            string aRef = g.TextField("ref（指回現場）", g.FieldValue("bank/t/ref", ""), "bank/t/ref");
+            string aCaller = g.TextField("caller（誰動的；預設＝選取的 persona）",
+                                         g.FieldValue("bank/t/caller", iSelP), "bank/t/caller");
+
+            g.Note("· `kind` / `ref` / `caller` 三欄**缺一就會被擋下**（擋在 `cmd bank`，不是這一頁）。");
+            g.Note("· 兩腳共用一個 `tx_id`，**收款腳失敗會自動回捲**轉出腳；"
+                   + "回捲也失敗時回 exit 5 並印出人工補救的那一行指令（⛔ 不靜默吞掉）。");
+
+            if (aTo.Length == 0) { g.Note("⚠ 還沒選收款方。"); return; }
+            g.Label($"**{iFrom}**（{BalanceText(iFrom)}）　→　**{aTo}**（{BalanceText(aTo)}）");
+
+            string aPending = g.FieldValue(PendingId, "");
+            bool aArmed = aPending == "transfer";
+            using (g.Row())
+            {
+                if (g.Button(aArmed ? "⚠ 再按一次確認轉帳 " + FromToLabel(iFrom, aTo, aAmount) : "轉帳", "bank/do/transfer"))
+                {
+                    if (aArmed)
+                    {
+                        g.SetField(PendingId, "");
+                        Start("轉帳 " + FromToLabel(iFrom, aTo, aAmount), () =>
+                        {
+                            var aArgs = new Dictionary<string, string>
+                            {
+                                ["account"] = iFrom,
+                                ["to_account"] = aTo,
+                                ["amount"] = aAmount,
+                                ["kind"] = aKind,
+                                ["ref"] = aRef,
+                                ["caller"] = aCaller,
+                            };
+                            // ⭐ 回讀**兩戶**：只回讀一戶的話，「轉出了但沒轉到」看起來跟成功一樣。
+                            return Describe2(Dispatch("transfer", aArgs), iFrom, aTo);
+                        });
+                    }
+                    else { g.SetField(PendingId, "transfer"); m_Message = "⚠ 待確認：再按一次才會真的轉帳（**兩戶都會動**）"; }
+                }
+                if (aArmed && g.Button("取消", "bank/t/cancel"))
+                { g.SetField(PendingId, ""); m_Message = "・已取消（沒有動任何錢）"; }
+            }
+        }
+    }
+
+    static string FromToLabel(string iFrom, string iTo, string iAmount)
+        => iFrom + " → " + iTo + " " + (iAmount.Length > 0 ? iAmount : "?");
 
     SCP_CmdResult Post(string iOp, string iAcct, string iAmount, string iKind, string iRef, string iCaller)
         => Dispatch(iOp, new Dictionary<string, string>
@@ -587,6 +742,32 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             ["ref"] = iRef,
             ["caller"] = iCaller,
         });
+
+    /// <summary>
+    /// 轉帳專用：回讀**兩戶**當收據。
+    /// <para>⚠ 只回讀一戶的話，「轉出了但沒轉到」在畫面上跟成功一樣 ——
+    /// 守恆是兩個數字的關係，⛔ 不是其中一個數字的性質。</para>
+    /// </summary>
+    string Describe2(SCP_CmdResult iRes, string iFrom, string iTo)
+    {
+        var aSb = new System.Text.StringBuilder();
+        aSb.Append(iRes.Ok ? "✅ " : "❌ exit " + iRes.ExitCode + " ");
+        for (int i = 0; i < iRes.Lines.Count && i < 8; ++i) aSb.Append(i == 0 ? "" : "\n  ").Append(iRes.Lines[i]);
+        // ⭐ 失敗時也回讀 —— 「它說失敗」與「它真的沒寫」是兩件事，而轉帳失敗有三種收場
+        //   （整筆沒發生／回捲了／停在半路），三種的餘額長得不一樣。
+        aSb.Append("\n  ・回讀 `").Append(iFrom).Append("` 餘額＝").Append(ReadBalance(iFrom));
+        aSb.Append("\n  ・回讀 `").Append(iTo).Append("` 餘額＝").Append(ReadBalance(iTo));
+        return aSb.ToString();
+    }
+
+    /// <summary>回讀一戶的餘額；讀不回來時**說「讀不回來」**，⛔ 不回 0（那會被當成「他沒錢」）。</summary>
+    string ReadBalance(string iAcct)
+    {
+        if (iAcct.Length == 0) return "（沒有帳號）";
+        SCP_CmdResult aBack = Dispatch("balance", new Dictionary<string, string> { ["account"] = iAcct });
+        foreach (KeyValuePair<string, string> kv in aBack.Values) if (kv.Key == "balance") return kv.Value;
+        return "（讀不回來）";
+    }
 
     /// <summary>把一次 Cmd 的結果講成人話，⭐ 並**回讀**那一戶的現況當收據。</summary>
     string Describe(SCP_CmdResult iRes, string iAcct)
@@ -609,7 +790,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
 
     void DrawMigrationPanel(SCP_Ui g)
     {
-        g.Title("遷移：把舊 Treasury 的餘額搬成開帳分錄");
+        // ⛔ 這裡不畫標題：它現在是外層 Fold 的標題列（`Title` 會再畫一條分隔線，變成兩層標題）。
         g.Note("① 先取讀數（走 Unity 端 `Cmd_Treasury op=balances` ＝ 舊帳本的 canonical replayer）"
                + " → ② 看對照表 → ③ 兩段確認才落帳。");
         g.Note("⛔ 只搬**開帳金額**，不搬歷史分錄；只搬這一區綁定得到的帳號。"
