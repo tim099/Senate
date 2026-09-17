@@ -65,9 +65,29 @@ public sealed class GuiImGuiRenderer
         foreach (var kv in iUi.FieldWrites) Fields[kv.Key] = kv.Value;
     }
 
+    // ⭐ **釘住的那幾塊先畫，其餘的畫在一個會捲的子區域裡**（Tim 2026-09-17）。
+    //   概念同 Unity 的 `UCL_EditorPage`：TopBar 在 ScrollView 外面、ContentOnGUI 在裡面
+    //   ⇒ 捲到第 200 行時返回鈕還在原地。
+    // ⚠ 沒有任何釘住的節點時**不開子區域** —— 多包一層 child 會多一組捲動狀態，
+    //   而那會讓「我捲到哪」在換頁之後變得不可預測。
     public void Render(SCP_GuiNode iRoot)
     {
-        foreach (var aChild in iRoot.Children) RenderNode(aChild);
+        bool aHasPinned = false;
+        foreach (var aChild in iRoot.Children) if (aChild.Pinned) { aHasPinned = true; break; }
+
+        if (!aHasPinned)
+        {
+            foreach (var aChild in iRoot.Children) RenderNode(aChild);
+            return;
+        }
+
+        foreach (var aChild in iRoot.Children) if (aChild.Pinned) RenderNode(aChild);
+
+        // 剩下的高度全給內容（0 ＝ 用剩餘空間）。⚠ 這裡**不畫框**：
+        //   子區域是為了捲動而存在，不是一個視覺上的盒子。
+        if (ImGui.BeginChild("scp/content", new System.Numerics.Vector2(0f, 0f), ImGuiChildFlags.None))
+            foreach (var aChild in iRoot.Children) if (!aChild.Pinned) RenderNode(aChild);
+        ImGui.EndChild();
     }
 
     /// <param name="iForcedWidth">

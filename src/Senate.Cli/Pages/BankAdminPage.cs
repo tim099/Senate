@@ -69,6 +69,42 @@ public sealed class BankAdminPage : SCP_GuiToolPage
 
     public BankAdminPage(SenateModel iModel) : base() { m_Model = iModel; }
 
+    // ===========================================================
+    // 區塊職責：**釘在最上面的那兩格選單**（Tim 2026-09-17：「Persona 選單也是 override TopBarButtons
+    //          後放在最上方」）—— 對應 Unity `UCL_BankAdminPage.TopBarButtons` 的 persona 下拉。
+    // 物理意義：工具列住在 `TopBar()` 裡 ⇒ **不跟內容一起捲**。
+    //          🩸 這一頁很長（帳戶表 22 列＋遷移對照表 11 列）⇒ 沒釘住的話，
+    //            「我現在在對誰動錢」這個讀數會在你捲下去按鈕的那一刻離開畫面。
+    //            而動錢的那兩顆鈕就在下面。
+    // ⚠ 下拉展開時會把工具列撐高（選項是 inline 畫的）—— 那是刻意的：
+    //   展開＝正在挑人，這時本來就該讓它佔版面；收合之後只剩兩顆鈕。
+    // ===========================================================
+    protected override void ToolBarButtons(SCP_Ui iUi)
+    {
+        if (!m_Loaded) Reload(iUi);
+
+        string aSelP = SelectedPersona(iUi);
+        var aPersonaOpts = new List<SCP_GuiOption>(m_Rows.Count);
+        foreach (Row r in m_Rows)
+            aPersonaOpts.Add(new SCP_GuiOption(r.Persona,
+                r.Persona + " → " + r.AccountId + (r.Borrowed ? "（借用 " + r.BindingRegion + "）" : "")));
+        string aPickP = iUi.Dropdown("Persona", aPersonaOpts, aSelP, "bank/sel/p");
+        if (aPickP != aSelP && aPickP.Length > 0)
+        {
+            iUi.SetField(PersonaId, aPickP);
+            // 選 persona → 帳戶跟著同步（同 Unity 那頁的手勢）。⚠ 二段確認要清掉：
+            //   換了人還留著上一個人的「待確認」，下一次按下去動的是**新選到的那一戶**。
+            iUi.SetField(AccountId, AccountOfPersona(aPickP));
+            iUi.SetField(PendingId, "");
+            m_Message = $"・已選 `{aPickP}` ⇒ 帳戶同步到 `{AccountOfPersona(aPickP)}`";
+        }
+
+        DrawAgentPicker(iUi, SelectedAccount(iUi));
+
+        string aNow = SelectedAccount(iUi);
+        iUi.Label(aNow.Length == 0 ? "｜（未選帳戶）" : $"｜**{aNow}**　{BalanceText(aNow)}");
+    }
+
     public override string Key { get { return PageKey; } }
     public override string Title { get { return "銀行後台（新銀行）"; } }
     public override string? MenuGroup { get { return "管理"; } }
@@ -395,31 +431,18 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             }
             // ⚠ 摺起來的是**控制項不是資料**：上面那張表永遠展開（誰被選到看得見），
             //   摺的只是那一排按鈕 —— CLI 上 22 顆擠成一行會把後面的內容推到看不見。
-            var aPersonaOpts = new List<SCP_GuiOption>(m_Rows.Count);
-            foreach (Row r in m_Rows)
-                aPersonaOpts.Add(new SCP_GuiOption(r.Persona,
-                    r.Persona + " → " + r.AccountId + (r.Borrowed ? "（借用 " + r.BindingRegion + "）" : "")));
-            string aPickP = g.Dropdown("Persona", aPersonaOpts, aSelP, "bank/sel/p");
-            if (aPickP != aSelP && aPickP.Length > 0)
-            {
-                g.SetField(PersonaId, aPickP);
-                // 選 persona → 帳戶跟著同步（同 Unity 那頁的手勢）。⚠ 二段確認要清掉：
-                //   換了人還留著上一個人的「待確認」，下一次按下去動的是**新選到的那一戶**。
-                g.SetField(AccountId, AccountOfPersona(aPickP));
-                g.SetField(PendingId, "");
-                m_Message = $"・已選 `{aPickP}` ⇒ 帳戶同步到 `{AccountOfPersona(aPickP)}`";
-            }
         }
         g.Note("· 「未開戶」＝新銀行還沒有這一戶的帳戶檔。⛔ 那**不是**「他沒有錢」——"
                + "遷移前錢都還在舊 `Treasury/`。");
-
-        DrawAgentPicker(g, aSelA);
+        g.Note("· 選人／選帳戶的兩格下拉**釘在最上面那一條**（跟著捲的話，"
+               + "「我在對誰動錢」會在你捲到動錢鈕的那一刻離開畫面）。");
     }
 
     /// <summary>帳戶（Agent）選單 —— 直接選帳號，⚠ 央行那種沒有人綁的只能從這裡選。</summary>
     void DrawAgentPicker(SCP_Ui g, string iSelected)
     {
-        g.Title("帳戶（Agent）選單");
+        // ⛔ 這裡不畫標題：它現在住在工具列（`Title` 會畫成一條分隔線，把那一條頂欄切成兩段）。
+        //   下拉自己的 label 就是標題。
         var aIds = new List<string>();
         foreach (Row r in m_Rows) if (!aIds.Contains(r.AccountId)) aIds.Add(r.AccountId);
         // 新銀行有、而本區沒有人綁的（央行／已銷戶的舊戶）也列出來 —— 藏起來的話
