@@ -65,14 +65,56 @@ public sealed class GuiImGuiRenderer
         foreach (var kv in iUi.FieldWrites) Fields[kv.Key] = kv.Value;
     }
 
+    /// <summary>
+    /// 內容子區域的 id。⚠ **探針與讀數都指名它** —— 「誰在捲」不可以是推論。
+    /// </summary>
+    public const string ContentChildId = "scp/content";
+
+    /// <summary>
+    /// 探針：&gt;0 時**在內容子區域裡**（不是外層視窗）每次 Render 強制往下捲這麼多 px。
+    /// <para>🩸 TASK-0236：舊探針對**外層視窗**呼叫 `SetScrollY`，而外層是
+    /// `NoScrollbar | NoScrollWithMouse` ⇒ `ScrollMaxY == 0` ⇒ 被夾回 0、畫面完全不動，
+    /// 於是它每次都印「捲不動」而那**看起來像修好了**。連三次誤判全出在這一格：
+    /// **探針從來沒有碰到真正會捲的那個容器。**</para>
+    /// <para>⇒ 探針必須長在 renderer 這一層，因為只有這裡知道那個子區域存不存在、叫什麼。</para>
+    /// </summary>
+    public float ContentScrollProbePx { get; set; }
+
+    /// <summary>
+    /// 反向對照開關：true ⇒ **當作沒有任何節點是釘住的**（TopBar 會跟內容一起被捲走）。
+    /// <para>⚠ 這不是除錯殘留，是驗收條件的一半：**沒有紅過的守衛等於沒有讀數**。
+    /// 本張單的病史就是「沒紅過卻宣告綠了」三次 ⇒ 讓它能紅，是修法的一部分。</para>
+    /// </summary>
+    public bool IgnorePinned { get; set; }
+
+    /// <summary>
+    /// 上一次 Render 時**內容子區域**的捲動讀數（誰在捲／捲了多少）。
+    /// <para>⚠ 它回答的是「那個會捲的容器現在在哪」，⛔ 不是「滾輪事件有沒有被吃掉」——
+    /// 兩者是不同的東西，拿這一格去宣稱另一格正是本張單的病。</para>
+    /// </summary>
+    public string? LastContentScrollReading { get; private set; }
+
+    /// <summary>釘住的節點在內容段落裡要跳過 —— 這個旗標分辨「現在畫的是哪一遍」。</summary>
+    bool m_InPinnedPass;
+
     // ⭐ **釘住的那幾塊先畫，其餘的畫在一個會捲的子區域裡**（Tim 2026-09-17）。
     //   概念同 Unity 的 `UCL_EditorPage`：TopBar 在 ScrollView 外面、ContentOnGUI 在裡面
     //   ⇒ 捲到第 200 行時返回鈕還在原地。
-    // ⚠ 沒有任何釘住的節點時**不開子區域** —— 多包一層 child 會多一組捲動狀態，
-    //   而那會讓「我捲到哪」在換頁之後變得不可預測。
     public void Render(SCP_GuiNode iRoot)
     {
-        foreach (var aChild in iRoot.Children) if (aChild.Pinned) RenderNode(aChild);
+        // ⭐ TASK-0236：釘住的節點要**整棵樹去找**，⛔ 不是只掃 `iRoot.Children`。
+        // 🩸 舊版只掃直接子節點，而 `SCP_GuiPageController.Draw` 的 `IdScope(page.Key)`
+        //   會 Push 一個 Column ⇒ TopBar 掉在 Root 的**孫層** ⇒ 一個都找不到
+        //   ⇒ 整棵樹（含 TopBar）被丟進會捲的子區域，而**沒有任何一層會喊**。
+        // ⚠ 為什麼修這裡而不是讓 IdScope 不建節點：那只把樹「這一次」擺回正確形狀，
+        //   任何人以後在頁面外多包一層群組就**靜默**重現同一隻 bug。
+        //   釘住與否是 renderer 的概念，找得到它是 renderer 的責任。
+        var aPinned = new List<SCP_GuiNode>();
+        if (!IgnorePinned) CollectPinned(iRoot, aPinned);
+
+        m_InPinnedPass = true;
+        foreach (var aNode in aPinned) RenderNode(aNode);
+        m_InPinnedPass = false;
 
         // ⚠ **一律開子區域**，即使這一頁沒有釘住任何東西。
         // 🩸 第一版寫成「沒有釘住的節點就不開」，而外層視窗的捲動是**全域**的一件事：
@@ -81,9 +123,35 @@ public sealed class GuiImGuiRenderer
         // ⚠ 高度顯式取剩餘空間（`GetContentRegionAvail().Y`）而不是傳 0：
         //   傳 0 時 ImGui 會用一個預設高度，那個值不保證等於「剩下的全部」。
         var aAvail = ImGui.GetContentRegionAvail();
-        if (ImGui.BeginChild("scp/content", new System.Numerics.Vector2(0f, aAvail.Y), ImGuiChildFlags.None))
-            foreach (var aChild in iRoot.Children) if (!aChild.Pinned) RenderNode(aChild);
+        if (ImGui.BeginChild(ContentChildId, new System.Numerics.Vector2(0f, aAvail.Y), ImGuiChildFlags.None))
+        {
+            // ⚠ 讀在**設定之前**：`SetScrollY` 寫的是 target，要到 EndChild 才套用並夾範圍
+            //   ⇒ 設完立刻讀會讀回「還沒動」的舊值，而那個值看起來完全合理。
+            //   ⇒ 這一格印的是「這一幀開始時它在哪」，跨幀累積才是探針的證據。
+            float aScrollY = ImGui.GetScrollY();
+            if (ContentScrollProbePx > 0f) ImGui.SetScrollY(aScrollY + ContentScrollProbePx);
+
+            foreach (var aChild in iRoot.Children) RenderNode(aChild);
+
+            // ⚠ ScrollMaxY 要等內容送完才算得出來 ⇒ 讀數擺在這裡，不是上面。
+            LastContentScrollReading =
+                $"{ContentChildId}: ScrollY={aScrollY:0.#} / ScrollMaxY={ImGui.GetScrollMaxY():0.#}" +
+                (ContentScrollProbePx > 0f ? $"（本幀 target={aScrollY + ContentScrollProbePx:0.#}）" : "");
+        }
         ImGui.EndChild();
+    }
+
+    /// <summary>
+    /// 整棵樹裡所有釘住的節點（前序，保持撰寫順序）。
+    /// <para>⛔ **不往釘住的節點裡面再找** —— 它的子孫是它自己的內容，不是另一條頂欄。</para>
+    /// </summary>
+    static void CollectPinned(SCP_GuiNode iNode, List<SCP_GuiNode> ioOut)
+    {
+        foreach (var aChild in iNode.Children)
+        {
+            if (aChild.Pinned) { ioOut.Add(aChild); continue; }
+            CollectPinned(aChild, ioOut);
+        }
     }
 
     /// <param name="iForcedWidth">
@@ -93,6 +161,12 @@ public sealed class GuiImGuiRenderer
     /// </param>
     void RenderNode(SCP_GuiNode iNode, float iForcedWidth = 0f)
     {
+        // ⭐ 釘住的節點在**內容那一遍一律跳過** —— 它已經在前面畫過了，這裡再畫一次就是兩份。
+        // ⚠ 守衛放在 RenderNode 開頭而不是各個容器的迴圈裡：Row／Column／Box 都經過這裡
+        //   ⇒ 不管它掉在第幾層都跳得掉。分散在各容器的話，漏掉的那一種**不會報錯**，
+        //   只會讓頂欄在畫面上出現兩次（而那看起來像版面壞了，不像釘住壞了）。
+        if (!m_InPinnedPass && iNode.Pinned && !IgnorePinned) return;
+
         switch (iNode.Kind)
         {
             case SCP_GuiNodeKind.Title:

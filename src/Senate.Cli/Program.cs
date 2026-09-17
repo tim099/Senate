@@ -531,9 +531,13 @@ public static class Program
 
         // 鍵盤／剪貼簿診斷 —— 「Ctrl+V 沒反應」有三個斷點，而它們在畫面上長得一樣（見 DrawKeyDebug）。
         aWin.KeyDebug = HasFlag(iArgs, "--keydebug");
-        // 捲動探針（驗「TopBar 有沒有真的釘住」）：強制叫外層視窗往下捲，看它動不動得了
+        // 捲動探針（驗「TopBar 有沒有真的釘住」）：強制叫**內容子區域** `scp/content` 往下捲。
+        // 🩸 TASK-0236：它原本叫的是**外層視窗**，而外層根本關掉了捲動 ⇒ 永遠印「捲不動」，
+        //   而那跟「釘住了」同形 —— 連三次誤判都出在這一格。
         string? aScrollProbe = ArgValue(iArgs, "--scroll-probe");
         if (aScrollProbe != null && int.TryParse(aScrollProbe, out int aProbeFrames)) aWin.ScrollProbeFrames = aProbeFrames;
+        // ⭐ 反向對照：讓 Pinned 失效 ⇒ TopBar **應該**跟著捲走。沒紅過的守衛等於沒有讀數。
+        aWin.IgnorePinned = HasFlag(iArgs, "--unpin");
         if (aWin.KeyDebug) Console.WriteLine("・keydebug 開著 —— 畫面底部會多一行鍵盤／剪貼簿讀數");
 
         // ⭐ soak：開真視窗**轉一段時間**再收工。截圖的 8 幀證明「畫得出來」，
@@ -573,6 +577,7 @@ public static class Program
         {
             aWin.Run(iShot);
             if (aWin.SoakReading is { } aReading) Console.WriteLine(aReading);
+            if (aWin.ScrollReading is { } aScrollReading) Console.WriteLine(aScrollReading);
             Console.WriteLine($"字型：{aWin.LoadedFonts}");
             Console.WriteLine($"{aWin.ClipboardStatus}");
             Console.WriteLine($"{aWin.WindowIconStatus}");
@@ -1304,8 +1309,8 @@ public static class Program
         ["doctor"] = new[] { "--width", "--scale", "--size" },
         ["init"] = new string[0],
         ["ui"] = new[] { "--window", "--screenshot", "--soak", "--reset", "--click", "--set", "--toggle",
-                         "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--scroll-probe", "--no-cleanup",
-                         "--width", "--scale", "--size", "--local" },
+                         "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--scroll-probe", "--unpin",
+                         "--no-cleanup", "--width", "--scale", "--size", "--local" },
         ["submodule"] = new[] { "--checkout", "--pull", "--push", "--dry-run", "--yes", "--branch", "--fetch",
                                 "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },
         ["ucmd"] = new[] { "--arg", "--arg-file", "--persona", "--project", "--timeout", "--lane", "--no-wait",

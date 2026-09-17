@@ -60,6 +60,13 @@ public sealed class SenateWindow : IDisposable
     /// <summary>soak 跑完的讀數（幀數／秒數／平均 fps／最慢一幀）。沒跑 soak 就是 null。</summary>
     public string? SoakReading { get; private set; }
 
+    /// <summary>
+    /// 收工時內容子區域的捲動讀數（TASK-0236 ④：**誰在捲／捲了多少**，可複驗）。
+    /// <para>⚠ 它一定指名容器（`scp/content`）—— 不指名的讀數沒辦法分辨
+    /// 「這一格捲不動」與「我量錯了另一格」，而那正是本張單被誤判三次的原因。</para>
+    /// </summary>
+    public string? ScrollReading { get; private set; }
+
     // ── 常駐窗的對外接點（TASK-0214）──────────────────────────────────
     // 區塊職責：讓宿主在**每一幀畫完之後**插手一次 —— 拿到這一幀真的畫出來的那棵樹。
     // 數值影響：⭐ 每幀的固定成本＝**一次 null 檢查**（OnFrameServed?.Invoke）＋ 幾個數的累加。
@@ -392,16 +399,29 @@ public sealed class SenateWindow : IDisposable
     public bool KeyDebug { get; set; }
 
     /// <summary>
-    /// **捲動探針**：開頭這幾幀每幀強制叫**外層視窗**往下捲 200px。
+    /// **捲動探針**：開頭這幾幀每幀強制叫**內容子區域**（`scp/content`）往下捲 200px。
     /// <para>🩸 為什麼需要它（2026-09-17）：「TopBar 釘住了沒」是一個**行為**，
     /// 而我連兩版都只驗了結構（頂欄畫在子區域外面）就宣告修好，兩次都被 Tim 用滾輪推翻。
-    /// ⇒ 唯一誠實的驗法是**真的叫它捲一次**再看畫面。
-    /// ⚠ 射程：它驗「外層捲不捲得動」，⛔ 不是「滾輪事件會不會被吃掉」——
+    /// ⇒ 唯一誠實的驗法是**真的叫它捲一次**再看畫面。</para>
+    /// <para>🩸 TASK-0236：而第三版的探針**叫錯了容器** —— 它對**外層視窗**呼叫 `SetScrollY`，
+    /// 而外層是 `NoScrollbar | NoScrollWithMouse` ⇒ `ScrollMaxY == 0` ⇒ 被夾回 0、
+    /// 畫面完全不動，於是它印的 `ScrollY=0 / ScrollMaxY=0` **看起來正是「釘住了」**。
+    /// ⇒ 三次誤判的共同形狀：**探針從來沒有碰到真正會捲的那個容器。**
+    /// 現在它打的是 <see cref="GuiImGuiRenderer.ContentScrollProbePx"/>，
+    /// 而那一格長在 renderer 裡 —— 只有那裡知道會捲的子區域在哪。</para>
+    /// <para>⚠ 射程：它驗「那個容器捲不捲得動」，⛔ 不是「滾輪事件會不會被吃掉」——
     /// 我第一版注入 `io.MouseWheel`，而那一格在 `NewFrame` 就被消化了（灌太晚），那個探針**沒有生效**。</para>
     /// <para>用法：`senate ui --page <頁> --window --scroll-probe 6 --screenshot <png>` ——
-    /// 截圖裡頂欄還在 ＝ 釘住了；不見了 ＝ 沒釘住。⛔ 這一格不可以用「應該會」回答。</para>
+    /// 收工時會印一行 `scp/content: ScrollY=… / ScrollMaxY=…`（⭐ **可複驗的讀數**，
+    /// ⛔ 不是「看起來還在」）；截圖裡頂欄還在 ＝ 釘住了；不見了 ＝ 沒釘住。</para>
     /// </summary>
     public int ScrollProbeFrames { get; set; }
+
+    /// <summary>
+    /// 反向對照：開了就**當作沒有任何節點是釘住的** ⇒ TopBar 應該跟著內容被捲走。
+    /// <para>⚠ 它是驗收條件的一半，不是除錯殘留：**沒有紅過的守衛等於沒有讀數**。</para>
+    /// </summary>
+    public bool IgnorePinned { get; set; }
 
     void OnRender(double iDelta)
     {
@@ -483,15 +503,16 @@ public sealed class SenateWindow : IDisposable
             | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoBringToFrontOnFocus
             | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
-        // ⭐ 捲動探針：**直接叫外層視窗往下捲**。
-        // ⚠ 它驗的是「外層捲不捲得動」，⛔ **不是**「滾輪事件會不會被吃掉」——
-        //   我第一版灌 `io.MouseWheel`，而那一格在 `NewFrame` 就被消化掉了（我灌太晚）⇒ 那個探針沒生效。
-        //   ⇒ 換成 `SetScrollY`：外層若真的釘住（`ScrollMaxY == 0`），它會被**夾回 0**、畫面不動；
-        //     外層若還能捲，這一捲就會把 TopBar 推出畫面 —— 那正是使用者回報的症狀。
-        // 📌 所以它是「症狀的探針」不是「輸入路徑的探針」。兩者的差別要講出來，
-        //    ⛔ 不可以拿它去宣稱「滾輪沒問題」。
-        if (ScrollProbeFrames > 0 && m_Frame <= ScrollProbeFrames)
-            ImGui.SetScrollY(ImGui.GetScrollY() + 200f);
+        // ⭐ 捲動探針：交給 renderer 去叫**內容子區域**捲（`scp/content`）。
+        // 🩸 TASK-0236：這裡原本寫的是 `ImGui.SetScrollY(...)`，而此刻的「當前視窗」是**外層**，
+        //   外層帶著 `NoScrollbar | NoScrollWithMouse` ⇒ `ScrollMaxY == 0` ⇒ **被夾回 0**。
+        //   於是探針每次都印「捲不動」，而那**跟「釘住了」長得一模一樣** —— 我三次驗收全栽在這裡。
+        //   ⇒ 受測體必須是**真的會捲的那個容器**，而它在 renderer 手上，不在這裡。
+        // ⚠ 它是「症狀的探針」不是「輸入路徑的探針」（⛔ 不可以拿它宣稱「滾輪沒問題」）：
+        //   我第一版灌 `io.MouseWheel`，那一格在 `NewFrame` 就被消化掉了（灌太晚）⇒ 沒生效。
+        m_Renderer.ContentScrollProbePx =
+            ScrollProbeFrames > 0 && m_Frame <= ScrollProbeFrames ? 200f : 0f;
+        m_Renderer.IgnorePinned = IgnorePinned;
 
         // ⚠ keydebug **畫在內容之前**（＝跟著釘住的那一段一起留在畫面上）。
         // 🩸 2026-09-17：外層視窗關掉捲動之後，內容子區域吃掉所有剩餘高度
@@ -553,6 +574,12 @@ public sealed class SenateWindow : IDisposable
                 + $"，第一幀 {m_SoakFirstFrameMs:0.0} ms"
                 + (m_Frame > 1 ? $"，其餘最慢 {m_SoakWorstFrameMs:0.0} ms" : "，其餘：沒有第二幀");
         }
+
+        // ⭐ TASK-0236 ④：把「誰在捲／捲了多少」留成一行可複驗的讀數。
+        // ⚠ 取在**關窗前的最後一幀** —— 探針是跨幀累積的，中途任何一幀都還沒捲到底。
+        if (ScrollProbeFrames > 0)
+            ScrollReading = $"scroll-probe：{m_Renderer.LastContentScrollReading ?? "（子區域這一幀沒有被畫出來 —— 這是「沒量到」，不是「捲不動」）"}"
+                + $"｜pinned={(IgnorePinned ? "ignored（反向對照）" : "on")}｜probe {ScrollProbeFrames} 幀 × 200px";
 
         if (m_ScreenshotPath != null)
             SenateScreenshot.Capture(m_Gl, m_Window!.FramebufferSize.X, m_Window.FramebufferSize.Y, m_ScreenshotPath);
