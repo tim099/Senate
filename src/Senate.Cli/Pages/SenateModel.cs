@@ -149,29 +149,14 @@ public sealed class SenateModel : ISCP_GuiAppContext
     public SCP_PathResolution LettersRoot => ResolvePath(SCP_PathId.LettersRoot);
 
     /// <summary>
-    /// 新銀行的根（TASK-0223）。**留空 ⇒ 退到宿主預設** <c>&lt;repo&gt;/SenateData/Bank</c>，
-    /// 與 <c>Program.cs</c> 替 <c>bank_root</c> 補值時走的是同一個預設函式。
-    /// <para>⚠ 兩處各自寫一個預設值的症狀是：CLI 與後台頁**指著兩個不同的銀行**，
-    /// 而兩邊都查得到帳戶、都不報錯。⇒ 預設只有 <see cref="SenatePaths.BankRootDefault"/> 一份。</para>
+    /// 新銀行的根（TASK-0223）。**2026-09-17 起是推導值**：<c>&lt;資料根&gt;/Bank</c>（Tim 拍板「不額外設定」）。
+    /// <para>⭐ 這一格從此跟其他推導路徑**同一條路**（`ResolvePath`）——
+    /// 原本那個「設定檔沒填就退宿主預設」的分支整段拿掉了，
+    /// 因為它與 <c>Program.cs</c> 的 <c>FillRootArg</c> 是同一段邏輯抄兩份，
+    /// 而兩份一漂就是 CLI 與後台頁**指著兩個不同的銀行，且兩邊都查得到帳戶、都不報錯**。</para>
+    /// <para>⚠ 解不出來時**照實回錯**，⛔ 不再退到任何預設 —— 「資料根壞了」不該長成「銀行在別的地方」。</para>
     /// </summary>
-    public SCP_PathResolution BankRoot
-    {
-        get
-        {
-            // ⚠ 這個判斷式**逐字照抄** `Program.cs` 的 `FillRootArg`：
-            //   「`Error == null` 且有值 ⇒ 用設定檔那一格，否則一律退宿主預設」。
-            //   ⛔ 不要在這裡寫一個「更聰明」的版本 —— 兩套規則不一樣的那天，
-            //   CLI 與後台頁會指著**兩個不同的銀行**，而兩邊都查得到帳戶、都不報錯。
-            SCP_PathResolution aRes = ResolvePath(SCP_PathId.BankRoot);
-            if (aRes.Error == null && aRes.Value.Length > 0) return aRes;
-            // ⚠ 退預設時把**為什麼**帶在 Origin 上：「設定檔沒填」與「設定檔壞了」
-            //   會得到同一條路徑，不說的話那兩件事在畫面上同形。
-            string aOrigin = aRes.Error == null
-                ? "宿主預設（設定檔沒填）"
-                : "宿主預設（⚠ 設定檔那一格解不出來：" + aRes.Error + "）";
-            return new SCP_PathResolution(SenatePaths.BankRootDefault(m_RepoRoot), aOrigin, null);
-        }
-    }
+    public SCP_PathResolution BankRoot => ResolvePath(SCP_PathId.BankRoot);
 
     /// <summary>解一格路徑 —— 上面那幾格共用的實作（多一格路徑不必再抄一次設定檔三態）。</summary>
     SCP_PathResolution ResolvePath(SCP_PathId iId)

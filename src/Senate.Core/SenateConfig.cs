@@ -100,16 +100,29 @@ public sealed class AwakeningSettings
 }
 
 /// <summary>
-/// 銀行設定。⚠ 只有一格，而那一格的**重點是它可以指到專案外面**。
+/// 銀行設定。⚠ 2026-09-17 之後這一區**沒有任何生效的欄位**了（銀行根改成推導）。
+/// 區塊留著是為了讓舊檔裡的值讀得回來、能被指著說「這一格已經不生效」。
 /// </summary>
 public sealed class BankSettings
 {
     /// <summary>
-    /// 新版銀行帳本根（絕對路徑），例如 <c>D:/Unity/Bank</c>。
-    /// <para>空 ＝ 還沒設定；<c>auto</c> ＝ 本專案資料根底下的 <c>Bank</c>（**過渡形，不是終局**）。</para>
-    /// <para>⛔ 空字串**不是**某個猜出來的路徑 —— 跟 <see cref="AwakeningSettings.LettersRoot"/> 同一條規矩。</para>
+    /// ⛔ **已停用**（Tim 2026-09-17）：銀行根改成 <c>&lt;資料根&gt;/Bank</c> 的**推導值**，不再有人填它。
+    /// <para>欄位沒有直接刪掉，是因為刪了之後舊檔裡那個值會掉進 <see cref="Extra"/> ——
+    /// 原樣保留、原樣寫回、而且**沒有任何一層會說它不生效**。
+    /// 留在這裡才有東西可以拿去比對並出聲（見 <see cref="DeadBankRootWarning"/>）。</para>
     /// </summary>
     public string BankRoot { get; set; } = "";
+
+    /// <summary>
+    /// 設定檔還留著一個**不生效**的 <c>bankRoot</c> 時回一句話（沒有就回 null）。
+    /// <para>⚠ 判準是「填過東西」而不是「填得對不對」：改設定卻沒生效的症狀是**什麼都沒發生**，
+    /// 而那跟「我本來就沒設」在畫面上同形。</para>
+    /// </summary>
+    public string? DeadBankRootWarning()
+        => string.IsNullOrWhiteSpace(BankRoot)
+            ? null
+            : $"⚠ 設定檔的 `bank.bankRoot` 還留著 `{BankRoot}`，而它 **2026-09-17 起不生效**"
+              + "（銀行根已改成 `<資料根>/Bank` 的推導值）—— 要換銀行位置請改資料根。";
 
     /// <summary>本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。</summary>
     /// <remarks>⚠ [SCP_Ignore]：不進畫面、不進自動序列化（同其他區塊）。</remarks>

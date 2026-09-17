@@ -211,8 +211,11 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         if (m_BankRoot.Value.Length == 0)
         {
             g.Note("⚠ 本頁**沒有資料來源** ⇒ 這不是「銀行是空的」，是「量不到」。原因："
-                   + (string.IsNullOrEmpty(m_BankRoot.Error) ? "bankRoot 是空的" : m_BankRoot.Error));
-            g.Note("· 去「路徑管理」頁（`senate ui --page paths`）設 **bankRoot** —— 本頁不存路徑。");
+                   + (string.IsNullOrEmpty(m_BankRoot.Error) ? "解出來是空字串" : m_BankRoot.Error));
+            // ⚠ 2026-09-17 起銀行根是**推導**的（`<資料根>/Bank`）⇒ 這裡解不出來，壞的是**資料根**。
+            //   ⛔ 別再叫人去設 bankRoot —— 那一格已經不存在，照著做會找不到東西可按。
+            g.Note("· 銀行根 ＝ `<AgentCommands 資料根>/Bank`（推導，不可設定）"
+                   + " ⇒ 解不出來就是**資料根**那一格壞了，去「路徑管理」頁（`senate ui --page paths`）看它。");
             return;
         }
 
@@ -470,6 +473,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                    + "\n  ⇒ 「它說寫了」與「檔案真的在」是兩件事，這裡採信後者。";
 
         var aOld = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int aReportRows = 0;
         string aStamp = "";
         foreach (string aLine in File.ReadAllLines(aOut))
         {
@@ -478,7 +482,9 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             if (aLine[0] == '#')
             { if (aCols.Length >= 2 && aCols[0] == "# generated_at") aStamp = aCols[1]; continue; }
             if (aCols.Length < 3) continue;
-            if (int.TryParse(aCols[2], out int aBal)) aOld[aCols[0]] = aBal;
+            if (!int.TryParse(aCols[2], out int aBal)) continue;
+            ++aReportRows;
+            aOld[aCols[0]] = aBal;
         }
 
         // ⚠ **一個帳號可能綁著好幾個 persona**（實測 BTC 區：calli／gura／kiara 三個人都綁 `Myth`）。
@@ -510,7 +516,10 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         m_Mig = aRows;
         m_MigStamp = aStamp.Length > 0 ? aStamp : "（報表沒寫時間）";
         string aCacheWhy = SaveMigCache(m_Region);
-        return "✅ 取到舊餘額：報表 " + aOld.Count + " 戶，其中這一區綁定得到的 " + aRows.Count + " 戶"
+        // ⚠ 兩個數字分開報：`aOld` 是**大小寫不分**的字典（`Zeta`／`zeta` 併成一格），
+        //   而報表上是兩列。把字典的筆數說成「報表 N 戶」，就是拿一個數字去回答另一個問題。
+        return "✅ 取到舊餘額：報表 " + aReportRows + " 列（大小寫不分後 " + aOld.Count + " 戶）"
+               + "，其中這一區綁定得到的 " + aRows.Count + " 戶"
                + "\n  報表：" + aOut
                + "\n  " + aCacheWhy;
     }
@@ -634,7 +643,13 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                 ["ref"] = "treasury-balances@" + m_MigStamp,
                 ["caller"] = "bank-admin-page",
                 ["description"] = "舊 Treasury 餘額遷入（TASK-0216／0223）",
-                ["idem_key"] = "opening/" + r.AccountId,
+                // ⚠ key 用**正規化後**的 id（小寫），⛔ 不是綁定檔上那個寫法。
+                // 🩸 2026-09-17 遷移日量到：summit 的綁定是 BTC=`Zeta`／Florin=`zeta`，
+                //   而新銀行的帳號 id **一律小寫**（`SCP_BankId`）⇒ 兩區指的是同一戶；
+                //   判重卻是 `StringComparison.Ordinal` 比 key ⇒ `opening/Zeta` ≠ `opening/zeta`
+                //   ⇒ 逐區各跑一次就會把**同一筆錢入帳兩次**（3337 → 6674），
+                //   而兩次都回 Ok、兩次都不判重、帳戶檔只有一個 —— 沒有任何一層會喊。
+                ["idem_key"] = "opening/" + r.AccountId.ToLowerInvariant(),
             });
             if (!aPost.Ok)
             {

@@ -58,10 +58,9 @@ public static class SenatePathBinding
             }
             case SCP_PathId.LettersRoot:
                 return SCP_PathStoredValue.Of(iConfig.Awakening.LettersRoot ?? "");
-            // ⚠ 銀行根刻意**不從專案推導**（跨專案共用同一套，Tim 2026-09-14）——
-            //   它跟 lettersRoot 同族：Global、Stored、空字串是「還沒設定」。
-            case SCP_PathId.BankRoot:
-                return SCP_PathStoredValue.Of(iConfig.Bank.BankRoot ?? "");
+            // ⛔ `BankRoot` 2026-09-17 起是 **Derived**（`<資料根>/Bank`）⇒ 本檔**不再接它那一格**。
+            //   哪天有人把它改回 Stored 而忘了這裡，下面的 default 會當場出聲，
+            //   ⛔ 不會靜默回一個空字串（而空字串在頁面上長成「未設定」，那是另一個意思）。
             default:
                 // 走到這裡＝描述表把某格標成 Stored 而本檔沒接 ⇒ 要大聲，不要靜默回空字串
                 //（靜默的空字串會在頁面上長成「未設定」，而那是另一個意思）。
@@ -88,9 +87,6 @@ public static class SenatePathBinding
             }
             case SCP_PathId.LettersRoot:
                 iConfig.Awakening.LettersRoot = iValue;
-                return true;
-            case SCP_PathId.BankRoot:
-                iConfig.Bank.BankRoot = iValue;
                 return true;
             default:
                 oError = $"{iId} 不是可設定的格子（Derived 的路徑算出來，不儲存）";

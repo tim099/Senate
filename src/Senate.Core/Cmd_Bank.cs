@@ -8,9 +8,10 @@
 //   ① **讀寫都走 Server，不分兩條路。** 讀（balance／accounts）其實可以原生跑，
 //      而分兩條的代價是**下一個人往「讀」那條加一個寫**，然後鎖就失效了 ——
 //      那種錯不會有任何一層喊。小團隊維護的判準是「入口少」而不是「每條路最佳化」。
-//   ② **`bank_root` 是必填參數，本層不推導。** 它是**跨專案共用**的那個根（Tim 2026-09-14）——
-//      推導就等於跟著專案漂，而那正是舊 Treasury 一個區一本帳的成因。
-//      CLI 那側沒給時會從「路徑管理」頁那一格補上**並印出來**（⛔ 不靜默注入）。
+//   ② **`bank_root` 是必填參數，本層不推導。** 本層不知道自己跑在誰的宿主裡 ——
+//      推導這一格等於在 Cmd 裡多一份「路徑住哪」的答案，而那份會跟宿主那份漂。
+//      ⚠ 2026-09-17 起 CLI 那側補的值是 **`<資料根>/Bank`**（推導，不再是可填的 `bankRoot`；
+//      Tim 拍板「不額外設定」）——⛔ 仍然**印出來**，不靜默注入。
 //   ③ **錢的動作一律要 `kind`**：沒有 kind 的錢，日後沒有人答得出它為什麼動。
 using SCP.Core.Bank;
 using SCP.Core.Cmd;
@@ -40,8 +41,9 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "accounts",
                     iChoices: new[] { "accounts", "open", "balance", "credit", "debit" }),
                 new SCP_CmdArgSpec("bank_root",
-                    "銀行帳本根（絕對路徑）—— **跨專案共用的那一個**。"
-                    + "CLI 沒給時會用「路徑管理」頁的 `bankRoot` 那一格補上並印出來", iRequired: true),
+                    "銀行帳本根（絕對路徑）。"
+                    + "CLI 沒給時會用 `<AgentCommands 資料根>/Bank` 補上並印出來（推導值，不可設定）",
+                    iRequired: true),
                 new SCP_CmdArgSpec("account", "帳號 id（大小寫不拘 —— 寫入端一律正規化成小寫）", iDefault: ""),
                 new SCP_CmdArgSpec("display_name", "顯示名（open 用；可以有大小寫與空白，⛔ 不當 id）", iDefault: ""),
                 new SCP_CmdArgSpec("amount", "金額（正整數；方向由 op 決定）", iDefault: "0"),

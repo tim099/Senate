@@ -92,15 +92,6 @@ public static class SenatePaths
     public static string ServerRoot(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "server");
 
     /// <summary>
-    /// 新版銀行帳本根的**宿主預設**（設定檔那一格留空時用它）。
-    /// <para>⚠ 落在 <c>SenateData/</c> 底下是刻意的：那一層整個 gitignore（`.gitignore` 的 `/SenateData/`）
-    /// ⇒ 錢不會跟著 code 進版控。</para>
-    /// <para>⛔ 這是**預設不是終局**：要跨專案共用同一套銀行，得在「路徑管理」頁手填一個共用的絕對路徑
-    /// （Tim 2026-09-14）。留在這裡的那一份只服務這一個 repo。</para>
-    /// </summary>
-    public static string BankRootDefault(string iRepoRoot) => Path.Combine(DataRoot(iRepoRoot), "Bank");
-
-    /// <summary>
     /// 把三層目錄建出來。**只建目錄、不寫任何檔**，重複呼叫無副作用。
     /// <para>⚠ 存在的理由是 ImGui：它存 ini 時**不會替你建目錄**，
     /// 目錄不在就靜默不存 —— 而「沒存成功」跟「使用者沒調過版面」在畫面上同形。</para>

@@ -1530,11 +1530,14 @@ public static class Program
             if (aCfg != null)
             {
                 FillRootArg(aCmd, aRawArgs, aCfg, "data_root", SCP.Core.Paths.SCP_PathId.AgentCommandsRoot);
-                // ⚠ bank_root 多一層**宿主預設**：設定檔留空時落 `<repo>/SenateData/Bank`（已 gitignore）。
-                //   ⛔ 刻意不在描述表裡做 `auto` 推導 —— 能推的只有「本專案底下」，
-                //     而「不要跟著專案漂」正是這一格存在的理由（Tim 2026-09-14）。
-                FillRootArg(aCmd, aRawArgs, aCfg, "bank_root", SCP.Core.Paths.SCP_PathId.BankRoot,
-                            () => SenatePaths.BankRootDefault(iRepoRoot));
+                // ⚠ bank_root 2026-09-17 起**沒有宿主預設那一層**了：它是 `<資料根>/Bank` 的推導值
+                //   ⇒ 跟 data_root 走同一支、同一個上游。資料根解不出來時這裡什麼都不填，
+                //     讓 Cmd 用「缺必填參數」擋下 —— ⛔ 不要在資料根壞掉的時候還指得出一個銀行。
+                FillRootArg(aCmd, aRawArgs, aCfg, "bank_root", SCP.Core.Paths.SCP_PathId.BankRoot);
+                // ⚠ 舊設定檔可能還留著一個**不生效**的 `bank.bankRoot` ⇒ 出聲。
+                //   不說的話，「我改了設定」與「我改的那一格已經死了」在畫面上完全同形。
+                string? aDead = aCfg.Bank.DeadBankRootWarning();
+                if (aDead != null) Console.Error.WriteLine("· " + aDead);
             }
         }
 
