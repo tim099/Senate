@@ -72,20 +72,16 @@ public sealed class GuiImGuiRenderer
     //   而那會讓「我捲到哪」在換頁之後變得不可預測。
     public void Render(SCP_GuiNode iRoot)
     {
-        bool aHasPinned = false;
-        foreach (var aChild in iRoot.Children) if (aChild.Pinned) { aHasPinned = true; break; }
-
-        if (!aHasPinned)
-        {
-            foreach (var aChild in iRoot.Children) RenderNode(aChild);
-            return;
-        }
-
         foreach (var aChild in iRoot.Children) if (aChild.Pinned) RenderNode(aChild);
 
-        // 剩下的高度全給內容（0 ＝ 用剩餘空間）。⚠ 這裡**不畫框**：
-        //   子區域是為了捲動而存在，不是一個視覺上的盒子。
-        if (ImGui.BeginChild("scp/content", new System.Numerics.Vector2(0f, 0f), ImGuiChildFlags.None))
+        // ⚠ **一律開子區域**，即使這一頁沒有釘住任何東西。
+        // 🩸 第一版寫成「沒有釘住的節點就不開」，而外層視窗的捲動是**全域**的一件事：
+        //   宿主那邊得把外層關掉（`NoScrollWithMouse`），關掉之後沒有子區域的頁面就**完全捲不動**了。
+        //   ⇒ 兩邊的條件必須一致，而「一律開」比「兩邊各自判斷同一個條件」少一個會漂的地方。
+        // ⚠ 高度顯式取剩餘空間（`GetContentRegionAvail().Y`）而不是傳 0：
+        //   傳 0 時 ImGui 會用一個預設高度，那個值不保證等於「剩下的全部」。
+        var aAvail = ImGui.GetContentRegionAvail();
+        if (ImGui.BeginChild("scp/content", new System.Numerics.Vector2(0f, aAvail.Y), ImGuiChildFlags.None))
             foreach (var aChild in iRoot.Children) if (!aChild.Pinned) RenderNode(aChild);
         ImGui.EndChild();
     }

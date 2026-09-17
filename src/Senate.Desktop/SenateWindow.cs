@@ -375,6 +375,11 @@ public sealed class SenateWindow : IDisposable
             $"[keydebug] io.KeyCtrl={aIo.KeyCtrl}  Silk:Ctrl={m_LastKeyCtrl} V={m_LastKeyV}"
             + $"  ｜ clipboard callback: Get={ImGuiClipboardBridge.GetCalls} Set={ImGuiClipboardBridge.SetCalls}"
             + $"  ｜ WantTextInput={aIo.WantTextInput}");
+        // ⭐ 版面診斷：外層**不該**有捲動空間（TopBar 釘住的前提）。
+        //   ⚠ 這一格是讀數不是保證 —— 它 > 0 就表示有東西把外層撐高了，而那時 TopBar 會被滾走。
+        ImGui.TextUnformatted(
+            $"  外層捲動上限 ScrollMaxY = {ImGui.GetScrollMaxY():0.##}"
+            + "　← **不是 0 就表示外層仍會捲**（TopBar 會被滾出畫面）");
         ImGui.TextUnformatted(
             $"  自我對拍（不需按鍵）：注入 ModCtrl=true 之後 io.KeyCtrl 讀回 = {m_ProbeKeyCtrl}"
             + "　← 這格是 False 就是我補的那條路沒生效");
@@ -456,17 +461,27 @@ public sealed class SenateWindow : IDisposable
         var aVp = ImGui.GetMainViewport();
         ImGui.SetNextWindowPos(aVp.WorkPos);
         ImGui.SetNextWindowSize(aVp.WorkSize);
+        // ⚠ **外層視窗自己不捲**（`NoScrollbar | NoScrollWithMouse`）—— 捲動一律發生在
+        //   renderer 開的那個內容子區域裡。
+        // 🩸 2026-09-17：只把內容包進 child、外層沒關捲動 ⇒ 滾輪滾的是**外層**，
+        //   於是釘住的 TopBar 照樣被滾出畫面（Tim 實測回報）。
+        //   ⇒ 「內容在一個會捲的子區域裡」**不蘊含**「外層不會捲」，那是兩個獨立的開關。
         ImGui.Begin(m_Title,
             ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
-            | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoBringToFrontOnFocus);
+            | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoBringToFrontOnFocus
+            | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
+        // ⚠ keydebug **畫在內容之前**（＝跟著釘住的那一段一起留在畫面上）。
+        // 🩸 2026-09-17：外層視窗關掉捲動之後，內容子區域吃掉所有剩餘高度
+        //   ⇒ 任何畫在 `Render` 之後的東西都被推到畫面外，而外層又捲不動 ⇒ **永遠看不到**。
+        //   ⛔ 而那種失效不會報錯：它只是不見了。
+        if (KeyDebug) DrawKeyDebug();
 
         SCP_Ui aUi = m_Draw(m_Renderer.TakeInput());
         m_Renderer.Render(aUi.Root);
         // 頁面要求的欄位寫入在**畫完之後**才套 —— 這一幀顯示的是頁面自己算出來的結果，
         // 套進 renderer 是為了下一幀（跟按鈕事件同一個「慢一幀」的節奏）。
         m_Renderer.ApplyWrites(aUi);
-
-        if (KeyDebug) DrawKeyDebug();
 
         ImGui.End();
         m_Controller.Render();
