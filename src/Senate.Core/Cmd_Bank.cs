@@ -39,7 +39,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             var aSpecs = new List<SCP_CmdArgSpec>
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "accounts",
-                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit" }),
+                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "close", "reopen" }),
                 new SCP_CmdArgSpec("bank_root",
                     "銀行帳本根（絕對路徑）。"
                     + "CLI 沒給時會用 `<AgentCommands 資料根>/Bank` 補上並印出來（推導值，不可設定）",
@@ -59,6 +59,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 //    而沒有它的話，`caller` 會靜默是空字串，錢就變成**沒有人簽名的**。
                 new SCP_CmdArgSpec("caller", "誰動的這筆錢（落進 entry，⛔ 沒簽名的錢日後查不出是誰）—— credit／debit **必填**", iDefault: ""),
                 new SCP_CmdArgSpec("cmd_id", "指回派這一筆的那個 cmd（追溯用）", iDefault: ""),
+                new SCP_CmdArgSpec("reason", "為什麼銷戶（close **必填** —— 沒有理由的銷戶事後查不出來）", iDefault: ""),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -79,7 +80,9 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             case "balance": return Stamp(OpBalance(aRoot, iArgs));
             case "credit":
             case "debit": return Stamp(OpPost(aRoot, iArgs, aOp == "debit"));
-            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit）");
+            case "close": return Stamp(OpClose(aRoot, iArgs));
+            case "reopen": return Stamp(OpReopen(aRoot, iArgs));
+            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|close|reopen）");
         }
     }
 
@@ -162,6 +165,87 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                                             + (aAccount.DisplayName.Length > 0 ? $"（{aAccount.DisplayName}）" : ""));
         aResult.Lines.Add($"  檔案：{SCP_BankAccounts.AccountPath(iRoot, aAccount.Id)}");
         aResult.AddValue("account", aAccount.Id);
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：`op=close` —— 銷戶。
+    // 物理意義：帳戶檔**留著**、狀態改 `closed`（判準②：「查不到帳戶」與「它被銷了」不可同形）。
+    //          ⛔ 不刪檔、⛔ 不動任何分錄 —— 帳本 append-only，歷史不因為戶頭關了就消失。
+    // 數值影響：不動錢。⚠ 而**餘額不是 0 就不准關** —— 關掉一個還有錢的戶頭，
+    //          那筆錢會變成「還在總額裡、卻沒有人能動它」，而沒有任何一層會喊。
+    //          要關就先把錢處置掉（轉走或補反向分錄），⇒ 處置留在帳本上看得見。
+    // 🩸 為什麼現在才有這一支（2026-09-17）：Tim 要把 `luna`／`codex`（別區綁定）移出本區，
+    //    而這家銀行**沒有關戶頭的入口** ⇒「餘額 0 的開著」只能假裝成「移除了」。
+    // ===========================================================
+    static SCP_CmdResult OpClose(string iRoot, SCP_CmdArgs iArgs)
+    {
+        string aAcct = iArgs.Get("account");
+        if (string.IsNullOrWhiteSpace(aAcct)) return SCP_CmdResult.Fail(2, "✗ close 需要 `account`");
+
+        string aReason = iArgs.Get("reason");
+        if (string.IsNullOrWhiteSpace(aReason))
+            return SCP_CmdResult.Fail(2, "✗ close 需要 `reason` —— 沒有理由的銷戶，事後沒有人答得出它為什麼被關");
+
+        SCP_BankAccount? aAcc = SCP_BankAccounts.TryLoad(iRoot, aAcct, out string aWhy);
+        if (aAcc == null) return SCP_CmdResult.Fail(1, "✗ 沒有這一戶：" + aWhy);
+        if (aAcc.Status == SCP_BankAccountStatus.Closed)
+            return SCP_CmdResult.Success($"・`{aAcc.Id}` 本來就已經銷戶（{aAcc.ClosedAtUtc}）—— 這次沒有動作")
+                                .AddValue("already_closed", "1");
+
+        int aBal = SCP_BankLedger.GetBalance(iRoot, aAcc.Id);
+        if (aBal != 0)
+            return SCP_CmdResult.Fail(1, $"✗ `{aAcc.Id}` 餘額是 {aBal}，**不是 0 ⇒ 不准銷戶**。"
+                                         + " 關掉一個還有錢的戶頭，那筆錢會留在總額裡而沒有人能動它。"
+                                         + " 先把錢處置掉（轉走或補反向分錄），處置才會留在帳本上看得見。");
+
+        aAcc.Status = SCP_BankAccountStatus.Closed;
+        aAcc.ClosedAtUtc = System.DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+        aAcc.ClosedReason = aReason;
+        if (!SCP_BankAccounts.TrySave(iRoot, aAcc, out string aSaveWhy))
+            return SCP_CmdResult.Fail(1, "✗ 銷戶沒有落盤：" + aSaveWhy);
+
+        var aResult = SCP_CmdResult.Success($"✓ 已銷戶 `{aAcc.Id}`（餘額 0）　理由：{aReason}");
+        aResult.Lines.Add($"  檔案：{SCP_BankAccounts.AccountPath(iRoot, aAcc.Id)}（⛔ 檔留著，狀態改 closed）");
+        aResult.AddValue("account", aAcc.Id);
+        aResult.AddValue("closed", "1");
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：`op=reopen` —— 把銷戶**開回來**。
+    // 🩸 為什麼一定要有（2026-09-17 血證）：我先做了 `close` 才發現那一戶**有主人**
+    //    （`Luna` 是 @kaguya 的綁定，只是綁在 BTC 區），而當時**沒有回頭路** ——
+    //    唯一的選項是手改 `accounts/<id>.json`，那是繞過工具去動錢的資料。
+    //    ⇒ 一個不可逆的狀態變更，等於逼下一個人去手改檔案。**可逆是入口的責任，不是使用者的運氣。**
+    // 數值影響：只翻狀態欄，⛔ 不動任何分錄、不動餘額。
+    // ===========================================================
+    static SCP_CmdResult OpReopen(string iRoot, SCP_CmdArgs iArgs)
+    {
+        string aAcct = iArgs.Get("account");
+        if (string.IsNullOrWhiteSpace(aAcct)) return SCP_CmdResult.Fail(2, "✗ reopen 需要 `account`");
+
+        string aReason = iArgs.Get("reason");
+        if (string.IsNullOrWhiteSpace(aReason))
+            return SCP_CmdResult.Fail(2, "✗ reopen 需要 `reason` —— 開回來跟關掉一樣要說得出為什麼");
+
+        SCP_BankAccount? aAcc = SCP_BankAccounts.TryLoad(iRoot, aAcct, out string aWhy);
+        if (aAcc == null) return SCP_CmdResult.Fail(1, "✗ 沒有這一戶：" + aWhy);
+        if (aAcc.Status != SCP_BankAccountStatus.Closed)
+            return SCP_CmdResult.Success($"・`{aAcc.Id}` 本來就是開著的 —— 這次沒有動作")
+                                .AddValue("already_open", "1");
+
+        string aWasClosedAt = aAcc.ClosedAtUtc, aWasReason = aAcc.ClosedReason;
+        aAcc.Status = SCP_BankAccountStatus.Open;
+        aAcc.ClosedAtUtc = "";
+        aAcc.ClosedReason = "";
+        if (!SCP_BankAccounts.TrySave(iRoot, aAcc, out string aSaveWhy))
+            return SCP_CmdResult.Fail(1, "✗ 開回來沒有落盤：" + aSaveWhy);
+
+        var aResult = SCP_CmdResult.Success($"✓ 已開回 `{aAcc.Id}`　理由：{aReason}");
+        aResult.Lines.Add($"  （原本銷於 {aWasClosedAt}，理由：{aWasReason}）");
+        aResult.AddValue("account", aAcc.Id);
+        aResult.AddValue("reopened", "1");
         return aResult;
     }
 
