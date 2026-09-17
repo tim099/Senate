@@ -410,23 +410,11 @@ public static class Program
             //   （窗卡住 ⇒ 等／窗已經不在了 ⇒ 重開），而心跳檔分不出它們 ——
             //   那是窗自己寫的，停筆後留下的最後一行跟「正忙著」長得一樣。
             //   ⇒ 這裡問一次作業系統（窗以外的路徑），問不到就照實說問不到。
+            // ⚠ TASK-0233：那三句話的措辭**不在這裡**了 —— 心跳過期那條路要印一模一樣的三種，
+            //   兩邊各寫一次的話下次只會有一邊被改（而那一邊不會叫）。⇒ 共用 PrintWhyNoAnswer。
             int aPid = aStatus.Heartbeat?.Pid ?? 0;
-            bool? aProcAlive = GuiBridge.ProcessAlive(aPid);
             Console.Error.WriteLine($"✗ 窗沒有在 {GuiBridge.RequestTimeoutMs / 1000} 秒內回應（pid={aPid}）");
-            switch (aProcAlive)
-            {
-                case false:
-                    Console.Error.WriteLine("  ⇒ 那個 pid **查無此行程**（問的是作業系統，不是它自己寫的心跳檔）⇒ 窗已經不在了。");
-                    Console.Error.WriteLine("  處置：重開 —— `senate ui --window`");
-                    break;
-                case true:
-                    Console.Error.WriteLine("  ⇒ 行程還在，只是這一筆沒答 ⇒ 它可能正卡在一幀很重的東西上。");
-                    Console.Error.WriteLine("  處置：等一下再問一次；一直不答就關掉它（`taskkill /PID <pid> /F`）再重開。");
-                    break;
-                default:
-                    Console.Error.WriteLine("  ⇒ 那個 pid 在不在**問不到**（沒有 pid 或查詢被擋）⇒ ⛔ 這裡不猜是哪一種。");
-                    break;
-            }
+            GuiBridge.PrintWhyNoAnswer(aPid, "這一筆沒答", Console.Error.WriteLine);
             // ⚠ 這一行是**心跳檔裡的最後一筆**，不是「它還活著」的證據 —— 窗死了它照樣印得出來。
             Console.Error.WriteLine($"  心跳檔最後一筆 fps（窗停筆後仍讀得到，⛔ 不是活體證據）：{aStatus.Heartbeat?.FpsRecent}");
             Console.Error.WriteLine("  ⛔ 逾時**不會**改用本地畫一次 —— 那份輸出跟窗上的畫面沒有關係。");

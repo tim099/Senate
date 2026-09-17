@@ -168,11 +168,19 @@ public static class GuiBridge
     /// <summary>窗沒在跑時該印的那幾行 —— ⛔ 一句話都不要改成「已改用文字模式」。</summary>
     public static void PrintNotRunning(GuiBridgeStatus iStatus, Action<string> iErr)
     {
+        bool aSaidWhatToDo = false;
         iErr("✗ 常駐視窗沒在跑 —— 這道指令問的是「那顆窗身上有哪些可以點」，沒有窗就沒有答案。");
         if (iStatus.Error != null) iErr($"  心跳：{iStatus.Error}");
         else if (iStatus.Heartbeat?.AgeSeconds() is { } aAge)
-            iErr($"  心跳停了 {aAge:0.0} 秒（判死門檻 {HeartbeatStaleSeconds:0.#} 秒）⇒ 窗可能卡住或已被關掉");
-        iErr("  開窗：senate ui --window");
+        {
+            iErr($"  心跳停了 {aAge:0.0} 秒（判死門檻 {HeartbeatStaleSeconds:0.#} 秒）");
+            // 🩸 TASK-0233：這一行以前是「⇒ 窗可能卡住或已被關掉」—— 一個「或」把兩個
+            //   **處置相反**的成因併成一句，而那個 pid 就在手上、從來沒有人去問作業系統。
+            aSaidWhatToDo = PrintWhyNoAnswer(iStatus.Heartbeat?.Pid ?? 0, "心跳停了", iErr);
+        }
+        // ⚠ 上面講得出處置時就不要再印一句通用的「開窗」—— 兩句並排時，
+        //   「等一下再問」與「開窗」會讀起來像兩個互相矛盾的建議。
+        if (!aSaidWhatToDo) iErr("  開窗：senate ui --window");
         iErr("  ⛔ **不會**自動退回 CLI 自己畫一次 —— 那棵樹描述的是另一個宇宙的畫面。");
         iErr("     真的要那一份（headless／CI）就顯式帶 --local，它會在輸出開頭說明自己不是窗上的畫面。");
     }
@@ -239,6 +247,38 @@ public static class GuiBridge
         }
         catch (ArgumentException) { return false; }   // 查無此 pid ＝ 它真的不在了
         catch (Exception) { return null; }            // 權限等 ⇒ 我沒有答案，別假裝有
+    }
+
+    // ===========================================================
+    // 區塊職責：把「窗為什麼沒答」講成三種**各自帶處置**的話 —— 唯一一份措辭。
+    // 物理意義：兩條路會走到這裡，而它們量到的症狀不同、成因的分法一樣：
+    //           · 心跳過期（Probe 判死，>{HeartbeatStaleSeconds} 秒）—— 多數人隔一會兒才問時走這條
+    //           · 送出請求後逾時（{RequestTimeoutMs} ms）—— 只有在心跳還新的那幾秒內問得到
+    // 🩸 TASK-0233：TASK-0229 只修了後者，而前者原封不動地留著那句
+    //   「窗可能卡住或已被關掉」—— 同一個病活在另一條路上，而那條才是常走的。
+    //   ⇒ 所以措辭收成這一份：兩邊各寫一次的話，下次只會有一邊被改。
+    // ⛔ 三種答案都要說得出**處置**；說不出處置的那一種要照實說「不猜」，
+    //    因為「我不知道」跟「沒事」在讀的人眼裡差很多，在輸出上卻很容易長一樣。
+    // ===========================================================
+    /// <summary>照 pid 問一次作業系統，把「為什麼沒答」分成三種並各自附處置。</summary>
+    /// <param name="iSymptom">呼叫端量到的症狀，填進句子裡（例：「心跳停了」／「這一筆沒答」）。</param>
+    /// <returns>有沒有印出**處置** —— false ＝ 這一次答不出是哪一種，呼叫端該自己補一句通用出口。</returns>
+    public static bool PrintWhyNoAnswer(int iPid, string iSymptom, Action<string> iErr)
+    {
+        switch (ProcessAlive(iPid))
+        {
+            case false:
+                iErr($"  ⇒ 那個 pid **查無此行程**（問的是作業系統，不是它自己寫的心跳檔）⇒ 窗已經不在了。");
+                iErr("  處置：重開 —— `senate ui --window`");
+                return true;
+            case true:
+                iErr($"  ⇒ 行程還在（pid={iPid} 查得到），只是{iSymptom} ⇒ 它可能正卡在一幀很重的東西上。");
+                iErr($"  處置：等一下再問一次；一直不答就關掉它（`taskkill /PID {iPid} /F`）再重開。");
+                return true;
+            default:
+                iErr("  ⇒ 那個 pid 在不在**問不到**（沒有 pid 或查詢被擋）⇒ ⛔ 這裡不猜是哪一種。");
+                return false;
+        }
     }
 
     static void TryDelete(string iPath)
