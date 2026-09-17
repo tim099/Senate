@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using SCP.Core.Bank;
 using SCP.Core.Cmd;
 using SCP.Core.Gui;
 using SCP.Core.Letters;
@@ -77,6 +78,11 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         m_Letters = m_Model.LettersRoot;
         m_DataRoot = m_Model.AgentCommandsRoot;
         m_Regions = ScanRegions(m_Letters.Value);
+        // ⚠ 區域名讀**舊系統那一格**（`Treasury/bank_settings.json` 的 `currency_id`）——
+        //   新銀行不另立設定：兩份設定會對「這裡是哪一區」給出不同答案，而兩邊都是合法字串。
+        m_Region = m_DataRoot.Value.Length > 0
+            ? SCP_BankRegion.Read(m_DataRoot.Value, out m_RegionWhy)
+            : SCP_BankRegion.DefaultRegion;
         m_Loaded = false;
     }
 
@@ -102,12 +108,9 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         return new List<string>(aSet);
     }
 
-    string CurrentRegion(SCP_Ui g)
-    {
-        string aPick = g.FieldValue(RegionId, "");
-        if (aPick.Length > 0 && m_Regions.Contains(aPick)) return aPick;
-        return m_Regions.Count > 0 ? m_Regions[0] : "";
-    }
+    // ⛔ `CurrentRegion(SCP_Ui)` 已退場（Tim 2026-09-17「新銀行不用多區」）：
+    //   區域現在是**設定檔那一格**，不是「畫面上按了哪顆鈕」。
+    //   🩸 舊版的症狀：漏按一個區，跟「那一區沒有人」在畫面上完全同形。
 
     /// <summary>一個人在這一區的讀數。</summary>
     sealed class Row
@@ -142,7 +145,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         m_Accounts = new Dictionary<string, Acct>(StringComparer.Ordinal);
         m_Loaded = true;
 
-        string aRegion = CurrentRegion(g);
+        string aRegion = m_Region;
         if (m_Letters.Value.Length > 0 && aRegion.Length > 0)
         {
             foreach (string aName in SCP_PersonaProfile.PoolNames(m_Letters.Value, m => m_Problems.Add(m)))
@@ -249,29 +252,56 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         }
     }
 
+    // ===========================================================
+    // 區塊職責：區域那一列 —— **本棵資料樹只有一個區**（Tim 2026-09-17：「新銀行不用多區，參考原本的」）。
+    // 物理意義：值住在**舊系統那一格**（`Treasury/bank_settings.json` 的 `currency_id`），⛔ 新銀行不另立設定。
+    // 🩸 為什麼拿掉選擇器：它讓「我在看哪一區」變成一個**畫面狀態**，而錢的歸屬不該由當下按了哪顆鈕決定 ——
+    //   遷移那天就是靠人記得逐區各按一次，而漏按一區跟「那一區沒有人」在畫面上同形。
+    // ⚠ 改這個名字＝把全體 persona 的綁定檔重新定鍵（`letters/<persona>/bank/<區>.md`）
+    //   ⇒ 二段確認，而且**本頁不代為改名任何綁定檔**（那是另一件事，不該藏在一個輸入框後面）。
+    // ===========================================================
     void DrawRegionRow(SCP_Ui g)
     {
-        if (m_Regions.Count == 0)
-        {
-            g.Note("⚠ 掃不到任何區（`letters/<persona>/bank/*.md` 一個都沒有）"
-                   + " ⇒ 這不是「沒有區」，是信件庫路徑可能不對。");
-            return;
-        }
-        string aCur = CurrentRegion(g);
         using (g.Row())
         {
-            g.Label("區（＝幣別軸）：");
-            for (int i = 0; i < m_Regions.Count; ++i)
+            g.Label("區域（＝幣別軸）：**" + m_Region + "**");
+            g.Label("來源=" + (m_RegionWhy == null ? "`Treasury/bank_settings.json` 的 `currency_id`"
+                                                   : "⚠ 預設（" + m_RegionWhy + "）"));
+        }
+        if (m_Regions.Count > 1)
+        {
+            var aOther = new List<string>();
+            foreach (string r in m_Regions) if (r != m_Region) aOther.Add(r);
+            g.Note("・信件庫裡另外還有綁定檔：" + string.Join("、", aOther)
+                   + "　—— 那是**別棵樹的區**，本頁不處理它們（它們由那一區自己的資料根處理）。");
+        }
+
+        string aDraft = g.TextField("改區域名（⚠ 會把全體 persona 的綁定檔重新定鍵）", m_Region, "bank/f/region");
+        bool aArmed = g.FieldValue(PendingId, "") == "region:" + aDraft;
+        if (aDraft != m_Region && aDraft.Trim().Length > 0)
+        {
+            g.Note("⚠ 送出之後，`letters/<persona>/bank/" + m_Region + ".md` 這批檔**不會**自動改名 ⇒"
+                   + " 在它們改名之前，全員的帳號會解析不到。⛔ 本頁不代為改名。");
+            using (g.Row())
             {
-                string r = m_Regions[i];
-                if (g.Button(r == aCur ? "● " + r : "○ " + r, "bank/region/" + r))
+                if (g.Button(aArmed ? "⚠ 再按一次確認改區域名" : "改區域名", "bank/region/set"))
                 {
-                    g.SetField(RegionId, r);
-                    g.SetField(PendingId, "");
-                    m_Loaded = false;
-                    m_Mig = null;            // 換區 ⇒ 舊的對照表是另一區的，⛔ 不留著誤用
-                    m_Message = "・已切到 `" + r + "`（遷移對照表已清掉 —— 它是上一區的讀數）";
+                    if (!aArmed) { g.SetField(PendingId, "region:" + aDraft); m_Message = "⚠ 待確認：再按一次才會寫回設定檔"; }
+                    else
+                    {
+                        g.SetField(PendingId, "");
+                        if (SCP_BankRegion.Write(m_DataRoot.Value, aDraft, out string? aErr))
+                        {
+                            m_Message = "✅ 區域名已寫回 " + SCP_BankRegion.SettingsPath(m_DataRoot.Value);
+                            m_Loaded = false;
+                            m_Mig = null;      // 換區 ⇒ 舊的對照表是上一個區的讀數，⛔ 不留著誤用
+                            OnPush();          // 回讀，⛔ 不採信剛才那個 draft
+                        }
+                        else m_Message = "✗ " + aErr;
+                    }
                 }
+                if (aArmed && g.Button("取消", "bank/region/cancel"))
+                { g.SetField(PendingId, ""); m_Message = "・已取消（設定檔一個字都沒動）"; }
             }
         }
     }
@@ -406,13 +436,12 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             {
                 // ⚠ 在**按下去的這一刻**抓住是哪一區：取讀數跑在背景 thread 上，
                 //   那邊碰不到 `SCP_Ui`（也不該碰 —— 頁面狀態不是 thread-safe 的）。
-                m_Region = CurrentRegion(g);
                 Start("取舊餘額", FetchMigration);
             }
             if (m_Mig != null) g.Label("讀數時間：" + m_MigStamp + "（一取出來就開始過期）");
         }
 
-        if (m_Mig == null) TryLoadMigCache(CurrentRegion(g));
+        if (m_Mig == null) TryLoadMigCache(m_Region);
         if (m_Mig == null) { g.Note("（還沒有讀數 —— 這不是「舊帳本是空的」）"); return; }
 
         // ⚠ 讀數的**年齡**要印出來，⛔ 而且不自動過期。
@@ -524,8 +553,11 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                + "\n  " + aCacheWhy;
     }
 
-    /// <summary>取讀數當下那一區（背景 thread 讀不到 `SCP_Ui`，所以按下去時就抓起來）。</summary>
+    /// <summary>這棵樹的區域名 —— 來自 `Treasury/bank_settings.json` 的 `currency_id`（⛔ 不是畫面狀態）。</summary>
     string m_Region = "";
+
+    /// <summary>區域名**回退到預設**的理由（null ＝ 真的是設定檔說的）。⚠ 「沒設定」與「值壞了」不可同形。</summary>
+    string? m_RegionWhy;
 
     string MigCachePath(string iRegion)
         => Path.Combine(SenatePaths.RuntimeDir(m_Model.RepoRoot), "bank_migration_" + iRegion + ".tsv");
