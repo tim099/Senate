@@ -531,6 +531,9 @@ public static class Program
 
         // 鍵盤／剪貼簿診斷 —— 「Ctrl+V 沒反應」有三個斷點，而它們在畫面上長得一樣（見 DrawKeyDebug）。
         aWin.KeyDebug = HasFlag(iArgs, "--keydebug");
+        // 捲動探針（驗「TopBar 有沒有真的釘住」）：強制叫外層視窗往下捲，看它動不動得了
+        string? aScrollProbe = ArgValue(iArgs, "--scroll-probe");
+        if (aScrollProbe != null && int.TryParse(aScrollProbe, out int aProbeFrames)) aWin.ScrollProbeFrames = aProbeFrames;
         if (aWin.KeyDebug) Console.WriteLine("・keydebug 開著 —— 畫面底部會多一行鍵盤／剪貼簿讀數");
 
         // ⭐ soak：開真視窗**轉一段時間**再收工。截圖的 8 幀證明「畫得出來」，
@@ -1301,7 +1304,7 @@ public static class Program
         ["doctor"] = new[] { "--width", "--scale", "--size" },
         ["init"] = new string[0],
         ["ui"] = new[] { "--window", "--screenshot", "--soak", "--reset", "--click", "--set", "--toggle",
-                         "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--no-cleanup",
+                         "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--scroll-probe", "--no-cleanup",
                          "--width", "--scale", "--size", "--local" },
         ["submodule"] = new[] { "--checkout", "--pull", "--push", "--dry-run", "--yes", "--branch", "--fetch",
                                 "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },

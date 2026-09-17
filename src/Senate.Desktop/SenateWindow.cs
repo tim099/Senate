@@ -378,7 +378,7 @@ public sealed class SenateWindow : IDisposable
         // ⭐ 版面診斷：外層**不該**有捲動空間（TopBar 釘住的前提）。
         //   ⚠ 這一格是讀數不是保證 —— 它 > 0 就表示有東西把外層撐高了，而那時 TopBar 會被滾走。
         ImGui.TextUnformatted(
-            $"  外層捲動上限 ScrollMaxY = {ImGui.GetScrollMaxY():0.##}"
+            $"  外層 ScrollY = {ImGui.GetScrollY():0.##} ／ 上限 ScrollMaxY = {ImGui.GetScrollMaxY():0.##}"
             + "　← **不是 0 就表示外層仍會捲**（TopBar 會被滾出畫面）");
         ImGui.TextUnformatted(
             $"  自我對拍（不需按鍵）：注入 ModCtrl=true 之後 io.KeyCtrl 讀回 = {m_ProbeKeyCtrl}"
@@ -390,6 +390,18 @@ public sealed class SenateWindow : IDisposable
 
     /// <summary>開了就在畫面底部畫一行鍵盤／剪貼簿診斷（`ui --window --keydebug`）。</summary>
     public bool KeyDebug { get; set; }
+
+    /// <summary>
+    /// **捲動探針**：開頭這幾幀每幀強制叫**外層視窗**往下捲 200px。
+    /// <para>🩸 為什麼需要它（2026-09-17）：「TopBar 釘住了沒」是一個**行為**，
+    /// 而我連兩版都只驗了結構（頂欄畫在子區域外面）就宣告修好，兩次都被 Tim 用滾輪推翻。
+    /// ⇒ 唯一誠實的驗法是**真的叫它捲一次**再看畫面。
+    /// ⚠ 射程：它驗「外層捲不捲得動」，⛔ 不是「滾輪事件會不會被吃掉」——
+    /// 我第一版注入 `io.MouseWheel`，而那一格在 `NewFrame` 就被消化了（灌太晚），那個探針**沒有生效**。</para>
+    /// <para>用法：`senate ui --page <頁> --window --scroll-probe 6 --screenshot <png>` ——
+    /// 截圖裡頂欄還在 ＝ 釘住了；不見了 ＝ 沒釘住。⛔ 這一格不可以用「應該會」回答。</para>
+    /// </summary>
+    public int ScrollProbeFrames { get; set; }
 
     void OnRender(double iDelta)
     {
@@ -470,6 +482,16 @@ public sealed class SenateWindow : IDisposable
             ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
             | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoBringToFrontOnFocus
             | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
+        // ⭐ 捲動探針：**直接叫外層視窗往下捲**。
+        // ⚠ 它驗的是「外層捲不捲得動」，⛔ **不是**「滾輪事件會不會被吃掉」——
+        //   我第一版灌 `io.MouseWheel`，而那一格在 `NewFrame` 就被消化掉了（我灌太晚）⇒ 那個探針沒生效。
+        //   ⇒ 換成 `SetScrollY`：外層若真的釘住（`ScrollMaxY == 0`），它會被**夾回 0**、畫面不動；
+        //     外層若還能捲，這一捲就會把 TopBar 推出畫面 —— 那正是使用者回報的症狀。
+        // 📌 所以它是「症狀的探針」不是「輸入路徑的探針」。兩者的差別要講出來，
+        //    ⛔ 不可以拿它去宣稱「滾輪沒問題」。
+        if (ScrollProbeFrames > 0 && m_Frame <= ScrollProbeFrames)
+            ImGui.SetScrollY(ImGui.GetScrollY() + 200f);
 
         // ⚠ keydebug **畫在內容之前**（＝跟著釘住的那一段一起留在畫面上）。
         // 🩸 2026-09-17：外層視窗關掉捲動之後，內容子區域吃掉所有剩餘高度
