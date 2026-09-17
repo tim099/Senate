@@ -143,7 +143,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     /// 「指紋說現在是不帶 fetch」的重掃蓋掉 —— 那顆鈕按了等於沒按，
     /// 而畫面上看不出它被回滾了。⇒ 兩個機制搶著決定同一件事，收斂成一個。</para>
     /// </summary>
-    protected override void ToolBarButtons(SCP_Ui g)
+    protected override void TopBarButtons(SCP_Ui g)
     {
         // ⚠ ToggleValue / FieldValue 只讀驅動端的字典、不建節點 ⇒ 工具列讀得到那些設定的值，
         //   即使它們的節點要等 DrawContent 才被建出來（工具列**先於**內容區畫）。
@@ -670,7 +670,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     {
         // 預設全關：三個開關各自都會**擴大**影響範圍（多跑網路／多動 root／多推一個遠端），
         // 而擴大範圍要人顯式點頭，不能是預設值。
-        // 這個開關是 fetch 的**唯一**入口（工具列那顆鈕吃它的值，見 ToolBarButtons 的血證）。
+        // 這個開關是 fetch 的**唯一**入口（工具列那顆鈕吃它的值，見 TopBarButtons 的血證）。
         // 一開就會立刻重掃並走網路 —— 那是使用者按下去要的東西，不是副作用。
         // ⚠ 預設值＝存檔值 ＞ 全關 —— 存過的 fetch=true 會在開頁第一輪就走網路，
         //   那不是副作用：它是使用者上次顯式點過頭、然後按了「儲存本頁設定」的意圖。

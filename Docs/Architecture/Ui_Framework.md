@@ -300,8 +300,8 @@ SCP_GuiPage（abstract）
 ```
 SCP_GuiToolPage : SCP_GuiPage
   ├── MenuGroup (string?)    ← 入口頁清單的 opt-in ＋ 分組名（null ＝ 不列）
-  ├── DrawToolBar(ui)        ← ◀ 返回｜⌂ 首頁｜<子類的鈕>｜page key
-  │     ├── ToolBarButtons(ui)   ← 子類的擴充點（＝ UCL 的 TopBarButtons）
+  ├── DrawTopBar(ui)        ← ◀ 返回｜⌂ 首頁｜<子類的鈕>｜page key
+  │     ├── TopBarButtons(ui)   ← 子類的擴充點（＝ UCL 的 TopBarButtons）
   │     └── ShowBackButton / ShowHomeButton / ShowKeyHint
   ├── DrawContent(ui)        ← 子類實作（＝ UCL 的 ContentOnGUI）
   └── Draw(ui)  **sealed**   ← 工具列 ＋ 內容，不給覆寫
@@ -360,7 +360,7 @@ class NoCtor   : B { }                                      // F = null
 
 ⚠ page key **不等於**類別名（`home` ↔ `HomePage`），所以 key hint 不能拿來頂這一格。
 
-⚠ `DrawToolBar` **先收集動作、離開 `Row` 之後才執行** —— handler 裡的 push／pop 會改變
+⚠ `DrawTopBar` **先收集動作、離開 `Row` 之後才執行** —— handler 裡的 push／pop 會改變
 `ShowBackButton` 的答案，在同一輪的 Row 中途改變版面會讓後面幾顆鈕的 id 跟著漂。
 
 ⚠ 工具列**不 try/catch**。UCL 那側包了 `Debug.LogException` 吞得起來，共用層沒有 logger ——

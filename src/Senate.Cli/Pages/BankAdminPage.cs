@@ -79,7 +79,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     // ⚠ 下拉展開時會把工具列撐高（選項是 inline 畫的）—— 那是刻意的：
     //   展開＝正在挑人，這時本來就該讓它佔版面；收合之後只剩兩顆鈕。
     // ===========================================================
-    protected override void ToolBarButtons(SCP_Ui iUi)
+    protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (!m_Loaded) Reload(iUi);
 

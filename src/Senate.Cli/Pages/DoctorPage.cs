@@ -34,7 +34,7 @@ public sealed class DoctorPage : SCP_GuiToolPage
     /// ⚠ id 沿用舊的（`doctor/refresh` / `doctor/open-config`）：那是契約，
     /// 版面搬家不可以順手換掉別人腳本裡的字。
     /// </summary>
-    protected override void ToolBarButtons(SCP_Ui g)
+    protected override void TopBarButtons(SCP_Ui g)
     {
         if (g.Button("重新取讀數", "doctor/refresh")) m_Model.Refresh();
         if (g.Button("開啟設定檔", "doctor/open-config")) OpenConfig();
