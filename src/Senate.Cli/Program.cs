@@ -575,7 +575,13 @@ public static class Program
 
         try
         {
-            aWin.Run(iShot);
+            // ⭐ `--win-size <寬>x<高>`：把視窗開成指定尺寸。
+            // 🩸 TASK-0236：`Run()` 一直吃得下 width/height，而 CLI **從來沒有傳** ——
+            //   ⇒ 小視窗那個尺寸**結構上驗不到**，不是「還沒驗」。
+            //   而 Tim 三次回報的截圖都是 ~300px 高的小窗，我三次都在 1280×800 上驗。
+            //   ⇒ 受測體涵蓋不到使用者的尺寸時，全綠只是在描述另一台機器。
+            (int aWinW, int aWinH) = ParseWinSize(ArgValue(iArgs, "--win-size"));
+            aWin.Run(iShot, 8, aWinW, aWinH);
             if (aWin.SoakReading is { } aReading) Console.WriteLine(aReading);
             if (aWin.ScrollReading is { } aScrollReading) Console.WriteLine(aScrollReading);
             Console.WriteLine($"字型：{aWin.LoadedFonts}");
@@ -1214,6 +1220,23 @@ public static class Program
         return Environment.CurrentDirectory;
     }
 
+    /// <summary>
+    /// `--win-size 700x300` → (700, 300)。給不出來就回 (0,0) ＝ **用預設，不猜**。
+    /// <para>⚠ 解不開時**印一行**再退回預設 —— 「我打錯了」與「我沒帶」在畫面上不得同形，
+    /// 否則驗小視窗的人會在一個 1280×800 的窗上拿到全綠。</para>
+    /// </summary>
+    static (int w, int h) ParseWinSize(string? iText)
+    {
+        if (string.IsNullOrWhiteSpace(iText)) return (0, 0);
+        string[] aParts = iText.Split('x', 'X', '*');
+        if (aParts.Length == 2
+            && int.TryParse(aParts[0], out int aW) && int.TryParse(aParts[1], out int aH)
+            && aW > 0 && aH > 0)
+            return (aW, aH);
+        Console.Error.WriteLine($"⚠ --win-size `{iText}` 解不開（要 <寬>x<高>，例 700x300）—— 這次用預設尺寸");
+        return (0, 0);
+    }
+
     static int Width(string[] iArgs)
         => int.TryParse(ArgValue(iArgs, "--width"), out int w) && w >= 40 ? w : SCP_GuiTextRenderer.DefaultWidth;
 
@@ -1310,7 +1333,7 @@ public static class Program
         ["init"] = new string[0],
         ["ui"] = new[] { "--window", "--screenshot", "--soak", "--reset", "--click", "--set", "--toggle",
                          "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--scroll-probe", "--unpin",
-                         "--no-cleanup", "--width", "--scale", "--size", "--local" },
+                         "--no-cleanup", "--width", "--scale", "--size", "--win-size", "--local" },
         ["submodule"] = new[] { "--checkout", "--pull", "--push", "--dry-run", "--yes", "--branch", "--fetch",
                                 "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },
         ["ucmd"] = new[] { "--arg", "--arg-file", "--persona", "--project", "--timeout", "--lane", "--no-wait",
@@ -1328,7 +1351,7 @@ public static class Program
     static readonly HashSet<string> ValueFlags = new(StringComparer.OrdinalIgnoreCase)
     {
         "--screenshot", "--soak", "--click", "--set", "--toggle", "--fold", "--page",
-        "--width", "--scale", "--size", "--branch", "--only", "--set-branch", "--root", "--project",
+        "--width", "--scale", "--size", "--win-size", "--branch", "--only", "--set-branch", "--root", "--project",
         "--arg", "--arg-file", "--persona", "--timeout", "--lane", "--output-file",
         "--ack-timeout", "--poll-interval",
     };

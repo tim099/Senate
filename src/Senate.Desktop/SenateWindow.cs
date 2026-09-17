@@ -67,6 +67,9 @@ public sealed class SenateWindow : IDisposable
     /// </summary>
     public string? ScrollReading { get; private set; }
 
+    // 外層視窗的捲動讀數（每幀更新，收工時併進 ScrollReading）。
+    float m_OuterScrollY, m_OuterScrollMaxY, m_OuterContentH, m_OuterWindowH;
+
     // ── 常駐窗的對外接點（TASK-0214）──────────────────────────────────
     // 區塊職責：讓宿主在**每一幀畫完之後**插手一次 —— 拿到這一幀真的畫出來的那棵樹。
     // 數值影響：⭐ 每幀的固定成本＝**一次 null 檢查**（OnFrameServed?.Invoke）＋ 幾個數的累加。
@@ -526,6 +529,16 @@ public sealed class SenateWindow : IDisposable
         // 套進 renderer 是為了下一幀（跟按鈕事件同一個「慢一幀」的節奏）。
         m_Renderer.ApplyWrites(aUi);
 
+        // ⭐ **外層視窗自己的捲動讀數** —— 跟子區域那一格並排印，⛔ 不是二選一。
+        // 🩸 TASK-0236 第四次：我只印了子區域（`scp/content`），量到它捲得動、頂欄沒動，
+        //   就宣告修好了 —— 而 Tim 用滾輪照樣把頂欄推出畫面。
+        //   「子區域會捲」與「外層不會捲」是**兩個獨立的命題**，我只量了第一個。
+        //   ⇒ 兩個容器都要有讀數；只印一個的話，另一個出事時畫面上不會有任何痕跡。
+        m_OuterScrollY = ImGui.GetScrollY();
+        m_OuterScrollMaxY = ImGui.GetScrollMaxY();
+        m_OuterContentH = ImGui.GetWindowContentRegionMax().Y - ImGui.GetWindowContentRegionMin().Y;
+        m_OuterWindowH = ImGui.GetWindowSize().Y;
+
         ImGui.End();
         m_Controller.Render();
 
@@ -579,7 +592,10 @@ public sealed class SenateWindow : IDisposable
         // ⚠ 取在**關窗前的最後一幀** —— 探針是跨幀累積的，中途任何一幀都還沒捲到底。
         if (ScrollProbeFrames > 0)
             ScrollReading = $"scroll-probe：{m_Renderer.LastContentScrollReading ?? "（子區域這一幀沒有被畫出來 —— 這是「沒量到」，不是「捲不動」）"}"
-                + $"｜pinned={(IgnorePinned ? "ignored（反向對照）" : "on")}｜probe {ScrollProbeFrames} 幀 × 200px";
+                + $"\n　　　　外層視窗：ScrollY={m_OuterScrollY:0.#} / ScrollMaxY={m_OuterScrollMaxY:0.#}"
+                + $"（內容高 {m_OuterContentH:0.#} / 視窗高 {m_OuterWindowH:0.#}）"
+                + (m_OuterScrollMaxY > 0.5f ? "　⛔ **外層有捲動範圍 —— 頂欄會被推出畫面**" : "　✅ 外層釘死")
+                + $"\n　　　　pinned={(IgnorePinned ? "ignored（反向對照）" : "on")}｜probe {ScrollProbeFrames} 幀 × 200px";
 
         if (m_ScreenshotPath != null)
             SenateScreenshot.Capture(m_Gl, m_Window!.FramebufferSize.X, m_Window.FramebufferSize.Y, m_ScreenshotPath);
