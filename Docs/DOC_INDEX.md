@@ -19,6 +19,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 |---|---|
 | [Overview](Architecture/Overview.md) | 分層（SCP_Core / Core / Desktop / Cli）、共用碼的邊界與**方言限制**、單一寫入者原則 |
 | [Data_Layout](Architecture/Data_Layout.md) | **`SenateData/` 資料根**：三層分類判準（config / prefs / runtime）、新東西該往哪放、**路徑分兩族**（Senate 自己的檔 vs 外部動態路徑）與各自的唯一決定點、⛔ 「決定點包含值存在哪」、⛔ 改路徑必須同時做 migration |
+| [Voucher_System](Architecture/Voucher_System.md) | **券＝以 id 區分的貨幣**：檔案格式（永久 ＋ 多筆限時）、⛔ **只有 Server 能寫**、券不記歷史與它的代價、`granted` 為什麼要存、分區遷移的冪等鍵、🩸 發放端／消費端分岔那次的讀數 |
 | [Ui_Framework](Architecture/Ui_Framework.md) | UI 中間層：節點樹、撰寫 API、四種 renderer／驅動方式、**id 規則**、慢一幀的事件語意、⛔ **頁面要宿主的值一律問介面**（不自存第二份設定） |
 
 ## Workflows — 怎麼做事

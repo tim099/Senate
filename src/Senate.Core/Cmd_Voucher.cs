@@ -41,7 +41,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             var aSpecs = new List<SCP_CmdArgSpec>
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "balance",
-                    iChoices: new[] { "balance", "list", "grant", "consume", "migrate" }),
+                    iChoices: new[] { "balance", "list", "usage", "grant", "consume", "migrate" }),
                 new SCP_CmdArgSpec("letters_root",
                     "persona 信件夾根（絕對路徑）。⛔ 本層**不推導**它 —— 跨專案共用的根，推導就會跟著專案漂",
                     iRequired: true),
@@ -86,10 +86,11 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         return aOp switch
         {
             "balance" => OpBalance(aLetters, aPersona, aVoucher),
+            "usage" => OpUsage(aLetters, aPersona, aVoucher, iArgs),
             "grant" => OpGrant(aLetters, aPersona, aVoucher, iArgs),
             "consume" => OpConsume(aLetters, aPersona, aVoucher, iArgs),
             "migrate" => OpMigrate(aLetters, aPersona, aVoucher, iArgs),
-            _ => SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（balance|list|grant|consume|migrate）"),
+            _ => SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（balance|list|usage|grant|consume|migrate）"),
         };
     }
 
@@ -143,6 +144,61 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         return aResult;
     }
 
+    // ===========================================================
+    // 區塊職責：某一批（按 `ref`）的**用量三值** —— 發了幾張／還剩幾張／用了幾張。
+    // 物理意義：自由時間收工要回報「本場那 10 顆免費像素用了幾顆」，
+    //          而 `op=balance` 回的是**所有**未過期限時券 ⇒ 同時持有兩場的券時它答的是別的問題。
+    // 數值影響：純讀。
+    //
+    // 🩸 判準：**`found=0` 時三個數字一律 0，⛔ 不回一個「真實的發放量」**。
+    //   回了的話呼叫端只要做一次「granted − 0」就會印出「全數用畢」——
+    //   TASK-0195 那隻病（**查無被算成用完**）就是這樣長出來的，
+    //   而兩者在畫面上一模一樣。⇒ 讓那個減法在物理上拿不到數字。
+    //
+    // ⚠ **射程**：券不記歷史 ⇒ 批次在過期後的下一次寫入就被清掉
+    //   ⇒ 那之後本 op 只能回 `found=0`（＝「我不知道」，⛔ 不是「沒用」）。
+    //   這是「不留歷史」這個拍板的**已知代價**，不是漏掉的一格。
+    // ===========================================================
+    static SCP_CmdResult OpUsage(SCP_LettersRoot iLetters, string iPersona, string iVoucher, SCP_CmdArgs iArgs)
+    {
+        string aRef = iArgs.Get("ref").Trim();
+        if (aRef.Length == 0)
+            return SCP_CmdResult.Fail(2, "✗ op=usage 缺 `ref` —— ⛔ 不給就回總量的話，"
+                                       + "那是拿「沒指定」冒充「全部」");
+
+        SCP_VoucherBook aBook = SCP_VoucherStore.Load(iLetters, iPersona, iVoucher, out string? aProblem);
+        if (aProblem != null) return SCP_CmdResult.Fail(1, "✗ " + aProblem);
+
+        DateTime aNow = DateTime.UtcNow;
+        int aGranted = 0, aRemain = 0, aAlive = 0;
+        bool aFound = false;
+        foreach (SCP_VoucherBatch aBatch in aBook.Expiring)
+        {
+            if (!string.Equals(aBatch.Ref, aRef, StringComparison.Ordinal)) continue;
+            aFound = true;
+            aGranted += aBatch.Granted > 0 ? aBatch.Granted : aBatch.Amount;
+            aRemain += aBatch.Amount;
+            if (SCP_VoucherBook.IsAlive(aBatch, aNow)) aAlive += aBatch.Amount;
+        }
+        if (!aFound) { aGranted = 0; aRemain = 0; aAlive = 0; }
+        int aUsed = aGranted - aRemain;
+        if (aUsed < 0) aUsed = 0;
+
+        var aResult = SCP_CmdResult.Success(aFound
+            ? $"# `{iVoucher}`　`{iPersona}`　`{aRef}`：發 **{aGranted}**　剩 **{aRemain}**　用 **{aUsed}**"
+            : $"# `{iVoucher}`　`{iPersona}`　`{aRef}`：**查無這一批** ——"
+              + " ⛔ 那是「我不知道」不是「一張都沒用」（批次可能已過期被清掉）");
+        if (aFound)
+            aResult.Lines.Add($"  · 其中**還花得掉的** {aAlive}"
+                              + (aAlive < aRemain ? "　⚠ 其餘已過期（下次寫入時清掉）" : ""));
+        aResult.AddValue("found", aFound ? "1" : "0");
+        aResult.AddValue("granted", aGranted.ToString());
+        aResult.AddValue("remain", aRemain.ToString());
+        aResult.AddValue("alive", aAlive.ToString());
+        aResult.AddValue("used", aUsed.ToString());
+        return aResult;
+    }
+
     // ── 寫 ────────────────────────────────────────────────────
 
     /// <summary>寫入前的共用閘：`region` 必填（判準②）。</summary>
@@ -173,6 +229,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             aBook.Expiring.Add(new SCP_VoucherBatch
             {
                 Amount = aAmount,
+                Granted = aAmount,   // ⚠ 發放量，⛔ 之後不再變動（`op=usage` 靠它答「用了幾張」）
                 ExpiresAtUtc = aExpires,
                 GrantedAtUtc = aNow.ToString("o", CultureInfo.InvariantCulture),
                 Source = iArgs.Get("source"),
@@ -286,6 +343,9 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
                         aExpiring.Add(new SCP_VoucherBatch
                         {
                             Amount = aRemain,
+                            // ⚠ 發放量取舊檔的 `amount`（不是 remain）—— 遷過來之後
+                            //   「本場發了幾張」才答得出來；remain 只回答「還剩幾張」。
+                            Granted = aItem.GetInt("amount", aRemain),
                             ExpiresAtUtc = aExpires,
                             GrantedAtUtc = aItem.GetString("granted_at", ""),
                             Source = aItem.GetString("source", ""),
