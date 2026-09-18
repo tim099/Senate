@@ -56,6 +56,10 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     /// <summary>新銀行帳戶表：id → （有沒有銷戶, 餘額）。來自 `cmd bank op=accounts` 的 `acc/<id>` 欄位。</summary>
     Dictionary<string, Acct> m_Accounts = new Dictionary<string, Acct>(StringComparer.Ordinal);
 
+    /// <summary>待審單（null ＝ 還沒讀過 —— ⛔ 跟「讀過了、零張」不同形）。</summary>
+    List<SCP_PayoutRequest>? m_Payouts;
+    List<SCP_TransferRequest>? m_Transfers;
+
     List<string> m_Problems = new List<string>();
     string? m_Message;
     bool m_Loaded;
@@ -301,7 +305,14 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         g.Separator();
         DrawAccountTable(g);
         g.Separator();
+        DrawOpenPanel(g);       // ⛔ 開戶在選取之外：新帳戶依定義還不在下拉裡
+        DrawRebindPanel(g);     // 🔗 換綁 ＝ 「這個人的錢進哪一戶」，那是銀行帳戶操作
+        g.Separator();
         DrawPostPanel(g);
+        g.Separator();
+        DrawVoucherPanel(g);
+        g.Separator();
+        DrawApprovalPanel(g);
         g.Separator();
         // ⭐ 遷移是本頁最長、也最少用的一段 ⇒ **預設收起來**（Tim 2026-09-17：大區塊加摺疊）。
         // ⚠ 收合時仍要看得出「這裡有沒有事」—— 對照表取過沒、取的是哪一刻的讀數。
@@ -543,6 +554,41 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     //   共用的話，收起放欄位的那一格會讓另一格送出時**靜默少三欄**，
     //   而少的那三欄正是 `cmd bank` 會擋的那三欄 —— 失效樣子是「按了沒反應」。
 
+    // ===========================================================
+    // 區塊職責：🏦 **開戶** —— 獨立一格，⛔ **不需要先選 persona／帳戶**。
+    // 物理意義：Tim 2026-09-18：「開戶功能不用選取 persona（因為是新建帳戶）」。
+    //          新帳戶**依定義還不在下拉裡** ⇒ 拿「選取」當前提，等於要求先選一個不存在的東西。
+    // 🩸 所以這是本頁**唯一**允許自由輸入帳號的地方，而它安全的理由要寫明：
+    //   ① 開戶**不動錢** —— 打錯字的代價是多一個空帳戶，⛔ 不是動到別人的餘額
+    //   ② `cmd bank` 自己驗 id 合法性與「已經開過了」⇒ 本頁不先攔（兩份驗證遲早會不一樣）
+    //   ⚠ 對照：打款／轉帳**照樣**只能對選取的那一戶動 —— 那兩件事打錯字會動到別人的錢。
+    // ===========================================================
+    void DrawOpenPanel(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("🏦 開戶（新建帳戶 —— ⛔ 不必先選 persona）", "bank/fold/open", iDefaultOpen: false))
+        {
+            if (!aFold.Open) { g.Note("　（收合中）・新帳戶還不在下拉裡，所以這一格自己收帳號"); return; }
+            g.Note("在新銀行建一個帳戶檔。⛔ **不動錢**（開戶不等於有餘額）。"
+                   + "⚠ 這是本頁唯一可以手打帳號的地方 —— 新帳戶依定義還不在下拉裡，"
+                   + "而開戶打錯字的代價是多一個空帳戶，⛔ 不是動到別人的餘額。");
+            string aId = g.TextField("帳號 id（寫入端會正規化成小寫）", g.FieldValue("bank/f/openid", ""), "bank/f/openid");
+            string aName = g.TextField("顯示名（可以有大小寫與空白，⛔ 不當 id）",
+                                       g.FieldValue("bank/f/name", ""), "bank/f/name");
+            if (aId.Trim().Length > 0 && FindAcct(aId.Trim()) != null)
+                g.Note($"・`{aId.Trim()}` **已經有帳戶檔了** —— 再按會被 `cmd bank` 擋下（那是對的，本頁不先攔）。");
+            if (g.Button("開戶", "bank/do/open2"))
+            {
+                string aTarget = aId.Trim();
+                if (aTarget.Length == 0) { m_Message = "⚠ 帳號 id 是空的 ⇒ **沒有送出**（⛔ 不替你挑一個）"; return; }
+                Start("開戶 " + aTarget, () =>
+                {
+                    var aArgs = new Dictionary<string, string> { ["account"] = aTarget, ["display_name"] = aName };
+                    return Describe(Dispatch("open", aArgs), aTarget);
+                });
+            }
+        }
+    }
+
     void DrawPostPanel(SCP_Ui g)
     {
         g.Title("帳號操作（對**選取的**那一戶）");
@@ -564,37 +610,9 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         g.Label($"目標帳戶：**{aAcct}**（餘額 {BalanceText(aAcct)}）"
                 + (aSelP.Length > 0 ? $"　persona：**{aSelP}**" : "　persona：（未選）"));
 
-        DrawOpenFold(g, aAcct);
+        // ⛔ 開戶已經搬出去了（`DrawOpenPanel`）—— 它不該掛在「選取的那一戶」底下。
         DrawDepositFold(g, aAcct, aSelP);
         DrawTransferFold(g, aAcct, aSelP);
-    }
-
-    /// <summary>🏦 開戶 —— **不動錢**，所以不做二段確認。</summary>
-    void DrawOpenFold(SCP_Ui g, string iAcct)
-    {
-        bool aExists = FindAcct(iAcct) != null;
-        using (var aFold = g.Fold("🏦 開戶", "bank/fold/open", iDefaultOpen: false))
-        {
-            if (!aFold.Open)
-            {
-                g.Note("　（收合中）" + (aExists ? "・這一戶**已經開過了**" : "⚠ 這一戶在新銀行**還沒開戶**"));
-                return;
-            }
-            g.Note("在新銀行替選取的那一戶建帳戶檔。⛔ **不動錢**（開戶不等於有餘額）。");
-            if (aExists)
-                g.Note("・`" + iAcct + "` 已經有帳戶檔了 —— 再按一次會被 `cmd bank` 擋下（那是對的，本頁不先攔）。");
-            using (g.Row())
-            {
-                string aName = g.TextField("顯示名（可以有大小寫與空白，⛔ 不當 id）",
-                                           g.FieldValue("bank/f/name", ""), "bank/f/name");
-                if (g.Button("開戶", "bank/do/open"))
-                    Start("開戶 " + iAcct, () =>
-                    {
-                        var aArgs = new Dictionary<string, string> { ["account"] = iAcct, ["display_name"] = aName };
-                        return Describe(Dispatch("open", aArgs), iAcct);
-                    });
-            }
-        }
     }
 
     /// <summary>💵 打款 —— 單向動一戶（入帳／扣款）。二段確認。</summary>
@@ -1094,6 +1112,332 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             aSb.Append("\n  ⚠ 有判重 ⇒ **那幾戶的錢沒有搬**。開帳只能有一次，")
                .Append("所以要嘛它本來就搬過了，要嘛是試跑的殘留要先清掉。");
         return (aFailed > 0 || aDuplicate > 0 ? "⚠ " : "✅ ") + aHead + aSb.ToString();
+    }
+
+    // ===========================================================
+    // 區塊職責：🎟 **券** —— 查／發（TASK-0243）。形狀取自 Unity `UCL_BankAdminPage` 的券區塊。
+    // 物理意義：券**不是錢**：不同資源、不同帳、不同 Cmd（`voucher` ⛔ 不是 `bank`）。
+    //          放在本頁是因為兩者都是「這個人有多少可用資源」，⛔ 而它們的數字**不可以相加**。
+    // 🩸 券綁 **persona** 不綁帳戶 ⇒ 本格只吃上面那格 persona 下拉。
+    //   ⚠ 選了帳戶而沒選 persona 時本格**不動作**：一個帳戶可能掛好幾個人（`cc` 有七個），
+    //     替他挑一個等於替使用者決定了「這些券發給誰」。
+    // ===========================================================
+    void DrawVoucherPanel(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("🎟 券（查 / 發）", "bank/fold/voucher", iDefaultOpen: false))
+        {
+            if (!aFold.Open) { g.Note("　（收合中）・券綁 persona、跟著人走、跨區共用"); return; }
+
+            string aPersona = SelectedPersona(g);
+            g.Note("券**不是錢**：不同資源、不同帳本（`letters/<persona>/vouchers/<券名>.json`）、不同 Cmd。"
+                   + "⛔ 券的張數與餘額**不可以相加**。");
+            if (aPersona.Length == 0)
+            {
+                g.Note("⚠ **還沒選 persona** —— 券綁的是人不是帳戶。"
+                       + "⛔ 本格不從帳戶反推：一個帳戶可能掛好幾個人，替你挑一個等於替你決定券發給誰。");
+                return;
+            }
+
+            string aVoucher = g.TextField("券名（＝檔名）", g.FieldValue("bank/f/vname", "canvas"), "bank/f/vname").Trim();
+            g.Label($"對象：**{aPersona}**　券：**{(aVoucher.Length > 0 ? aVoucher : "（未填）")}**");
+
+            if (g.Button("查餘額", "bank/do/vbal"))
+            {
+                if (aVoucher.Length == 0) { m_Message = "⚠ 券名是空的 ⇒ **沒有送出**"; return; }
+                string aP = aPersona, aV = aVoucher;
+                Start("查券 " + aP + "/" + aV, () => DescribeVoucher(DispatchVoucher("balance",
+                    new Dictionary<string, string> { ["persona"] = aP, ["voucher"] = aV })));
+            }
+
+            using (g.Row())
+            {
+                string aAmt = g.TextField("張數", g.FieldValue("bank/f/vamt", ""), "bank/f/vamt");
+                string aExp = g.TextField("到期（ISO-8601 UTC；**空 ＝ 永久券**）",
+                                          g.FieldValue("bank/f/vexp", ""), "bank/f/vexp");
+                string aSrc = g.TextField("為什麼發", g.FieldValue("bank/f/vsrc", ""), "bank/f/vsrc");
+                if (g.Button("發券", "bank/do/vgrant"))
+                {
+                    if (aVoucher.Length == 0) { m_Message = "⚠ 券名是空的 ⇒ **沒有送出**"; return; }
+                    if (!int.TryParse(aAmt.Trim(), out int aN) || aN <= 0)
+                    { m_Message = $"⚠ 張數 '{aAmt}' 不是正整數 ⇒ **沒有送出**"; return; }
+                    string aP = aPersona, aV = aVoucher, aE = aExp.Trim(), aS = aSrc;
+                    Start($"發券 {aN} 張 {aV} → {aP}", () => DescribeVoucher(DispatchVoucher("grant",
+                        new Dictionary<string, string>
+                        {
+                            ["persona"] = aP,
+                            ["voucher"] = aV,
+                            ["amount"] = aN.ToString(),
+                            ["expires_at"] = aE,
+                            ["source"] = aS,
+                        })));
+                }
+            }
+            g.Note("⚠ 到期欄**空的就是永久券** —— 兩者差很多，而空白在畫面上不會替自己說話。");
+        }
+    }
+
+    SCP_CmdResult DispatchVoucher(string iOp, Dictionary<string, string> iArgs)
+    {
+        iArgs["op"] = iOp;
+        iArgs["letters_root"] = m_Letters.Value;
+        // ⚠ `region` 是**寫入時的必填欄**（券沒有歷史，它是唯一的「誰動過它」線索）
+        //   ⇒ 一律帶上；讀的時候它會被忽略，帶了沒有壞處。
+        iArgs["region"] = m_Region;
+        return SCP_CmdRegistry.Dispatch("voucher", iArgs);
+    }
+
+    static string DescribeVoucher(SCP_CmdResult iRes)
+    {
+        var aSb = new System.Text.StringBuilder();
+        aSb.Append(iRes.Ok ? "✅ " : "❌ exit " + iRes.ExitCode + " ");
+        for (int i = 0; i < iRes.Lines.Count && i < 8; ++i) aSb.Append(i == 0 ? "" : "\n  ").Append(iRes.Lines[i]);
+        return aSb.ToString();
+    }
+
+    // ===========================================================
+    // 區塊職責：🔗 **換綁** —— 這個 persona 在**本區**的錢進哪一戶。
+    // 物理意義：Tim 2026-09-18：「原本在 `UCL_PersonaAgentAdminPage` 的換綁功能整合進來，
+    //          因為這屬於銀行帳戶操作」⇒ 本格改的是 `letters/<p>/bank/<本區>.md`。
+    // ⚠ **受詞要講清楚**：UCL 那一頁的換綁改的是 persona 檔的 `agent` 欄（agent 歸屬），
+    //   而**決定錢進哪一戶的是這個檔** —— 兩者是不同的東西，
+    //   ⛔ 不要以為改了一個就等於改了另一個（那個誤會的代價是錢進了沒改到的那一戶）。
+    // 🩸 **讀綁定不是動錢，寫綁定是**（Tim 2026-08-31）⇒ 二段確認 ＋ `reason` 必填 ＋ 審計一行。
+    //   ⛔ 它**不搬錢**：既有分錄 append-only 不追溯，換綁之後的收付才走新帳戶。
+    // ===========================================================
+    void DrawRebindPanel(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("🔗 換綁（這個人在本區的錢進哪一戶）", "bank/fold/rebind", iDefaultOpen: false))
+        {
+            if (!aFold.Open) { g.Note("　（收合中）・改 `letters/<persona>/bank/" + m_Region + ".md`"); return; }
+
+            string aPersona = SelectedPersona(g);
+            if (aPersona.Length == 0)
+            { g.Note("⚠ **還沒選 persona** —— 換綁的受詞是人（⛔ 不是帳戶）。上面那格下拉挑一個。"); return; }
+
+            Row? aRow = FindRow(aPersona);
+            string aNow = aRow == null ? "" : aRow.AccountId;
+            g.Label($"**{aPersona}** 目前 → **{(aNow.Length > 0 ? aNow : "（未綁）")}**"
+                    + (aRow != null && aRow.Borrowed
+                       ? $"　⚠ 那是**借用 {aRow.BindingRegion} 區**的綁定，本區沒有自己的宣告" : ""));
+
+            var aOpts = new List<SCP_GuiOption>();
+            foreach (KeyValuePair<string, Acct> kv in m_Accounts)
+                aOpts.Add(new SCP_GuiOption(kv.Key, kv.Key + (kv.Value.Closed ? "（已銷戶）" : "（" + kv.Value.Balance + "）")));
+            aOpts.Sort((a, b) => string.CompareOrdinal(a.Value, b.Value));
+            string aPick = g.Dropdown("換成", aOpts, g.FieldValue("bank/f/rbacct", ""), "bank/f/rbacct");
+            string aReason = g.TextField("為什麼換（**必填** —— 三個月後有人要問「他的錢為什麼在這一戶」）",
+                                         g.FieldValue("bank/f/rbwhy", ""), "bank/f/rbwhy");
+
+            if (IsOnline(aPersona))
+                g.Note($"⚠ **{aPersona} 目前在線**（`profile/_session.json` 在）—— 換綁會讓那個 session "
+                       + "記憶中的帳戶與檔案不一致（薪資可能記到舊帳戶）。建議等他走完晚安協議再換。");
+
+            bool aArmed = g.FieldValue(PendingId, "") == "rebind:" + aPersona + ":" + aPick;
+            if (g.Button(aArmed ? "⚠ 再按一次＝真的換綁" : "換綁", "bank/do/rebind"))
+            {
+                if (aPick.Length == 0) { m_Message = "⚠ 沒有選新帳戶 ⇒ **沒有動作**"; return; }
+                if (aReason.Trim().Length == 0)
+                { m_Message = "⚠ `reason` 是空的 ⇒ **沒有寫入**（匿名換綁不收 —— 事後查不出是憑什麼）"; return; }
+                if (!aArmed)
+                {
+                    g.SetField(PendingId, "rebind:" + aPersona + ":" + aPick);
+                    m_Message = $"⚠ 待確認：`{aPersona}` 的本區綁定 `{(aNow.Length > 0 ? aNow : "(未綁)")}` → `{aPick}`。"
+                                + "⛔ 它**不搬錢**（既有分錄不追溯），換綁之後的收付才走新帳戶。再按一次才會寫。";
+                    return;
+                }
+                g.SetField(PendingId, "");
+                bool aOk = SCP_PersonaProfile.WriteBankAccount(m_Letters.Value, aPersona, m_Region,
+                                                               aPick, "BankAdminPage", aReason.Trim(), out string aErr);
+                // ⭐ 判準是**回讀**，不是上面那個 bool。
+                string aBack = SCP_PersonaProfile.GetBankAccount(m_Letters.Value, aPersona, m_Region,
+                                                                 out string aSrc, out string _);
+                m_Message = (aOk ? "✅ " : "❌ ") + (aErr.Length > 0 ? aErr + "　" : "")
+                            + $"回讀：`{aPersona}` 在 `{m_Region}` ＝ `{aBack}`（來源 {aSrc}）";
+                Reload(g);
+            }
+            if (aArmed && g.Button("取消", "bank/do/rebind/cancel"))
+            { g.SetField(PendingId, ""); m_Message = "・已取消（綁定一個字都沒動）"; }
+        }
+    }
+
+    // ===========================================================
+    // 區塊職責：📨 **請款審批** ＋ 💸 **轉帳審批**（把 Unity 端那兩格搬過來）。
+    // 物理意義：兩者**同形狀、不同語意**：請款是**央行撥款**（消耗公庫），
+    //          轉帳是 A→B（**總量守恆**）。⛔ 合成一格的話，「錢從哪來」這一欄會消失。
+    // 🩸 **三本帳分開結算**：單據（這裡）／錢（`cmd bank`，Server）／結果（回讀餘額）。
+    //   ⇒ 順序寫死：**先動錢、成功了才寫裁決欄**。
+    //   反過來的話，中途失敗留下的是「單子寫著 approved、而錢沒撥」——
+    //   ⚠ 而那張單**不會再出現在待審清單裡**，所以沒有人會回來看它。
+    // ⚠ 這兩個資料夾**有第二個寫入端**（Unity 端那一頁也能批）。今天靠的是
+    //   「同時只有一個人在批」這個營運前提，⛔ 不是機械 ——
+    //   所以 `SCP_TreasuryRequests.Decide` 每次都先回讀狀態，不是 pending 就拒絕。
+    // ===========================================================
+    void DrawApprovalPanel(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("📨 審批（請款 / 轉帳）", "bank/fold/approve", iDefaultOpen: false))
+        {
+            if (!aFold.Open)
+            {
+                g.Note("　（收合中）" + (m_Payouts == null
+                        ? "・還沒讀待審單（展開時讀）"
+                        : $"・待審：請款 **{m_Payouts.Count}** 張／轉帳 **{m_Transfers?.Count ?? 0}** 張"));
+                return;
+            }
+            if (m_Payouts == null) ReloadRequests();
+            if (g.Button("重讀待審單", "bank/do/reqreload")) ReloadRequests();
+
+            string aCentral = SCP_TreasuryRequests.ReadCentralBank(m_DataRoot.Value);
+            g.Note($"請款＝**央行撥款**（從 `{aCentral}` 出，公庫變少）；轉帳＝**A→B**（總量守恆）。"
+                   + "⛔ 兩者不合成一格：合起來之後「錢從哪來」這一欄會消失。");
+            g.Note("⚠ 順序寫死：**先動錢、成功了才寫裁決欄**。反過來的話，"
+                   + "中途失敗會留下「單子寫著已核准、而錢沒撥」——而那張單不會再出現在待審清單裡。");
+
+            // ── 請款 ──────────────────────────────────────────
+            g.Title($"📨 請款（待審 {m_Payouts?.Count ?? 0} 張）");
+            if (m_Payouts == null || m_Payouts.Count == 0) g.Note("・沒有待審請款單。");
+            else
+                foreach (SCP_PayoutRequest r in m_Payouts)
+                {
+                    string aKey = "payout:" + r.RequestId;
+                    bool aArmed = g.FieldValue(PendingId, "") == aKey;
+                    g.Label($"· `{r.RequestId}`　**{r.Amount}** {r.Currency} → **{r.TargetBank}**"
+                            + $"　請款人 {r.RequesterPersona}　{r.RequestedAt}");
+                    g.Label("　理由：" + r.Reason);
+                    string aNote = g.TextField("裁決備註", g.FieldValue("bank/f/note/" + r.RequestId, ""),
+                                               "bank/f/note/" + r.RequestId);
+                    using (g.Row())
+                    {
+                        if (g.Button(aArmed ? "⚠ 再按一次＝真的撥款" : "核准", "bank/do/appr/" + r.RequestId))
+                        {
+                            if (!aArmed)
+                            {
+                                g.SetField(PendingId, aKey);
+                                m_Message = $"⚠ 待確認：從央行 `{aCentral}` 撥 **{r.Amount}** 給 `{r.TargetBank}`。再按一次才會動錢。";
+                            }
+                            else { g.SetField(PendingId, ""); ApprovePayout(r, aCentral, aNote); }
+                        }
+                        if (g.Button("駁回", "bank/do/rej/" + r.RequestId))
+                        {
+                            // 駁回**不動錢** ⇒ 不需要二段確認，但照樣要署名與備註欄。
+                            bool aOk = SCP_TreasuryRequests.Decide(r.Path, "rejected", "BankAdminPage",
+                                                                   aNote, null, out string aErr);
+                            m_Message = (aOk ? "✅ 已駁回 " : "❌ ") + r.RequestId + "　" + aErr;
+                            ReloadRequests();
+                        }
+                    }
+                }
+
+            // ── 轉帳 ──────────────────────────────────────────
+            g.Title($"💸 轉帳（待審 {m_Transfers?.Count ?? 0} 張）");
+            if (m_Transfers == null || m_Transfers.Count == 0) g.Note("・沒有待審轉帳單。");
+            else
+                foreach (SCP_TransferRequest r in m_Transfers)
+                {
+                    string aKey = "xfer:" + r.RequestId;
+                    bool aArmed = g.FieldValue(PendingId, "") == aKey;
+                    g.Label($"· `{r.RequestId}`　**{r.Amount}** {r.Currency}　**{r.FromBank}** → **{r.ToBank}**"
+                            + $"　{(r.Kind.Length > 0 ? "[" + r.Kind + "] " : "")}{r.RequestedAt}");
+                    g.Label("　理由：" + r.Reason);
+                    string aNote = g.TextField("裁決備註", g.FieldValue("bank/f/xnote/" + r.RequestId, ""),
+                                               "bank/f/xnote/" + r.RequestId);
+                    using (g.Row())
+                    {
+                        if (g.Button(aArmed ? "⚠ 再按一次＝真的轉帳" : "核准", "bank/do/xappr/" + r.RequestId))
+                        {
+                            if (!aArmed)
+                            {
+                                g.SetField(PendingId, aKey);
+                                m_Message = $"⚠ 待確認：`{r.FromBank}` → `{r.ToBank}` **{r.Amount}**（總量守恆）。再按一次才會動錢。";
+                            }
+                            else { g.SetField(PendingId, ""); ApproveTransfer(r, aNote); }
+                        }
+                        if (g.Button("駁回", "bank/do/xrej/" + r.RequestId))
+                        {
+                            bool aOk = SCP_TreasuryRequests.Decide(r.Path, "rejected", "BankAdminPage",
+                                                                   aNote, null, out string aErr);
+                            m_Message = (aOk ? "✅ 已駁回 " : "❌ ") + r.RequestId + "　" + aErr;
+                            ReloadRequests();
+                        }
+                    }
+                }
+        }
+    }
+
+    void ReloadRequests()
+    {
+        var aProblems = new List<string>();
+        m_Payouts = SCP_TreasuryRequests.LoadPendingPayouts(m_DataRoot.Value, aProblems);
+        m_Transfers = SCP_TreasuryRequests.LoadPendingTransfers(m_DataRoot.Value, aProblems);
+        foreach (string p in aProblems) m_Problems.Add(p);
+    }
+
+    /// <summary>核准請款：**先動錢**（央行 → 目標），成功了才寫裁決欄。</summary>
+    void ApprovePayout(SCP_PayoutRequest iReq, string iCentral, string iNote)
+    {
+        SCP_PayoutRequest aR = iReq; string aC = iCentral, aN = iNote;
+        Start($"撥款 {aR.Amount} → {aR.TargetBank}", () =>
+        {
+            SCP_CmdResult aRes = Dispatch("transfer", new Dictionary<string, string>
+            {
+                ["account"] = aC,
+                ["to_account"] = aR.TargetBank,
+                ["amount"] = aR.Amount.ToString(),
+                ["kind"] = "payout_request",
+                ["ref"] = aR.RequestId,
+                ["description"] = aR.Reason,
+                ["caller"] = "BankAdminPage",
+                // 同一張單重送不該撥兩次 —— 冪等鍵綁單號。
+                ["idem_key"] = "payout/" + aR.RequestId,
+            });
+            if (!aRes.Ok)
+                // ⛔ 錢沒動 ⇒ 單子**保持 pending**（它會再出現在待審清單裡，那正是我們要的）
+                return "❌ 撥款失敗 exit " + aRes.ExitCode + "：" + FirstLine(aRes)
+                       + "\n  ⇒ 單子**保持 pending**（沒有寫裁決欄）";
+            bool aOk = SCP_TreasuryRequests.Decide(aR.Path, "approved", "BankAdminPage", aN, null, out string aErr);
+            return (aOk ? "✅ 已撥款並結單 " : "⚠ **錢撥了**，而裁決欄沒寫成功：" + aErr + "　")
+                   + aR.RequestId + "　" + Describe(aRes, aR.TargetBank);
+        });
+        ReloadRequests();
+    }
+
+    /// <summary>核准轉帳：A→B（總量守恆）。同樣**先動錢再寫單**。</summary>
+    void ApproveTransfer(SCP_TransferRequest iReq, string iNote)
+    {
+        SCP_TransferRequest aR = iReq; string aN = iNote;
+        Start($"轉帳 {aR.Amount}：{aR.FromBank} → {aR.ToBank}", () =>
+        {
+            SCP_CmdResult aRes = Dispatch("transfer", new Dictionary<string, string>
+            {
+                ["account"] = aR.FromBank,
+                ["to_account"] = aR.ToBank,
+                ["amount"] = aR.Amount.ToString(),
+                ["kind"] = aR.Kind.Length > 0 ? aR.Kind : "transfer_request",
+                ["ref"] = aR.RequestId,
+                ["description"] = aR.Reason,
+                ["caller"] = "BankAdminPage",
+                ["idem_key"] = "transfer/" + aR.RequestId,
+            });
+            if (!aRes.Ok)
+                return "❌ 轉帳失敗 exit " + aRes.ExitCode + "：" + FirstLine(aRes)
+                       + "\n  ⇒ 單子**保持 pending**（沒有寫裁決欄）";
+            bool aOk = SCP_TreasuryRequests.Decide(aR.Path, "approved", "BankAdminPage", aN, null, out string aErr);
+            return (aOk ? "✅ 已轉帳並結單 " : "⚠ **錢轉了**，而裁決欄沒寫成功：" + aErr + "　")
+                   + aR.RequestId + "　" + Describe(aRes, aR.ToBank);
+        });
+        ReloadRequests();
+    }
+
+    static string FirstLine(SCP_CmdResult iRes) => iRes.Lines.Count > 0 ? iRes.Lines[0] : "（沒有訊息）";
+
+    /// <summary>這個人現在在線嗎 —— 判準與登入那側同一個（`profile/_session.json` 檔在＝在線）。</summary>
+    bool IsOnline(string iPersona)
+    {
+        try
+        {
+            return File.Exists(SCP_LettersPaths.ProfileDir(new SCP_LettersRoot(m_Letters.Value), iPersona)
+                               + "/_session.json");
+        }
+        catch (Exception) { return false; }
     }
 
     // ── 背景委派（形狀照 SCP_GuiSessionAdminPage）──────────────
