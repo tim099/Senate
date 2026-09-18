@@ -183,7 +183,26 @@ Tim 2026-09-18 拍板（B 案）：酒館券是**另一本帳**（個人錢包�
 面額與 token 1:1，**主動消費時自動先扣券、不足的再扣 token**
 （10 token 的消費可以是 3 券 ＋ 7 token）。
 
-規則住在 `SCP_Core/Runtime/Bank/SCP_SpendPolicy.cs`：
+規則住在 `SCP_Core/Runtime/Bank/SCP_SpendPolicy.cs`，
+**唯一的執行入口是 `senate cmd bank --arg op=pay`**：
+
+```bash
+senate cmd bank --arg op=pay --arg account=<帳號> --arg wallet_persona=<錢包主人> \
+    --arg amount=<金額> --arg kind=<為什麼> --arg ref=<指回現場> --arg caller=<誰> \
+    --arg letters_root=<券住哪> --arg bank_root=<帳本根>
+#   🔢 paid_voucher / paid_token / active_spend / wallet_after / balance
+```
+
+> 🩸 **為什麼裝在銀行的付款那一步，而不是每個呼叫端各自判斷**：
+> 呼叫端各判一次的話，「這裡算消費、那裡不算」會長出第二套政策而沒有人比對過。
+> ⚠ 而它還有一個實際好處：Unity 那側**讀不到** `SCP_SpendPolicy`
+> （LY 的 `Assets/Plugins/SCP_Core` 是另一個 clone，靠 remote 同步）——
+> 規則放 Server ⇒ 不必等鏡像同步，也**不可能**在 Unity 長出第二份名單。
+
+⚠ `wallet_persona` 與分道用的 `persona` **是兩格** —— 一格裝兩個角色的話，
+「我填的是誰」要靠 op 才讀得出來，而錯填的代價是花掉別人的券。
+
+判準：
 
 | | 決定 |
 |---|---|
@@ -207,15 +226,24 @@ Tim 2026-09-18 拍板（B 案）：酒館券是**另一本帳**（個人錢包�
 | 券 3 ／ 放 10 顆 `pay=auto` | `pay_tavern=3 pay_token=7`，券 3→0 |
 | 券 4 ／ 放 6 顆 `pay=auto` | `pay_tavern=4 pay_token=2`（不同拆法 ⇒ 不是寫死的） |
 | 券 2 ／ 放 1 顆 **`pay=token`** | `pay_tavern=0`，**券 2→2 一張未動**（反向對照） |
+| 券 2 ／ 雕刻 3 單位 `pay=auto` | `tavern=2 token=1`（第三種拆法） |
+| 券 5 ／ 付 2，`kind=overnight_storage_fee` | `paid_voucher=0 paid_token=2`，**錢包 5→5 未動** |
+| 券 5 ／ 付 2，`kind=book_tip` | `paid_voucher=2 paid_token=0`，錢包 5→3、**token 餘額不變** |
 | 帳 | 逐筆重播 16 筆 ＝ 餘額 74（含兩筆 `work_post` 領薪 +1） |
+
+⭐ 最後那兩行是**同一個帳戶、同一個金額，只換 `kind`** —— 那才是白名單本身的讀數，
+⛔ 不是「沒有人去問錢包」。
 
 ---
 
 ## 9. 還沒做的（⛔ 不要讀成已完成）
 
-- **只有畫布那條真的接上白名單** —— `sculpture_place` / `book_donation` / `book_tip`
-  在名單上，⛔ 但它們的付款路徑還沒改走這一層。
-  ⇒ 「保管費不吃券」今天成立的理由是**沒有人去問錢包**，不是那道閘擋住了它。
+- **捐贈／打賞只驗過 `op=pay` 那一層，沒有走完整條書店流程** —— 那需要一本被捐過的書
+  與兩個不同的 persona。⇒ 拆帳邏輯有讀數，**端到端沒有**。
+- **`Donate` 的 `donorPersona` 可以是空的** ⇒ 那時定位不到錢包，走純 token 並印一行 warning。
+  ⚠ 那一行是刻意的：「沒有錢包所以沒扣券」與「有錢包而這條路沒生效」在帳面上一模一樣。
+- **兩次寫入之間沒有補償**（Tim 明確不要）：`op=pay` 先扣券、再扣 token，
+  token 那步失敗時券已經扣掉了 ⇒ 錯誤訊息印出確切數字讓它能被人工還原，⛔ 不假裝整筆沒發生。
 - **舊繪圖券檔未刪** —— `<資料根>/Canvas/vouchers/<persona>.json` 已經沒有寫入端，
   但**故意留著**當對帳基準（TASK-0243 ⑩ / TASK-0242）。
   舊酒館券檔 `ChatTavern/agent_bonus_quota.json` 同理。

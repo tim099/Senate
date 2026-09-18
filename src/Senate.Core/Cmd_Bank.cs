@@ -15,6 +15,8 @@
 //   ③ **錢的動作一律要 `kind`**：沒有 kind 的錢，日後沒有人答得出它為什麼動。
 using SCP.Core.Bank;
 using SCP.Core.Cmd;
+using SCP.Core.Paths;
+using SCP.Core.Voucher;
 
 namespace Senate.Core;
 
@@ -45,7 +47,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             var aSpecs = new List<SCP_CmdArgSpec>
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "accounts",
-                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "transfer", "close", "reopen" }),
+                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "pay", "transfer", "close", "reopen" }),
                 new SCP_CmdArgSpec("bank_root",
                     "銀行帳本根（絕對路徑）。"
                     + "CLI 沒給時會用 `<AgentCommands 資料根>/Bank` 補上並印出來（推導值，不可設定）",
@@ -70,6 +72,12 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 new SCP_CmdArgSpec("caller", "誰動的這筆錢（落進 entry，⛔ 沒簽名的錢日後查不出是誰）—— credit／debit **必填**", iDefault: ""),
                 new SCP_CmdArgSpec("cmd_id", "指回派這一筆的那個 cmd（追溯用）", iDefault: ""),
                 new SCP_CmdArgSpec("reason", "為什麼銷戶（close **必填** —— 沒有理由的銷戶事後查不出來）", iDefault: ""),
+                // ⚠ 錢包的主人**另開一格**，⛔ 不重用 `persona`（那一格是分道路由，一格裝兩個角色
+                //   的話「我填的是誰」要靠 op 才讀得出來，而錯填的代價是花掉別人的券）。
+                new SCP_CmdArgSpec("wallet_persona",
+                    "錢包（酒館券）的主人 —— `pay` 必填。⛔ 與分道用的 `persona` 是兩回事", iDefault: ""),
+                new SCP_CmdArgSpec("letters_root",
+                    "券住哪（`pay` 必填；券在 `letters/<persona>/vouchers/`）。⛔ 本層不推導它", iDefault: ""),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -90,10 +98,11 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             case "balance": return Stamp(OpBalance(aRoot, iArgs), aRoot);
             case "credit":
             case "debit": return Stamp(OpPost(aRoot, iArgs, aOp == "debit"), aRoot);
+            case "pay": return Stamp(OpPay(aRoot, iArgs), aRoot);
             case "transfer": return Stamp(OpTransfer(aRoot, iArgs), aRoot);
             case "close": return Stamp(OpClose(aRoot, iArgs), aRoot);
             case "reopen": return Stamp(OpReopen(aRoot, iArgs), aRoot);
-            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|transfer|close|reopen）");
+            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|pay|transfer|close|reopen）");
         }
     }
 
@@ -287,6 +296,100 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             aResult.Lines.Add("⚠ 這個帳號**已銷戶**（餘額仍然算得出來，但收付會被擋）");
         aResult.AddValue("account", aId);
         aResult.AddValue("balance", aBal.ToString());
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：**一筆消費** —— 自動先扣酒館券（個人錢包），不足的部分才扣 token。
+    // 物理意義：Tim 2026-09-18 拍板 —— 酒館券是另一本帳，面額與 token 1:1，
+    //           主動消費時自動先吃券（10 token 的消費可以是 3 券 ＋ 7 token）。
+    //           哪些 `kind` 算主動消費由 `SCP_SpendPolicy` 的**白名單**決定，
+    //           ⇒ 名單外（保管費／罰款／系統費用）走純 token。
+    // 數值影響：最多動兩本帳 —— 券帳（`letters/<p>/vouchers/tavern.json`）與 token 帳。
+    //
+    // 🩸 判準：
+    //   ① **規則只有這一份。** 放在銀行的付款這一步，而不是每個呼叫端各自判斷 ——
+    //      呼叫端各判一次的話，「這裡算消費、那裡不算」會長出第二套政策而沒有人比對過。
+    //   ② **先檢查兩邊夠不夠，不夠整筆不做**（Tim 拍板）—— ⛔ 不部分扣款。
+    //   ③ ⚠ **兩次寫入之間沒有補償**（Tim 明確不要補償邏輯）：
+    //      先扣券、再扣 token。token 那步失敗時**券已經扣掉了** ——
+    //      那是已知殘留，⇒ 本層把確切數字印在錯誤訊息裡，讓它能被人工還原，
+    //      ⛔ 不假裝整筆沒發生。
+    // ===========================================================
+    static SCP_CmdResult OpPay(string iRoot, SCP_CmdArgs iArgs)
+    {
+        string aAcct = iArgs.Get("account");
+        if (string.IsNullOrWhiteSpace(aAcct)) return SCP_CmdResult.Fail(2, "✗ 需要 `account`");
+        string aWallet = iArgs.Get("wallet_persona").Trim();
+        if (aWallet.Length == 0)
+            return SCP_CmdResult.Fail(2, "✗ `pay` 需要 `wallet_persona`（錢包的主人）"
+                                       + " —— ⛔ 不從 account 反查（反查錯就是花掉別人的券）");
+        string aLetters = iArgs.Get("letters_root").Trim();
+        if (aLetters.Length == 0)
+            return SCP_CmdResult.Fail(2, "✗ `pay` 需要 `letters_root`（券住哪）—— ⛔ 本層不推導它");
+        if (!int.TryParse(iArgs.Get("amount"), out int aAmount))
+            return SCP_CmdResult.Fail(2, $"✗ amount 讀不出來：'{iArgs.Get("amount")}'");
+        string aKind = iArgs.Get("kind");
+        if (string.IsNullOrWhiteSpace(aKind))
+            return SCP_CmdResult.Fail(2, "✗ `pay` 需要 `kind` —— 它同時決定署名**與這筆算不算主動消費**");
+
+        bool aActive = SCP_SpendPolicy.IsActiveSpend(aKind);
+
+        // 券餘額：⛔ 讀不了**不是**「零張」（後者是讀數，前者是「我不知道」）。
+        var aRoot = new SCP_LettersRoot(aLetters);
+        SCP_VoucherBook aBook = SCP_VoucherStore.Load(aRoot, aWallet, SCP_SpendPolicy.TavernVoucherId,
+                                                      out string? aVoucherProblem);
+        if (aVoucherProblem != null)
+            return SCP_CmdResult.Fail(1, "✗ 錢包讀不了（" + aVoucherProblem + "）⇒ **這筆沒有付**"
+                                       + "　⛔ 讀不到券不等於沒有券");
+        DateTime aNow = DateTime.UtcNow;
+        int aWalletBalance = aBook.Spendable(aNow);
+        int aTokenBalance = SCP_BankLedger.GetBalance(iRoot, aAcct);
+
+        if (!SCP_SpendPolicy.TryPlan(aAmount, aWalletBalance, aTokenBalance, aActive,
+                                     out SCP_SpendPolicy.Plan aPlan, out string aWhy))
+            return SCP_CmdResult.Fail(1, "✗ " + aWhy);
+
+        // ── ① 先扣券 ──
+        int aVoucherBefore = aWalletBalance;
+        if (aPlan.Voucher > 0)
+        {
+            if (!SCP_VoucherStore.TryConsume(aBook, aPlan.Voucher, aNow, out string? aConsumeWhy))
+                return SCP_CmdResult.Fail(1, "✗ 扣券失敗（" + aConsumeWhy + "）⇒ **這筆沒有付**");
+            string aRegion = SCP_BankRegion.Read(SCP_BankRegion.DataRootOfBankRoot(iRoot), out string? _);
+            if (!SCP_VoucherStore.Save(aRoot, aBook, aNow, aRegion, out int _, out string? aSaveErr))
+                return SCP_CmdResult.Fail(1, "✗ 券扣不下去（" + aSaveErr + "）⇒ **這筆沒有付**");
+        }
+
+        // ── ② 再扣 token ──
+        if (aPlan.Token > 0)
+        {
+            SCP_BankPostResult aPost = SCP_BankLedger.Debit(iRoot, aAcct, aPlan.Token, aKind,
+                iArgs.Get("ref"), iArgs.Get("description"), iArgs.Get("caller"), iArgs.Get("cmd_id"),
+                iArgs.Get("idem_key"));
+            if (!aPost.Ok)
+                // 🩸 判準③ 的那一格：券已經扣了而 token 沒扣成 ⇒ 把數字講清楚，讓它能被還原。
+                return SCP_CmdResult.Fail(1,
+                    "✗ token 扣款失敗（" + aPost.Why + "）",
+                    aPlan.Voucher > 0
+                        ? $"  ⚠ **而酒館券已經扣掉 {aPlan.Voucher} 張了**（`{aWallet}` {aVoucherBefore} → {aBook.Spendable(aNow)}）"
+                          + "　⇒ 這是已知的半付殘留，補回去要手動：`voucher op=grant`"
+                        : "  · 券沒有動（這筆不吃券）");
+        }
+
+        int aBalAfter = SCP_BankLedger.GetBalance(iRoot, aAcct);
+        var aResult = SCP_CmdResult.Success(
+            $"✓ 已付 {aAmount}　`{aAcct}`（{aKind}）"
+            + (aPlan.Voucher > 0 ? $"　＝ 酒館券 {aPlan.Voucher} ＋ token {aPlan.Token}" : "　（純 token）"));
+        if (!aActive)
+            aResult.Lines.Add($"  · `{aKind}` **不在主動消費名單上** ⇒ 走純 token（保管費／罰款那一族）");
+        aResult.Lines.Add($"  · 錢包 {aVoucherBefore} → {aBook.Spendable(aNow)}　餘額 = {aBalAfter}");
+        aResult.AddValue("account", aAcct);
+        aResult.AddValue("paid_voucher", aPlan.Voucher.ToString());
+        aResult.AddValue("paid_token", aPlan.Token.ToString());
+        aResult.AddValue("active_spend", aActive ? "1" : "0");
+        aResult.AddValue("wallet_after", aBook.Spendable(aNow).ToString());
+        aResult.AddValue("balance", aBalAfter.ToString());
         return aResult;
     }
 
