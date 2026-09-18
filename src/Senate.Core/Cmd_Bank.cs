@@ -29,14 +29,12 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     //   ⇒ 只講「權威這件事去哪裡讀」，真正的答案由每次執行的定語（`Stamp`）現場推導。
     //   🩸 舊版在這裡寫死「遷移前＝測試用」，於是 2026-09-18 切換那天它整句變成假的。
     public override string Summary =>
-        "新版銀行：開戶／查餘額／入帳／扣款 —— 由 Senate Server 執行（**單一寫入端**）"
-        + "　⚠ 這棵樹是不是以本帳為權威，看每次執行印出的定語（`money_authority`）";
+        "新版銀行：開戶／查餘額／入帳／扣款 —— 由 Senate Server 執行（**單一寫入端**）";
 
     public override string PortNote =>
-        "⚠ **權威是逐棵樹的設定**（`Treasury/bank_settings.json` 的 `money_authority`）："
-        + "`senate_bank` ＝ 本帳就是那本帳、舊 `Treasury/` 凍結為歷史；"
-        + "`legacy` ＝ 錢仍以舊 `Treasury/` 為準，本帳只是測試用（D27）。"
-        + "⛔ 別假設所有專案同時切 —— 同一顆 exe 服務多棵樹";
+        "⚠ **本帳就是那本帳** —— 兩個區都已於 2026-09-18 切換完成（TASK-0216／0241），"
+        + "舊 `Treasury/` 凍結為唯讀歷史（Tim 拍板：不刪、轉唯讀）。"
+        + "⛔ 沒有「切回去」的旗標了（TASK-0242 ④ 整段移除）—— 退路留在資料上，不在程式碼上";
 
     public override string Example => SCP_CmdRegistry.Invoke("bank --arg op=balance --arg account=cc");
 
@@ -111,20 +109,16 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     //          而**兩邊都不會報錯**（它們各自都對，只是在回答不同的問題）。
     // 🩸 為什麼掛在這裡而不是寫進文件：文件要有人去讀，而這一行長在**每一個看到數字的人**的必經路上。
     //    ⛔ 也不靠「大家記得」—— 記得是這個系統最不能依賴的東西。
-    // ⭐ 2026-09-18（TASK-0216 ⑨）：這一行原本寫死「遷移前＝測試用」，並在旁邊留了一句
-    //    「遷移那天要回來把它拿掉」。⛔ 而那是一條**靠人記得**的規矩 ——
-    //    今天真的切了權威，於是同一句話**整句變成假的**，而過期不會叫。
-    //    ⇒ 改成**推導**：定語跟著 `money_authority` 走，兩種狀態各說各的真話。
-    //    📌 而它**不是**「切完就刪掉」：`legacy` 那一支仍然要印 ——
-    //      另一棵樹（另一個專案／另一區）可能還沒切，而它們共用這同一顆 exe。
+    // ⭐ TASK-0242 ④（2026-09-18 晚）：`legacy` 那一支**整段退場**。
+    //   它當初留著的理由逐字是「另一棵樹可能還沒切，而它們共用這同一顆 exe」——
+    //   而今晚 BTC 那一區也切完了（TASK-0241）⇒ **那個理由失效了，所以它跟著走**。
+    // 🩸 為什麼不留著「以防萬一有人切回去」：一個編得過、讀得到、呼叫得到的舊分支，
+    //   會讓下一個人寫出「切回 legacy」這種指令，而錢會被寫進一本凍結的帳 —— 沒有任何一層會喊。
+    //   ⇒ 退路留在**資料**上（舊帳本原封不動、在 git 裡），⛔ 不留在程式碼上。
     static SCP_CmdResult Stamp(SCP_CmdResult ioResult, string iBankRoot)
     {
-        bool aIsNew = SCP_BankRegion.AuthorityFromBankRoot(iBankRoot) == SCP_BankRegion.AuthoritySenateBank;
-        ioResult.Lines.Add(aIsNew
-            ? "🔁 **本帳＝這棵樹的金流權威**（`money_authority=senate_bank`，2026-09-18 切換）"
-              + " —— 舊 `Treasury/` 已凍結為歷史，⛔ 不再長新分錄"
-            : "⚠ **本帳＝測試用**（`money_authority=legacy`）—— 實際餘額以舊系統"
-              + "（`Treasury/`，酒館領薪那本）為準（D27）");
+        ioResult.Lines.Add("🔁 **本帳＝金流權威**（2026-09-18 切換完成，兩區皆是）"
+                           + " —— 舊 `Treasury/` 已凍結為唯讀歷史，⛔ 不再長新分錄");
         return ioResult;
     }
 
