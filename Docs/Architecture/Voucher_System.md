@@ -33,7 +33,10 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 券 id | 用途 | 狀態 |
 |---|---|---|
 | `canvas` | 繪圖券（畫布放點、雕刻） | ✅ 已遷入本系統（2026-09-18） |
-| （酒館券） | 自由時間券 | ⛔ **還沒遷** —— 仍在 `ChatTavern/agent_bonus_quota.json`，由 Editor 寫 |
+| `tavern` | **酒館券＝個人錢包**，面額與 token 1:1 | ✅ 已遷入（2026-09-18，15 人／2019 張） |
+
+⚠ **`tavern` 刻意不叫 `token`** —— 它跟銀行帳戶餘額是**兩本帳**（Tim 2026-09-18 拍板 B 案）。
+名字取一樣的話，「錢包剩多少」與「戶頭剩多少」會在畫面上同形。
 
 ---
 
@@ -174,14 +177,46 @@ senate cmd voucher --arg op=migrate --arg persona=<誰> --arg voucher=<券 id> \
 
 ---
 
-## 8. 還沒做的（⛔ 不要讀成已完成）
+## 8. 酒館券怎麼被花掉 —— **主動消費自動先扣，白名單制**
 
-- **酒館券未遷** —— 仍在 `ChatTavern/agent_bonus_quota.json`，由 Editor 直寫，
-  且 key 是 (bank, persona) 不是 persona。
-  ⚠ Tim 的構想是「酒館券當 Token ＝ 個人錢包，跟銀行帳戶的 Token 相等」——
-  **「相等」有兩種讀法，處置相反**：
-  ① 券**就是**帳戶餘額的別名（沒有第二本帳）／② 券是另一本帳、面額等於 1 Token。
-  🩸 **②正是本文 §7 那隻病的形狀。** 這一格等拍板，⛔ 不要自己挑一個開始寫。
+Tim 2026-09-18 拍板（B 案）：酒館券是**另一本帳**（個人錢包），
+面額與 token 1:1，**主動消費時自動先扣券、不足的再扣 token**
+（10 token 的消費可以是 3 券 ＋ 7 token）。
+
+規則住在 `SCP_Core/Runtime/Bank/SCP_SpendPolicy.cs`：
+
+| | 決定 |
+|---|---|
+| 哪些 kind 會吃券 | **白名單**：`canvas_pixel` / `sculpture_place` / `book_donation` / `book_tip` |
+| 名單外的 kind | **純 token**（保管費、罰款、系統費用都在這一邊 —— Tim 拍板） |
+| 不夠怎麼辦 | **先檢查兩邊夠不夠，不夠就整筆不做**（⛔ 不部分扣款） |
+| 顯式 `pay=token` | ⛔ **不動酒館券** —— 自動先扣只發生在 `auto` |
+
+> 🩸 **為什麼是白名單不是黑名單**：兩種錯的代價不對稱。
+> 漏列一個消費 kind ＝「券花不掉」（看得見、可補）；
+> 漏排一個系統費用 ＝「券被吃掉了」（看不見、補不回來）。
+> ⇒ fail-closed：不認得的 kind 一律純 token。
+
+⚠ 這份名單是**手寫的**，而漏列不會叫 —— 症狀只是「券怎麼都花不掉」。
+新增消費管道時要回來加一行。
+
+**讀數（2026-09-18，Template 實跑）**
+
+| 場景 | 結果 |
+|---|---|
+| 券 3 ／ 放 10 顆 `pay=auto` | `pay_tavern=3 pay_token=7`，券 3→0 |
+| 券 4 ／ 放 6 顆 `pay=auto` | `pay_tavern=4 pay_token=2`（不同拆法 ⇒ 不是寫死的） |
+| 券 2 ／ 放 1 顆 **`pay=token`** | `pay_tavern=0`，**券 2→2 一張未動**（反向對照） |
+| 帳 | 逐筆重播 16 筆 ＝ 餘額 74（含兩筆 `work_post` 領薪 +1） |
+
+---
+
+## 9. 還沒做的（⛔ 不要讀成已完成）
+
+- **只有畫布那條真的接上白名單** —— `sculpture_place` / `book_donation` / `book_tip`
+  在名單上，⛔ 但它們的付款路徑還沒改走這一層。
+  ⇒ 「保管費不吃券」今天成立的理由是**沒有人去問錢包**，不是那道閘擋住了它。
 - **舊繪圖券檔未刪** —— `<資料根>/Canvas/vouchers/<persona>.json` 已經沒有寫入端，
   但**故意留著**當對帳基準（TASK-0243 ⑩ / TASK-0242）。
+  舊酒館券檔 `ChatTavern/agent_bonus_quota.json` 同理。
 - **中斷安全（⑨）零讀數**、**跨區實測（⑦）等 BTC 區**。

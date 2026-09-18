@@ -54,6 +54,12 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
                     "現在是哪一區在動它 —— **寫入時必填**（券沒有歷史，這是唯一的「誰動過」線索）", iDefault: ""),
                 new SCP_CmdArgSpec("source", "為什麼發／花這批券", iDefault: ""),
                 new SCP_CmdArgSpec("ref", "指回現場（場次 id／seq／單號）", iDefault: ""),
+                new SCP_CmdArgSpec("from_kind",
+                    "舊券的形狀（`migrate` 用）：`canvas_ledger`＝繪圖券的 batches 檔／"
+                    + "`tavern_quota`＝酒館券的 (bank,persona) 兩層配額檔。"
+                    + "⛔ 不用猜的 —— 猜錯的樣子是「遷到 0 張、標記照樣落盤」",
+                    iDefault: FromKindCanvas,
+                    iChoices: new[] { FromKindCanvas, FromKindTavernQuota }),
                 new SCP_CmdArgSpec("from_path",
                     "`migrate` 用：舊券檔的絕對路徑（舊 schema：`batches[]`）。⛔ 本層不推導它", iDefault: ""),
             };
@@ -295,7 +301,18 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             return aSkip;
         }
 
-        (int aPermanent, List<SCP_VoucherBatch> aExpiring, string? aReadErr) = ReadLegacy(aFrom);
+        // ⚠ 舊券有**兩種形狀**，而它們長得完全不一樣 ⇒ 由呼叫端顯式宣告，⛔ 不用猜的：
+        //   猜錯時的失效樣子是「讀到 0 張、遷移成功、標記落盤」—— 一個合法數字，
+        //   而那一區**之後永遠不會再遷一次**。
+        string aKind = iArgs.Get("from_kind").Trim();
+        if (aKind.Length == 0) aKind = FromKindCanvas;
+        if (aKind != FromKindCanvas && aKind != FromKindTavernQuota)
+            return SCP_CmdResult.Fail(2,
+                $"✗ 認不得的 `from_kind`='{aKind}'（{FromKindCanvas}|{FromKindTavernQuota}）");
+
+        (int aPermanent, List<SCP_VoucherBatch> aExpiring, string? aReadErr) = aKind == FromKindTavernQuota
+            ? ReadLegacyTavernQuota(aFrom, iPersona)
+            : ReadLegacy(aFrom);
         if (aReadErr != null) return SCP_CmdResult.Fail(1, "✗ 舊券檔讀不了：" + aReadErr);
 
         DateTime aNow = DateTime.UtcNow;
@@ -314,6 +331,47 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         aResult.AddValue("migrated_expiring", aExpSum.ToString());
         Tail(aResult, aBook, aNow, aDropped);
         return aResult;
+    }
+
+    public const string FromKindCanvas = "canvas_ledger";
+    public const string FromKindTavernQuota = "tavern_quota";
+
+    // ===========================================================
+    // 區塊職責：讀**酒館券**的舊帳（`ChatTavern/agent_bonus_quota.json`）。
+    // 物理意義：那份檔的鍵是 **(bank, persona)** 兩層，而券綁 persona ——
+    //          ⇒ 同一個人散在好幾個 bank 底下（實測 2026-09-18：apex-one 分在
+    //            `antigravity-da-xiaojie` / `a` / `Altair` 三個 bank；summit 在
+    //            `Zeta-da-xiaojie` / `zeta` 兩個）。**遷移要跨 bank 加總**，
+    //            ⛔ 只讀一個 bank 的話會靜默少算，而少算出來的數字完全合法。
+    // 數值影響：酒館券全是**永久券**（那份 schema 沒有到期的概念）⇒ 限時券永遠回空清單。
+    // ⚠ 找不到這個 persona ⇒ 回 0 並**不報錯**：那是「他本來就沒有酒館券」，
+    //   而檔案本身讀不了才是錯誤。兩者處置不同，所以出口分開。
+    // ===========================================================
+    static (int Permanent, List<SCP_VoucherBatch> Expiring, string? Error) ReadLegacyTavernQuota(
+        string iPath, string iPersona)
+    {
+        var aExpiring = new List<SCP_VoucherBatch>();
+        try
+        {
+            if (!File.Exists(iPath)) return (0, aExpiring, $"檔不在（{iPath}）");
+            SCP.Core.Json.SCP_JsonData aData = SCP.Core.Json.SCP_JsonParser.Parse(File.ReadAllText(iPath));
+            SCP.Core.Json.SCP_JsonData aAgents = aData["agents"];
+            if (!aAgents.Exists || !aAgents.IsObject)
+                return (0, aExpiring, "沒有 `agents` 節點 ⇒ 這不是酒館券的帳（⛔ 不當作 0 張）");
+
+            int aSum = 0;
+            foreach (string aBank in aAgents.Keys)
+            {
+                SCP.Core.Json.SCP_JsonData aPersonas = aAgents[aBank]["personas"];
+                if (!aPersonas.Exists || !aPersonas.IsObject) continue;
+                SCP.Core.Json.SCP_JsonData aNode = aPersonas[iPersona];
+                if (!aNode.Exists || !aNode.IsObject) continue;
+                int aRemain = aNode.GetInt("total_remaining", 0);
+                if (aRemain > 0) aSum += aRemain;
+            }
+            return (aSum, aExpiring, null);
+        }
+        catch (Exception e) { return (0, aExpiring, $"{e.GetType().Name}: {e.Message}"); }
     }
 
     /// <summary>
