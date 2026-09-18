@@ -568,22 +568,65 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         using (var aFold = g.Fold("🏦 開戶（新建帳戶 —— ⛔ 不必先選 persona）", "bank/fold/open", iDefaultOpen: false))
         {
             if (!aFold.Open) { g.Note("　（收合中）・新帳戶還不在下拉裡，所以這一格自己收帳號"); return; }
-            g.Note("在新銀行建一個帳戶檔。⛔ **不動錢**（開戶不等於有餘額）。"
-                   + "⚠ 這是本頁唯一可以手打帳號的地方 —— 新帳戶依定義還不在下拉裡，"
-                   + "而開戶打錯字的代價是多一個空帳戶，⛔ 不是動到別人的餘額。");
+            g.Note("在新銀行建一個帳戶檔。⚠ 這是本頁唯一可以手打帳號的地方 —— "
+                   + "新帳戶依定義還不在下拉裡；⛔ 而開戶本身**不動錢**，打錯字的代價是多一個空帳戶。");
             string aId = g.TextField("帳號 id（寫入端會正規化成小寫）", g.FieldValue("bank/f/openid", ""), "bank/f/openid");
             string aName = g.TextField("顯示名（可以有大小寫與空白，⛔ 不當 id）",
                                        g.FieldValue("bank/f/name", ""), "bank/f/name");
-            if (aId.Trim().Length > 0 && FindAcct(aId.Trim()) != null)
-                g.Note($"・`{aId.Trim()}` **已經有帳戶檔了** —— 再按會被 `cmd bank` 擋下（那是對的，本頁不先攔）。");
-            if (g.Button("開戶", "bank/do/open2"))
+            // ⭐ 種子額度（Tim 2026-09-18，形狀取自 Unity 那頁的「種子」欄）。
+            // ⚠ **帶了它，開戶就不再是「不動錢」的操作** —— 所以它有自己的二段確認，
+            //   而帳號那格的自由輸入只在**種子 ＝ 0** 時才是無害的。
+            // 🩸 種子是**憑空增發**（`system_init`），⛔ 不是從央行撥 ——
+            //   兩者對貨幣總量的影響相反，而畫面上都只是「帳戶多了錢」。
+            string aSeedRaw = g.TextField("初始金額（種子；0 ＝ 只開戶不給錢）",
+                                          g.FieldValue("bank/f/seed", "0"), "bank/f/seed");
+            string aTarget = aId.Trim();
+            if (aTarget.Length > 0 && FindAcct(aTarget) != null)
+                g.Note($"・`{aTarget}` **已經有帳戶檔了** —— 再按會被 `cmd bank` 擋下（那是對的，本頁不先攔）。");
+
+            int aSeed = 0;
+            bool aSeedOk = int.TryParse(aSeedRaw.Trim(), out aSeed) && aSeed >= 0;
+            if (!aSeedOk) g.Note($"⚠ 種子 `{aSeedRaw}` 不是 ≥0 的整數 ⇒ 按下去**不會送出**（⛔ 不當成 0）。");
+            else if (aSeed > 0)
+                g.Note($"⚠ 種子 **{aSeed}** ＞ 0 ⇒ 這一按**會動錢**："
+                       + "`system_init` 是**憑空增發**，⛔ 不是從央行撥 —— "
+                       + "兩者對貨幣總量的影響相反，而畫面上都只是「帳戶多了錢」。所以它要按兩次。");
+
+            bool aArmed = g.FieldValue(PendingId, "") == "open:" + aTarget + ":" + aSeed;
+            string aLabel = aSeed > 0 ? (aArmed ? "⚠ 再按一次＝開戶並發 " + aSeed : "開戶並給種子") : "開戶";
+            if (g.Button(aLabel, "bank/do/open2"))
             {
-                string aTarget = aId.Trim();
                 if (aTarget.Length == 0) { m_Message = "⚠ 帳號 id 是空的 ⇒ **沒有送出**（⛔ 不替你挑一個）"; return; }
-                Start("開戶 " + aTarget, () =>
+                if (!aSeedOk) { m_Message = $"⚠ 種子 `{aSeedRaw}` 不是 ≥0 的整數 ⇒ **沒有送出**"; return; }
+                if (aSeed > 0 && !aArmed)
                 {
-                    var aArgs = new Dictionary<string, string> { ["account"] = aTarget, ["display_name"] = aName };
-                    return Describe(Dispatch("open", aArgs), aTarget);
+                    g.SetField(PendingId, "open:" + aTarget + ":" + aSeed);
+                    m_Message = $"⚠ 待確認：開 `{aTarget}` 並**憑空增發 {aSeed}**（`system_init`）。再按一次才會動。";
+                    return;
+                }
+                g.SetField(PendingId, "");
+                string aN = aName; int aS = aSeed;
+                Start("開戶 " + aTarget + (aS > 0 ? " ＋種子 " + aS : ""), () =>
+                {
+                    SCP_CmdResult aOpen = Dispatch("open", new Dictionary<string, string>
+                    { ["account"] = aTarget, ["display_name"] = aN });
+                    if (!aOpen.Ok || aS <= 0) return Describe(aOpen, aTarget);
+
+                    // ⛔ 開戶失敗就**不發種子**（上面已 return）—— 對一個不存在的戶發錢，
+                    //   `cmd bank` 會擋，而那個錯誤訊息長得像帳本壞了。
+                    SCP_CmdResult aSeedRes = Dispatch("credit", new Dictionary<string, string>
+                    {
+                        ["account"] = aTarget,
+                        ["amount"] = aS.ToString(),
+                        ["kind"] = "system_init",
+                        ["ref"] = "bank_admin_open",
+                        ["description"] = "開戶種子額度",
+                        ["caller"] = "BankAdminPage",
+                        // 同一戶重按不該發兩次種子。
+                        ["idem_key"] = "seed/" + aTarget,
+                    });
+                    return (aSeedRes.Ok ? "✅ 開戶＋種子 " + aS : "⚠ **戶開了、種子沒發成功**")
+                           + "　" + Describe(aSeedRes, aTarget);
                 });
             }
         }
@@ -1198,9 +1241,16 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     // 區塊職責：🔗 **換綁** —— 這個 persona 在**本區**的錢進哪一戶。
     // 物理意義：Tim 2026-09-18：「原本在 `UCL_PersonaAgentAdminPage` 的換綁功能整合進來，
     //          因為這屬於銀行帳戶操作」⇒ 本格改的是 `letters/<p>/bank/<本區>.md`。
-    // ⚠ **受詞要講清楚**：UCL 那一頁的換綁改的是 persona 檔的 `agent` 欄（agent 歸屬），
-    //   而**決定錢進哪一戶的是這個檔** —— 兩者是不同的東西，
-    //   ⛔ 不要以為改了一個就等於改了另一個（那個誤會的代價是錢進了沒改到的那一戶）。
+    // ⚠ **`agent` 欄與銀行帳戶早就合一了**（Tim 2026-08-20 拍板；2026-09-18 我量過才確認）：
+    //   `profile/` 底下**沒有** `agent.md` —— 那一欄是 `SCP_PersonaProfile.BuildRaw` 拿
+    //   `GetBankAccount()` **推導**出來的 ⇒ 一個來源（`bank/<區>.md`）、兩個名字。
+    // 🩸 所以 UCL 那一頁（`UCL_PersonaAgentAdminPage`）的換綁**今天已經寫不進去**：
+    //   它呼叫 `UCL_PersonaProfile.SetField(persona,"agent",…)`，而那支對 `agent` 是 fail-loud
+    //   （「不由本入口寫 —— 走 `Cmd_PersonaProfile op=set_bank`」）。
+    //   ⇒ 本格不是「把另一個受詞搬過來」，是**把唯一還有效的那條路放到它該在的地方**。
+    // 📌 我第一版把這兩者寫成「不同的東西」—— 那是**從檔案位置推的，沒有量**。
+    //   Tim 一句「agent 欄應該已經跟銀行帳戶合併了？」才讓我去讀 `BuildRaw`。
+    //   ⇒ 形狀記著：**同一件事有兩個名字時，它看起來就像兩件事。**
     // 🩸 **讀綁定不是動錢，寫綁定是**（Tim 2026-08-31）⇒ 二段確認 ＋ `reason` 必填 ＋ 審計一行。
     //   ⛔ 它**不搬錢**：既有分錄 append-only 不追溯，換綁之後的收付才走新帳戶。
     // ===========================================================
