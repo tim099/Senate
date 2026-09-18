@@ -274,8 +274,13 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     {
         g.Note("新銀行（`SCP_Bank*`）的後台。**帳號來源＝跟舊系統共用的綁定** "
                + "`letters/<persona>/bank/<區>.md`：同一個人**每區是不同帳號 id**。");
-        g.Note("⚠ **遷移前新銀行＝測試用**，「我有多少錢」的答案仍然是舊 `Treasury/`（D27）。"
-               + "⛔ 本頁不切換權威。");
+        // ⭐ 2026-09-18（TASK-0216 ⑨）：定語改成**推導**。寫死的那一句在切換那天整句變成假的，
+        //    而過期不會叫 —— 一句過期的真話比沒有話貴，因為它看起來是對的。
+        g.Note(SCP_BankRegion.ReadAuthority(m_DataRoot.Value) == SCP_BankRegion.AuthoritySenateBank
+               ? "🔁 **本帳＝這棵樹的金流權威**（`money_authority=senate_bank`，2026-09-18 切換）——"
+                 + "舊 `Treasury/` 已凍結為歷史。⛔ 本頁不切換權威（那一格在設定檔裡）。"
+               : "⚠ **本帳＝測試用**（`money_authority=legacy`），「我有多少錢」的答案仍然是舊 `Treasury/`（D27）。"
+                 + "⛔ 本頁不切換權威。");
 
         DrawPathRow(g);
         if (m_BankRoot.Value.Length == 0)
@@ -441,7 +446,9 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                     }
                 }
                 g.Note("· 「未開戶」＝新銀行還沒有這一戶的帳戶檔。⛔ 那**不是**「他沒有錢」——"
-                       + "遷移前錢都還在舊 `Treasury/`。");
+                       + (SCP_BankRegion.ReadAuthority(m_DataRoot.Value) == SCP_BankRegion.AuthoritySenateBank
+                          ? "權威已切到本帳，而**沒開戶的人動不了錢**（寫入會被擋下並說出理由）。"
+                          : "遷移前錢都還在舊 `Treasury/`。"));
                 g.Note("· 選人／選帳戶的兩格下拉**釘在最上面那一條**（跟著捲的話，"
                        + "「我在對誰動錢」會在你捲到動錢鈕的那一刻離開畫面）。");
                 if (g.Button("清掉選取", "bank/sel/clear"))

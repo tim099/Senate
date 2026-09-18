@@ -22,13 +22,19 @@ public sealed class Cmd_Bank : ServerDelegateCmd
 {
     public override string Name => "bank";
 
+    // ⚠ 這兩段是**靜態字串**：它們在指令清單裡印出來，那時候還不知道要對哪一棵資料樹說話
+    //   ⇒ ⛔ 不可以在這裡宣布誰是權威（同一顆 exe 服務多棵樹，有的切了有的沒切）。
+    //   ⇒ 只講「權威這件事去哪裡讀」，真正的答案由每次執行的定語（`Stamp`）現場推導。
+    //   🩸 舊版在這裡寫死「遷移前＝測試用」，於是 2026-09-18 切換那天它整句變成假的。
     public override string Summary =>
         "新版銀行：開戶／查餘額／入帳／扣款 —— 由 Senate Server 執行（**單一寫入端**）"
-        + "　⚠ 遷移前＝**測試用**，實際餘額以舊 Treasury 為準（D27）";
+        + "　⚠ 這棵樹是不是以本帳為權威，看每次執行印出的定語（`money_authority`）";
 
     public override string PortNote =>
-        "⚠ **不是終局形**：舊的 `Treasury/`（python + Editor）2026-09-15（D27）拍板"
-        + "**不是唯讀歷史，是仍在服役的權威** —— 兩套長期並存，遷移前新銀行只是測試用，錢以舊的為準";
+        "⚠ **權威是逐棵樹的設定**（`Treasury/bank_settings.json` 的 `money_authority`）："
+        + "`senate_bank` ＝ 本帳就是那本帳、舊 `Treasury/` 凍結為歷史；"
+        + "`legacy` ＝ 錢仍以舊 `Treasury/` 為準，本帳只是測試用（D27）。"
+        + "⛔ 別假設所有專案同時切 —— 同一顆 exe 服務多棵樹";
 
     public override string Example => SCP_CmdRegistry.Invoke("bank --arg op=balance --arg account=cc");
 
@@ -79,14 +85,14 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         string aOp = iArgs.Get("op");
         switch (aOp)
         {
-            case "accounts": return Stamp(OpAccounts(aRoot));
-            case "open": return Stamp(OpOpen(aRoot, iArgs));
-            case "balance": return Stamp(OpBalance(aRoot, iArgs));
+            case "accounts": return Stamp(OpAccounts(aRoot), aRoot);
+            case "open": return Stamp(OpOpen(aRoot, iArgs), aRoot);
+            case "balance": return Stamp(OpBalance(aRoot, iArgs), aRoot);
             case "credit":
-            case "debit": return Stamp(OpPost(aRoot, iArgs, aOp == "debit"));
-            case "transfer": return Stamp(OpTransfer(aRoot, iArgs));
-            case "close": return Stamp(OpClose(aRoot, iArgs));
-            case "reopen": return Stamp(OpReopen(aRoot, iArgs));
+            case "debit": return Stamp(OpPost(aRoot, iArgs, aOp == "debit"), aRoot);
+            case "transfer": return Stamp(OpTransfer(aRoot, iArgs), aRoot);
+            case "close": return Stamp(OpClose(aRoot, iArgs), aRoot);
+            case "reopen": return Stamp(OpReopen(aRoot, iArgs), aRoot);
             default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|transfer|close|reopen）");
         }
     }
@@ -96,10 +102,20 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     //          而**兩邊都不會報錯**（它們各自都對，只是在回答不同的問題）。
     // 🩸 為什麼掛在這裡而不是寫進文件：文件要有人去讀，而這一行長在**每一個看到數字的人**的必經路上。
     //    ⛔ 也不靠「大家記得」—— 記得是這個系統最不能依賴的東西。
-    // ⚠ 遷移那天要回來把這一行拿掉（它屆時會變成一句過期的真話，而過期不會叫）。
-    static SCP_CmdResult Stamp(SCP_CmdResult ioResult)
+    // ⭐ 2026-09-18（TASK-0216 ⑨）：這一行原本寫死「遷移前＝測試用」，並在旁邊留了一句
+    //    「遷移那天要回來把它拿掉」。⛔ 而那是一條**靠人記得**的規矩 ——
+    //    今天真的切了權威，於是同一句話**整句變成假的**，而過期不會叫。
+    //    ⇒ 改成**推導**：定語跟著 `money_authority` 走，兩種狀態各說各的真話。
+    //    📌 而它**不是**「切完就刪掉」：`legacy` 那一支仍然要印 ——
+    //      另一棵樹（另一個專案／另一區）可能還沒切，而它們共用這同一顆 exe。
+    static SCP_CmdResult Stamp(SCP_CmdResult ioResult, string iBankRoot)
     {
-        ioResult.Lines.Add("⚠ **遷移前新銀行＝測試用** —— 實際餘額以舊系統（`Treasury/`，酒館領薪那本）為準（D27）");
+        bool aIsNew = SCP_BankRegion.AuthorityFromBankRoot(iBankRoot) == SCP_BankRegion.AuthoritySenateBank;
+        ioResult.Lines.Add(aIsNew
+            ? "🔁 **本帳＝這棵樹的金流權威**（`money_authority=senate_bank`，2026-09-18 切換）"
+              + " —— 舊 `Treasury/` 已凍結為歷史，⛔ 不再長新分錄"
+            : "⚠ **本帳＝測試用**（`money_authority=legacy`）—— 實際餘額以舊系統"
+              + "（`Treasury/`，酒館領薪那本）為準（D27）");
         return ioResult;
     }
 
