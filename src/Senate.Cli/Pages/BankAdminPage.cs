@@ -314,6 +314,8 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         g.Separator();
         DrawApprovalPanel(g);
         g.Separator();
+        DrawPolicyPanel(g);
+        g.Separator();
         // ⭐ 遷移是本頁最長、也最少用的一段 ⇒ **預設收起來**（Tim 2026-09-17：大區塊加摺疊）。
         // ⚠ 收合時仍要看得出「這裡有沒有事」—— 對照表取過沒、取的是哪一刻的讀數。
         using (var aFold = g.Fold("🚚 遷移：把舊 Treasury 的餘額搬成開帳分錄", "bank/fold/migration", iDefaultOpen: false))
@@ -1410,6 +1412,111 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                         }
                     }
                 }
+        }
+    }
+
+    // ===========================================================
+    // 區塊職責：🏦 **央行 / 政策參數** —— 從 Unity 那頁遷過來（Tim 2026-09-18：UCL 那邊要廢棄）。
+    // 物理意義：這幾個數字原本寫死在 `UCL_BartenderDaemon` 的 const 裡 ——
+    //          它們是**經濟政策參數不是實作細節**，決定權該在後台。
+    //          改完**立刻生效**（收保管費那支每輪重讀），不必重編、不必重啟。
+    // ⚠ **刻意沒有「立刻結算一次」** —— 保管費是每日一次的跨日事件，
+    //   手動觸發會讓人以為扣了兩次而去查一個不存在的 bug。
+    // 🩸 **央行帳戶與費率分開**：前者決定**錢從哪來**（換掉它，所有撥款換一個來源）⇒ 二段確認；
+    //   後者只改數字 ⇒ 不必。⛔ 兩者合成一顆「儲存」鈕的話，改費率的人會順手改掉錢的來源。
+    // ⚠ 過渡期：Unity 那頁**還在，而且也寫得動同一個檔** ⇒ 改參數**只從這一邊改**，
+    //   否則「誰是權威」在畫面上看不出來（退場排在 TASK-0242）。
+    // ===========================================================
+    void DrawPolicyPanel(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("🏦 央行 / 政策參數", "bank/fold/policy", iDefaultOpen: false))
+        {
+            SCP_BankPolicy.Reading aPol = SCP_BankPolicy.Read(m_DataRoot.Value, out string? aWhy);
+            if (!aFold.Open)
+            {
+                g.Note($"　（收合中）・央行 `{aPol.CentralBank}`｜保管費 {aPol.FeeRateDisplay}%"
+                       + $"（門檻 {aPol.Threshold}）｜掛號信 {aPol.MailFee}");
+                return;
+            }
+            if (aWhy != null) g.Note("⚠ " + aWhy);
+
+            g.Label($"🏦 央行帳戶 **{aPol.CentralBank}**　餘額 {BalanceText(aPol.CentralBank)}");
+            g.Note("跨日保管費**全數存入央行**（不再蒸發）；請款核准由此撥款（不足即拒絕，⛔ 不憑空增發）。"
+                   + "⚠ 而開戶的「種子」是 `system_init` **憑空增發** —— 那兩者對貨幣總量的影響相反。");
+
+            // ── 央行帳戶（換掉它＝換掉錢的來源）⇒ 二段確認 ──
+            var aOpts = new List<SCP_GuiOption>();
+            foreach (KeyValuePair<string, Acct> kv in m_Accounts)
+                aOpts.Add(new SCP_GuiOption(kv.Key, kv.Key + (kv.Value.Closed ? "（已銷戶）" : "（" + kv.Value.Balance + "）")));
+            aOpts.Sort((a, b) => string.CompareOrdinal(a.Value, b.Value));
+            string aPickCb = g.Dropdown("改央行帳戶（⚠ 換掉它＝所有撥款換一個來源）", aOpts,
+                                        g.FieldValue("bank/f/cb", aPol.CentralBank), "bank/f/cb");
+            bool aCbArmed = g.FieldValue(PendingId, "") == "cb:" + aPickCb;
+            if (aPickCb.Length > 0 && !string.Equals(aPickCb, aPol.CentralBank, StringComparison.Ordinal))
+            {
+                if (g.Button(aCbArmed ? "⚠ 再按一次＝真的換央行" : "設為央行", "bank/do/setcb"))
+                {
+                    if (!aCbArmed)
+                    {
+                        g.SetField(PendingId, "cb:" + aPickCb);
+                        m_Message = $"⚠ 待確認：央行 `{aPol.CentralBank}` → `{aPickCb}`。"
+                                    + "⛔ 它**不搬錢**（舊央行的餘額原地不動），只換之後撥款的來源。";
+                    }
+                    else
+                    {
+                        g.SetField(PendingId, "");
+                        if (!SCP_BankPolicy.IsValidAccountId(aPickCb)) m_Message = $"❌ `{aPickCb}` 不能當帳戶 id";
+                        else
+                        {
+                            string aNew = aPickCb;
+                            bool aOk = SCP_BankPolicy.Write(m_DataRoot.Value,
+                                jd => jd[SCP_BankPolicy.KeyCentralBank] = aNew, out string? aErr);
+                            // 判準是回讀，不是上面那個 bool。
+                            SCP_BankPolicy.Reading aBack = SCP_BankPolicy.Read(m_DataRoot.Value, out string? _);
+                            m_Message = (aOk ? "✅ " : "❌ " + aErr + "　") + $"回讀：央行 ＝ `{aBack.CentralBank}`";
+                        }
+                    }
+                }
+            }
+
+            // ── 費率／門檻／豁免／掛號信費（只改數字）──
+            string aTh = g.TextField("保管費門檻（超過這個餘額的部分才收）",
+                                     g.FieldValue("bank/f/th", aPol.Threshold.ToString()), "bank/f/th");
+            string aFee = g.TextField($"保管費率 %（現在 {aPol.FeeRateDisplay}%；0 ＝ 停收）",
+                                      g.FieldValue("bank/f/fee", aPol.FeeRateDisplay), "bank/f/fee");
+            string aMail = g.TextField("掛號信每封費用（⚠ 這筆**蒸發**，不進央行）",
+                                       g.FieldValue("bank/f/mail", aPol.MailFee.ToString()), "bank/f/mail");
+            bool aExempt = g.Toggle($"央行自己免收保管費（現在：{(aPol.ExemptCentral ? "免" : "照收")}）",
+                                    g.FieldValue("bank/f/exempt", aPol.ExemptCentral ? "1" : "0") == "1", "bank/f/exempt");
+
+            if (g.Button("儲存政策參數", "bank/do/policy"))
+            {
+                if (!int.TryParse(aTh.Trim(), out int aThV) || aThV < SCP_BankPolicy.MinThreshold)
+                { m_Message = $"⚠ 門檻 `{aTh}` 不是 ≥0 的整數 ⇒ **沒有寫入**"; return; }
+                // ⚠ % 轉千分比：收「5」或「2.5」都行，⛔ 而看不懂的字**不當成 0**
+                //   （0 ＝ 停收，那是一個合法設定 ⇒ 把打錯字讀成停收，會讓保管費靜靜消失）。
+                if (!double.TryParse(aFee.Trim(), System.Globalization.NumberStyles.Float,
+                                     System.Globalization.CultureInfo.InvariantCulture, out double aPct) || aPct < 0)
+                { m_Message = $"⚠ 費率 `{aFee}` 讀不出來 ⇒ **沒有寫入**（⛔ 不當成 0 —— 0 是「停收」，那是另一個意思）"; return; }
+                if (!int.TryParse(aMail.Trim(), out int aMailV) || aMailV < 0)
+                { m_Message = $"⚠ 掛號信費 `{aMail}` 不是 ≥0 的整數 ⇒ **沒有寫入**"; return; }
+
+                int aPermille = SCP_BankPolicy.ClampPermille((int)Math.Round(aPct * 10.0));
+                bool aEx = aExempt;
+                bool aOk = SCP_BankPolicy.Write(m_DataRoot.Value, jd =>
+                {
+                    jd[SCP_BankPolicy.KeyThreshold] = aThV;
+                    jd[SCP_BankPolicy.KeyFeePermille] = aPermille;
+                    jd[SCP_BankPolicy.KeyMailFee] = aMailV;
+                    jd[SCP_BankPolicy.KeyExemptCentral] = aEx ? 1 : 0;
+                }, out string? aErr);
+                SCP_BankPolicy.Reading aBack = SCP_BankPolicy.Read(m_DataRoot.Value, out string? _);
+                m_Message = (aOk ? "✅ 已寫入　" : "❌ " + aErr + "　")
+                            + $"回讀：門檻 {aBack.Threshold}／費率 {aBack.FeeRateDisplay}%"
+                            + $"／掛號信 {aBack.MailFee}／央行豁免 {(aBack.ExemptCentral ? "免" : "照收")}"
+                            + (aPermille != (int)Math.Round(aPct * 10.0)
+                               ? $"　⚠ 費率被夾到上限 {SCP_BankPolicy.MaxFeePermille / 10}%" : "");
+            }
         }
     }
 
