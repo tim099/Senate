@@ -1,7 +1,11 @@
-// 區塊職責：畫布閘的 **CLI／Server 實作** —— 付款、自由時間資格、分享全部派給 Unity Editor。
-// 物理意義：這三件事的權威實作只有 Editor 那側有（券／token 的 canonical ledger、
-//           UCL_SessionService、酒館 seq 分配）。Tim 2026-09-03 拍板：**內部串 ucmd，不移植**
-//           ⇒ 這裡不重寫帳本，只把問題送過去、把答案讀回來。
+// 區塊職責：畫布閘的 **CLI／Server 實作** —— 券、自由時間資格、分享派給 Unity Editor；
+//           **token 直接串 Server**（`bank`）。
+// 物理意義：券／session／酒館 seq 的權威實作只有 Editor 那側有。Tim 2026-09-03 拍板
+//           「內部串 ucmd，不移植」⇒ 那幾格這裡不重寫，只把問題送過去、把答案讀回來。
+//           ⭐ 2026-09-18 起 **token 那一格不同**：權威已切到新銀行（TASK-0216 ⑨），
+//           而 Tim 說「Senate 端的金流直接串到 Server，不用走 ucmd 再繞一圈」——
+//           繞 Editor 的話是 CLI → 檔案協議 → Editor → 再 spawn 一顆 senate → Server，
+//           🩸 多出來的那一段**不增加任何保證，只多一個會逾時的地方**。
 // 數值影響：每一次呼叫 ＝ 一次 AgentCommand 檔案協議 round-trip（寫 queue＋trigger、等 result 檔）。
 //           取值一律讀 result 檔的 **values 欄**（`AgentCmdClient.ResultReport`），
 //           ⛔ 不 regex stdout —— python 那側是 parse `🔢 in_free_time = 0|1` 的字串，
@@ -17,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using SCP.Core.Canvas;
+using SCP.Core.Cmd;
 
 namespace Senate.Core;
 
@@ -63,8 +68,11 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         m_QueryTimeoutSec = iQueryTimeoutSec;
     }
 
+    // ⚠ 2026-09-18 起**錢與資格不再是同一個宿主**：token 走 Server（`bank`），
+    //   券／在場資格仍走 Editor。⛔ 兩者壓成一句「由 Editor 執行」就是一個過期的定語，
+    //   而讀它的人會去錯的地方查為什麼沒扣到。
     public string HostQualifier
-        => $"⤷ 錢與資格由 Unity Editor 執行 @ {m_ProjectLabel}（{m_DataRoot}）";
+        => $"⤷ token 由 Senate Server 執行（`bank`）／券與資格由 Unity Editor 執行 @ {m_ProjectLabel}（{m_DataRoot}）";
 
     /// <summary>資料根 → 專案標籤（上一層目錄名）。解不出來就說「未宣告」，⛔ 不猜一個看起來合理的。</summary>
     static string DeriveProjectLabel(string iDataRoot)
@@ -165,22 +173,58 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         return (m_VoucherEchoValues, aWhy, "");
     }
 
+    // ===========================================================
+    // 區塊職責：token 的讀與寫 —— **直接串 Server**（`bank`），⛔ 不再派 ucmd 繞 Editor。
+    // 物理意義：Tim 2026-09-18：「Senate 端的金流直接串到 Server，不用走 ucmd 再繞一圈。」
+    //          權威切到新銀行之後（TASK-0216 ⑨），繞 Editor 那條是
+    //          **CLI → 檔案協議 → Editor → 再 spawn 一顆 senate → Server**：
+    //          同一筆錢走兩次行程邊界，而中間那一段**不增加任何保證**。
+    // 🩸 而它不只是慢：多一段就多一個會逾時的地方 ⇒「不知道有沒有扣到」的機會變兩倍，
+    //   而那個狀態正是這支最貴的失效（逾時一律當沒扣，否則就是白拿像素）。
+    // ⚠ `bank` 是 `ServerDelegateCmd` ⇒ 在 CLI 裡被打到會自己委派給 Server
+    //   （路由由 `ServerContext.InServer` 決定，**不是由呼叫端記得**）。
+    // ⚠ 參數名跟舊的 `Treasury` 那支**不一樣**：這裡是 `kind` / `ref`，⛔ 不是 `use_kind` / `use_ref`。
+    //   ⭐ 而帶錯的失效樣子也換了：`bank` 有 ArgSpec 預檢**會擋下並說出理由**，
+    //     ⛔ 不再是舊路那種「靜默取預設值、錢照扣、審計欄留白」。
+    // ===========================================================
+    string BankRoot()
+        => System.IO.Path.Combine(
+            m_DataRoot, SCP.Core.Paths.SCP_PathRegistry.Get(SCP.Core.Paths.SCP_PathId.BankRoot).DeriveSuffix);
+
+    /// <summary>失敗訊息的第一行 —— `SCP_CmdResult` 沒有 Title 欄，人讀的內容在 `Lines`。</summary>
+    static string FirstLineOf(SCP_CmdResult iResult)
+        => iResult.Lines.Count > 0 ? iResult.Lines[0] : "（沒有訊息）";
+
+    /// <summary>從 `SCP_CmdResult` 的 values 撈一欄（沒有就回空字串）。</summary>
+    static string ValueOf(SCP_CmdResult iResult, string iKey)
+    {
+        foreach (KeyValuePair<string, string> aPair in iResult.Values)
+            if (string.Equals(aPair.Key, iKey, StringComparison.Ordinal)) return aPair.Value;
+        return "";
+    }
+
     public long QueryTokenBalance(string iAccountId, out string oDetail)
     {
-        var aArgs = new Dictionary<string, string> { ["op"] = "balance", ["account"] = iAccountId };
-        if (!TryRun("Treasury", null, aArgs, m_QueryTimeoutSec,
-                    out List<KeyValuePair<string, string>> aValues, out string aWhy))
+        var aArgs = new Dictionary<string, string>
         {
-            oDetail = "問不到（" + aWhy + "）⇒ -1 是「不知道」，**不是 0**（0 是查到了沒錢）";
+            ["op"] = "balance",
+            ["bank_root"] = BankRoot(),
+            ["account"] = iAccountId,
+        };
+        SCP_CmdResult aResult = SCP_CmdRegistry.Dispatch("bank", aArgs);
+        if (aResult.ExitCode != 0)
+        {
+            oDetail = "問不到（bank exit " + aResult.ExitCode + "：" + FirstLineOf(aResult)
+                      + "）⇒ -1 是「不知道」，**不是 0**（0 是查到了沒錢）";
             return -1;
         }
-        string aRaw = Value(aValues, "balance");
+        string aRaw = ValueOf(aResult, "balance");
         if (!long.TryParse(aRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out long aBalance))
         {
-            oDetail = "Cmd 成功但讀不到 balance 欄 ⇒ 仍然是「不知道」";
+            oDetail = "bank 成功但讀不到 balance 欄 ⇒ 仍然是「不知道」";
             return -1;
         }
-        oDetail = "來源：Cmd Treasury 的 values 欄 balance=" + aBalance;
+        oDetail = "來源：Cmd bank（Server）的 values 欄 balance=" + aBalance;
         return aBalance;
     }
 
@@ -210,27 +254,31 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     public SCP_CanvasGateResult DebitTokens(string iAccountId, int iAmount, string iSourceKind,
                                              string iSourceRef, string iDescription)
     {
-        if (iAmount <= 0) return SCP_CanvasGateResult.Good("amount<=0，無需扣款（不必打擾 Editor）");
+        if (iAmount <= 0) return SCP_CanvasGateResult.Good("amount<=0，無需扣款（不必驚動 Server）");
         var aArgs = new Dictionary<string, string>
         {
             ["op"] = "debit",
+            ["bank_root"] = BankRoot(),
             ["account"] = iAccountId,
             ["amount"] = iAmount.ToString(CultureInfo.InvariantCulture),
-            ["currency"] = "tavern_token",
-            // ⚠ debit 讀的是 use_kind / use_ref（**credit 才是 source_kind / source_ref**）——
-            //   兩支同一個檔、名字差一個字，而帶錯的那次不會報錯：審計欄留白，錢照扣。
-            ["use_kind"] = iSourceKind,
-            ["use_ref"] = iSourceRef,
+            // ⚠ `bank` 這支的欄名是 `kind` / `ref`（⛔ 不是舊 Treasury 的 use_kind / use_ref）。
+            //   舊路帶錯名字會**靜默取預設值、錢照扣、審計欄留白**；
+            //   這支有 ArgSpec 預檢 ⇒ 帶錯會被擋下並說出理由。
+            ["kind"] = iSourceKind,
+            ["ref"] = iSourceRef,
             ["description"] = iDescription,
-            // 🩸 caller 必須是**帳戶本人**（或 "system"）：UCL_TreasuryLedger 有帳戶隔離鐵律，
-            //   caller 非 system 且 != account 就拋例外「不可動用對方帳戶」，
-            //   而那個錯誤訊息長得像帳本壞了。語意上這裡就是「該帳戶花自己的錢」。
+            // 🩸 `caller` 是**簽名欄**（沒簽名的錢日後查不出是誰動的）。
+            //   ⚠ 新銀行**沒有**舊系統那條「帳戶隔離鐵律」（caller != account 就拋例外）——
+            //     所以這裡填帳戶本人不再是為了通過檢查，是為了**留下正確的簽名**。
             ["caller"] = iAccountId,
         };
-        if (!TryRun("Treasury", null, aArgs, AgentCmdClient.DefaultWaitTimeoutSec,
-                    out _, out string aWhy))
-            return SCP_CanvasGateResult.Bad("扣 token 沒有成功的收據（" + aWhy + "）");
-        return SCP_CanvasGateResult.Good("扣 " + iAmount + " token（Editor 端 Treasury debit）");
+        SCP_CmdResult aResult = SCP_CmdRegistry.Dispatch("bank", aArgs);
+        // ⛔ 非零一律當「沒扣成功」——「不知道有沒有扣到」在這支要當成沒扣
+        //   （當成扣到了就是白拿像素）。
+        if (aResult.ExitCode != 0)
+            return SCP_CanvasGateResult.Bad("扣 token 沒有成功的收據（bank exit "
+                                            + aResult.ExitCode + "：" + FirstLineOf(aResult) + "）");
+        return SCP_CanvasGateResult.Good("扣 " + iAmount + " token（Server 端 bank debit）");
     }
 
     // 區塊職責：把分享（含預覽附件）派給 Editor 的 Cmd_Tavern op=post

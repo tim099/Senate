@@ -40,6 +40,7 @@ public static class SenatePages
         aCatalog.Register(SCP_GuiProcessAdminPage.PageKey, () => new SCP_GuiProcessAdminPage());
         aCatalog.Register(SCP_GuiSessionAdminPage.PageKey, () => new SCP_GuiSessionAdminPage(iModel));
         aCatalog.Register(BankAdminPage.PageKey, () => new BankAdminPage(iModel));
+        aCatalog.Register(ServerAdminPage.PageKey, () => new ServerAdminPage(iModel));
         return aCatalog;
     }
 
