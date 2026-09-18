@@ -113,6 +113,30 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         return aRaw == "1" ? SCP_CanvasTriState.Yes : SCP_CanvasTriState.No;
     }
 
+    // ===========================================================
+    // 區塊職責：券的查與扣 —— **直接串 Server 的 `voucher`**（TASK-0243），⛔ 不再派 ucmd 繞 Editor。
+    // 物理意義：券已於 2026-09-18 遷進 `letters/<persona>/vouchers/<券名>.json`，
+    //          而**寫入端只有 Server**（券不記歷史 ⇒ 那是它成立的唯一前提）。
+    // 🩸 為什麼一定要跟著切：遷移那一刻起，舊系統每扣一張券，兩本帳就差一張 ——
+    //   而遷移的冪等鍵是**區名**，已經寫進去了 ⇒ **不能靠「再遷一次」把差額補回來**。
+    //   ⇒ 消費端不切，差額只會單調變大，而兩邊各自都是合法數字。
+    // ⚠ 券名是 `canvas`（＝檔名）—— 與 2026-09-18 那次遷移落的檔同名，⛔ 不另取。
+    // ===========================================================
+    const string k_CanvasVoucher = "canvas";
+
+    string LettersRoot()
+        => SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(m_DataRoot)).Value;
+
+    SCP_CmdResult DispatchVoucher(string iOp, Dictionary<string, string> iArgs)
+    {
+        iArgs["op"] = iOp;
+        iArgs["letters_root"] = LettersRoot();
+        iArgs["voucher"] = k_CanvasVoucher;
+        // ⚠ `region` 是寫入時的必填欄（券沒有歷史，它是唯一的「誰動過它」線索）。
+        iArgs["region"] = SCP.Core.Bank.SCP_BankRegion.Read(m_DataRoot, out string? _);
+        return SCP_CmdRegistry.Dispatch("voucher", iArgs);
+    }
+
     public int QueryExpiringVouchers(string iPersona, out string oDetail)
         => QueryVoucherField(iPersona, "expiring", out oDetail);
 
@@ -121,21 +145,22 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
 
     int QueryVoucherField(string iPersona, string iField, out string oDetail)
     {
-        (List<KeyValuePair<string, string>>? aValues, string aWhy, string aEcho) =
-            VoucherBalance(iPersona);
-        if (aValues == null)
+        // ⛔ 舊版在這裡試三種欄名（Editor 那側欄名沒被驗過）。新的 `voucher` 有**宣告過的**
+        //   `permanent` / `expiring` 兩欄 ⇒ 只讀那一個名字；讀不到就是「不知道」，
+        //   ⛔ 不再猜第二、第三個名字 —— 猜中了也不知道自己讀的是哪一欄。
+        SCP_CmdResult aRes = DispatchVoucher("balance",
+            new Dictionary<string, string> { ["persona"] = iPersona });
+        string aEcho = "";
+        if (aRes.ExitCode != 0)
         {
-            oDetail = "問不到（" + aWhy + "）" + aEcho + "⇒ -1 是「不知道」不是「沒有券」";
+            oDetail = "問不到（voucher exit " + aRes.ExitCode + "：" + FirstLineOf(aRes)
+                      + "）⇒ -1 是「不知道」不是「沒有券」";
             return -1;
         }
-        // 兩種欄名都試：Editor 那側的欄名還沒被本單驗過（②的已知缺口，不假裝知道）
-        string aRaw = Value(aValues, iField);
-        if (aRaw.Length == 0) aRaw = Value(aValues, iField + "_vouchers");
-        if (aRaw.Length == 0) aRaw = Value(aValues, "voucher_" + iField);
+        string aRaw = ValueOf(aRes, iField);
         if (!int.TryParse(aRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int aN))
         {
-            oDetail = "Cmd 成功但讀不到 " + iField + " 那一欄（回了 "
-                      + aValues.Count + " 欄）⇒ 仍然是「不知道」";
+            oDetail = "voucher 成功而讀不到 `" + iField + "` 那一欄 ⇒ 仍然是「不知道」";
             return -1;
         }
         oDetail = "來源：Cmd CanvasVoucher 的 values 欄 " + iField + "=" + aN + aEcho;
@@ -233,22 +258,26 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     public SCP_CanvasGateResult ConsumeVouchers(string iPersona, int iCount, string iSourceRef,
                                                 string iDescription)
     {
-        if (iCount <= 0) return SCP_CanvasGateResult.Good("amount<=0，無需消券（不必打擾 Editor）");
-        // ⚠ 參數名是量出來的不是猜的：Editor 端 Op_Consume 讀的是 `ref`（不是 source_ref）。
-        //   帶錯名字不會被說「名字錯」—— 它會拿預設值（空字串）然後照樣扣，審計欄留白。
+        if (iCount <= 0) return SCP_CanvasGateResult.Good("amount<=0，無需消券（不必驚動 Server）");
+        // ⚠ 新系統的欄名是 `source` / `ref`，而**帶錯名字的失效樣子換了**：
+        //   舊路（Editor 的 CanvasVoucher）會靜默取預設值、券照扣、審計欄留白；
+        //   `voucher` 有 ArgSpec 預檢 ⇒ 帶錯會被擋下並說出理由。
         var aArgs = new Dictionary<string, string>
         {
-            ["op"] = "consume",
             ["persona"] = iPersona,
             ["amount"] = iCount.ToString(CultureInfo.InvariantCulture),
             ["ref"] = iSourceRef,
-            ["description"] = iDescription,
+            ["source"] = iDescription,
         };
-        if (!TryRun("CanvasVoucher", iPersona, aArgs, AgentCmdClient.DefaultWaitTimeoutSec,
-                    out _, out string aWhy))
-            // ⚠ 逾時在這裡是**失敗**：不確定有沒有扣到，一律當沒扣（當成扣到了就是白拿像素）。
-            return SCP_CanvasGateResult.Bad("扣券沒有成功的收據（" + aWhy + "）");
-        return SCP_CanvasGateResult.Good("扣券 " + iCount + " 張（Editor 端 CanvasVoucher consume）");
+        SCP_CmdResult aRes = DispatchVoucher("consume", aArgs);
+        // ⚠ 非零一律當**沒扣成功**：不確定有沒有扣到就當沒扣
+        //   （當成扣到了就是白拿像素）。⛔ 而「券不足」也走這一條 —— 它是合法結果，
+        //   訊息會說出可花多少、要花多少，呼叫端分得出來。
+        if (aRes.ExitCode != 0)
+            return SCP_CanvasGateResult.Bad("扣券沒有成功的收據（voucher exit "
+                                            + aRes.ExitCode + "：" + FirstLineOf(aRes) + "）");
+        return SCP_CanvasGateResult.Good("扣券 " + iCount + " 張（Server 端 voucher consume）"
+                                         + "　可花剩 " + ValueOf(aRes, "spendable"));
     }
 
     public SCP_CanvasGateResult DebitTokens(string iAccountId, int iAmount, string iSourceKind,
