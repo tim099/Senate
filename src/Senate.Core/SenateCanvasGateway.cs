@@ -1,5 +1,5 @@
-// 區塊職責：畫布閘的 **CLI／Server 實作** —— 券、自由時間資格、分享派給 Unity Editor；
-//           **token 直接串 Server**（`bank`）。
+// 區塊職責：畫布閘的 **CLI／Server 實作** —— **token 與券直接串 Server**（`bank` / `voucher`）；
+//           在場資格（自由時間／session）與分享仍派給 Unity Editor。
 // 物理意義：券／session／酒館 seq 的權威實作只有 Editor 那側有。Tim 2026-09-03 拍板
 //           「內部串 ucmd，不移植」⇒ 那幾格這裡不重寫，只把問題送過去、把答案讀回來。
 //           ⭐ 2026-09-18 起 **token 那一格不同**：權威已切到新銀行（TASK-0216 ⑨），
@@ -68,11 +68,15 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         m_QueryTimeoutSec = iQueryTimeoutSec;
     }
 
-    // ⚠ 2026-09-18 起**錢與資格不再是同一個宿主**：token 走 Server（`bank`），
-    //   券／在場資格仍走 Editor。⛔ 兩者壓成一句「由 Editor 執行」就是一個過期的定語，
-    //   而讀它的人會去錯的地方查為什麼沒扣到。
+    // ⚠ 2026-09-18 **同一天改了兩次**，而中間那一版的定語當天就過期了：
+    //   ① 早上：token 切到 Server ⇒ 寫成「token 走 Server／**券**與資格走 Editor」
+    //   ② 下午：券也切到 Server（`voucher`）⇒ 上面那句的「券」當場變成假的
+    //   ⇒ 現在只剩**在場資格**（自由時間／session）還在 Editor。
+    // 🩸 記著這個形狀：**定語是跟著實作走的，而它不會自己跟** ——
+    //   一句半對的定語比沒有定語貴，因為讀它的人會去錯的地方查為什麼沒扣到。
     public string HostQualifier
-        => $"⤷ token 由 Senate Server 執行（`bank`）／券與資格由 Unity Editor 執行 @ {m_ProjectLabel}（{m_DataRoot}）";
+        => $"⤷ token 與券由 Senate Server 執行（`bank` / `voucher`）／"
+           + $"在場資格由 Unity Editor 執行 @ {m_ProjectLabel}（{m_DataRoot}）";
 
     /// <summary>資料根 → 專案標籤（上一層目錄名）。解不出來就說「未宣告」，⛔ 不猜一個看起來合理的。</summary>
     static string DeriveProjectLabel(string iDataRoot)
