@@ -67,11 +67,21 @@ public static class SenatePaths
     /// <summary>CLI 跨呼叫的 UI session（每次 CLI 都是新 process，靠它記住多步操作）。</summary>
     public static string UiSession(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "ui_session.json");
 
-    /// <summary>常駐 Server 的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ Server 沒在跑，重生成本零。</summary>
-    public static string ServerHeartbeat(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_server_heartbeat.json");
+    /// <summary>常駐 Server 的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ Server 沒在跑，重生成本零。
+    /// <para>⚠ **一顆一份**（TASK-0244）：`main` 沿用舊檔名、其餘帶 `.&lt;id&gt;`；理由見 <see cref="ServerIds"/> 檔頭。</para></summary>
+    public static string ServerHeartbeat(string iRepoRoot, string iServerId)
+        => Path.Combine(RuntimeDir(iRepoRoot), "_server_heartbeat" + ServerIds.Suffix(iServerId) + ".json");
 
-    /// <summary>`senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉它）。</summary>
-    public static string ServerStopRequest(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop.request");
+    /// <summary>`senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉它）。**一顆一份。**</summary>
+    public static string ServerStopRequest(string iRepoRoot, string iServerId)
+        => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop" + ServerIds.Suffix(iServerId) + ".request");
+
+    /// <summary>
+    /// 單例鎖（OS advisory lock ＝ 獨佔開檔；握著 handle 就是持有鎖）。**一顆一把。**
+    /// <para>⛔ 兩顆共用一把的話，第二顆永遠起不來 —— 而那看起來會像「單例閘正常運作」。</para>
+    /// </summary>
+    public static string ServerSingletonLock(string iRepoRoot, string iServerId)
+        => Path.Combine(RuntimeDir(iRepoRoot), "_server_singleton" + ServerIds.Suffix(iServerId) + ".lock");
 
     /// <summary>常駐視窗的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ 窗沒在跑。</summary>
     public static string GuiHeartbeat(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_gui_heartbeat.json");
@@ -88,8 +98,12 @@ public static class SenatePaths
     /// 由 <c>SCP_DataPaths</c> 解析底下的路徑 —— 這裡只決定根在哪。
     /// <para>⚠ 它是 Senate 自己的，跟任何 Unity 專案的 AgentCommands 根**沒有關係**：
     /// 兩邊各自有 Watcher，同一棵樹兩個 Watcher 會互搶 trigger。</para>
+    /// <para>🔴 **一顆一個根**（TASK-0244）：兩顆 Server 掃同一個 `queues/` 會**互相接手對方的 lane**，
+    /// 而那件事會**成功**（兩顆載同一份 Senate.Core）⇒ 沒有任何一層會叫。
+    /// `main` 沿用舊目錄名 `server`，其餘是 `server-&lt;id&gt;`。</para>
     /// </summary>
-    public static string ServerRoot(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "server");
+    public static string ServerRoot(string iRepoRoot, string iServerId)
+        => Path.Combine(RuntimeDir(iRepoRoot), ServerIds.RootDirName(iServerId));
 
     /// <summary>
     /// 把三層目錄建出來。**只建目錄、不寫任何檔**，重複呼叫無副作用。

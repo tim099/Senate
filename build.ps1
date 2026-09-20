@@ -32,9 +32,10 @@ $oldExe = Join-Path $root 'publish/senate.exe'
 # 2026-09-04：先記下 build 前本來有沒有一顆在跑 -- 停掉之後沒有人會幫你起回來（理由見 build.sh 同一段）
 $hadServer = $false
 if (Test-Path $oldExe) {
-    & $oldExe server status > $null 2>&1
+    # TASK-0244: list 才代表「至少有一顆活著」; stop --all 才把所有鎖著 exe 的都放掉
+    & $oldExe server list > $null 2>&1
     if ($LASTEXITCODE -eq 0) { $hadServer = $true }
-    & $oldExe server stop
+    & $oldExe server stop --all
     if ($LASTEXITCODE -ne 0) { Write-Host '警告 server stop 回非零 -- 若 publish 撞鎖，先手動收掉 Server 再重跑' }
     if ($hadServer) { Write-Host '. 你本來有一顆 Server 在跑 -- 已停；build 完不會自動起回來（收尾會再提醒一次）' }
     # (2) 視窗：先請它自己關，2 秒不走才 kill。比對 Path 不是 process 名 -- 別份 clone 的 senate 不干我的事。
@@ -144,7 +145,7 @@ for ($i = 0; $i -lt 6; $i++) {
 }
 & $exe cmd server-ping --arg echo=build-check > $pingLog 2>&1
 $server = $LASTEXITCODE
-& $exe server stop > $null 2>&1
+& $exe server stop --all > $null 2>&1
 try { $serverProc.WaitForExit(8000) | Out-Null } catch {}
 if ($server -eq 0 -and (Select-String -Path $pingLog -Pattern 'echo = build-check' -Quiet)) {
     Write-Host '完成 Server round-trip 通'

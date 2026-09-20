@@ -37,7 +37,7 @@ public static class ServerBootstrap
     /// <summary>
     /// 裝上 Server 需要的宿主能力，然後前景常駐直到停止。回傳 exit code。
     /// </summary>
-    public static int Run(string iRepoRoot, Action<string> iOut, Action<string> iErr)
+    public static int Run(string iRepoRoot, string iServerId, Action<string> iOut, Action<string> iErr)
     {
         SenatePaths.EnsureDirectories(iRepoRoot);
 
@@ -54,6 +54,6 @@ public static class ServerBootstrap
         // 沒裝的症狀是 exit 70「宿主沒裝上」——⛔ 不會靜默猜一個根。
         ServerDelegateCmd.RepoRootProvider = () => iRepoRoot;
 
-        return ServerHost.RunForeground(iRepoRoot, iOut, iErr);
+        return ServerHost.RunForeground(iRepoRoot, iServerId, iOut, iErr);
     }
 }

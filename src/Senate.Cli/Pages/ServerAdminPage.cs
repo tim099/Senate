@@ -33,6 +33,13 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     ServerStatus? m_Status;
     string? m_Message;
 
+    /// <summary>
+    /// 本頁現在看的是哪一顆（TASK-0244）。
+    /// <para>🔴 這一格不是裝飾：少了它，「酒館那顆挂了」跟「一切正常」在這頁上同形，
+    /// 而「啟動 Server」那顆鈕會起到一顆你沒在看的。</para>
+    /// </summary>
+    string m_ServerId = ServerIds.Default;
+
     public ServerAdminPage(SenateModel iModel) : base() { m_Model = iModel; }
 
     public override string Key { get { return PageKey; } }
@@ -47,7 +54,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
 
     void Reload()
     {
-        try { m_Status = ServerHost.Probe(m_Model.RepoRoot); }
+        try { m_Status = ServerHost.Probe(m_Model.RepoRoot, m_ServerId); }
         catch (Exception e)
         {
             m_Status = null;
@@ -77,6 +84,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
 
     protected override void DrawContent(SCP_Ui g)
     {
+        g.Note("▶ 本頁看的是 **serverId = `" + m_ServerId + "`**（這棵樹上看得到：" + string.Join("、", ServerHost.KnownIds(m_Model.RepoRoot)) + "）。切別顆：終端機 `senate server status --id <id>`。");
         g.Note("Senate Server 的狀態與生命週期。讀數來自 `ServerHost.Probe`，"
                + "與 `senate server status` **同一份事實**（⛔ 本頁不自己判活著）。");
         g.Note("⚠ **2026-09-18 起它是金流的必要條件**：權威在新銀行，而寫入端只有 Server"
@@ -106,7 +114,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
             if (s.Unverifiable.Count > 0)
             {
                 g.Label("？ 沒有 Alive 的 Server，而 registry 裡有 **" + s.Unverifiable.Count
-                        + "** 筆 `" + ServerHost.Tag + "` 身分**驗不出來**"
+                        + "** 筆 `" + ServerHost.TagFor(m_ServerId) + "` 身分**驗不出來**"
                         + "（pid=" + string.Join(",", s.Unverifiable.ConvertAll(r => r.Pid.ToString())) + "）");
                 g.Note("⛔ 那幾筆不能當活著，也不能當死了 —— 去 ProcessAdminPage 看它們。");
             }
@@ -186,8 +194,13 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     // ===========================================================
     string StartDetached()
     {
-        if (m_Status != null && m_Status.IsRunning)
-            return "・已經有一顆在跑（pid=" + m_Status.Alive!.Pid + "）⇒ **沒有啟動第二顆**。";
+        // ⚠ 這道閘量的是**上一次探測**的結果，而那可能是幾秒鐘以前的 ⇒ 現場重採一次。
+        //   ⛔ 真正擋得住第二顆的不是本頁，是 Server 自己的單例鎖（OS advisory lock）——
+        //   本頁這一格只是讓人少看一個失敗視窗。
+        ServerStatus aNow = ServerHost.Probe(m_Model.RepoRoot, m_ServerId);
+        m_Status = aNow;
+        if (aNow.IsRunning)
+            return "・[" + m_ServerId + "] 已經有一顆在跑（pid=" + aNow.Alive!.Pid + "）⇒ **沒有啟動第二顆**。";
 
         string? aExe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(aExe))
@@ -207,6 +220,12 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
             };
             aPsi.ArgumentList.Add("server");
             aPsi.ArgumentList.Add("start");
+            // ⚠ 指名才不會起錯一顆 —— 不帶的話不管本頁現在看哪一顆，起來的都是 `main`。
+            if (!string.Equals(m_ServerId, ServerIds.Default, StringComparison.Ordinal))
+            {
+                aPsi.ArgumentList.Add("--id");
+                aPsi.ArgumentList.Add(m_ServerId);
+            }
             System.Diagnostics.Process.Start(aPsi);
         }
         catch (Exception e)
@@ -224,7 +243,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     {
         var aLines = new List<string>();
         int aExit;
-        try { aExit = ServerHost.Stop(m_Model.RepoRoot, s => aLines.Add(s), s => aLines.Add(s)); }
+        try { aExit = ServerHost.Stop(m_Model.RepoRoot, m_ServerId, s => aLines.Add(s), s => aLines.Add(s)); }
         catch (Exception e) { return "🔴 停止時丟例外（" + e.GetType().Name + "：" + e.Message + "）"; }
 
         string aTail = aLines.Count > 0 ? "　—— " + aLines[aLines.Count - 1] : "";

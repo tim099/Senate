@@ -1346,7 +1346,11 @@ public static class Program
         //   （那要每支子命令各自處理它，而沒處理的那幾支會回一個看起來像壞掉的答案）。
         ["cmd"] = new[] { "--arg", "--arg-file", "--help" },
         ["selftest"] = new[] { "--list", "--only", "--clipboard", "--width", "--scale", "--size" },
-        ["server"] = new string[0],
+        // TASK-0244：`--id <serverId>` 選哪一顆；`--all` 只給 `stop`（build 腳本用）。
+        // ⚠ 不加進這張表的話，旗標閘會在 `ServerCommand` 看到它之前就 exit 2 ——
+        //   而那個錯誤訊息逐字是「這支子命令**不吃任何旗標**」，
+        //   讀起來像是設計上沒有這個能力，而不像漏登記。
+        ["server"] = new[] { "--id", "--all" },
     };
 
     // 值型旗標：它後面那一個 token 是**值**，不是旗標 ⇒ 不能拿去比對名單
@@ -1355,7 +1359,7 @@ public static class Program
     {
         "--screenshot", "--soak", "--click", "--set", "--toggle", "--fold", "--page",
         "--width", "--scale", "--size", "--win-size", "--branch", "--only", "--set-branch", "--root", "--project",
-        "--arg", "--arg-file", "--persona", "--timeout", "--lane", "--output-file",
+        "--arg", "--arg-file", "--persona", "--timeout", "--lane", "--output-file", "--id",
         "--ack-timeout", "--poll-interval",
     };
 
@@ -1603,7 +1607,7 @@ public static class Program
                 string aHost = aResult.Values.Exists(v => v.Key == "delegate_host" && v.Value == "server") ? "server" : "local";
                 // Server 跑的那筆，報告由 Server 寫在它的根（cmd_id 同一個）；這裡只指路，不再寫第二份。
                 string? aPath = aHost == "server"
-                    ? Path.Combine(SenatePaths.ServerRoot(iRepoRoot), CmdErrorReport.DirName, aReportId + ".md")
+                    ? Path.Combine(SenatePaths.ServerRoot(iRepoRoot, ServerIdOf(aResult)), CmdErrorReport.DirName, aReportId + ".md")
                     : CmdErrorReport.Write(SenatePaths.RuntimeDir(iRepoRoot), aReportId, aName, WithClient(aRawArgs), aResult, aHost,
                         m => Console.Error.WriteLine(m));
                 if (aPath != null)
@@ -1619,6 +1623,17 @@ public static class Program
     }
 
     /// <summary>CLI 直跑的 Cmd 沒有經過 Submit，不會有 `_caller_client` —— 報告裡補上，不然「諰送的」會印成 unstated（那是給舊 client 留的態）。</summary>
+    /// <summary>
+    /// 這一筆是哪一顆 Server 跑的（TASK-0244）—— 錯誤報告在**那顆的根**底下。
+    /// <para>⚠ 讀的是 `ServerDelegateCmd` 自己填的 `server_id`，⛔ 不在這邊推：
+    /// 推錯的樣子是「指了一個不存在的檔」，而那行字讀起來完全正常。沒帶 ⇒ `main`。</para>
+    /// </summary>
+    static string ServerIdOf(SCP.Core.Cmd.SCP_CmdResult iResult)
+    {
+        foreach (var kv in iResult.Values) if (kv.Key == "server_id" && kv.Value.Length > 0) return kv.Value;
+        return Senate.Core.ServerIds.Default;
+    }
+
     static Dictionary<string, string> WithClient(Dictionary<string, string> iArgs)
     {
         if (iArgs.ContainsKey("_caller_client")) return iArgs;

@@ -63,10 +63,11 @@ public static class ServerAutoStart
     /// 確保有一顆 Server 在跑；沒有就拉一顆起來，等到它能收工作為止。
     /// <para>⚠ 等的是「**有沒有一顆**」不是「我 spawn 的那顆」—— 見檔頭判準①。</para>
     /// </summary>
-    public static ServerAutoStartReport Ensure(string iRepoRoot, Action<string>? iLog = null)
+    public static ServerAutoStartReport Ensure(string iRepoRoot, string iServerId, Action<string>? iLog = null)
     {
         var aReport = new ServerAutoStartReport();
-        if (ServerHost.Probe(iRepoRoot).IsRunning)
+        string aServerId = ServerIds.Normalize(iServerId);
+        if (ServerHost.Probe(iRepoRoot, aServerId).IsRunning)
         {
             aReport.Outcome = ServerAutoStartOutcome.AlreadyRunning;
             return aReport;
@@ -79,14 +80,14 @@ public static class ServerAutoStart
         //      那三顆「拿不到單例鎖」的訊息一個字都沒留下。
         //   ⇒ 結論：**log 由 child 自己寫**（`ServerHost.RunForeground` 自帶 tee），parent 不接管線。
         //     parent 只負責記下 child 的 pid，好指得出**那一份**。
-        if (!TrySpawn(iRepoRoot, out int aChildPid, out string aSpawnErr))
+        if (!TrySpawn(iRepoRoot, aServerId, out int aChildPid, out string aSpawnErr))
         {
             aReport.Outcome = ServerAutoStartOutcome.SpawnFailed;
             aReport.Detail = aSpawnErr;
             return aReport;
         }
-        aReport.LogPath = ServerHost.StartLogPath(iRepoRoot, aChildPid);
-        iLog?.Invoke($"⤷ Server 沒在跑 ⇒ 已拉起一顆，等它上線（最多 {ReadyTimeoutMs / 1000}s）…");
+        aReport.LogPath = ServerHost.StartLogPath(iRepoRoot, aServerId, aChildPid);
+        iLog?.Invoke($"⤷ Server [{aServerId}] 沒在跑 ⇒ 已拉起一顆，等它上線（最多 {ReadyTimeoutMs / 1000}s）…");
 
         var aSw = Stopwatch.StartNew();
         while (aSw.ElapsedMilliseconds < ReadyTimeoutMs)
@@ -94,7 +95,7 @@ public static class ServerAutoStart
             Thread.Sleep(PollMs);
             // ⚠ 條件是 IsRunning（registry 判定），不是「我那顆 pid 活著」：
             //   輸掉單例鎖的那幾顆會自己退出，而真正上線的是別人 spawn 的那顆 —— 那也算數。
-            if (ServerHost.Probe(iRepoRoot).IsRunning)
+            if (ServerHost.Probe(iRepoRoot, aServerId).IsRunning)
             {
                 aReport.Outcome = ServerAutoStartOutcome.Started;
                 aReport.Detail = $"{aSw.ElapsedMilliseconds} ms";
@@ -112,7 +113,7 @@ public static class ServerAutoStart
     /// <para>⚠ 用**這顆 CLI 自己**的執行方式去起（exe 就起 exe、`dotnet x.dll` 就起 dotnet）——
     /// 起錯一顆的症狀是 build id 不符，而那個錯訊息會把人帶去查一個不存在的版本問題。</para>
     /// </summary>
-    static bool TrySpawn(string iRepoRoot, out int oChildPid, out string oErr)
+    static bool TrySpawn(string iRepoRoot, string iServerId, out int oChildPid, out string oErr)
     {
         oErr = ""; oChildPid = 0;
         try
@@ -159,6 +160,15 @@ public static class ServerAutoStart
         }
         aInfo.ArgumentList.Add("server");
         aInfo.ArgumentList.Add("start");
+        // 🔴 TASK-0244：子行程要知道自己是哪一顆。
+        //   ⛔ 不傳的話它會起成 `main` —— 而 `main` 可能已經在跑，
+        //   於是這一顆拿不到單例鎖自退，而呼叫端等的那顆永遠不會上線。
+        //   失效樣子：`autostart_timeout`，而 log 裡寫的是「拿不到單例鎖」—— 兩句話指不到彼此。
+        if (!string.Equals(iServerId, ServerIds.Default, StringComparison.Ordinal))
+        {
+            aInfo.ArgumentList.Add("--id");
+            aInfo.ArgumentList.Add(iServerId);
+        }
 
         // ⭐ TASK-0204：**先試著脫離呼叫端的行程樹**再退回直接 spawn。
         //   `Process.Start` 生出來的是直系子孫 ⇒ 它會跟著呼叫端繼承一整包東西

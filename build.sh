@@ -57,8 +57,13 @@ command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 
 #   ⚠ 用**舊的** exe 去停 Server（新的還沒 build 出來）；舊 exe 不存在就沒有東西可停。
 had_server=0
 if [ -f "$root/publish/senate.exe" ]; then
-  if "$root/publish/senate.exe" server status > /dev/null 2>&1; then had_server=1; fi
-  "$root/publish/senate.exe" server stop || echo "⚠ server stop 回非零 —— 若 publish 撞鎖，先手動收掉 Server 再重跑"
+  # ⚠ 用 `list` 不用 `status`：status 不指名時只有一顆的情況下才代表全部，
+  #   而 `list` 的 exit 0 逐字就是「至少有一顆活著」（TASK-0244）。
+  if "$root/publish/senate.exe" server list > /dev/null 2>&1; then had_server=1; fi
+  # 🔴 TASK-0244：一律 `--all` —— 這裡要的不是「停某一顆」，是**把所有鎖著 exe 的都放掉**。
+  #   ⛔ 不指名也不指定 `main`：漏停一顆的樣子是 publish 撞 `Access to the path ... is denied`，
+  #     而那個錯誤訊息**不會說是誰**（這一段檔頭上面那兩筆血證就是它）。
+  "$root/publish/senate.exe" server stop --all || echo "⚠ server stop 回非零 —— 若 publish 撞鎖，先手動收掉 Server 再重跑"
   # ⚠ 射程：停的是**那顆常駐 Server**（不分它是哪顆 exe 起的 —— 它們 watch 同一個 stop-request 檔）。
   #   ⇒ 這一停同時解掉 publish/senate.exe 與 publish/server/senate-server.exe 兩個鎖。
   # ⚠ 寫成 `[ ... ] && echo` 會在**沒有 Server 在跑**時讓整支腳本當場 abort：

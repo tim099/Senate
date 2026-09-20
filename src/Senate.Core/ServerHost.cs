@@ -77,6 +77,9 @@ public sealed class ServerStatus
     /// <summary>這顆 CLI 自己的 build id（跟心跳裡的比）。</summary>
     public string MyBuildId = "";
 
+    /// <summary>這份讀數問的是哪一顆（TASK-0244）。⚠ 印讀數時一定要帶上它 —— 少了它，兩顆的輸出同形。</summary>
+    public string ServerId = ServerIds.Default;
+
     public bool IsRunning => Alive != null;
 
     /// <summary>心跳還新鮮嗎（Server 活著但心跳停了 ＝ 卡住，不是正常）。</summary>
@@ -96,8 +99,19 @@ public sealed class ServerStatus
 
 public static class ServerHost
 {
-    /// <summary>registry 裡的 tag（ProcessAdminPage 那張表上看到的名字）。</summary>
+    /// <summary>
+    /// registry 裡的 tag **字首**（ProcessAdminPage 那張表上看到的名字）。
+    /// <para>🔴 TASK-0244 起它不再是「某一顆的 tag」—— 要某一顆的走 <see cref="TagFor"/>。
+    /// ⛔ 直接拿這個常數去比對，等於只看得見 `main` 那一顆，而其餘的會**安靜地不存在**。</para>
+    /// </summary>
     public const string Tag = "senate_server";
+
+    /// <summary>
+    /// 某一顆 Server 在 registry 裡的 tag。`main` 逐字沿用舊值 <c>senate_server</c>：
+    /// ⚠ 那不是美觀問題 —— 改掉的話**升級當下正在跑的那顆會從新版視野裡消失**，
+    /// 新版判「沒有人在跑」然後起第二顆，而那正是本檔要防的事。理由全文見 <see cref="ServerIds"/> 檔頭。
+    /// </summary>
+    public static string TagFor(string iServerId) => Tag + ServerIds.TagSuffix(iServerId);
 
     public const int HeartbeatIntervalMs = 500;
 
@@ -137,22 +151,60 @@ public static class ServerHost
 
     // ── status ────────────────────────────────────────────────────────
 
-    public static ServerStatus Probe(string iRepoRoot)
+    public static ServerStatus Probe(string iRepoRoot, string iServerId)
     {
-        var aStatus = new ServerStatus { MyBuildId = BuildId };
+        string aServerId = ServerIds.Normalize(iServerId);
+        string aTag = TagFor(aServerId);
+        var aStatus = new ServerStatus { MyBuildId = BuildId, ServerId = aServerId };
         foreach (var aKv in SCP_ProcessRegistry.LoadAllWithStatus())
         {
-            if (!string.Equals(aKv.Key.Tag, Tag, StringComparison.Ordinal)) continue;
+            // ⚠ 逐字相等，⛔ 不用 StartsWith：`senate_server` 是 `senate_server.tavern` 的字首，
+            //   用前綴比對會讓 `main` 把別顆算成自己的 —— 而那正好是「互相接手」的入口。
+            if (!string.Equals(aKv.Key.Tag, aTag, StringComparison.Ordinal)) continue;
             if (aKv.Value == SCP_ProcessStatus.Alive) aStatus.Alive ??= aKv.Key;
             else if (aKv.Value == SCP_ProcessStatus.Unknown) aStatus.Unverifiable.Add(aKv.Key);
             // Dead / PidReused：CleanupStale 會收；這裡不列 —— 列了會讓「有一筆死的」看起來像「有東西」。
         }
 
-        string aHb = SenatePaths.ServerHeartbeat(iRepoRoot);
+        string aHb = SenatePaths.ServerHeartbeat(iRepoRoot, aServerId);
         if (!File.Exists(aHb)) { aStatus.HeartbeatError = "心跳檔不存在"; return aStatus; }
         try { aStatus.Heartbeat = ServerHeartbeat.FromJson(SCP_JsonParser.Parse(File.ReadAllText(aHb))); }
         catch (Exception e) { aStatus.HeartbeatError = $"心跳檔讀不了：{e.GetType().Name}: {e.Message}"; }
         return aStatus;
+    }
+
+
+    /// <summary>
+    /// 這棵樹上**看得到的所有 serverId**（registry 的 tag ∪ runtime/ 的心跳檔名）。
+    /// <para>⚠ 兩個來源都收，因為它們各自會漏：registry 只看得到「登記過且還在」的，
+    /// 心跳檔看得到「跑過但沒收乾淨」的。⛔ 只讀一邊的話，`server status` 不指名時會少報一顆，
+    /// 而少報的那顆**還在寫檔**。</para>
+    /// </summary>
+    public static List<string> KnownIds(string iRepoRoot)
+    {
+        var aIds = new SortedSet<string>(StringComparer.Ordinal) { ServerIds.Default };
+        foreach (var aKv in SCP_ProcessRegistry.LoadAllWithStatus())
+        {
+            string aTag = aKv.Key.Tag ?? "";
+            if (string.Equals(aTag, Tag, StringComparison.Ordinal)) { aIds.Add(ServerIds.Default); continue; }
+            if (aTag.StartsWith(Tag + "-", StringComparison.Ordinal))
+                aIds.Add(aTag.Substring(Tag.Length + 1));
+        }
+        try
+        {
+            string aDir = SenatePaths.RuntimeDir(iRepoRoot);
+            const string aStem0 = "_server_heartbeat";
+            if (Directory.Exists(aDir))
+                foreach (string aFile in Directory.GetFiles(aDir, aStem0 + "*.json"))
+                {
+                    string aStem = Path.GetFileNameWithoutExtension(aFile);
+                    if (aStem.Length == aStem0.Length) { aIds.Add(ServerIds.Default); continue; }
+                    if (aStem.StartsWith(aStem0 + ".", StringComparison.Ordinal))
+                        aIds.Add(aStem.Substring(aStem0.Length + 1));
+                }
+        }
+        catch (Exception) { /* 列不到就只剩 registry 那半；⛔ 不因此拋掉已經拿到的 */ }
+        return new List<string>(aIds);
     }
 
     // ── start（前景，永駐）─────────────────────────────────────────────
@@ -162,8 +214,12 @@ public static class ServerHost
     /// <para>⚠ 已有 Alive 的 Server ⇒ 拒絕第二顆（exit 1）並印它的 pid：兩顆 Server 就是兩個寫入者，
     /// 那正是本檔存在要防的事。Unknown 的也拒絕 —— 認不出來不等於沒有。</para>
     /// </summary>
-    public static int RunForeground(string iRepoRoot, Action<string> iOut, Action<string> iErr)
+    public static int RunForeground(string iRepoRoot, string iServerId, Action<string> iOut, Action<string> iErr)
     {
+        string aServerId;
+        try { aServerId = ServerIds.Normalize(iServerId); }
+        catch (ArgumentException e) { iErr("✗ " + e.Message); return 2; }
+
         // 🩸 **自己的輸出自己落檔**（TASK-0209 A5，2026-09-14 兩次實測換來的形狀）：
         //   ① 先是共用一份 `_server_start.log`，`WriteAllText` 互相**截斷覆蓋**。
         //   ② 改成一顆一份之後仍然是空的：輸出原本接成 **parent 的管線**，
@@ -172,7 +228,7 @@ public static class ServerHost
         //   ⇒ 兩次的症狀一模一樣：**要查「它為什麼沒起來」的時候，那幾行剛好不在。**
         //   ⇒ 所以落檔的責任歸 child：它活多久 log 就寫多久，跟誰拉起它無關。
         // ⚠ 手動 `senate server start` 也照寫（終端機看得到 ＋ 檔案留得住，兩者不互斥）。
-        string aStartLog = StartLogPath(iRepoRoot, Environment.ProcessId);
+        string aStartLog = StartLogPath(iRepoRoot, aServerId, Environment.ProcessId);
         var aLogLock = new object();
         void Tee(string iLine)
         {
@@ -210,7 +266,7 @@ public static class ServerHost
         //    ⛔ 也不用 Named Mutex：實務上 Windows-only，而這裡沒有非它不可的理由。
         // ⚠ 鎖**握到 process 結束**（不是只包住 Probe+Register）：
         //    「誰是唯一那顆」由鎖回答，「那顆是誰」由 registry 回答 —— 兩個不同的問題，各自一個機制。
-        FileStream? aSingleton = TryAcquireSingletonLock(iRepoRoot, out string aLockWhy);
+        FileStream? aSingleton = TryAcquireSingletonLock(iRepoRoot, aServerId, out string aLockWhy);
         if (aSingleton == null)
         {
             iErr($"✗ 拿不到單例鎖 ⇒ 拒絕啟動：{aLockWhy}");
@@ -219,7 +275,7 @@ public static class ServerHost
         }
         using FileStream aSingletonHold = aSingleton;
 
-        ServerStatus aExisting = Probe(iRepoRoot);
+        ServerStatus aExisting = Probe(iRepoRoot, aServerId);
         if (aExisting.Alive != null)
         {
             iErr($"✗ 已有一顆 Server 在跑：pid={aExisting.Alive.Pid}　build={aExisting.Heartbeat?.BuildId ?? "?"}"
@@ -229,14 +285,14 @@ public static class ServerHost
         }
         if (aExisting.Unverifiable.Count > 0)
         {
-            iErr($"✗ registry 裡有 {aExisting.Unverifiable.Count} 筆 `{Tag}` 身分驗不出來（pid="
+            iErr($"✗ registry 裡有 {aExisting.Unverifiable.Count} 筆 `{TagFor(aServerId)}` 身分驗不出來（pid="
                  + string.Join(",", aExisting.Unverifiable.ConvertAll(r => r.Pid.ToString())) + "）—— 認不出來不等於沒有。");
             iErr("  出口：ProcessAdminPage（`senate ui --click home/open/process`）看那幾筆，人工判斷後移除記錄再 start。");
             return 1;
         }
 
-        string aStopReq = SenatePaths.ServerStopRequest(iRepoRoot);
-        string aHbPath = SenatePaths.ServerHeartbeat(iRepoRoot);
+        string aStopReq = SenatePaths.ServerStopRequest(iRepoRoot, aServerId);
+        string aHbPath = SenatePaths.ServerHeartbeat(iRepoRoot, aServerId);
         Directory.CreateDirectory(SenatePaths.RuntimeDir(iRepoRoot));
         // 舊的停止請求是上一顆的遺物 —— 不清掉會讓這一顆起來就退，而且退得理直氣壯。
         TryDelete(aStopReq);
@@ -258,8 +314,8 @@ public static class ServerHost
                      : (Path.GetFileName(Environment.ProcessPath ?? "") is { Length: > 0 } aFile
                         ? aFile
                         : "（拿不到執行檔名）");
-        SCP_ProcessRecord? aRec = SCP_ProcessRegistry.Register(aSelf, Tag,
-            $"Senate 常駐 Server（build {aBuild}）", aBy, iAllowMultiple: true);
+        SCP_ProcessRecord? aRec = SCP_ProcessRegistry.Register(aSelf, TagFor(aServerId),
+            $"Senate 常駐 Server[{aServerId}]（build {aBuild}）", aBy, iAllowMultiple: true);
         if (aRec == null)
         {
             iErr("✗ 登記失敗（Warn 那條有原因）⇒ 拒絕啟動：沒登記的 Server 沒人停得掉。");
@@ -277,7 +333,7 @@ public static class ServerHost
         ServerContext.InServer = true;
         ServerContext.Pid = aSelf.Id;
         ServerContext.BuildId = aBuild;
-        string aServerRoot = SenatePaths.ServerRoot(iRepoRoot);
+        string aServerRoot = SenatePaths.ServerRoot(iRepoRoot, aServerId);
         Directory.CreateDirectory(aServerRoot);
         var aExecutor = new ServerExecutor(aServerRoot, iOut, iErr);
         // 先把 Cmd 目錄掃好再開 lane：Discover 有鎖（正解），這一行是讓第一筆 Cmd 不必付反射那幾百毫秒。
@@ -288,7 +344,7 @@ public static class ServerHost
         ConsoleCancelEventHandler aOnCancel = (_, e) => { e.Cancel = true; aCancel = true; };
         Console.CancelKeyPress += aOnCancel;
 
-        iOut($"⤷ senate server 啟動 @ pid={aSelf.Id}　build={aBuild}　registry={SCP_ProcessRegistry.RegistryDir}");
+        iOut($"⤷ senate server [{aServerId}] 啟動 @ pid={aSelf.Id}　build={aBuild}　registry={SCP_ProcessRegistry.RegistryDir}");
         iOut($"· 心跳：{aHbPath}（每 {HeartbeatIntervalMs} ms）　停止：Ctrl+C 或 `senate server stop`");
         if (aBuild == "unversioned")
             iOut("⚠ build=unversioned ⇒ 這是 `dotnet run`（Debug DLL），不是 publish 出來的 exe。CLI 那側會判成版本不符。");
@@ -334,9 +390,9 @@ public static class ServerHost
             // 三件遺物一起收；任何一件收不掉都要說 —— 留下來的心跳檔會讓下一次 status 讀到一個「剛剛還在跳」的假象。
             TryDelete(aHbPath, iErr);
             TryDelete(aStopReq, iErr);
-            SCP_ProcessRegistry.Unregister(aSelf.Id, Tag);
+            SCP_ProcessRegistry.Unregister(aSelf.Id, TagFor(aServerId));
         }
-        iOut($"· Server 已停（{aExitWhy}）　pid={aSelf.Id}");
+        iOut($"· Server [{aServerId}] 已停（{aExitWhy}）　pid={aSelf.Id}");
         return 0;
     }
 
@@ -344,18 +400,19 @@ public static class ServerHost
     public const int SingletonLockWaitMs = 3000;
 
     /// <summary>某顆 Server（pid）的啟動 log 路徑 —— 自動啟動那側要指得出**哪一份**。</summary>
-    public static string StartLogPath(string iRepoRoot, int iPid)
-        => Path.Combine(SenatePaths.RuntimeDir(iRepoRoot), $"_server_start_{iPid}.log");
+    public static string StartLogPath(string iRepoRoot, string iServerId, int iPid)
+        => Path.Combine(SenatePaths.RuntimeDir(iRepoRoot),
+                        $"_server_start{ServerIds.Suffix(iServerId)}_{iPid}.log");
 
     /// <summary>
     /// 拿單例鎖：獨佔開檔（<see cref="FileShare.None"/>），**握著 handle ＝ 持有鎖**，
     /// process 死掉由 OS 釋放（⛔ 所以沒有 stale lock 要偵測，也不必猜 pid）。
     /// <para>拿不到回 null，<paramref name="oWhy"/> 一定有話說。檔案本身留著沒關係 —— 鎖是 handle 不是檔案存在。</para>
     /// </summary>
-    static FileStream? TryAcquireSingletonLock(string iRepoRoot, out string oWhy)
+    static FileStream? TryAcquireSingletonLock(string iRepoRoot, string iServerId, out string oWhy)
     {
         oWhy = "";
-        string aPath = Path.Combine(SenatePaths.RuntimeDir(iRepoRoot), "_server_singleton.lock");
+        string aPath = SenatePaths.ServerSingletonLock(iRepoRoot, iServerId);
         try { Directory.CreateDirectory(SenatePaths.RuntimeDir(iRepoRoot)); }
         catch (Exception e) { oWhy = $"建不了 runtime 目錄：{e.Message}"; return null; }
 
@@ -445,9 +502,13 @@ public static class ServerHost
     /// 請 Server 自己退；<see cref="StopGraceMs"/> 內沒退才 kill（身分驗證過的才 kill）。
     /// 沒有在跑 ⇒ exit 0（冪等：build 腳本每次都呼叫它）。
     /// </summary>
-    public static int Stop(string iRepoRoot, Action<string> iOut, Action<string> iErr)
+    public static int Stop(string iRepoRoot, string iServerId, Action<string> iOut, Action<string> iErr)
     {
-        ServerStatus aStatus = Probe(iRepoRoot);
+        string aServerId;
+        try { aServerId = ServerIds.Normalize(iServerId); }
+        catch (ArgumentException e) { iErr("✗ " + e.Message); return 2; }
+
+        ServerStatus aStatus = Probe(iRepoRoot, aServerId);
         if (aStatus.Alive == null)
         {
             if (aStatus.Unverifiable.Count > 0)
@@ -455,18 +516,18 @@ public static class ServerHost
                 iErr($"⚠ 沒有 Alive 的 Server，但有 {aStatus.Unverifiable.Count} 筆身分驗不出來的記錄 —— 沒動它們（不能 kill 認不出來的東西）。");
                 return 1;
             }
-            iOut("· 沒有 Server 在跑（沒有東西要停）。");
+            iOut($"· Server [{aServerId}] 沒在跑（沒有東西要停）。");
             // 遺物順手清：沒有活著的 Server 而心跳檔還在 ⇒ 那是上一顆沒收乾淨的。
-            if (File.Exists(SenatePaths.ServerHeartbeat(iRepoRoot)))
+            if (File.Exists(SenatePaths.ServerHeartbeat(iRepoRoot, aServerId)))
             {
-                TryDelete(SenatePaths.ServerHeartbeat(iRepoRoot), iErr);
+                TryDelete(SenatePaths.ServerHeartbeat(iRepoRoot, aServerId), iErr);
                 iOut("· 清掉一份殘留的心跳檔（沒有活著的 Server 對得上它）。");
             }
             return 0;
         }
 
         SCP_ProcessRecord aRec = aStatus.Alive;
-        string aStopReq = SenatePaths.ServerStopRequest(iRepoRoot);
+        string aStopReq = SenatePaths.ServerStopRequest(iRepoRoot, aServerId);
         WriteAtomic(aStopReq, DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) + "\n");
         iOut($"· 已送出停止請求 → pid={aRec.Pid}，等最多 {StopGraceMs / 1000} 秒…");
 
@@ -493,7 +554,7 @@ public static class ServerHost
             if (aSw.ElapsedMilliseconds < StopGraceMs) continue;
 
             // 過了基本寬限還沒退 ⇒ 看它是不是還在跳（在排乾），而不是直接砍。
-            ServerStatus aNow = Probe(iRepoRoot);
+            ServerStatus aNow = Probe(iRepoRoot, aServerId);
             double? aAge = aNow.Heartbeat?.AgeSeconds();
             if (aAge != null && aAge.Value <= HeartbeatStaleSeconds)
             {
@@ -516,7 +577,7 @@ public static class ServerHost
         {
             iOut($"✓ Server 沒在 {aSw.ElapsedMilliseconds / 1000} 秒內自退，已 kill（pid={aRec.Pid}）"
                  + "　⚠ 手上那筆 cmd 會在下一顆 Server 啟動時**再跑一次**");
-            TryDelete(SenatePaths.ServerHeartbeat(iRepoRoot), iErr);
+            TryDelete(SenatePaths.ServerHeartbeat(iRepoRoot, aServerId), iErr);
             TryDelete(aStopReq);
             return 0;
         }
