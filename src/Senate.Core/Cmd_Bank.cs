@@ -12,6 +12,11 @@
 //      推導這一格等於在 Cmd 裡多一份「路徑住哪」的答案，而那份會跟宿主那份漂。
 //      ⚠ 2026-09-17 起 CLI 那側補的值是 **`<資料根>/Bank`**（推導，不再是可填的 `bankRoot`；
 //      Tim 拍板「不額外設定」）——⛔ 仍然**印出來**，不靜默注入。
+//      🔴 **2026-09-21 basecamp 改（TASK-0260，@kiara 開單）**：上面那句「是必填參數」仍然成立，
+//         ⛔ 但它**不再接受使用者手填** —— 擋在 `Program.cs`（宿主層），理由與血證寫在那裡。
+//         ⚠ 本層的「不推導」**一個字都沒改**：本檔仍然不知道銀行根住哪，仍然由宿主注入。
+//         ⇒ 這一段留著而不是刪掉，因為下一個人會問「為什麼這支不推導」——
+//           而那個答案不能只活在 git log 裡。
 //   ③ **錢的動作一律要 `kind`**：沒有 kind 的錢，日後沒有人答得出它為什麼動。
 using SCP.Core.Bank;
 using SCP.Core.Cmd;
@@ -107,6 +112,19 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         string aRoot = iArgs.Get("bank_root");
         if (string.IsNullOrWhiteSpace(aRoot))
             return SCP_CmdResult.Fail(2, "✗ 缺 `bank_root` —— 本層**不推導**它（跨專案共用的根，推導就會跟著專案漂）");
+
+        // ── TASK-0260：根給錯時**說它是根給錯**，⛔ 不要退化成「帳號不存在」──────
+        // 🩸 這兩件事在改這一格之前的輸出上逐字同形，而它們的處置相反：
+        //   前者要改路徑，後者要去開戶 —— 而錯誤訊息主動建議了後者（⇒ 憑空多一個帳戶）。
+        // ⚠ 判準只用**目錄在不在**，⛔ 不數裡面有幾個帳號：一棵剛開的新樹本來就是 0 個帳號，
+        //   拿「0 個」當根給錯的證據，會把一棵合法的空樹講成壞的。
+        if (!System.IO.Directory.Exists(System.IO.Path.Combine(aRoot, SCP_BankAccounts.AccountsDirName)))
+            return SCP_CmdResult.Fail(2,
+                $"✗ `bank_root` 底下沒有 `{SCP_BankAccounts.AccountsDirName}/` ⇒ **這個根給錯了**，"
+                + "⛔ 不是「帳號不存在」",
+                $"  · 給的是：`{aRoot}`",
+                $"  · 銀行根的形狀是 `<資料根>/Bank`（底下有 `{SCP_BankAccounts.AccountsDirName}/` 與 `ledger/`）",
+                "  ⇒ 要換一棵樹請改 `--arg data_root=<資料根>`，⛔ 別手填 `bank_root`（TASK-0260）");
 
         string aOp = iArgs.Get("op");
         switch (aOp)

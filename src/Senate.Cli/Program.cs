@@ -1560,6 +1560,32 @@ public static class Program
         //   並把不唯一的理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
         // ⚠ 兩格用**同一支**（TASK-0209）：原本只有 data_root 一格，加 bank_root 時複製一份的話
         //   就是「同一段邏輯兩份」—— 而兩份會漂，漂掉時兩邊都不報錯。
+        // ── TASK-0260：`bank_root` 不接受手填 ─────────────────────────────
+        // 🩸 症狀（kiara 2026-09-21 實測，變因單一）：`--arg bank_root=<資料根>`（少了 `/Bank`）
+        //   ⇒ 每個帳號都回「帳號 X 沒有開戶 ⇒ 真要用它：先開戶」，而 `accounts/<id>.json`
+        //     **就在磁碟上**。⇒「路徑給錯」與「帳號真的不存在」在輸出上**逐字同形**，
+        //     而錯誤訊息還主動指反方向 —— 照它做會憑空多開一個帳戶，原帳戶好端端在旁邊。
+        // ⭐ 為什麼擋在**這一層**，而不是把它從 `Cmd_Bank.ArgSpecs` 移除（原單的字面）：
+        //   `FillRootArg` 第一行就是 `if (… || !DeclaresArg(iCmd, iArgName)) return;`
+        //   ⇒ **移除宣告的同一個動作就關掉了宿主注入**，而 Cmd 內 `iArgs.Get("bank_root")`
+        //     會當場丟例外（框架刻意不回空字串）。⇒「移除宣告」與「宿主仍注入」互斥。
+        //   ⚠ 而「使用者填的」與「宿主填的」**只有在這個位置分得開** —— 再往下一行，
+        //     `FillRootArg` 就把它們寫進同一個 dict，Bind 那層看到的是同一種東西。
+        // ⛔ 內部呼叫端不受影響：它們走 `SCP_CmdRegistry.Dispatch(name, dict)`，不經過本層。
+        if (aCmd != null && aRawArgs.ContainsKey("bank_root") && DeclaresArg(aCmd, "bank_root"))
+        {
+            Console.Error.WriteLine("✗ `bank_root` 不接受手填 —— 它是 `<資料根>/Bank` 的**推導值**"
+                                    + "（Tim 2026-09-17 拍板：不額外設定）");
+            Console.Error.WriteLine("  ⇒ 要指另一棵樹請改 `--arg data_root=<資料根>`，銀行根會跟著推導");
+            Console.Error.WriteLine("  ⛔ 手填錯值的失效樣子是「帳號沒有開戶」"
+                                    + "—— 跟帳號真的不存在**逐字同形**（TASK-0260）");
+            var aLegal = new List<string>();
+            foreach (SCP.Core.Cmd.SCP_CmdArgSpec aSpec in aCmd.ArgSpecs)
+                if (aSpec.Name != "bank_root") aLegal.Add(aSpec.Name);
+            Console.Error.WriteLine("  · 這支 Cmd 吃的是：" + string.Join(" , ", aLegal));
+            return 2;
+        }
+
         if (aCmd != null)
         {
             SenateConfig? aCfg = null;
