@@ -351,6 +351,31 @@ public static class ServerHost
         iOut($"· 執行器：{aServerRoot}（queues/<lane>/ 同 lane 串行、跨 lane 並行）"
              + (aOrphans > 0 ? $"　⚠ 翻回 {aOrphans} 條孤兒 lane" : ""));
 
+        // ── 名片：往「我服務的那棵資料根」留下 server_root／心跳路徑（TASK-0106 第 4 步）──
+        // 🩸 為什麼要這一步：Unity Editor 那側**不知道 Senate 在哪**（UCL_Core 全樹零個 Server 根參照），
+        //    而委派需要一個可寫的 queue 目錄。⇒ 由知道答案的一方把答案寫到兩邊都看得到的地方。
+        // ⚠ 名片寫不出去**不擋啟動** —— Server 本身仍然是好的，只是 Editor 那側會判成「沒有 Server」。
+        //   ⇒ 那時候要大聲說，⛔ 不可以靜默：靜默的話症狀會長成「委派一直說沒有 Server」，而 Server 明明開著。
+        string? aEndpointDataRoot = TryResolveDataRoot(iRepoRoot);
+        if (aEndpointDataRoot == null)
+            iErr("⚠ 解析不出 AgentCommands 資料根 ⇒ **沒有留名片**：Editor 那側會判成「這棵樹沒有 Server」。");
+        else
+        {
+            var aCard = new SCP_ServerEndpointInfo
+            {
+                ServerId = aServerId,
+                Pid = aSelf.Id,
+                BuildId = aBuild,
+                StartedAtUtc = aHb.StartedAtUtc,
+                ServerRoot = aServerRoot,
+                HeartbeatPath = aHbPath,
+                StaleSeconds = HeartbeatStaleSeconds,
+            };
+            (bool aCardOk, string aCardMsg) = SCP_ServerEndpoint.Write(aEndpointDataRoot, aCard);
+            if (aCardOk) iOut("· 名片：" + aCardMsg + "（Editor 那側靠它找到執行器與心跳）");
+            else iErr("⚠ " + aCardMsg);
+        }
+
         string aExitWhy;
         try
         {
@@ -390,10 +415,35 @@ public static class ServerHost
             // 三件遺物一起收；任何一件收不掉都要說 —— 留下來的心跳檔會讓下一次 status 讀到一個「剛剛還在跳」的假象。
             TryDelete(aHbPath, iErr);
             TryDelete(aStopReq, iErr);
+            // 名片是第四件遺物。⚠ 刪不掉要說：留下來的名片讀起來像「有一顆 Server」，
+            //   而下一個人要再去讀心跳才分得出那是遺體 —— 那一步不是每個呼叫端都會做。
+            if (aEndpointDataRoot != null)
+            {
+                (bool aDelOk, string aDelMsg) = SCP_ServerEndpoint.Delete(aEndpointDataRoot, aServerId);
+                if (!aDelOk) iErr("⚠ " + aDelMsg);
+            }
             SCP_ProcessRegistry.Unregister(aSelf.Id, TagFor(aServerId));
         }
         iOut($"· Server [{aServerId}] 已停（{aExitWhy}）　pid={aSelf.Id}");
         return 0;
+    }
+
+    /// <summary>
+    /// 這顆 Server 服務的 AgentCommands 資料根。<c>null</c> ＝ 解析不出來（沒有唯一啟用專案／目錄不存在）。
+    /// <para>⚠ **資料根只有一組**（Tim 2026-08-31）⇒ 這裡不挑、不猜，解析不出來就回 null 讓呼叫端出聲。</para>
+    /// </summary>
+    static string? TryResolveDataRoot(string iRepoRoot)
+    {
+        try
+        {
+            SenateConfig? aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot));
+            if (aCfg == null) return null;
+            SenateProject? aProj = SenatePathBinding.SingleProject(aCfg, out _);
+            if (aProj == null) return null;
+            string? aRoot = ProjectProbe.ResolveAgentCommandsRoot(aProj.Root, aProj.AgentCommandsRoot);
+            return aRoot != null && Directory.Exists(aRoot) ? aRoot : null;
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>單例鎖等多久（毫秒）。短 —— 這道鎖只保護「檢查＋登記」那一瞬間，等久了代表對方是**在跑**不是在啟動。</summary>

@@ -22,6 +22,7 @@ using SCP.Core.Books;
 using SCP.Core.Library;
 using SCP.Core.Cmd;
 using SCP.Core.Bank;
+using SCP.Core.Proc;
 using SCP.Core.Tavern;
 using System.Globalization;
 
@@ -68,6 +69,7 @@ public static class SelfTest
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
         One(nameof(QueueSubLaneShape), "core", QueueSubLaneShape),
         One(nameof(ServerResultRoundTrip), "core", ServerResultRoundTrip),
+        One(nameof(ServerEndpointFourStates), "core", ServerEndpointFourStates),
         One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
 
@@ -4519,6 +4521,78 @@ public static class SelfTest
     sealed class TavernLaneProbe : Senate.Core.Cmd_TavernWrite
     {
         public string Peek(SCP_CmdArgs iArgs) => Lane(iArgs);
+    }
+
+
+    /// <summary>
+    /// Server 名片的四態（TASK-0106 第 4 步）。
+    /// 🔴 這一格的閘是**「沒有名片」與「名片在但心跳死了」不可以同形** ——
+    /// 前者要去啟動，後者要去查它為什麼死；壓成一個 bool 的話兩邊都只會印「Server 沒跑」。
+    /// </summary>
+    static CheckRow ServerEndpointFourStates()
+    {
+        const string aName = "Server 名片四態（沒有／遺體／活著／讀不開）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_endpoint_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            const string aId = "probe";
+            string aHb = Path.Combine(aTmp, "_hb.json").Replace('\\', '/');
+
+            // ① 沒有名片
+            SCP_ServerProbe aNone = SCP_ServerEndpoint.Probe(aTmp, aId);
+            bool aOk1 = aNone.State == SCP_ServerLiveness.NoEndpoint && !aNone.Alive;
+
+            var aCard = new SCP_ServerEndpointInfo
+            {
+                ServerId = aId, Pid = 12345, BuildId = "test",
+                StartedAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                ServerRoot = aTmp + "/server-probe", HeartbeatPath = aHb, StaleSeconds = 4.0,
+            };
+            SCP_ServerEndpoint.Write(aTmp, aCard);
+
+            // ② 名片在、心跳檔不在 ⇒ 遺體（⛔ 不是「沒有 Server」）
+            SCP_ServerProbe aNoHb = SCP_ServerEndpoint.Probe(aTmp, aId);
+            bool aOk2 = aNoHb.State == SCP_ServerLiveness.StaleHeartbeat && aNoHb.Info?.Pid == 12345;
+
+            // ③ 心跳在但過期
+            void Beat(double iAgoSeconds)
+            {
+                string aAt = DateTime.UtcNow.AddSeconds(-iAgoSeconds).ToString("o", CultureInfo.InvariantCulture);
+                File.WriteAllText(aHb, "{\"beat_at_utc\":\"" + aAt + "\"}", new UTF8Encoding(false));
+            }
+            Beat(30);
+            SCP_ServerProbe aStale = SCP_ServerEndpoint.Probe(aTmp, aId);
+            bool aOk3 = aStale.State == SCP_ServerLiveness.StaleHeartbeat
+                        && aStale.BeatAgeSeconds.HasValue && aStale.BeatAgeSeconds.Value > 4.0;
+
+            // ④ 心跳新鮮 ⇒ 活著（🔴 反向對照：上一格與這一格只差心跳時間，其餘完全相同
+            //    ⇒ 判定真的是由心跳決定的，不是由「名片在不在」決定的）
+            Beat(0.2);
+            SCP_ServerProbe aAlive = SCP_ServerEndpoint.Probe(aTmp, aId);
+            bool aOk4 = aAlive.State == SCP_ServerLiveness.Alive && aAlive.Alive
+                        && aAlive.Info?.ServerRoot == aTmp + "/server-probe";
+
+            // ⑤ 名片壞掉 ⇒ 不知道（⛔ 不當成沒有）
+            File.WriteAllText(SCP_ServerEndpoint.PathFor(aTmp, aId), "{壞掉", new UTF8Encoding(false));
+            SCP_ServerProbe aBad = SCP_ServerEndpoint.Probe(aTmp, aId);
+            bool aOk5 = aBad.State == SCP_ServerLiveness.Unreadable;
+
+            // ⑥ 刪掉 ⇒ 回到「沒有」
+            SCP_ServerEndpoint.Delete(aTmp, aId);
+            bool aOk6 = SCP_ServerEndpoint.Probe(aTmp, aId).State == SCP_ServerLiveness.NoEndpoint;
+
+            bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5 && aOk6;
+            string aReading =
+                $"沒有名片 ⇒ NoEndpoint：{aOk1}／名片在但心跳檔不在 ⇒ **遺體**：{aOk2}"
+                + $"／心跳 30s 沒跳 ⇒ 遺體（量得出 {aStale.BeatAgeSeconds?.ToString("0.0", CultureInfo.InvariantCulture)}s）：{aOk3}"
+                + $"／🔴 只把心跳換成 0.2s 前（其餘一個位元組都沒動）⇒ Alive：{aOk4}"
+                + $"／名片壞掉 ⇒ **Unreadable 不是 NoEndpoint**：{aOk5}／刪掉 ⇒ 回到 NoEndpoint：{aOk6}"
+                + "　⚠ 本格是淨室；**真的起一顆 Server 的那次**另外量（見 TASK-0106 留言）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
     }
 
 }
