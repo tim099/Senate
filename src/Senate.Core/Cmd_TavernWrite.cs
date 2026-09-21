@@ -42,32 +42,45 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     protected override string ServerId => ServerIds.Tavern;
 
     /// <summary>
-    /// **per-room lane**（留言 #3 的候選 B）。
-    /// <para>⛔ 不走預設的 persona lane：那會讓兩個 persona 對同一個房並行寫入，
-    /// 而配號要的正是「同房序列化」。⛔ 也不用單一 `tavern` lane（候選 A）：
-    /// 跨房並行是安全的 —— `SCP_TavernWriter` 的鎖是 per-room，計數快取是 `ConcurrentDictionary`。
-    /// ⇒ 要改回 A 只要把這裡回 <see cref="DefaultLane"/>，一行。</para>
+    /// **固定一條 lane <c>tavern</c>**（留言 #3 的候選 A，PM @basecamp 2026-09-21 拍板，驗收條文 ③）。
+    /// <para>⚠ 判準是讀數不是「A 比較安全」：她量了流量分布 ——
+    /// 52 房 20,426 則裡 `tavern` 這一個房占 **95.9%**，而**近 7 日是 100%**。
+    /// 在這個分布下 A 與 B（per-room lane）序列化的結果**逐筆相同**，
+    /// ⇒ B 買到的跨房並行今天收益是 **0**，而它的成本是多依賴一個前提（`_seq.txt` 必須 per-room）。
+    /// **同樣的效果，選前提少的那個。**</para>
+    /// <para>⚠ 射程照她寫的原樣抄：那是**今天的分布**，⛔ 不是永久性質；
+    /// 而「A 吞吐夠用」是**推論不是讀數**（她沒量吞吐上限）。
+    /// ⇒ 哪天真有第二個房吃到可觀流量，換 B 的成本是改這裡一行。</para>
+    /// <para>🩸 而我 2026-09-21 在她拍板之後**做成了 B**，理由是我自己的技術判斷（跨房並行是安全的）——
+    /// 安全與否不是這格的問題，**收益才是**，而那個讀數在我手上沒有。
+    /// ⛔ 技術上成立不構成推翻 PM 決策的理由。</para>
+    /// <para>⛔ 不走預設的 persona lane（<see cref="DefaultLane"/> ＝ <c>server</c>）：
+    /// 那會讓兩個 persona 對同一個房並行寫入，而配號要的正是「同房序列化」。
+    /// ⚠ 舊註解寫「要改回 A 只要回 <c>DefaultLane</c>」—— **那句是錯的**，
+    /// 它會落在 <c>server</c> 那條 lane 上。改回 A 要回的是本常數。</para>
     /// <para>⚠ 而這道 lane **不是**配號正確性的依靠（那由寫入端自己的鎖與原子建檔保證）——
     /// 它降的是自我校正的重試率。兩者混為一談的話，哪天 lane 設錯了會以為「反正有鎖」。</para>
-    /// <para>🩸 形狀是 <c>tavern-&lt;room&gt;</c>（**一層資料夾名**），而我試錯了兩次才量到為什麼：
-    /// <br/>· 第一版 <c>tavern:&lt;room&gt;</c> —— 冒號在 Windows 是 ADS 分隔字元。
-    /// <br/>· 第二版 <c>tavern/&lt;room&gt;</c> —— 那是協議的**子分道**寫法（`SCP_DataPaths.SplitQueueId`
+    /// <para>🩸 lane 名**必須是一層資料夾名**，而我試錯了兩次才量到為什麼：
+    /// <br/>· <c>tavern:&lt;room&gt;</c> —— 冒號在 Windows 是 ADS 分隔字元。
+    /// <br/>· <c>tavern/&lt;room&gt;</c> —— 那是協議的**子分道**寫法（`SCP_DataPaths.SplitQueueId`
     ///   ⇒ <c>queues/tavern/queue-&lt;room&gt;.json</c>），合法、檔案也真的寫出去了，
     ///   **而 Server 的執行器讀不到它**：`ServerExecutor.Tick` 掃的是 `queues/*` 這一層**目錄**，
     ///   lane 名 ＝ 目錄名，它只看 <c>pending.trigger</c>，⛔ 不看 <c>pending-&lt;lane&gt;.trigger</c>。
     /// <br/>⇒ 2026-09-21 端到端實測：queue 落在對的地方、JSON 合法、trigger 也寫了，
     ///   而 15 秒之後等不到判定 —— **沒有任何一層說「我不認得這個形狀」**。
     /// <br/>📌 ⇒ 子分道是 **Editor Runner 有、Server 執行器沒有**的能力。要它就得改執行器，
-    ///   而那不在本單射程（見 TASK-0106 留言）。</para>
+    ///   而那不在本單射程（見 TASK-0106 留言）。
+    /// <br/>⚠ 這一格在 A 之下**沒有消失，只是碰不到** —— 常數是寫死的，所以現在沒有人能把 `/` 餵進來。
+    ///   哪天改回 B（房名接在後面）那個坑原地回來，所以讀數留著。</para>
     /// </summary>
-    protected override string Lane(SCP_CmdArgs iArgs)
-    {
-        string aRoom = iArgs.Get("room").Trim();
-        return aRoom.Length > 0 ? TavernLanePrefix + aRoom : DefaultLane;
-    }
+    protected override string Lane(SCP_CmdArgs iArgs) => TavernLane;
 
-    /// <summary>酒館 lane 的前綴。⚠ 後面接房名就是**目錄名**，所以它不可以含 `/` 或 `:`。</summary>
-    public const string TavernLanePrefix = "tavern-";
+    /// <summary>
+    /// 酒館唯一那條 lane。⭐ **事實源在 <see cref="SCP_TavernWriter.LaneName"/>** ——
+    /// 送出端（Unity 的 `UCL_ChatTavernIO`）與本收下端唯一共同編得到的組件是 SCP_Core，
+    /// ⇒ 兩邊指同一顆常數，⛔ 不是各寫一個字面再靠註解說「與對面同字面」。
+    /// </summary>
+    public const string TavernLane = SCP_TavernWriter.LaneName;
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
     {

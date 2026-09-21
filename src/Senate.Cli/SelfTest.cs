@@ -4494,13 +4494,24 @@ public static class SelfTest
                 ? Directory.GetFiles(aMsgDir, "*.json", SearchOption.AllDirectories).Length : 0;
             bool aOk4 = aR4.ExitCode != 0 && aFiles == 1;
 
-            // 🔴 ⑤ lane 是 per-room，**而且必須是一層目錄名**（⛔ 不含 `/` 也不含 `:`）。
-            //   🩸 這一格的閘不是「它等於某個字串」，是「Server 的執行器讀得到它」：
-            //     `ServerExecutor.Tick` 掃 `queues/*` 那一層目錄、只認 `pending.trigger`
-            //     ⇒ 帶 `/` 的子分道會落到 `queue-<lane>.json`，**它永遠讀不到，而且不會說不認得**
-            //     （2026-09-21 端到端實測：等 15 秒逾時，queue 檔好好躺在磁碟上）。
-            string aLane = new TavernLaneProbe().Peek(Args(Raw(aMsgJson)));
-            bool aOk5 = aLane == "tavern-" + aRoom
+            // 🔴 ⑤ lane 是**固定一條 `tavern`**（PM 2026-09-21 拍板 A，驗收條文 ③），
+            //   **而且必須是一層目錄名**（⛔ 不含 `/` 也不含 `:`）。兩個性質要同時在場：
+            //   [a] **房名不會漏進 lane** —— 餵兩個不同的房要拿到同一條 lane。
+            //       🩸 只比「等於 tavern」擋不住 per-room 實作：它在 room=`tavern` 那個房上
+            //       **產生一模一樣的字串**，而那正是近 7 日 100% 流量所在的房
+            //       ⇒ 真實用法下那種對拍永遠不會紅。
+            //   [b] **執行器讀得到它** —— `ServerExecutor.Tick` 掃 `queues/*` 那一層目錄、
+            //       只認 `pending.trigger` ⇒ 帶 `/` 的子分道會落到 `queue-<lane>.json`，
+            //       **它永遠讀不到，而且不會說不認得**（2026-09-21 端到端實測：等 15 秒逾時，
+            //       queue 檔好好躺在磁碟上）。
+            var aProbe = new TavernLaneProbe();
+            string aLane = aProbe.Peek(Args(Raw(aMsgJson)));
+            string aLaneOther = aProbe.Peek(Args(new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["room"] = "another-room", ["msg_json"] = aMsgJson,
+            }));
+            bool aOk5 = aLane == Senate.Core.Cmd_TavernWrite.TavernLane
+                        && aLaneOther == aLane
                         && !aLane.Contains("/", StringComparison.Ordinal)
                         && !aLane.Contains(":", StringComparison.Ordinal);
 
@@ -4510,7 +4521,9 @@ public static class SelfTest
                 + $"／認不得的值 ⇒ 拒絕（exit {aR2.ExitCode}）：{aOk2}"
                 + $"／切到 server ⇒ seq={aSeq}、落盤且簽章 `{SCP_TavernWriter.WriterSignatureValue}`：{aOk3}"
                 + $"／msg_json 壞 ⇒ 拒絕且檔數仍是 {aFiles}：{aOk4}"
-                + $"／🔴 lane=`{aLane}`（per-room **且是一層目錄名** —— 帶 `/` 的話執行器讀不到且不出聲）：{aOk5}"
+                + $"／🔴 lane=`{aLane}`（**固定一條**，PM 拍板 A）、"
+                + $"換一個房 `another-room` 仍是 `{aLaneOther}`（＝房名沒漏進 lane）、"
+                + "且是一層目錄名（帶 `/` 的話執行器讀不到且不出聲）：" + aOk5
                 + "　⚠ 本格**不經過檔案協議** ⇒ 委派那條路不在射程內";
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
