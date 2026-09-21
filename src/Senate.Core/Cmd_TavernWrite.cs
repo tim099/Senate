@@ -49,12 +49,25 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     /// ⇒ 要改回 A 只要把這裡回 <see cref="DefaultLane"/>，一行。</para>
     /// <para>⚠ 而這道 lane **不是**配號正確性的依靠（那由寫入端自己的鎖與原子建檔保證）——
     /// 它降的是自我校正的重試率。兩者混為一談的話，哪天 lane 設錯了會以為「反正有鎖」。</para>
+    /// <para>🩸 形狀是 <c>tavern-&lt;room&gt;</c>（**一層資料夾名**），而我試錯了兩次才量到為什麼：
+    /// <br/>· 第一版 <c>tavern:&lt;room&gt;</c> —— 冒號在 Windows 是 ADS 分隔字元。
+    /// <br/>· 第二版 <c>tavern/&lt;room&gt;</c> —— 那是協議的**子分道**寫法（`SCP_DataPaths.SplitQueueId`
+    ///   ⇒ <c>queues/tavern/queue-&lt;room&gt;.json</c>），合法、檔案也真的寫出去了，
+    ///   **而 Server 的執行器讀不到它**：`ServerExecutor.Tick` 掃的是 `queues/*` 這一層**目錄**，
+    ///   lane 名 ＝ 目錄名，它只看 <c>pending.trigger</c>，⛔ 不看 <c>pending-&lt;lane&gt;.trigger</c>。
+    /// <br/>⇒ 2026-09-21 端到端實測：queue 落在對的地方、JSON 合法、trigger 也寫了，
+    ///   而 15 秒之後等不到判定 —— **沒有任何一層說「我不認得這個形狀」**。
+    /// <br/>📌 ⇒ 子分道是 **Editor Runner 有、Server 執行器沒有**的能力。要它就得改執行器，
+    ///   而那不在本單射程（見 TASK-0106 留言）。</para>
     /// </summary>
     protected override string Lane(SCP_CmdArgs iArgs)
     {
         string aRoom = iArgs.Get("room").Trim();
-        return aRoom.Length > 0 ? "tavern:" + aRoom : DefaultLane;
+        return aRoom.Length > 0 ? TavernLanePrefix + aRoom : DefaultLane;
     }
+
+    /// <summary>酒館 lane 的前綴。⚠ 後面接房名就是**目錄名**，所以它不可以含 `/` 或 `:`。</summary>
+    public const string TavernLanePrefix = "tavern-";
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
     {

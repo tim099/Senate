@@ -70,6 +70,7 @@ public static class SelfTest
         One(nameof(QueueSubLaneShape), "core", QueueSubLaneShape),
         One(nameof(ServerResultRoundTrip), "core", ServerResultRoundTrip),
         One(nameof(ServerEndpointFourStates), "core", ServerEndpointFourStates),
+        One(nameof(ServerCmdClientMatchesAgentCmdClient), "core", ServerCmdClientMatchesAgentCmdClient),
         One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
 
@@ -4491,9 +4492,15 @@ public static class SelfTest
                 ? Directory.GetFiles(aMsgDir, "*.json", SearchOption.AllDirectories).Length : 0;
             bool aOk4 = aR4.ExitCode != 0 && aFiles == 1;
 
-            // ⑤ lane 是 per-room（⛔ 不是 persona、不是單一 tavern lane）
+            // 🔴 ⑤ lane 是 per-room，**而且必須是一層目錄名**（⛔ 不含 `/` 也不含 `:`）。
+            //   🩸 這一格的閘不是「它等於某個字串」，是「Server 的執行器讀得到它」：
+            //     `ServerExecutor.Tick` 掃 `queues/*` 那一層目錄、只認 `pending.trigger`
+            //     ⇒ 帶 `/` 的子分道會落到 `queue-<lane>.json`，**它永遠讀不到，而且不會說不認得**
+            //     （2026-09-21 端到端實測：等 15 秒逾時，queue 檔好好躺在磁碟上）。
             string aLane = new TavernLaneProbe().Peek(Args(Raw(aMsgJson)));
-            bool aOk5 = aLane == "tavern:" + aRoom;
+            bool aOk5 = aLane == "tavern-" + aRoom
+                        && !aLane.Contains("/", StringComparison.Ordinal)
+                        && !aLane.Contains(":", StringComparison.Ordinal);
 
             bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5;
             string aReading =
@@ -4501,7 +4508,7 @@ public static class SelfTest
                 + $"／認不得的值 ⇒ 拒絕（exit {aR2.ExitCode}）：{aOk2}"
                 + $"／切到 server ⇒ seq={aSeq}、落盤且簽章 `{SCP_TavernWriter.WriterSignatureValue}`：{aOk3}"
                 + $"／msg_json 壞 ⇒ 拒絕且檔數仍是 {aFiles}：{aOk4}"
-                + $"／lane=`{aLane}`（per-room）：{aOk5}"
+                + $"／🔴 lane=`{aLane}`（per-room **且是一層目錄名** —— 帶 `/` 的話執行器讀不到且不出聲）：{aOk5}"
                 + "　⚠ 本格**不經過檔案協議** ⇒ 委派那條路不在射程內";
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
@@ -4589,6 +4596,105 @@ public static class SelfTest
                 + $"／🔴 只把心跳換成 0.2s 前（其餘一個位元組都沒動）⇒ Alive：{aOk4}"
                 + $"／名片壞掉 ⇒ **Unreadable 不是 NoEndpoint**：{aOk5}／刪掉 ⇒ 回到 NoEndpoint：{aOk6}"
                 + "　⚠ 本格是淨室；**真的起一顆 Server 的那次**另外量（見 TASK-0106 留言）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+
+    /// <summary>
+    /// 🔴 **兩份 client 的 queue 形狀必須一樣**（TASK-0106 第 5 步）。
+    /// <para>Unity 那側編不到 <c>AgentCmdClient</c>（吃 System.Text.Json），所以協議有了第二份實作
+    /// （<c>SCP_ServerCmdClient</c>）。⛔ 兩份實作會分岔，而分岔的失效樣子是
+    /// **「送出去了，對面永遠看不到」** —— 路徑對、JSON 合法、trigger 也寫了，而 Watcher 不認得那個形狀。
+    /// ⇒ 這一格拿兩邊各送一筆進暫存樹，逐欄比 `queue.json`。</para>
+    /// <para>⚠ 刻意**不比**的三格（它們本來就該不同，比了會逼人改成一樣而失去意義）：
+    /// `Id`／`CreatedAt`（每次不同）、`Args` 裡兩邊各自注入的 caller 標記。</para>
+    /// </summary>
+    static CheckRow ServerCmdClientMatchesAgentCmdClient()
+    {
+        const string aName = "兩份 Cmd client 的 queue 形狀一致（Unity 版 vs Senate 版）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_twoclients_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aRootA = Path.Combine(aTmp, "a");
+            string aRootB = Path.Combine(aTmp, "b");
+            Directory.CreateDirectory(aRootA);
+            Directory.CreateDirectory(aRootB);
+            const string aLane = "probe";
+            var aArgs = new Dictionary<string, string> { ["data_root"] = "D:/x", ["room"] = "tavern" };
+
+            string aIdA = Senate.Core.AgentCmdClient.Submit(aRootA, aLane, "TavernWrite",
+                                                            new Dictionary<string, string>(aArgs), _ => { });
+            string aIdB = SCP_ServerCmdClient.Submit(aRootB, aLane, "TavernWrite", aArgs);
+
+            string aQa = Senate.Core.AgentCmdClient.QueuePath(aRootA, aLane);
+            string aQb = SCP_ServerCmdClient.QueuePath(aRootB, aLane);
+            bool aBothQueues = File.Exists(aQa) && File.Exists(aQb);
+            bool aBothTriggers = File.Exists(Senate.Core.AgentCmdClient.TriggerPath(aRootA, aLane))
+                                 && File.Exists(SCP_ServerCmdClient.TriggerPath(aRootB, aLane));
+
+            SCP_JsonData aA = SCP_JsonParser.Parse(File.ReadAllText(aQa));
+            SCP_JsonData aB = SCP_JsonParser.Parse(File.ReadAllText(aQb));
+            SCP_JsonData aCmdA = aA["Commands"][0];
+            SCP_JsonData aCmdB = aB["Commands"][0];
+
+            // ① 指令物件的**鍵集合**逐字相同（順序也比 —— 兩邊都是手寫順序，差一格就代表有人漏加）
+            string KeysOf(SCP_JsonData iObj)
+            {
+                var aKeys = new List<string>();
+                foreach (string k in iObj.Keys) aKeys.Add(k);
+                return string.Join(",", aKeys);
+            }
+            string aKeysA = KeysOf(aCmdA), aKeysB = KeysOf(aCmdB);
+            bool aOkKeys = aKeysA == aKeysB;
+
+            // ② 不會變的那幾格逐字相同
+            bool aOkFixed = aCmdA.GetString("Type", "") == aCmdB.GetString("Type", "")
+                            && aCmdA.GetString("Mode", "") == aCmdB.GetString("Mode", "")
+                            && aCmdA.GetInt("RunCount", -1) == aCmdB.GetInt("RunCount", -2);
+
+            // ③ 三個 null 欄位真的是 null（⛔ 不是空字串 —— Watcher 那側區分得出來）
+            bool IsNull(SCP_JsonData iObj, string iKey) => iObj.Contains(iKey) && iObj[iKey].IsNull;
+            bool aOkNulls = IsNull(aCmdB, "LastRunAt") && IsNull(aCmdB, "LastRunResult")
+                            && IsNull(aCmdB, "LastRunError") && IsNull(aCmdB, "Description")
+                            && IsNull(aCmdA, "LastRunAt");
+
+            // ④ cmd id 的形狀一樣（`<日期>-<時間>-<6碼>-<型別小寫>`）
+            bool ShapeOk(string iId)
+            {
+                string[] aSeg = iId.Split('-');
+                return aSeg.Length == 4 && aSeg[0].Length == 8 && aSeg[1].Length == 6
+                       && aSeg[2].Length == 6 && aSeg[3] == "tavernwrite";
+            }
+            bool aOkId = ShapeOk(aIdA) && ShapeOk(aIdB);
+
+            // ⑤ 業務參數兩邊都在（caller 標記各自不同，刻意不比）
+            bool aOkArgs = aCmdA["Args"].GetString("room", "") == "tavern"
+                           && aCmdB["Args"].GetString("room", "") == "tavern"
+                           && aCmdB["Args"].GetString("_caller_client", "") == SCP_ServerCmdClient.ClientId;
+
+            // 🔴 ⑥ **子分道的路徑兩邊要一樣** —— 這一格是本測試真正的閘。
+            //   🩸 第一版只比了 queue.json 的內容、兩邊又都餵沒有子分道的 lane
+            //   ⇒ 它對「Unity 版自己拼了一套路徑」完全無感（實際發生過，2026-09-21）。
+            //   協議的子分道住在**檔名**裡（`queues/<folder>/queue-<lane>.json`），⛔ 不是另一個資料夾。
+            const string aSub = "tavern/my-room";
+            bool aOkLane = SCP_ServerCmdClient.QueuePath(aRootB, aSub)
+                               == Senate.Core.AgentCmdClient.QueuePath(aRootB, aSub)
+                           && SCP_ServerCmdClient.TriggerPath(aRootB, aSub)
+                               == Senate.Core.AgentCmdClient.TriggerPath(aRootB, aSub)
+                           && SCP_ServerCmdClient.QueuePath(aRootB, aSub).Contains("queue-my-room.json",
+                                                                                   StringComparison.Ordinal);
+
+            bool aOk = aBothQueues && aBothTriggers && aOkKeys && aOkFixed && aOkNulls && aOkId && aOkArgs && aOkLane;
+            string aReading =
+                $"兩邊都生出 queue＋trigger：{aBothQueues && aBothTriggers}"
+                + $"／🔴 指令物件鍵集合逐字相同：{aOkKeys}（`{aKeysB}`）"
+                + $"／Type·Mode·RunCount 相同：{aOkFixed}／四個欄位真的是 null 不是空字串：{aOkNulls}"
+                + $"／cmd_id 形狀相同：{aOkId}／業務參數穿得過去：{aOkArgs}"
+                + $"／🔴 子分道路徑兩邊逐字相同（`queue-my-room.json`）：{aOkLane}"
+                + "　⚠ 刻意不比 Id／CreatedAt／caller 標記（那三格本來就該不同）";
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
