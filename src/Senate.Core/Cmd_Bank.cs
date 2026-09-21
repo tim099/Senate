@@ -45,7 +45,8 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             var aSpecs = new List<SCP_CmdArgSpec>
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "accounts",
-                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "pay", "transfer", "close", "reopen" }),
+                    iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "pay", "transfer", "close", "reopen",
+                                      "requests", "approve", "reject" }),
                 new SCP_CmdArgSpec("bank_root",
                     "銀行帳本根（絕對路徑）。"
                     + "CLI 沒給時會用 `<AgentCommands 資料根>/Bank` 補上並印出來（推導值，不可設定）",
@@ -83,6 +84,18 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                     "錢包（酒館券）的主人 —— `pay` 必填。⛔ 與分道用的 `persona` 是兩回事", iDefault: ""),
                 new SCP_CmdArgSpec("letters_root",
                     "券住哪（`pay` 必填；券在 `letters/<persona>/vouchers/`）。⛔ 本層不推導它", iDefault: ""),
+                // ── TASK-0261：請款／轉帳審批（把常駐視窗那兩格接到 CLI 上）──────────
+                // ⚠ 待審單住 `<data_root>/Treasury/requests` 與 `…/transfer_requests`，
+                //   而 `bank_root` 是 `<data_root>/Bank` ⇒ 兩個根**不是同一格**。
+                //   ⛔ 不從 `bank_root` 往上推 `data_root`：那是在本層多養一份「路徑住哪」的答案，
+                //   而它會跟宿主那份漂（同檔頭判準②）。
+                new SCP_CmdArgSpec("data_root",
+                    "資料根（絕對路徑）—— `requests`／`approve`／`reject` 必填；待審單在 `<data_root>/Treasury/`。"
+                    + "⛔ 本層不從 `bank_root` 推導它", iDefault: ""),
+                new SCP_CmdArgSpec("request_id",
+                    "要裁決的單號（`approve`／`reject` 必填）—— 請款與轉帳共用這一格；"
+                    + "兩種都找不到時**明說兩種都找過**，⛔ 不回一個看起來像「沒有待審」的成功", iDefault: ""),
+                new SCP_CmdArgSpec("note", "裁決備註（落進單子的裁決欄）", iDefault: ""),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -107,7 +120,12 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             case "transfer": return Stamp(OpTransfer(aRoot, iArgs), aRoot);
             case "close": return Stamp(OpClose(aRoot, iArgs), aRoot);
             case "reopen": return Stamp(OpReopen(aRoot, iArgs), aRoot);
-            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|pay|transfer|close|reopen）");
+            // ── TASK-0261：審批三支。⚠ 它們動的是 `<data_root>/Treasury/`（單子）＋ 銀行（錢），
+            //    所以 `Stamp` 一樣要蓋 —— 看到數字的人要知道那是哪一本帳。
+            case "requests": return Stamp(OpRequests(iArgs), aRoot);
+            case "approve": return Stamp(OpDecide(aRoot, iArgs, iApprove: true), aRoot);
+            case "reject": return Stamp(OpDecide(aRoot, iArgs, iApprove: false), aRoot);
+            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|pay|transfer|close|reopen|requests|approve|reject）");
         }
     }
 
@@ -643,5 +661,188 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         aResult.AddValue("to_balance", aBalTo.ToString());
         aResult.AddValue("duplicate", aDup ? "1" : "0");
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：📨 **請款／轉帳審批**的 CLI 出口（TASK-0261）。
+    // 物理意義：把常駐視窗 `BankAdminPage` 那兩格接到 `senate cmd bank` 上 ——
+    //          ⛔ **不另寫一份撥款邏輯**：核准走的是本檔既有的 `OpTransfer`，
+    //          跟視窗那條路逐字同一個出口（視窗是 `Dispatch("transfer", …)`）。
+    //          🩸 為什麼這一格不能複製：第二個寫入端正是整條銀行線在根治的病 ——
+    //          兩份撥款邏輯會在其中一份改過之後開始分岔，**而它們各自都不會報錯**。
+    // 數值影響：`approve` 會**真的動錢**（央行→目標戶／A→B）並寫單子的裁決欄；
+    //          `reject` 只寫裁決欄，⛔ 一毛錢不動；`requests` 唯讀。
+    //
+    // ⭐ 順序判準（沿用視窗那條，⛔ 不反過來）：**先動錢，成功了才寫裁決欄**。
+    //   反過來的話，中途失敗留下的是「單子寫著 approved、而錢沒撥」——
+    //   而那份單子之後**不會再出現在待審清單裡** ⇒ 沒有人會發現錢沒到。
+    //   ⇒ 失敗時單子保持 `pending`，它會再被列出來，那正是我們要的。
+    // ===========================================================
+
+    /// <summary>待審清單（唯讀）。⚠ 印單號與金額，⛔ 不只印「有幾張」—— 數字答不出「是哪一張」。</summary>
+    static SCP_CmdResult OpRequests(SCP_CmdArgs iArgs)
+    {
+        string aData = iArgs.Get("data_root");
+        if (string.IsNullOrWhiteSpace(aData))
+            return SCP_CmdResult.Fail(2, "✗ 缺 `data_root` —— 待審單在 `<data_root>/Treasury/`，本層不推導它");
+
+        var aProblems = new List<string>();
+        List<SCP_PayoutRequest> aPayouts = SCP_TreasuryRequests.LoadPendingPayouts(aData, aProblems);
+        List<SCP_TransferRequest> aTransfers = SCP_TreasuryRequests.LoadPendingTransfers(aData, aProblems);
+        string aCentral = SCP_TreasuryRequests.ReadCentralBank(aData);
+
+        var aR = SCP_CmdResult.Success(
+            $"# 待審：請款 **{aPayouts.Count}** 張／轉帳 **{aTransfers.Count}** 張");
+        aR.Lines.Add($"・請款＝**央行撥款**（從 `{aCentral}` 出，公庫變少）；轉帳＝**A→B**（總量守恆）");
+
+        aR.Lines.Add("");
+        aR.Lines.Add("## 📨 請款");
+        if (aPayouts.Count == 0) aR.Lines.Add("・（沒有待審請款單）");
+        foreach (SCP_PayoutRequest r in aPayouts)
+            aR.Lines.Add($"・`{r.RequestId}`　**{r.Amount}** {r.Currency} → **{r.TargetBank}**"
+                         + $"　請款人 {r.RequesterPersona}　{r.RequestedAt}"
+                         + (r.Reason.Length > 0 ? "　理由：" + r.Reason : ""));
+
+        aR.Lines.Add("");
+        aR.Lines.Add("## 💸 轉帳");
+        if (aTransfers.Count == 0) aR.Lines.Add("・（沒有待審轉帳單）");
+        foreach (SCP_TransferRequest r in aTransfers)
+            aR.Lines.Add($"・`{r.RequestId}`　**{r.Amount}** {r.Currency}　**{r.FromBank}** → **{r.ToBank}**"
+                         + $"　請求人 {r.RequesterPersona}　{r.RequestedAt}"
+                         + (r.Reason.Length > 0 ? "　理由：" + r.Reason : ""));
+
+        // ⚠ 讀不了的單**要出聲**：一張壞掉的單被靜默跳過，跟「它已經被處理掉了」在清單上同形。
+        if (aProblems.Count > 0)
+        {
+            aR.Lines.Add("");
+            aR.Lines.Add($"⚠ **有 {aProblems.Count} 張單讀不了**（⛔ 不當成「沒有這張單」）：");
+            foreach (string aWhy in aProblems) aR.Lines.Add("  · " + aWhy);
+        }
+        aR.AddValue("payouts", aPayouts.Count.ToString());
+        aR.AddValue("transfers", aTransfers.Count.ToString());
+        aR.AddValue("problems", aProblems.Count.ToString());
+        aR.AddValue("central_bank", aCentral);
+        return aR;
+    }
+
+    /// <summary>核准／駁回一張單。<paramref name="iApprove"/>＝true 時**會真的動錢**。</summary>
+    SCP_CmdResult OpDecide(string iRoot, SCP_CmdArgs iArgs, bool iApprove)
+    {
+        string aData = iArgs.Get("data_root");
+        string aId = iArgs.Get("request_id").Trim();
+        var aMissing = new List<string>();
+        if (string.IsNullOrWhiteSpace(aData)) aMissing.Add("data_root（待審單在 `<data_root>/Treasury/`）");
+        if (aId.Length == 0) aMissing.Add("request_id（要裁決哪一張）");
+        if (aMissing.Count > 0)
+            return SCP_CmdResult.Fail(2, "✗ 缺 " + aMissing.Count + " 欄：", "  · " + string.Join("\n  · ", aMissing));
+
+        var aProblems = new List<string>();
+        List<SCP_PayoutRequest> aPayouts = SCP_TreasuryRequests.LoadPendingPayouts(aData, aProblems);
+        List<SCP_TransferRequest> aTransfers = SCP_TreasuryRequests.LoadPendingTransfers(aData, aProblems);
+
+        SCP_PayoutRequest? aPay = null;
+        foreach (SCP_PayoutRequest r in aPayouts)
+            if (string.Equals(r.RequestId, aId, StringComparison.OrdinalIgnoreCase)) { aPay = r; break; }
+        SCP_TransferRequest? aTr = null;
+        if (aPay == null)
+            foreach (SCP_TransferRequest r in aTransfers)
+                if (string.Equals(r.RequestId, aId, StringComparison.OrdinalIgnoreCase)) { aTr = r; break; }
+
+        // ⚠ 找不到要**說清楚兩種都找過了** —— 「請款裡沒有」與「這張單不存在」是兩件事，
+        //   而把前者印成後者的話，下一個人會去建一張已經存在的單。
+        if (aPay == null && aTr == null)
+        {
+            var aFail = SCP_CmdResult.Fail(1,
+                $"✗ 待審清單裡找不到 `{aId}` —— **請款（{aPayouts.Count} 張）與轉帳（{aTransfers.Count} 張）兩邊都找過了**");
+            aFail.Lines.Add("  ⇒ 它可能已經被裁決過（裁決過的單不在待審清單裡），或是單號打錯");
+            if (aProblems.Count > 0)
+                aFail.Lines.Add($"  ⚠ 另有 **{aProblems.Count}** 張單讀不了 ⇒ ⛔ 「找不到」這個結論的射程不含它們");
+            return aFail;
+        }
+
+        bool aIsPayout = aPay != null;
+        string aCentral = SCP_TreasuryRequests.ReadCentralBank(aData);
+        string aFrom = aIsPayout ? aCentral : aTr!.FromBank;
+        string aTo = aIsPayout ? aPay!.TargetBank : aTr!.ToBank;
+        int aAmount = aIsPayout ? aPay!.Amount : aTr!.Amount;
+        string aPath = aIsPayout ? aPay!.Path : aTr!.Path;
+        string aWhat = aIsPayout ? "請款（央行撥款）" : "轉帳（A→B）";
+
+        // ⭐ 反向對照那一格：不帶 `confirm=1` ⇒ **一毛錢沒動、單子狀態不變**，只印會發生什麼。
+        //   ⚠ 駁回也要 confirm —— 它不動錢，但它**改變單子的狀態且不可逆**
+        //     （裁決欄寫下去，那張單就不在待審清單裡了）。
+        if (iArgs.Get("confirm") != "1")
+        {
+            var aDry = SCP_CmdResult.Success("・**乾跑**（沒帶 `confirm=1`）⇒ 一毛錢沒動、單子狀態沒變");
+            aDry.Lines.Add($"  · 這一張：`{aId}`　{aWhat}　**{aAmount}**　**{aFrom}** → **{aTo}**");
+            aDry.Lines.Add(iApprove
+                ? "  · 帶 `confirm=1` 會：**先動錢**（走本檔 `transfer` 那條路，冪等鍵綁單號），成功了才寫裁決欄 `approved`"
+                : "  · 帶 `confirm=1` 會：只寫裁決欄 `rejected`，⛔ 一毛錢不動");
+            aDry.AddValue("dry_run", "1");
+            aDry.AddValue("request_kind", aIsPayout ? "payout" : "transfer");
+            aDry.AddValue("amount", aAmount.ToString());
+            return aDry;
+        }
+
+        string aActor = "cmd_bank/" + (iArgs.Get("caller").Length > 0 ? iArgs.Get("caller") : "cli");
+        string aNote = iArgs.Get("note");
+
+        // ── 駁回：不動錢 ──────────────────────────────────────
+        if (!iApprove)
+        {
+            if (!SCP_TreasuryRequests.Decide(aPath, "rejected", aActor, aNote, null, out string aRejErr))
+                return SCP_CmdResult.Fail(1, "✗ 裁決欄寫不進去：" + aRejErr, "  ⇒ 單子**保持 pending**");
+            var aRej = SCP_CmdResult.Success($"✅ 已駁回 `{aId}`（{aWhat} **{aAmount}**）—— ⛔ 一毛錢沒動");
+            aRej.AddValue("decided", "rejected");
+            aRej.AddValue("moved_money", "0");
+            return aRej;
+        }
+
+        // ── 核准：先動錢，成功了才寫裁決欄 ──────────────────────
+        // ⭐ 冪等鍵綁單號 ⇒ 同一張單重送不會撥第二次（與視窗那條路同一把鍵）。
+        var aRaw = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["op"] = "transfer",
+            ["bank_root"] = iRoot,
+            ["account"] = aFrom,
+            ["to_account"] = aTo,
+            ["amount"] = aAmount.ToString(),
+            ["kind"] = aIsPayout ? "payout_request"
+                                 : (aTr!.Kind.Length > 0 ? aTr!.Kind : "transfer_request"),
+            ["ref"] = aId,
+            ["description"] = aIsPayout ? aPay!.Reason : aTr!.Reason,
+            ["caller"] = aActor,
+            ["cmd_id"] = iArgs.Get("cmd_id"),
+            ["idem_key"] = (aIsPayout ? "payout/" : "transfer/") + aId,
+        };
+        (SCP_CmdArgs? aXferArgs, List<string> aBindErrors) = SCP_CmdArgs.Bind(ArgSpecs, aRaw);
+        if (aXferArgs == null)
+            return SCP_CmdResult.Fail(1, "✗ 內部組參數失敗（本 Cmd 的規格與實作不同步）：",
+                                      "  · " + string.Join("\n  · ", aBindErrors));
+
+        SCP_CmdResult aXfer = OpTransfer(iRoot, aXferArgs);
+        if (!aXfer.Ok)
+        {
+            var aFail = SCP_CmdResult.Fail(aXfer.ExitCode,
+                $"❌ {aWhat}失敗 ⇒ **整筆沒有發生**，單子**保持 pending**（裁決欄沒寫）");
+            aFail.Lines.AddRange(aXfer.Lines);
+            aFail.AddValue("decided", "");
+            aFail.AddValue("moved_money", "0");
+            return aFail;
+        }
+
+        bool aOk = SCP_TreasuryRequests.Decide(aPath, "approved", aActor, aNote, null, out string aErr);
+        var aRes = SCP_CmdResult.Success(aOk
+            ? $"✅ 已{aWhat}並結單 `{aId}`：**{aAmount}**　**{aFrom}** → **{aTo}**"
+            // 🩸 這一行是三本帳分開結算：錢動了（處置成立）而單子沒結（結果沒成立）——
+            //    ⛔ 不可以印成一個乾淨的 ✅，否則下一個人會以為兩件事都完成了。
+            : $"⚠ **錢已經動了**（{aAmount}　{aFrom} → {aTo}），而裁決欄沒寫成功：{aErr}"
+              + "　⇒ 單子仍是 pending，**重送會被冪等鍵擋住、不會撥第二次**，但要有人把裁決欄補上");
+        aRes.Lines.AddRange(aXfer.Lines);
+        foreach (KeyValuePair<string, string> kv in aXfer.Values) aRes.AddValue(kv.Key, kv.Value);
+        aRes.AddValue("decided", aOk ? "approved" : "");
+        aRes.AddValue("moved_money", "1");
+        aRes.AddValue("request_kind", aIsPayout ? "payout" : "transfer");
+        return aRes;
     }
 }
