@@ -22,6 +22,7 @@ using SCP.Core.Books;
 using SCP.Core.Library;
 using SCP.Core.Cmd;
 using SCP.Core.Bank;
+using SCP.Core.Io;
 using SCP.Core.Proc;
 using SCP.Core.Tavern;
 using System.Globalization;
@@ -69,6 +70,7 @@ public static class SelfTest
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
         One(nameof(QueueSubLaneShape), "core", QueueSubLaneShape),
         One(nameof(ServerResultRoundTrip), "core", ServerResultRoundTrip),
+        One(nameof(AtomicFileDistinguishesCollisionFromOtherIo), "core", AtomicFileDistinguishesCollisionFromOtherIo),
         One(nameof(ServerEndpointFourStates), "core", ServerEndpointFourStates),
         One(nameof(ServerCmdClientMatchesAgentCmdClient), "core", ServerCmdClientMatchesAgentCmdClient),
         One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
@@ -4695,6 +4697,63 @@ public static class SelfTest
                 + $"／cmd_id 形狀相同：{aOkId}／業務參數穿得過去：{aOkArgs}"
                 + $"／🔴 子分道路徑兩邊逐字相同（`queue-my-room.json`）：{aOkLane}"
                 + "　⚠ 刻意不比 Id／CreatedAt／caller 標記（那三格本來就該不同）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+
+    /// <summary>
+    /// 🔴 撞檔與「其他 IO 失敗」必須**同時在場、而且分得開**（TASK-0256，@kiara QA ② 擋下的那格）。
+    /// <para>🩸 第一版判準是 `catch (IOException) when (File.Exists(path))`，而
+    /// `FileStream(CreateNew)` 一建構檔就已經存在（0 bytes）⇒ 那個條件在**任何**建構後的
+    /// IOException 上都成立。實測把「磁碟空間不足」丟進去：被吃掉、降級成撞檔、留下 0-byte 孤兒檔
+    /// **永久佔住一個 seq**，而最後報出來的成因是「資料層可能損壞」——它會把人送去翻一個沒壞的目錄。</para>
+    /// <para>⚠ 驗收寫成**比較**不是狀態（她的判準）：只寫「磁碟滿會往上炸」的話，
+    /// 它半套的時候（吃掉、留孤兒、報錯成因）看起來一模一樣。</para>
+    /// <para>⚠ 射程：磁碟滿那一腿在這裡是**用 win32 code 合成的例外**驗判準本身；
+    /// **真的把磁碟寫滿那次是 @kiara 跑的**（她的 harness，`SetLength(可用空間+64GB)`）。
+    /// ⛔ 本格不宣稱重現了那個現場。</para>
+    /// </summary>
+    static CheckRow AtomicFileDistinguishesCollisionFromOtherIo()
+    {
+        const string aName = "原子建檔：撞檔 vs 其他 IO 失敗（兩個讀數同時在場）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_atomic_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            string aPath = Path.Combine(aTmp, "target.json");
+
+            // ① 第一次建檔：成功
+            bool aFirst = SCP_AtomicFile.TryCreateNew(aPath, "{\"n\":1}");
+            // ② 同一個路徑再建一次：**撞檔 ⇒ false**，而且**原檔一個位元組都沒變**
+            byte[] aBefore = File.ReadAllBytes(aPath);
+            bool aSecond = SCP_AtomicFile.TryCreateNew(aPath, "{\"n\":2}");
+            bool aIntact = File.ReadAllBytes(aPath).AsSpan().SequenceEqual(aBefore.AsSpan());
+
+            // 🔴 ③ 判準本身：撞檔碼吃掉、其他碼**不吃**
+            bool Judge(int iWin32) => SCP_AtomicFile.IsAlreadyExists(new IOException("x") { HResult = unchecked((int)(0x80070000 | (uint)iWin32)) });
+            bool aTake80 = Judge(80);            // ERROR_FILE_EXISTS
+            bool aTake183 = Judge(183);          // ERROR_ALREADY_EXISTS
+            bool aSkip112 = !Judge(112);         // 🔴 ERROR_DISK_FULL —— 這一格是閘
+            bool aSkip32 = !Judge(32);           // ERROR_SHARING_VIOLATION（別人開著同名檔）
+            bool aSkip3 = !Judge(3);             // ERROR_PATH_NOT_FOUND
+
+            // 🔴 ④ 反向對照：舊判準（問 File.Exists）對**同一批**例外會怎麼答
+            //    —— 它在目標檔存在時一律回 true ⇒ 磁碟滿也會被讀成撞檔。
+            bool aOldWouldEat = File.Exists(aPath);   // 舊版的條件；此刻檔在 ⇒ true ＝ 它會吃掉 112
+            bool aNewBeatsOld = aOldWouldEat && aSkip112;
+
+            bool aOk = aFirst && !aSecond && aIntact && aTake80 && aTake183
+                       && aSkip112 && aSkip32 && aSkip3 && aNewBeatsOld;
+            string aReading =
+                $"首建 {aFirst}／同名再建 ⇒ false：{!aSecond}、原檔位元組未變：{aIntact}"
+                + $"／判準吃 80·183：{aTake80 && aTake183}"
+                + $"／🔴 **不吃** 112 磁碟滿：{aSkip112}、32 共用衝突：{aSkip32}、3 路徑不存在：{aSkip3}"
+                + $"／🔴 反向對照：同一時刻舊判準 `File.Exists` ＝ {aOldWouldEat}"
+                + $"（⇒ 它會把磁碟滿讀成撞檔；新判準不會）：{aNewBeatsOld}"
+                + "　⚠ 磁碟滿這一腿是**合成例外驗判準**，真的寫滿那次是 @kiara 的 harness 跑的";
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
