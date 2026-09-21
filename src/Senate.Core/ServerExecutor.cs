@@ -140,9 +140,14 @@ public sealed class ServerExecutor
     {
         string aQueuePath = AgentCmdClient.QueuePath(m_Root, iLane);
         string aRunning = AgentCmdClient.RunningPath(m_Root, iLane);
+        // 🔴 這一批處理過的 id（TASK-0263）—— 收尾時**重讀磁碟**只拿掉這些，
+        //   ⛔ 不把手上這份跑了幾秒的舊副本整個寫回去。
+        var aDoneOneShot = new HashSet<string>(StringComparer.Ordinal);
+        var aRepeatState = new Dictionary<string, (string? At, string? Result, string? Error)>(StringComparer.Ordinal);
         try
         {
-            JsonObject aQueue = LoadQueue(aQueuePath);
+            JsonObject aQueue;
+            using (SCP.Core.Io.SCP_FileLock.Acquire(aQueuePath)) aQueue = LoadQueue(aQueuePath);
             var aCommands = aQueue["Commands"] as JsonArray ?? new JsonArray();
             int aTotal = aCommands.Count;
             m_Out($"▶ lane '{iLane}'：{aTotal} 筆");
@@ -168,17 +173,18 @@ public sealed class ServerExecutor
                     : $"  ✗ {aType} ({aId}) exit={aResult.ExitCode}：{FirstLine(aResult)}");
 
                 // OneShot 成功與失敗都出隊（Tim 2026-08-07 拍板的 Editor 半邊，這裡照用）；verdict 在 result 檔。
-                if (aMode == "OneShot") aCommands.RemoveAt(i);
+                if (aMode == "OneShot") { aCommands.RemoveAt(i); aDoneOneShot.Add(aId); }
                 else
                 {
                     aCmd["LastRunAt"] = DateTime.UtcNow.ToString("o");
                     aCmd["LastRunResult"] = aResult.Ok ? "Success" : "Failed";
                     aCmd["LastRunError"] = aResult.Ok ? null : FirstLine(aResult);
                     aCmd["RunCount"] = ((int?)aCmd["RunCount"] ?? 0) + 1;
+                    aRepeatState[aId] = ((string?)aCmd["LastRunAt"], (string?)aCmd["LastRunResult"],
+                                         (string?)aCmd["LastRunError"]);
                 }
             }
-            aQueue["Commands"] = aCommands;
-            SaveQueue(aQueuePath, aQueue);
+            CommitLane(aQueuePath, iLane, aDoneOneShot, aRepeatState);
         }
         catch (Exception e)
         {
@@ -292,5 +298,60 @@ public sealed class ServerExecutor
         string aTmp = iPath + $".tmp{Environment.ProcessId}";
         File.WriteAllText(aTmp, iRoot.ToJsonString(s_JsonOpt) + "\n", new System.Text.UTF8Encoding(false));
         File.Move(aTmp, iPath, overwrite: true);
+    }
+
+    /// <summary>
+    /// 一批跑完之後把結果寫回 queue —— 🔴 **重讀磁碟、只動這一批碰過的 id**（TASK-0263）。
+    /// <para>🩸 舊版是 `SaveQueue(整份手上那個副本)`，而那份副本是**批次開始時**載入的。
+    /// 一批可能跑好幾秒，這段時間內任何 client `append` 的那一筆會被這次寫回**整個蓋掉** ——
+    /// ⚠ 那不是窄窗口的競態，是**整批時長那麼寬**的窗口。
+    /// 而下游看不見：那筆 cmd 不在 queue、也不會有 result 檔 ⇒ client 端的舊 fallback
+    /// 把它讀成「Cmd disappeared → 推論 Success」。實測 60 筆併發：落盤 55，client 全 exit 0。</para>
+    /// <para>⚠ 這裡**不需要**在整批期間握著鎖 —— 那會把 client 擋到逾時。
+    /// 要的只是「寫回的那一瞬間，依據的是磁碟現況」。</para>
+    /// <para>⛔ 本函式不處理「批次中途丟例外」：那種情況下已跑完的 OneShot 仍留在 queue，
+    /// 下一輪會**再跑一次**。那是既有行為（見 `Drain` 的警語），⛔ 不在 TASK-0263 射程。</para>
+    /// </summary>
+    void CommitLane(string iQueuePath, string iLane, HashSet<string> iDoneOneShot,
+                    Dictionary<string, (string? At, string? Result, string? Error)> iRepeat)
+    {
+        int aKept = CommitLaneQueue(iQueuePath, iDoneOneShot, iRepeat);
+        if (aKept > 0)
+            m_Out($"  · lane '{iLane}'：保留了這一批期間新進的 {aKept} 筆（下一輪跑）");
+    }
+
+    /// <summary>
+    /// <see cref="CommitLane"/> 的本體（無日誌）。⚠ <c>public</c> 的理由是**它要被對拍直接驅動** ——
+    /// 「批次期間進來的那一筆有沒有活下來」只有在這一層量得到，
+    /// 從整顆 Server 外面量要先造出一個時序，而那個時序本身會變成第二個可能壞掉的東西。
+    /// </summary>
+    /// <returns>這一批期間新進、因而被保留下來的筆數。</returns>
+    public static int CommitLaneQueue(string iQueuePath, ICollection<string> iDoneOneShot,
+                                      IDictionary<string, (string? At, string? Result, string? Error)> iRepeat)
+    {
+        using (SCP.Core.Io.SCP_FileLock.Acquire(iQueuePath))
+        {
+            JsonObject aFresh = LoadQueue(iQueuePath);                 // ⚠ 重讀，⛔ 不用手上那份
+            var aCommands = aFresh["Commands"] as JsonArray ?? new JsonArray();
+            int aKeptNew = 0;
+            for (int i = aCommands.Count - 1; i >= 0; --i)
+            {
+                if (aCommands[i] is not JsonObject aObj) { aCommands.RemoveAt(i); continue; }
+                string aId = (string?)aObj["Id"] ?? "";
+                if (iDoneOneShot.Contains(aId)) { aCommands.RemoveAt(i); continue; }
+                if (iRepeat.TryGetValue(aId, out var aState))
+                {
+                    aObj["LastRunAt"] = aState.At;
+                    aObj["LastRunResult"] = aState.Result;
+                    aObj["LastRunError"] = aState.Error;
+                    aObj["RunCount"] = ((int?)aObj["RunCount"] ?? 0) + 1;
+                    continue;
+                }
+                ++aKeptNew;   // 這一批期間才進來的 —— 舊版會把它寫沒
+            }
+            aFresh["Commands"] = aCommands;
+            SaveQueue(iQueuePath, aFresh);
+            return aKeptNew;
+        }
     }
 }

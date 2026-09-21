@@ -79,12 +79,17 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             AgentCmdWaitResult aVerdict = AgentCmdClient.Wait(m_DataRoot, iSenderPersona, aCmdId,
                 m_TimeoutSec, AgentCmdClient.DefaultPollSec, m_Log, m_Log, iPrintOutputs: false);
             // ⛔ 順序寫死：**先判定，才准碰 result 檔**（逾時讀到的是上一輪，而它看起來完全正常）。
-            if (aVerdict == AgentCmdWaitResult.Timeout)
+            if (aVerdict.IsIndeterminate())
                 // ⚠ 這一格**不是失敗，是不知道**。措辭順序刻意是「等待上限 → 才提 Editor 沒開」：
                 //   「Editor 沒開？」擺第一句時，讀的人會把它讀成診斷結果而不是猜測
                 //   （summit 拿到 exit 6 時 Editor 是開著的）。同 TASK-0104 對 AgentCmdClient 做過的事。
+                // ⚠ 兩種「不知道」的成因不同，措辭要跟著分（TASK-0263）——
+                //   共用一句話的話，「被寫回蓋掉」會被讀成「等太久」，而後者聽起來只要再等就好。
                 return SCP_TavernPostVerdict.Unknown(
-                    "**沒等到回執**（這是 CLI 端的等待上限 "
+                    aVerdict == AgentCmdWaitResult.Unknown
+                    ? "**這一筆從 queue 消失了，而判定檔不存在** —— 它可能已經發了（不寫判定檔的舊版執行端），"
+                      + "也可能**根本沒被執行**（append 被別人的整檔寫回蓋掉）"
+                    : "**沒等到回執**（這是 CLI 端的等待上限 "
                     + m_TimeoutSec.ToString("0.###", CultureInfo.InvariantCulture)
                     + "s，不是宿主的成敗）—— 它可能已經發出去了，也可能 Editor 沒開",
                     "cat \"" + AgentCmdClient.ResultPath(m_DataRoot, aCmdId).Replace('\\', '/')

@@ -391,7 +391,7 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
             {
                 // ⛔ 不在這裡猜成因 —— 成因是**量**出來的，而量它的地方只有一個
                 //   （AgentCmdClient.DescribeWaitTimeout；理由見那支方法的血證註解）。
-                oWhy = aVerdict == AgentCmdWaitResult.Timeout
+                oWhy = aVerdict.IsIndeterminate()
                     ? AgentCmdClient.DescribeWaitTimeout(m_DataRoot, iPersona, aCmdId, iTimeoutSec)
                     : "Editor 端回報失敗";
                 return false;

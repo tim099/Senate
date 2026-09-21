@@ -196,11 +196,17 @@ public abstract class ServerDelegateCmd : SCP_Cmd
             AgentCmdClient.DefaultPollSec, aResult.Lines.Add, aResult.Lines.Add,
             iPrintOutputs: false, iHostLabel: "Server");
 
-        if (aVerdict == AgentCmdWaitResult.Timeout)
+        if (aVerdict.IsIndeterminate())
         {
+            // ⚠ 兩種成因共用這個出口（處置相同：先回讀、⛔ 不要重送），
+            //   而 **它們要分得出來** —— 把 Unknown 印成「逾時」就是一個比事實大的名字（TASK-0263）。
             aResult.ExitCode = 3;
-            aResult.AddValue("delegate_failure", "timeout");
-            aResult.Lines.Add("⛔ 逾時 ⇒ 本 Cmd **不去讀回傳檔**（那份是上一輪的，而它看起來正常）。");
+            bool aLost = aVerdict == AgentCmdWaitResult.Unknown;
+            aResult.AddValue("delegate_failure", aLost ? "unknown" : "timeout");
+            aResult.Lines.Add(aLost
+                ? "⛔ **不知道**：這筆已不在 queue 而判定檔不存在 ⇒ 它可能根本沒被執行"
+                  + "（append 被別人的整檔寫回蓋掉）。⛔ 本 Cmd **不去讀回傳檔**。"
+                : "⛔ 逾時 ⇒ 本 Cmd **不去讀回傳檔**（那份是上一輪的，而它看起來正常）。");
             return aResult;
         }
         // Server 端的 Lines 落在 result 檔的 `lines`，這裡原樣接回來 —— 使用者要看到的是 Server 說了什麼。

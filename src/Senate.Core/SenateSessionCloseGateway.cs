@@ -78,9 +78,10 @@ public sealed class SenateSessionCloseGateway : SCP_IActivitySessionCloseGateway
                 //     然後去檢查一個沒有問題的 Editor（canvas 那條的活體：2026-09-16 TASK-0226）。
                 // ⚠ 尾巴那句必須留著，它不是排版：本閘是**寫入類**，逾時是「不知道」不是「沒做」——
                 //   而 `DescribeWaitTimeout` 只答「lane 現在什麼狀態」，⛔ 不答「這一筆有沒有生效」。
-                oError = aVerdict == AgentCmdWaitResult.Timeout
+                oError = aVerdict.IsIndeterminate()
                     ? AgentCmdClient.DescribeWaitTimeout(m_DataRoot, aTarget, aCmdId, m_TimeoutSec)
-                      + "（⚠ 逾時不代表它沒做 —— 這一筆是寫入，回讀磁碟才知道）"
+                      + "（⚠ 這是**不知道**不是「沒做」 —— 這一筆是寫入，回讀磁碟才知道。"
+                      + "兩種成因：等過頭，或那筆 append 被別人的整檔寫回蓋掉 ⇒ TASK-0263）"
                     : "Editor 端回報失敗（詳見它的 _cmd_errors 報告）";
                 return false;
             }

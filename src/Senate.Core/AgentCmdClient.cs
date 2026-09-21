@@ -19,12 +19,41 @@ using SCP.Core.Paths;
 
 namespace Senate.Core;
 
-/// <summary>一次 Cmd 派遣的等待結果。</summary>
+/// <summary>
+/// 一次 Cmd 派遣的等待結果。⚠ 這個 enum 的**數值就是 CLI 的 exit code**
+/// （`Program.cs` 直接 `(int)` 轉）⇒ 改值會改掉對外契約。
+/// </summary>
 public enum AgentCmdWaitResult
 {
     Success = 0,
     Failed = 2,
+
+    /// <summary>等過頭了，判定檔沒出現。⛔ 不是「失敗」—— 那一筆可能已經做完了。</summary>
     Timeout = 3,
+
+    /// <summary>
+    /// **不知道**：那筆 cmd 已經不在 queue 裡，而判定檔**不存在**（TASK-0263）。
+    /// <para>🩸 它以前被讀成 <see cref="Success"/>，理由是相容「不寫判定檔的舊版 Editor」——
+    /// 而同一個形狀也是「這筆委派**被別人的寫回整個蓋掉了**」的樣子。
+    /// 兩者處置相反（一個沒事、一個訊息不見了），⛔ 不得共用一個回傳值。
+    /// 實測（2026-09-21，60 筆併發）：落盤 55，而 **60 顆 client 全部 exit 0**。</para>
+    /// <para>⚠ 數值取 7 ＝ 與 `cmd rest` 那條「不知道」對齊（6 是確定沒發、7 是沒等到回執）。
+    /// ⛔ 處置一律是**先回讀，不要直接重送** —— 重送的代價是做第二次。</para>
+    /// </summary>
+    Unknown = 7,
+}
+
+/// <summary>判定結果的讀法。</summary>
+public static class AgentCmdWaitResultX
+{
+    /// <summary>
+    /// 「**不知道成功了沒**」的那一族：<see cref="AgentCmdWaitResult.Timeout"/> 與
+    /// <see cref="AgentCmdWaitResult.Unknown"/>。
+    /// <para>⚠ 它們的成因不同（一個是等太久、一個是筆數不見了），而**處置相同**：
+    /// 先回讀，⛔ 不要直接重送。⇒ 呼叫端要分的是這個，不是 enum 的字面。</para>
+    /// </summary>
+    public static bool IsIndeterminate(this AgentCmdWaitResult iR)
+        => iR == AgentCmdWaitResult.Timeout || iR == AgentCmdWaitResult.Unknown;
 }
 
 public static class AgentCmdClient
@@ -193,28 +222,37 @@ public static class AgentCmdClient
         }
 
         string aCmdId = MakeId(iCmdType);
-        JsonObject aRoot = LoadQueue(iDataRoot, iPersona, iLog);
-        var aCommands = aRoot["Commands"] as JsonArray ?? new JsonArray();
-        aRoot["Commands"] = aCommands;
-
-        var aArgsNode = new JsonObject();
-        foreach (var kv in iArgs) aArgsNode[kv.Key] = kv.Value;
-        aCommands.Add(new JsonObject
+        // 🔴 讀改寫整段在檔案鎖裡（TASK-0263）—— 這顆 queue 有多個寫入端（每顆 CLI／Editor／
+        //   Server 執行器）。沒有互斥時兩邊各自讀到同一份舊內容、各自寫回，
+        //   **後寫的把先寫的那一筆整個吃掉**，而每一層都回報成功。
+        //   ⛔ 別把 `SaveQueue` 的 atomic replace 讀成已經有互斥：它保護的是「寫到一半的檔」，
+        //   不是「讀到一半的世界」—— 兩者中間隔著一整個決策。
+        using (SCP.Core.Io.SCP_FileLock.Acquire(QueuePath(iDataRoot, iPersona)))
         {
-            ["Id"] = aCmdId,
-            ["Type"] = iCmdType,
-            ["Mode"] = "OneShot",
-            ["RunCount"] = 0,
-            ["Args"] = aArgsNode,
-            ["CreatedAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-            ["LastRunAt"] = null,
-            ["LastRunResult"] = null,
-            ["LastRunError"] = null,
-            ["Description"] = null,
-        });
-        SaveQueue(iDataRoot, iPersona, aRoot);
+            JsonObject aRoot = LoadQueue(iDataRoot, iPersona, iLog);   // ⚠ 載入**在鎖裡面**
+            var aCommands = aRoot["Commands"] as JsonArray ?? new JsonArray();
+            aRoot["Commands"] = aCommands;
+
+            var aArgsNode = new JsonObject();
+            foreach (var kv in iArgs) aArgsNode[kv.Key] = kv.Value;
+            aCommands.Add(new JsonObject
+            {
+                ["Id"] = aCmdId,
+                ["Type"] = iCmdType,
+                ["Mode"] = "OneShot",
+                ["RunCount"] = 0,
+                ["Args"] = aArgsNode,
+                ["CreatedAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ["LastRunAt"] = null,
+                ["LastRunResult"] = null,
+                ["LastRunError"] = null,
+                ["Description"] = null,
+            });
+            SaveQueue(iDataRoot, iPersona, aRoot);
+        }
 
         // trigger：內容只是 debug 註記，Watcher 認的是檔案存在本身。
+        // ⚠ 寫在鎖**外面**、且**在 queue 落盤之後** —— 反過來的話接手端可能看到 trigger 卻讀到舊 queue。
         var aTrigger = new JsonObject
         {
             ["createdAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
@@ -275,9 +313,19 @@ public static class AgentCmdClient
                         if (iPrintOutputs) PrintOutputs(aVerdict, iOut);
                         return AgentCmdWaitResult.Success;
                     }
-                    // fallback：無 result 檔（舊版 Editor / 落檔失敗）—— 明講這是推論。
-                    iOut("  ✓ Cmd disappeared from queue → Success (推論：無 result 檔的舊版 fallback)");
-                    return AgentCmdWaitResult.Success;
+                    // 🔴 不在 queue ＋ 沒有判定檔 ＝ **不知道**（TASK-0263）。
+                    //   🩸 舊版在這裡回 Success，理由是相容「不寫判定檔的舊版 Editor」——
+                    //   而同一個形狀也是「這筆委派被別人的寫回整個蓋掉」的樣子，
+                    //   兩者處置相反（一個沒事、一個訊息不見了）。
+                    //   實測 2026-09-21：60 筆併發委派，落盤 55，而 **60 顆 client 全 exit 0**。
+                    //   ⇒ 分不出來的時候要說「分不出來」，⛔ 不挑好聽的那個。
+                    iErr("  ⚠ Cmd 從 queue 消失了，而**判定檔不存在** ⇒ 這一筆的結局**不知道**。");
+                    iErr($"     判定檔應該在：{ResultPath(iDataRoot, iCmdId)}");
+                    iErr("     兩種成因長得一樣：① 不寫判定檔的舊版執行端（那就是做完了）"
+                         + " ② 這筆 append 被別人的整檔寫回蓋掉（那就是**沒做**）。");
+                    iErr("     ⛔ **先回讀再決定，不要直接重送** —— 重送的代價是做第二次"
+                         + "（酒館 seq 全域遞增 ⇒ 多一則）。");
+                    return AgentCmdWaitResult.Unknown;
                 }
                 // 還在 queue → 看 LastRunResult（Repeatable / 失敗殘留兩種可能）
                 string? aResult = (string?)aCmd["LastRunResult"];
@@ -389,19 +437,26 @@ public static class AgentCmdClient
         return null;
     }
 
+    /// <summary>
+    /// 把一筆 cmd 從 queue 拿掉。🔴 讀改寫整段在檔案鎖裡（TASK-0263）——
+    /// 沒有鎖時它會把「別人在我讀完之後 append 的那幾筆」一起寫沒。
+    /// </summary>
     static void RemoveCmd(string iDataRoot, string? iPersona, string iCmdId, Action<string> iErr)
     {
-        JsonObject aQueue = LoadQueue(iDataRoot, iPersona, iErr);
-        var aCommands = aQueue["Commands"] as JsonArray;
-        if (aCommands == null) return;
-        for (int i = aCommands.Count - 1; i >= 0; --i)
+        using (SCP.Core.Io.SCP_FileLock.Acquire(QueuePath(iDataRoot, iPersona)))
         {
-            if (aCommands[i] is JsonObject aObj && (string?)aObj["Id"] == iCmdId)
+            JsonObject aQueue = LoadQueue(iDataRoot, iPersona, iErr);   // ⚠ 載入在鎖裡面
+            var aCommands = aQueue["Commands"] as JsonArray;
+            if (aCommands == null) return;
+            for (int i = aCommands.Count - 1; i >= 0; --i)
             {
-                aCommands.RemoveAt(i);
-                SaveQueue(iDataRoot, iPersona, aQueue);
-                iErr("  ↳ removed failed cmd from queue");
-                return;
+                if (aCommands[i] is JsonObject aObj && (string?)aObj["Id"] == iCmdId)
+                {
+                    aCommands.RemoveAt(i);
+                    SaveQueue(iDataRoot, iPersona, aQueue);
+                    iErr("  ↳ removed failed cmd from queue");
+                    return;
+                }
             }
         }
     }

@@ -165,13 +165,18 @@ public abstract class UnityDelegateCmd : SCP_Cmd
             aWhere.DataRoot, aLane, aCmdId, aTimeout, AgentCmdClient.DefaultPollSec,
             aResult.Lines.Add, aResult.Lines.Add, iPrintOutputs: false);
 
-        if (aVerdict == AgentCmdWaitResult.Timeout)
+        if (aVerdict.IsIndeterminate())
         {
-            aResult.ExitCode = 3;
-            aResult.AddValue("delegate_failure", "timeout");
-            // ⛔ 這裡**刻意不去讀回傳檔**：逾時代表它沒被更新，讀到的會是上一輪的內容，
+            // ⛔ 這裡**刻意不去讀回傳檔**：這兩種結局下它都沒被更新，讀到的會是上一輪的內容，
             //    而那份內容格式完整、數字合理 —— 它比沒有東西可讀危險得多。
-            aResult.Lines.Add("⛔ 逾時 ⇒ 本 Cmd **不去讀回傳檔**（那份是上一輪的，而它看起來正常）。");
+            // ⚠ 兩種成因處置相同（先回讀、⛔ 不重送）而**必須分得出來**（TASK-0263）。
+            aResult.ExitCode = 3;
+            bool aLost = aVerdict == AgentCmdWaitResult.Unknown;
+            aResult.AddValue("delegate_failure", aLost ? "unknown" : "timeout");
+            aResult.Lines.Add(aLost
+                ? "⛔ **不知道**：這筆已不在 queue 而判定檔不存在 ⇒ 它可能根本沒被執行。"
+                  + "⛔ 本 Cmd **不去讀回傳檔**。"
+                : "⛔ 逾時 ⇒ 本 Cmd **不去讀回傳檔**（那份是上一輪的，而它看起來正常）。");
             return aResult;
         }
 

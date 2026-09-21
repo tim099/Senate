@@ -74,6 +74,9 @@ public static class SelfTest
         One(nameof(ServerEndpointFourStates), "core", ServerEndpointFourStates),
         One(nameof(ServerCmdClientMatchesAgentCmdClient), "core", ServerCmdClientMatchesAgentCmdClient),
         One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
+        One(nameof(QueueAppendSurvivesConcurrency), "core", QueueAppendSurvivesConcurrency),
+        One(nameof(QueueCommitKeepsEntriesAppendedDuringBatch), "core", QueueCommitKeepsEntriesAppendedDuringBatch),
+        One(nameof(VanishedCmdIsUnknownNotSuccess), "core", VanishedCmdIsUnknownNotSuccess),
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
@@ -4767,6 +4770,199 @@ public static class SelfTest
                 + $"／🔴 反向對照：同一時刻舊判準 `File.Exists` ＝ {aOldWouldEat}"
                 + $"（⇒ 它會把磁碟滿讀成撞檔；新判準不會）：{aNewBeatsOld}"
                 + "　⚠ 磁碟滿這一腿是**合成例外驗判準**，真的寫滿那次是 @kiara 的 harness 跑的";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+
+    /// <summary>
+    /// 🔴 委派佇列的 append 在併發下**不得遺失**（TASK-0263）。
+    /// <para>🩸 舊形狀是「讀整個 queue.json → 加一筆 → 寫回整檔」，⛔ 沒有互斥
+    /// ⇒ 兩個寫入端各自讀到同一份舊內容、各自寫回，**後寫的把先寫的那一筆整個吃掉**。
+    /// 活體（2026-09-21，三顆 CLI 併發 60 筆委派）：落盤 55，而 **60 顆 client 全部 exit 0** ——
+    /// 沒有任何一層說「有一筆不見了」。</para>
+    /// <para>⚠ 本格是**差分**不是狀態（@kiara 的判準）：舊形狀與新形狀在同一支 harness 下各跑一次，
+    /// 兩個讀數同時在場。只寫「新的不會掉」的話，它半套的時候（偶爾掉一兩筆）看起來一模一樣。</para>
+    /// <para>⚠ 射程：本格重現的是**那對原語**（無鎖讀改寫 vs <see cref="SCP_FileLock"/>），
+    /// ⛔ 不是整顆 Server —— 執行器那一側由
+    /// <see cref="QueueCommitKeepsEntriesAppendedDuringBatch"/> 管。</para>
+    /// </summary>
+    static CheckRow QueueAppendSurvivesConcurrency()
+    {
+        const string aName = "委派佇列 append 併發不遺失（舊形狀 vs 新形狀，同一支 harness）";
+        const int aThreads = 4, aPer = 25;
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_queuerace_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            int aOldLanded = RaceAppend(Path.Combine(aTmp, "old"), aThreads, aPer, iLocked: false);
+            int aNewLanded = RaceAppend(Path.Combine(aTmp, "new"), aThreads, aPer, iLocked: true);
+            int aWant = aThreads * aPer;
+
+            // 🔴 舊形狀**必須真的掉**，否則這一格什麼都沒證明
+            //   （機器太快／排程沒交錯 ⇒ 沒有競爭 ⇒ 新形狀的綠燈是「沒測到」的偽裝）。
+            bool aOldLoses = aOldLanded < aWant;
+            bool aNewKeeps = aNewLanded == aWant;
+            bool aOk = aOldLoses && aNewKeeps;
+            string aReading =
+                $"{aThreads} 條執行緒 × {aPer} 筆 ＝ 送出 {aWant}"
+                + $"／🔴 舊形狀（無鎖讀改寫）落盤 **{aOldLanded}**（掉 {aWant - aOldLanded}）：{aOldLoses}"
+                + $"／🔴 新形狀（檔案鎖）落盤 **{aNewLanded}**：{aNewKeeps}"
+                + "　⚠ 舊形狀沒掉的話本格判 Fail —— 那代表這一趟沒有發生競爭，"
+                + "而**綠燈會變成「沒測到」的偽裝**";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+    /// <summary>N 條執行緒同時 append 進同一顆 queue.json，回傳最後**真的在檔案裡**的筆數。</summary>
+    /// <param name="iLocked"><c>true</c> ＝ 走 <see cref="SCP_FileLock"/>（新形狀）；
+    /// <c>false</c> ＝ 原地重現舊形狀（讀 → 改 → 寫回，無互斥）。</param>
+    static int RaceAppend(string iRoot, int iThreads, int iPer, bool iLocked)
+    {
+        string aDir = Path.Combine(iRoot, "queues", "lane");
+        Directory.CreateDirectory(aDir);
+        string aPath = Path.Combine(aDir, "queue.json");
+        File.WriteAllText(aPath, "{\"Commands\":[]}\n", new UTF8Encoding(false));
+
+        void AppendOne(string iId)
+        {
+            // ⚠ 兩條路**只差一個 using** —— 其餘每一行刻意相同，
+            //   否則差分量到的可能是別的東西（受詞先於差值）。
+            if (iLocked) { using (SCP_FileLock.Acquire(aPath)) AppendUnlocked(aPath, iId); }
+            else AppendUnlocked(aPath, iId);
+        }
+
+        var aThreadList = new List<System.Threading.Thread>();
+        for (int t = 0; t < iThreads; ++t)
+        {
+            int aT = t;
+            aThreadList.Add(new System.Threading.Thread(() =>
+            {
+                for (int i = 0; i < iPer; ++i) AppendOne($"t{aT}-{i}");
+            }));
+        }
+        foreach (var aTh in aThreadList) aTh.Start();
+        foreach (var aTh in aThreadList) aTh.Join();
+
+        SCP_JsonData aRoot = SCP_JsonParser.Parse(File.ReadAllText(aPath));
+        return aRoot.Contains("Commands") ? aRoot["Commands"].Count : 0;
+    }
+
+    /// <summary>讀 → 加一筆 → 寫回整檔。⛔ **沒有互斥** —— 這正是 TASK-0263 的那個形狀。</summary>
+    static void AppendUnlocked(string iPath, string iId)
+    {
+        for (int aTry = 0; ; ++aTry)
+        {
+            try
+            {
+                SCP_JsonData aRoot = SCP_JsonParser.Parse(File.ReadAllText(iPath));
+                SCP_JsonData aCmd = SCP_JsonData.NewObject();
+                aCmd.Set("Id", SCP_JsonData.NewString(iId));
+                aRoot["Commands"].Add(aCmd);
+                string aTmpFile = iPath + ".tmp" + Guid.NewGuid().ToString("N")[..6];
+                File.WriteAllText(aTmpFile, SCP_JsonWriter.Write(aRoot) + "\n", new UTF8Encoding(false));
+                File.Move(aTmpFile, iPath, overwrite: true);
+                return;
+            }
+            // ⚠ 檔案被別人開著／正在被換掉時重試 —— 這一腿**兩條路都有**（既有的 WriteAtomic 也這樣做）
+            //   ⇒ 差分量到的不是「舊的會丟例外」，是**它會安靜地少一筆**。
+            catch (Exception) when (aTry < 60) { System.Threading.Thread.Sleep(2); }
+        }
+    }
+
+    /// <summary>
+    /// 🔴 執行器收尾時**不得把批次期間新進的那幾筆寫沒**（TASK-0263 的第二個落點）。
+    /// <para>🩸 舊版是 <c>SaveQueue(批次開始時載入的那份副本)</c>，而一批要跑好幾秒 ——
+    /// 這段時間內 client append 的那一筆會被整個蓋掉。⚠ 那不是窄窗口的競態，
+    /// 是**整批時長那麼寬**的窗口。而下游看不見：它不在 queue、也沒有判定檔
+    /// ⇒ client 端把它讀成「Cmd disappeared → 推論 Success」。</para>
+    /// </summary>
+    static CheckRow QueueCommitKeepsEntriesAppendedDuringBatch()
+    {
+        const string aName = "執行器收尾：批次期間新進的那筆要活下來（⛔ 不寫回舊副本）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_queuecommit_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aDir = Path.Combine(aTmp, "queues", "lane");
+            Directory.CreateDirectory(aDir);
+            string aPath = Path.Combine(aDir, "queue.json");
+
+            // ① 批次開始：queue 裡有兩筆（a、b），執行器把它們讀進記憶體開跑
+            File.WriteAllText(aPath, "{\"Commands\":[{\"Id\":\"a\"},{\"Id\":\"b\"}]}\n", new UTF8Encoding(false));
+
+            // ② 批次「跑了幾秒」期間，某顆 client append 第三筆（c）—— 直接寫檔，模擬另一個 process
+            SCP_JsonData aMid = SCP_JsonParser.Parse(File.ReadAllText(aPath));
+            SCP_JsonData aNew = SCP_JsonData.NewObject();
+            aNew.Set("Id", SCP_JsonData.NewString("c"));
+            aMid["Commands"].Add(aNew);
+            File.WriteAllText(aPath, SCP_JsonWriter.Write(aMid) + "\n", new UTF8Encoding(false));
+
+            // ③ 執行器收尾：a、b 跑完出隊
+            int aKept = Senate.Core.ServerExecutor.CommitLaneQueue(
+                aPath, new List<string> { "a", "b" },
+                new Dictionary<string, (string?, string?, string?)>());
+
+            SCP_JsonData aAfter = SCP_JsonParser.Parse(File.ReadAllText(aPath));
+            var aIds = new List<string>();
+            for (int i = 0; i < aAfter["Commands"].Count; ++i)
+                aIds.Add(aAfter["Commands"][i].GetString("Id", ""));
+
+            bool aOnlyC = aIds.Count == 1 && aIds[0] == "c";
+            bool aOk = aOnlyC && aKept == 1;
+            string aReading =
+                "批次開始 [a,b] ⇒ 期間 client 加了 c ⇒ 收尾把 a,b 出隊"
+                + $"／🔴 剩下 `[{string.Join(",", aIds)}]`（要是 `[c]`，⛔ 不是空的）：{aOnlyC}"
+                + $"／回報保留新進 {aKept} 筆：{aKept == 1}"
+                + "　⚠ 舊版在這裡會寫回 `[]` —— 而 c 不在 queue、也沒有判定檔 ⇒ 送它的人拿到 exit 0";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+    /// <summary>
+    /// 🔴 「不在 queue ＋ 沒有判定檔」⇒ 必須是 <c>Unknown</c>，⛔ **不得回 Success**（TASK-0263 ③）。
+    /// <para>🩸 舊版在這裡回 Success，理由是相容不寫判定檔的舊版執行端 ——
+    /// 而同一個形狀也是「這筆 append 被別人的整檔寫回蓋掉」的樣子，**兩者處置相反**。</para>
+    /// <para>⚠ 本格同時量**另一半**：判定檔在的時候仍然要回 Success ——
+    /// 只驗「不回 Success」的話，一支永遠回 Unknown 的實作也會綠。</para>
+    /// </summary>
+    static CheckRow VanishedCmdIsUnknownNotSuccess()
+    {
+        const string aName = "委派判定：cmd 不見了而無判定檔 ⇒ **不知道**（⛔ 不是成功）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_vanished_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "queues", "lane"));
+            File.WriteAllText(AgentCmdClient.QueuePath(aTmp, "lane"), "{\"Commands\":[]}\n",
+                              new UTF8Encoding(false));
+            const string aMissing = "20260921-000000-aaaaaa-probe";
+            const string aDone = "20260921-000000-bbbbbb-probe";
+            var aSink = new List<string>();
+
+            // ① 不在 queue、沒有判定檔 ⇒ Unknown
+            AgentCmdWaitResult aR1 = AgentCmdClient.Wait(aTmp, "lane", aMissing, 2, 0.05,
+                aSink.Add, aSink.Add, iPrintOutputs: false);
+
+            // ② 判定檔在（result=Success）⇒ 仍然要 Success
+            string aResults = Path.Combine(aTmp, SCP_DataPaths.CmdResultsDirName);
+            Directory.CreateDirectory(aResults);
+            File.WriteAllText(Path.Combine(aResults, aDone + ".json"),
+                              "{\"result\":\"Success\",\"values\":{},\"outputs\":[]}", new UTF8Encoding(false));
+            AgentCmdWaitResult aR2 = AgentCmdClient.Wait(aTmp, "lane", aDone, 2, 0.05,
+                aSink.Add, aSink.Add, iPrintOutputs: false);
+
+            bool aSaysDontResend = aSink.Exists(s => s.Contains("不要直接重送", StringComparison.Ordinal));
+            bool aOk = aR1 == AgentCmdWaitResult.Unknown && (int)aR1 == 7 && aR1.IsIndeterminate()
+                       && aR2 == AgentCmdWaitResult.Success && aSaysDontResend;
+            string aReading =
+                $"🔴 不見了＋無判定檔 ⇒ `{aR1}`（exit {(int)aR1}）、歸在「不知道」那族：{aR1.IsIndeterminate()}"
+                + $"／⚠ 反向：判定檔說成功 ⇒ `{aR2}`（⛔ 不是一律回 Unknown）：{aR2 == AgentCmdWaitResult.Success}"
+                + $"／訊息叫人先回讀別重送：{aSaysDontResend}"
+                + "　⚠ 本格不量「為什麼不見了」—— 成因兩種而長得一樣，那正是它回 Unknown 的理由";
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
