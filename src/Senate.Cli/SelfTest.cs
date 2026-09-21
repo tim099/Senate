@@ -22,6 +22,7 @@ using SCP.Core.Books;
 using SCP.Core.Library;
 using SCP.Core.Cmd;
 using SCP.Core.Bank;
+using SCP.Core.Tavern;
 using System.Globalization;
 
 using Senate.Cli.Pages;
@@ -101,6 +102,12 @@ public static class SelfTest
         One(nameof(BookChapterArcCleanRoom), "book", BookChapterArcCleanRoom),
 
         One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
+
+        One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
+        One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
+        One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
+        Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
+             () => RealTavernSerializerMatchesEditor(iProjects)),
 
         One(nameof(BankIdRules), "bank", BankIdRules),
         One(nameof(BankAccountCleanRoom), "bank", BankAccountCleanRoom),
@@ -4212,6 +4219,306 @@ public static class SelfTest
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+
+    // ===========================================================
+    // 區塊職責：酒館寫入臨界區（`SCP_TavernWriter`）的兩格 —— TASK-0106
+    // ⚠ 這兩格量的是**不同的東西**，⛔ 不要把它們合成一格：
+    //   · 淨室那格量「撞檔時會怎樣」—— 那是行為，臨時目錄就夠。
+    //   · 真檔那格量「寫出來的位元組跟 Editor 一不一樣」—— 那只有真語料答得出來。
+    // ===========================================================
+
+    /// <summary>
+    /// 淨室：配號、原子建檔、撞檔自我校正、`_seq.txt` 快取，以及序列化的選填欄位規則。
+    /// 🔴 反向對照在第三格：**人工放一個佔位檔**，寫入端必須繞過它而**不是覆蓋它**
+    /// （舊版 `File.Exists` → `WriteAllText` 在單 process 下也繞得過，所以這一格真正的閘是
+    /// 「那個佔位檔的位元組一個都沒變」＋「HealAttempts 說得出它重算過一次」）。
+    /// </summary>
+    static CheckRow TavernWriteCleanRoom()
+    {
+        const string aName = "酒館寫入臨界區（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernwrite_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            const string aRoom = "probe-room";
+            SCP_TavernWriter.InvalidateCount(aTmp, aRoom);
+
+            var aM1 = new SCP_TavernMessage
+            {
+                SenderId = "zeta", SenderName = "zeta", SenderPersona = "summit",
+                Kind = "chat", Body = "第一則",
+            };
+            SCP_TavernWriteResult aR1 = SCP_TavernWriter.WriteMessage(aTmp, aRoom, aM1);
+
+            // 人工佔位：下一個號碼的檔名先被別人佔走（模擬「另一個寫入端剛寫完而我不知道」）
+            string aDir = Path.GetDirectoryName(aR1.FullPath)!;
+            string aSquat = Path.Combine(aDir, "00000002.json");
+            byte[] aSquatBytes = new UTF8Encoding(false).GetBytes("{\"decoy\":\"佔位\"}");
+            File.WriteAllBytes(aSquat, aSquatBytes);
+
+            var aM2 = new SCP_TavernMessage
+            {
+                SenderId = "zeta", SenderName = "zeta", SenderPersona = "summit",
+                Kind = "chat", Body = "第二則",
+            };
+            SCP_TavernWriteResult aR2 = SCP_TavernWriter.WriteMessage(aTmp, aRoom, aM2);
+
+            bool aSquatIntact = File.ReadAllBytes(aSquat).AsSpan()
+                                    .SequenceEqual(aSquatBytes.AsSpan());
+            string aSeqCache = File.Exists(SCP_TavernRooms.SeqPath(aTmp, aRoom))
+                ? File.ReadAllText(SCP_TavernRooms.SeqPath(aTmp, aRoom)).Trim() : "(沒有)";
+
+            // 序列化的選填欄位規則：空的不 emit、`kind` 空要補 "chat"、seq 不進內容
+            var aFull = new SCP_TavernMessage
+            {
+                Ts = "2026-09-21T00:00:00.000Z", Uuid = "abcdef",
+                SenderId = "zeta", SenderName = "zeta", SenderPersona = "summit",
+                SenderAvatarSprite = "Null", Kind = "", Body = "引號\" 換行\n 反斜線\\",
+                ReplyTo = 7, ReplyToUuid = "112233", Seq = 999,
+            };
+            aFull.Meta["tag"] = "probe";
+            string aJson = SCP_TavernWriter.Serialize(aFull);
+            const string aExpect =
+                "{\"ts\":\"2026-09-21T00:00:00.000Z\",\"uuid\":\"abcdef\",\"sender_id\":\"zeta\","
+                + "\"sender_name\":\"zeta\",\"sender_persona\":\"summit\",\"sender_avatar_sprite\":\"Null\","
+                + "\"kind\":\"chat\",\"body\":\"引號\\\" 換行\\n 反斜線\\\\\",\"reply_to\":7,"
+                + "\"reply_to_uuid\":\"112233\",\"meta\":{\"tag\":\"probe\"}}";
+            bool aSerOk = aJson == aExpect;
+
+            var aBare = new SCP_TavernMessage { Ts = "t", SenderId = "a", SenderName = "b", Kind = "chat", Body = "" };
+            string aBareJson = SCP_TavernWriter.Serialize(aBare);
+            bool aOmit = !aBareJson.Contains("sender_persona", StringComparison.Ordinal)
+                         && !aBareJson.Contains("sender_avatar_sprite", StringComparison.Ordinal)
+                         && !aBareJson.Contains("reply_to", StringComparison.Ordinal)
+                         && !aBareJson.Contains("\"seq\"", StringComparison.Ordinal);
+
+            bool aOk = aR1.Wrote && aR1.Seq == 1 && aR1.HealAttempts == 0
+                       && aR2.Wrote && aR2.Seq == 3 && aR2.HealAttempts == 1
+                       && aSquatIntact && aSeqCache == "3" && aSerOk && aOmit;
+
+            string aReading =
+                $"第一則 seq={aR1.Seq}（校正 {aR1.HealAttempts} 次）／撞檔後 seq={aR2.Seq}（校正 {aR2.HealAttempts} 次）"
+                + $"／🔴 佔位檔位元組{(aSquatIntact ? "一個都沒變 ⇒ **沒有覆蓋**" : "**被改掉了 —— 那就是舊行為**")}"
+                + $"／`_seq.txt`={aSeqCache}"
+                + $"／序列化逐字對齊 Editor={aSerOk}／選填欄位空值不 emit＋seq 不進內容={aOmit}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+    /// <summary>
+    /// 真語料：把每一則落盤訊息讀回來、用 `SCP_TavernWriter.Serialize` 重寫一次，**逐位元組比**。
+    /// <para>⚠ 閘只押在「**現行 Editor writer 寫的那一段**」：2026-05-16 之前那段是遷移工具
+    /// 與幾支繞道寫入端（python 排版、BOM、尾端換行）的產物 —— 它們本來就不是這支移植要復刻的對象。
+    /// ⛔ 而它們**不靜默排掉**：每一桶的數字都印出來，否則「驗過 19,884 則」與「驗過 20,434 則」同形。</para>
+    /// </summary>
+    static IEnumerable<CheckRow> RealTavernSerializerMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    {
+        // 現行 writer 的起點：全庫最後一筆「不同」落在 2026-05-15T15:52Z（2026-09-21 實測）。
+        const string aCutoff = "2026-05-16";
+        bool aAny = false;
+        foreach (var p in iProjects)
+        {
+            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            List<string> aRooms = SCP_TavernRead.EnumerateRoomIds(p.AgentCommandsRoot);
+            if (aRooms.Count == 0) continue;
+            aAny = true;
+
+            int aNewSame = 0, aNewDiff = 0, aOldSame = 0, aOldDiff = 0, aNoFile = 0;
+            string aFirstDiff = "";
+            foreach (string r in aRooms)
+            {
+                int n = SCP_TavernRead.CountMessages(p.AgentCommandsRoot, r);
+                if (n <= 0) continue;
+                foreach (SCP_TavernMessage m in SCP_TavernRead.Range(p.AgentCommandsRoot, r, 1, n, null))
+                {
+                    if (string.IsNullOrEmpty(m.Path) || !File.Exists(m.Path)) { aNoFile++; continue; }
+                    byte[] aDisk;
+                    try { aDisk = File.ReadAllBytes(m.Path); } catch { aNoFile++; continue; }
+                    byte[] aMine = new UTF8Encoding(false).GetBytes(SCP_TavernWriter.Serialize(m));
+                    bool aSame = aDisk.AsSpan().SequenceEqual(aMine.AsSpan());
+                    bool aNew = string.CompareOrdinal(m.Ts, aCutoff) >= 0;
+                    if (aNew) { if (aSame) aNewSame++; else aNewDiff++; }
+                    else { if (aSame) aOldSame++; else aOldDiff++; }
+                    if (aNew && !aSame && aFirstDiff.Length == 0)
+                        aFirstDiff = "　▸ 第一筆不符：" + r + " #" + m.Seq + "（" + m.Ts + "）";
+                }
+            }
+
+            int aNewTotal = aNewSame + aNewDiff;
+            yield return new CheckRow(
+                $"酒館序列化移植 vs Editor 真產物（{p.Name}）",
+                $"**{aCutoff} 之後 {aNewTotal} 則：相符 {aNewSame}／不符 {aNewDiff}**（這一桶是閘）"
+                + $"　之前 {aOldSame + aOldDiff} 則：相符 {aOldSame}／不符 {aOldDiff}"
+                + "（**只是讀數** —— 遷移工具與繞道寫入端的產物：python 排版／BOM／尾端換行）"
+                + $"／讀不到檔 {aNoFile}" + aFirstDiff,
+                aNewDiff == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        if (!aAny)
+            yield return new CheckRow("酒館序列化移植 vs Editor 真產物", "沒有可讀的專案 ⇒ **量不到**，不是通過", CheckResult.Skipped);
+    }
+
+
+    /// <summary>
+    /// 開關的四種讀法必須**兩兩可分**（TASK-0106 / D10）：沒設定過／設成 editor／設成 server／看不懂。
+    /// 🔴 這一格真正的閘是最後一種：**認不得的值不可以悄悄回 editor** ——
+    /// 那會讓打錯字的人看到「一切正常」，然後以為自己切過去了。
+    /// </summary>
+    static CheckRow TavernWriteModeFourStates()
+    {
+        const string aName = "酒館寫入開關四態（agent_settings.json）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernmode_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+
+            // ① 檔還不存在 ⇒ 沒設定過（不是錯誤），走預設 editor
+            SCP_TavernWriteModeRead aNone = SCP_TavernWriteMode.Read(aTmp);
+            bool aOkNone = aNone.Ok && aNone.Host == SCP_TavernWriteHost.Editor && !aNone.IsExplicit;
+
+            // ② 顯式 editor ⇒ 同樣走 editor，但 IsExplicit 要分得出來
+            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Editor);
+            SCP_TavernWriteModeRead aEd = SCP_TavernWriteMode.Read(aTmp);
+            bool aOkEd = aEd.Ok && aEd.Host == SCP_TavernWriteHost.Editor && aEd.IsExplicit;
+
+            // ③ 顯式 server
+            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Server);
+            SCP_TavernWriteModeRead aSv = SCP_TavernWriteMode.Read(aTmp);
+            bool aOkSv = aSv.Ok && aSv.Host == SCP_TavernWriteHost.Server && aSv.IsExplicit;
+
+            // 🔴 ④ 手寫一個認不得的值 ⇒ 必須是 Error，⛔ 不是「回 editor」
+            string aPath = SCP_TavernWriteMode.SettingsPath(aTmp);
+            File.WriteAllText(aPath, "{\"tavern\":{\"writer\":\"serverr\"}}", new UTF8Encoding(false));
+            SCP_TavernWriteModeRead aBad = SCP_TavernWriteMode.Read(aTmp);
+            bool aOkBad = !aBad.Ok && aBad.Raw == "serverr";
+
+            // ⑤ 值是空字串 ⇒ 也要出聲（「有人清空它」跟「沒設定過」不同形）
+            File.WriteAllText(aPath, "{\"tavern\":{\"writer\":\"\"}}", new UTF8Encoding(false));
+            SCP_TavernWriteModeRead aEmpty = SCP_TavernWriteMode.Read(aTmp);
+            bool aOkEmpty = !aEmpty.Ok;
+
+            // 反向對照：寫開關不可以吃掉別人的 section
+            File.WriteAllText(aPath, "{\"tavern\":{\"writer\":\"editor\"},\"skills\":{\"agent\":\"summit\"}}",
+                              new UTF8Encoding(false));
+            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Server);
+            string aAfter = File.ReadAllText(aPath);
+            bool aKept = aAfter.Contains("\"skills\"", StringComparison.Ordinal)
+                         && aAfter.Contains("summit", StringComparison.Ordinal);
+
+            bool aOk = aOkNone && aOkEd && aOkSv && aOkBad && aOkEmpty && aKept;
+            string aReading =
+                $"沒設定過 ⇒ editor 且 IsExplicit=false：{aOkNone}／顯式 editor：{aOkEd}／顯式 server：{aOkSv}"
+                + $"／🔴 認不得的值 `serverr` ⇒ **報錯不回預設**：{aOkBad}"
+                + $"／值空字串 ⇒ 出聲：{aOkEmpty}／寫入保留別人的 section：{aKept}"
+                + $"　⚠ 這一格只量開關本身，⛔ **不量「Server 在不在」**（那是另一個讀數）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+
+    /// <summary>
+    /// `tavern-write` 的三道閘（TASK-0106 / D10 丙）。
+    /// 🔴 最重要的是**拒絕那一格要零寫入** —— 「拒絕了」與「拒絕了但還是寫了半個目錄出去」
+    /// 在 exit code 上長得一樣，而後者正是「兩個寫入端」的第一步。
+    /// ⚠ 這格用 <c>ServerContext.InServer</c> 直接跑本體，⛔ **不經過檔案協議**
+    ///   ⇒ 它量的是閘與寫入，**不量**委派那條路（那條由 `ServerResultRoundTrip` 管）。
+    /// </summary>
+    static CheckRow TavernWriteCmdGates()
+    {
+        const string aName = "tavern-write 三道閘（開關未切 ⇒ 零寫入）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernwritecmd_" + Guid.NewGuid().ToString("N")[..8]);
+        bool aWas = Senate.Core.ServerContext.InServer;
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            var aCmd = new Senate.Core.Cmd_TavernWrite();
+            Senate.Core.ServerContext.InServer = true;
+
+            const string aRoom = "probe";
+            string aMsgJson = "{\"ts\":\"2026-09-21T02:00:00.000Z\",\"uuid\":\"aa11bb\",\"sender_id\":\"zeta\","
+                              + "\"sender_name\":\"zeta\",\"sender_persona\":\"summit\",\"kind\":\"chat\","
+                              + "\"body\":\"閘測\"}";
+
+            SCP_CmdArgs Args(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return a;
+            }
+            Dictionary<string, string> Raw(string iJson) => new()
+            {
+                ["data_root"] = aTmp, ["room"] = aRoom, ["msg_json"] = iJson,
+            };
+
+            // ① 開關沒設過（＝ editor）⇒ 必須拒絕，而且**一個位元組都不寫**
+            SCP_CmdResult aR1 = aCmd.Execute(Args(Raw(aMsgJson)));
+            string aMsgDir = Path.Combine(aTmp, "ChatTavern", "rooms", aRoom);
+            bool aNoWrite = !Directory.Exists(aMsgDir);
+            bool aOk1 = aR1.ExitCode != 0 && aNoWrite;
+
+            // ② 認不得的值 ⇒ 也是拒絕（⛔ 不是「當成 editor」也不是「當成 server」）
+            File.WriteAllText(SCP_TavernWriteMode.SettingsPath(aTmp),
+                              "{\"tavern\":{\"writer\":\"serverr\"}}", new UTF8Encoding(false));
+            SCP_CmdResult aR2 = aCmd.Execute(Args(Raw(aMsgJson)));
+            bool aOk2 = aR2.ExitCode != 0 && !Directory.Exists(aMsgDir);
+
+            // ③ 切到 server ⇒ 寫得進去，且簽章是本寫入端的
+            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Server);
+            SCP_CmdResult aR3 = aCmd.Execute(Args(Raw(aMsgJson)));
+            string Val(SCP_CmdResult iR, string iKey)
+            {
+                foreach (KeyValuePair<string, string> kv in iR.Values) if (kv.Key == iKey) return kv.Value;
+                return "";
+            }
+            string aSeq = Val(aR3, "seq");
+            string aPath = Val(aR3, "path");
+            bool aLanded = aPath.Length > 0 && File.Exists(aPath);
+            string aOnDisk = aLanded ? File.ReadAllText(aPath, new UTF8Encoding(false)) : "";
+            bool aOk3 = aR3.ExitCode == 0 && aSeq == "1" && aLanded
+                        && aOnDisk.Contains("\"body\":\"閘測\"", StringComparison.Ordinal)
+                        && aOnDisk.Contains("\"_writer\":\"" + SCP_TavernWriter.WriterSignatureValue + "\"",
+                                            StringComparison.Ordinal);
+
+            // ④ msg_json 壞掉 ⇒ 拒絕，且不多出第二個檔
+            SCP_CmdResult aR4 = aCmd.Execute(Args(Raw("{not json")));
+            int aFiles = Directory.Exists(aMsgDir)
+                ? Directory.GetFiles(aMsgDir, "*.json", SearchOption.AllDirectories).Length : 0;
+            bool aOk4 = aR4.ExitCode != 0 && aFiles == 1;
+
+            // ⑤ lane 是 per-room（⛔ 不是 persona、不是單一 tavern lane）
+            string aLane = new TavernLaneProbe().Peek(Args(Raw(aMsgJson)));
+            bool aOk5 = aLane == "tavern:" + aRoom;
+
+            bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5;
+            string aReading =
+                $"🔴 開關未切 ⇒ 拒絕（exit {aR1.ExitCode}）且 rooms/ 根本沒建出來：{aOk1}"
+                + $"／認不得的值 ⇒ 拒絕（exit {aR2.ExitCode}）：{aOk2}"
+                + $"／切到 server ⇒ seq={aSeq}、落盤且簽章 `{SCP_TavernWriter.WriterSignatureValue}`：{aOk3}"
+                + $"／msg_json 壞 ⇒ 拒絕且檔數仍是 {aFiles}：{aOk4}"
+                + $"／lane=`{aLane}`（per-room）：{aOk5}"
+                + "　⚠ 本格**不經過檔案協議** ⇒ 委派那條路不在射程內";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally
+        {
+            Senate.Core.ServerContext.InServer = aWas;
+            try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// 只為了讀 <c>Lane()</c> 而存在的探針 —— `Lane` 是 protected，而「它到底回哪一條」
+    /// 正是 TASK-0106 留言 #3 要拍的那一格 ⇒ 它必須被量到，不能只寫在註解裡。
+    /// （<c>Cmd_TavernWrite</c> 因此**不加 sealed**，理由就是這一格。）
+    /// </summary>
+    sealed class TavernLaneProbe : Senate.Core.Cmd_TavernWrite
+    {
+        public string Peek(SCP_CmdArgs iArgs) => Lane(iArgs);
     }
 
 }
