@@ -99,7 +99,7 @@ static class ServerCommand
     static int List(string iRepoRoot)
     {
         List<string> aIds = ServerHost.KnownIds(iRepoRoot);
-        int aAlive = 0;
+        int aAlive = 0, aTotalPending = 0, aTotalOrphan = 0;
         Console.WriteLine($"· 看得到 {aIds.Count} 顆（registry ∪ 心跳檔）");
         foreach (string aId in aIds)
         {
@@ -107,8 +107,20 @@ static class ServerCommand
             if (s.IsRunning) aAlive++;
             string aState = s.IsRunning ? (s.HeartbeatFresh ? "running" : "stale_heartbeat") : "not_running";
             Console.WriteLine($"    {aId,-12} {aState,-16} pid={(s.Alive?.Pid.ToString() ?? "-"),-8} build={s.Heartbeat?.BuildId ?? "-"}");
+            (int aPend, int aOrphan, List<string> aNotes) = ProbeQueueResidue(iRepoRoot, aId);
+            if (aPend > 0 || aOrphan > 0)
+            {
+                Console.WriteLine($"      queue 殘量：待消化 {aPend} 筆／**執行器讀不到 {aOrphan} 筆**");
+                foreach (string n in aNotes) Console.WriteLine("  " + n);
+                aTotalPending += aPend;
+                aTotalOrphan += aOrphan;
+            }
         }
         Console.WriteLine($"🔢 server_alive_count = {aAlive}");
+        // ⚠ 兩個數字分開報 —— 「還沒跑完」與「永遠不會被跑」的處置不同：
+        //   前者等它，後者要有人去搬走或改執行器。壓成一個「殘量」會讓後者一直被當成前者。
+        Console.WriteLine($"🔢 queue_pending = {aTotalPending}");
+        Console.WriteLine($"🔢 queue_unreachable = {aTotalOrphan}");
         return aAlive > 0 ? 0 : 3;
     }
 
@@ -208,4 +220,58 @@ static class ServerCommand
         Console.Error.WriteLine("  共用旗標：--id <serverId>（預設 `main`；stop 不指名而有兩顆以上在跑 ⇒ 擋下要求指名）");
         return iCode;
     }
+
+    /// <summary>
+    /// 這顆 Server 的執行器根底下**還沒被消化的 queue 筆數**，以及**它根本不會去看的那些檔**。
+    /// <para>🩸 為什麼要這一格（TASK-0106 D10 驗收最後一條）：切回 `editor` 之後，
+    /// Server 那側可能還躺著幾筆沒跑完的 —— 而在這之前**沒有任何一支指令讀得出那個數字**。
+    /// ⇒ 「切回來了」與「切回來了但那邊還躺著三筆」在畫面上同形。</para>
+    /// <para>⭐ 第二格更貴：執行器只認 <c>queues/&lt;dir&gt;/pending.trigger</c>，
+    /// 而協議還有一種**子分道**寫法（<c>pending-&lt;lane&gt;.trigger</c>，`SCP_DataPaths.SplitQueueId`）。
+    /// 那種檔案合法、寫得出去、而執行器**永遠不會碰它** ——
+    /// 2026-09-21 實測：等 15 秒逾時，queue 檔好好躺在磁碟上，沒有任何一層說不認得。
+    /// ⇒ 這裡把它數出來並點名，⛔ 不修執行器（那不在本單射程）。</para>
+    /// </summary>
+    static (int Pending, int Orphan, List<string> Notes) ProbeQueueResidue(string iRepoRoot, string iServerId)
+    {
+        var aNotes = new List<string>();
+        int aPending = 0, aOrphan = 0;
+        string aQueues = Path.Combine(SenatePaths.ServerRoot(iRepoRoot, iServerId), "queues");
+        if (!Directory.Exists(aQueues)) return (0, 0, aNotes);
+
+        foreach (string aDir in Directory.GetDirectories(aQueues))
+        {
+            string aLane = Path.GetFileName(aDir);
+            foreach (string aFile in Directory.GetFiles(aDir, "queue*.json"))
+            {
+                int aCount = CountQueueEntries(aFile);
+                if (aCount <= 0) continue;
+                bool aSubLane = !string.Equals(Path.GetFileName(aFile), "queue.json", StringComparison.Ordinal);
+                if (aSubLane)
+                {
+                    aOrphan += aCount;
+                    aNotes.Add($"　⛔ **執行器不會碰它**：{aLane}/{Path.GetFileName(aFile)}（{aCount} 筆）"
+                               + " —— 子分道檔（`queue-<lane>.json`），而 `ServerExecutor.Tick` 只認"
+                               + " `queues/<dir>/pending.trigger`。這些會**永遠躺在那裡而不出聲**。");
+                }
+                else
+                {
+                    aPending += aCount;
+                    aNotes.Add($"　· 待消化：{aLane}（{aCount} 筆）");
+                }
+            }
+        }
+        return (aPending, aOrphan, aNotes);
+    }
+
+    static int CountQueueEntries(string iPath)
+    {
+        try
+        {
+            SCP.Core.Json.SCP_JsonData aJson = SCP.Core.Json.SCP_JsonParser.Parse(File.ReadAllText(iPath));
+            return aJson.Contains("Commands") ? aJson["Commands"].Count : 0;
+        }
+        catch (Exception) { return 0; }
+    }
+
 }
