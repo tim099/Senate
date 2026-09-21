@@ -56,7 +56,14 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 //   「我填的是誰」要靠 op 才讀得出來，而錯填的代價是錢進了別人的帳。
                 new SCP_CmdArgSpec("to_account", "轉帳的**收款方**帳號 id（`transfer` 必填）", iDefault: ""),
                 new SCP_CmdArgSpec("display_name", "顯示名（open 用；可以有大小寫與空白，⛔ 不當 id）", iDefault: ""),
-                new SCP_CmdArgSpec("amount", "金額（正整數；方向由 op 決定）", iDefault: "0"),
+                // ⚠ `open` 也吃這一格（TASK-0250）——「一個宣告過的參數」不等於「每個 op 都看它」，
+                //   所以射程寫在說明裡：哪個 op 怎麼解讀它，讀 help 的人一眼看得到。
+                new SCP_CmdArgSpec("amount", "金額（正整數；方向由 op 決定）"
+                    + "。`open` 時它是**初始金額（種子）** ⇒ >0 要 `confirm=1` ＋ `caller`", iDefault: "0"),
+                // 🩸 TASK-0250：種子是憑空增發（`system_init`），⛔ 不是從央行撥 ——
+                //   兩者對貨幣總量的影響相反。後台頁那一格用「再按一次」擋，CLI 這一側用這格擋。
+                new SCP_CmdArgSpec("confirm",
+                    "`1` ＝ 我知道這一次會動錢。目前只有 `open` 帶 `amount>0`（憑空增發種子）要它", iDefault: ""),
                 new SCP_CmdArgSpec("kind", "為什麼動這筆錢（credit／debit **必填**）", iDefault: ""),
                 new SCP_CmdArgSpec("ref", "指回現場（commit sha／seq／單號）—— credit／debit **必填**", iDefault: ""),
                 new SCP_CmdArgSpec("description", "人讀的一句話", iDefault: ""),
@@ -176,10 +183,55 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         return aResult;
     }
 
+    // ===========================================================
+    // 區塊職責：`op=open` —— 開戶，並（帶了種子時）發初始金額。
+    // 🩸 TASK-0250：這一支原本**逐字只讀 `account`／`display_name`／`caller`** ——
+    //    `amount` 是本 Cmd 宣告過的合法參數（credit／debit／transfer 都吃），
+    //    ⇒ ArgSpec 預檢看到的是「一個宣告過的參數」，擋不住「**這個 op 根本不看它**」。
+    //    失效樣子：`✓ 已開戶` ＋ exit 0 ＋ 餘額 0 —— 帳開了、錢沒發，沒有任何一層出聲。
+    //    ⚠ 那一格的真正教訓是分層的：**參數的合法性是 cmd 層的，它的意義是 op 層的**，
+    //      而兩層之間沒有人把關 ⇒ 把關只能寫在這裡（op 自己讀、自己喊）。
+    // 📐 修法等級（「讓失敗不可能」＞「當場喊」＞「記得注意」）：
+    //    參數名跨 op 共用 ⇒ 做不到「不可能」，所以取第二級 —— **當場喊，且喊在動作發生之前**。
+    // ⚠ 種子是**憑空增發**（`system_init`），⛔ 不是從央行撥 ——
+    //    兩者對貨幣總量的影響相反，而畫面上都只是「帳戶多了錢」⇒ 所以它要 `confirm=1`。
+    //    （後台頁那一格的對應物是「再按一次」：`BankAdminPage.DrawOpenPanel`。）
+    // ===========================================================
     static SCP_CmdResult OpOpen(string iRoot, SCP_CmdArgs iArgs)
     {
         string aAcct = iArgs.Get("account");
         if (string.IsNullOrWhiteSpace(aAcct)) return SCP_CmdResult.Fail(2, "✗ open 需要 `account`");
+
+        // ⚠ 種子先解析、先擋 —— **全部在 TryOpen 之前**。
+        //   擋在開戶之後的話，被擋下的那一次會留下一個「開了但沒錢」的帳戶，
+        //   而那正是本單在抱怨的那個半套狀態，只是換成由守衛自己製造。
+        string aAmountRaw = iArgs.Get("amount") ?? "";
+        int aSeed = 0;
+        if (aAmountRaw.Trim().Length > 0)
+        {
+            if (!int.TryParse(aAmountRaw.Trim(), out aSeed))
+                return SCP_CmdResult.Fail(2, $"✗ amount 讀不出來：'{aAmountRaw}'"
+                                             + " —— ⛔ 這不是「沒帶」，是**帶了但解析不出**，不猜（⛔ 也不當成 0）");
+            if (aSeed < 0)
+                return SCP_CmdResult.Fail(2, $"✗ amount 是 {aSeed} —— 開戶的種子**不能是負的**。"
+                                             + " 要讓一戶一開始就欠錢，走 `op=debit`，那樣帳本上看得見是誰讓它欠的");
+        }
+
+        if (aSeed > 0)
+        {
+            // 🩸 兩格一起擋、一次把缺的都列出來 —— 分兩次擋的話，補完第一格的人會再撞一次牆。
+            var aNeed = new List<string>();
+            if (iArgs.Get("confirm") != "1")
+                aNeed.Add("confirm=1（種子是**憑空增發** `system_init`，⛔ 不是從央行撥；"
+                          + "兩者對貨幣總量的影響相反，而帳戶上都只是「多了錢」）");
+            if (string.IsNullOrWhiteSpace(iArgs.Get("caller")))
+                aNeed.Add("caller（誰增發的 —— ⛔ 沒簽名的錢日後查不出是誰）");
+            if (aNeed.Count > 0)
+                return SCP_CmdResult.Fail(2, $"✗ 帶了 `amount={aSeed}` ⇒ 這一次**會動錢**，而還缺 {aNeed.Count} 格：",
+                                          "  · " + string.Join("\n  · ", aNeed),
+                                          "  ⛔ **帳戶也沒有開** —— 擋下的那一次不留「開了但沒錢」的半套狀態。",
+                                          $"  ⇒ 只想開戶不給錢：把 `amount` 拿掉（或給 0）。");
+        }
 
         bool aOk = SCP_BankAccounts.TryOpen(iRoot, aAcct, iArgs.Get("display_name"),
                                             iArgs.Get("caller"), out SCP_BankAccount? aAccount, out string aWhy);
@@ -189,6 +241,44 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                                             + (aAccount.DisplayName.Length > 0 ? $"（{aAccount.DisplayName}）" : ""));
         aResult.Lines.Add($"  檔案：{SCP_BankAccounts.AccountPath(iRoot, aAccount.Id)}");
         aResult.AddValue("account", aAccount.Id);
+        if (aSeed <= 0)
+        {
+            // ⚠ 沒帶種子時**不加 `seeded` 欄** —— 印 `seeded=0` 的話，
+            //   「沒要種子」與「要了但沒發成」在呼叫端同形，而那正是本單的病。
+            aResult.AddValue("balance", SCP_BankLedger.GetBalance(iRoot, aAccount.Id).ToString());
+            return aResult;
+        }
+
+        // 冪等鍵綁帳號 ⇒ 同一戶重送不會發第二次種子。
+        SCP_BankPostResult aPost = SCP_BankLedger.Credit(
+            iRoot, aAccount.Id, aSeed, "system_init", "cmd_bank_open",
+            "開戶種子額度", iArgs.Get("caller"), iArgs.Get("cmd_id"), "seed/" + aAccount.Id);
+
+        if (!aPost.Ok)
+        {
+            // 🩸 本單的核心：**「戶開了、種子沒發」⛔ 不得回 exit 0。**
+            //   回 0 的話它跟「開戶＋發錢都成功」在呼叫端逐字同形 —— 那就是原本那隻病換一張臉。
+            aResult.ExitCode = 6;
+            aResult.Lines[0] = $"⚠ **戶開了（`{aAccount.Id}`）、種子沒發成功** —— 這兩件事只成了一半";
+            aResult.Lines.Add($"  種子失敗原因：{aPost.Why}");
+            aResult.Lines.Add($"  ⇒ 戶頭留著（餘額 {SCP_BankLedger.GetBalance(iRoot, aAccount.Id)}）。"
+                              + $" 補發走 `op=credit --arg account={aAccount.Id} --arg amount={aSeed}"
+                              + $" --arg kind=system_init --arg ref=cmd_bank_open --arg idem_key=seed/{aAccount.Id}`"
+                              + "（同一個冪等鍵 ⇒ 補發不會變成發兩次）");
+            aResult.AddValue("seeded", "0");
+            aResult.AddValue("seed_requested", aSeed.ToString());
+            aResult.AddValue("balance", SCP_BankLedger.GetBalance(iRoot, aAccount.Id).ToString());
+            return aResult;
+        }
+
+        int aBal = SCP_BankLedger.GetBalance(iRoot, aAccount.Id);
+        aResult.Lines[0] += $"　＋種子 **{aSeed}**（`system_init` 憑空增發）";
+        aResult.Lines.Add($"  種子 entry：{aPost.Entry!.Id}"
+                          + (aPost.Duplicate ? "　↻ **冪等判重：這次沒有動錢**（這一戶先前已發過種子）" : ""));
+        aResult.AddValue("seeded", aPost.Duplicate ? "0" : aSeed.ToString());
+        aResult.AddValue("seed_requested", aSeed.ToString());
+        aResult.AddValue("seed_duplicate", aPost.Duplicate ? "1" : "0");
+        aResult.AddValue("balance", aBal.ToString());
         return aResult;
     }
 
