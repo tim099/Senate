@@ -1510,6 +1510,61 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                             + (aPermille != (int)Math.Round(aPct * 10.0)
                                ? $"　⚠ 費率被夾到上限 {SCP_BankPolicy.MaxFeePermille / 10}%" : "");
             }
+
+            // ══ 保管費轉券（TASK-0270 ②）══════════════════════════════════════
+            // 物理意義：扣繳進央行的 Token，同時按比例**鑄出券**發給該帳戶底下的 persona。
+            // ⛔ 這格與上面那組分開一顆鈕，而且要二段確認 —— 理由不是謹慎，是**不可逆**：
+            //   保管費改小了明天就少收；券發出去在別人手上，**收不回來**。
+            g.Label("");
+            g.Label("🎫 **保管費轉券**（扣繳的 Token 同時鑄券發給該帳戶底下的 persona）");
+            g.Note(aPol.VoucherEnabled
+                   ? $"現在：**開著** —— 1 Token → {aPol.VoucherRatio} 張 `{aPol.VoucherType}` 券"
+                   : "現在：**沒開**（券種空白或比例 0 ⇒ 只扣保管費，一張券都不發）");
+            g.Note("⚠ 兩格**都要填**才算開 —— 只填一個算沒開，⛔ 不猜你的意思（半套設定最容易被讀成已經開了）。");
+
+            string aVt = g.TextField("券種（＝券名＝檔名，例 `gold` / `btc`；**留空＝不轉券**）",
+                                     g.FieldValue("bank/f/vt", aPol.VoucherType), "bank/f/vt");
+            string aVr = g.TextField($"每 Token 換幾張券（0 ＝ 不轉券；上限 {SCP_BankPolicy.MaxVoucherRatio}）",
+                                     g.FieldValue("bank/f/vr", aPol.VoucherRatio.ToString()), "bank/f/vr");
+
+            string aVtT = aVt.Trim();
+            bool aVArmed = g.FieldValue(PendingId, "") == "vch:" + aVtT + "|" + aVr.Trim();
+            if (g.Button(aVArmed ? "⚠ 再按一次＝真的改鑄券參數" : "儲存轉券設定", "bank/do/voucher"))
+            {
+                // ⚠ 讀不出來的數字**不當成 0** —— 0 是「不轉券」，那是一個合法設定；
+                //   把打錯字讀成 0，會讓轉券在沒有人宣告的情況下安靜關掉。
+                if (!int.TryParse(aVr.Trim(), out int aVrV) || aVrV < 0)
+                { m_Message = $"⚠ 比例 `{aVr}` 不是 ≥0 的整數 ⇒ **沒有寫入**（⛔ 不當成 0）"; return; }
+                if (aVtT.Length > 0 && !SCP_BankPolicy.IsValidVoucherType(aVtT))
+                { m_Message = $"⚠ `{aVtT}` 不能當券名（券名＝檔名）⇒ **沒有寫入**"; return; }
+
+                if (!aVArmed)
+                {
+                    g.SetField(PendingId, "vch:" + aVtT + "|" + aVr.Trim());
+                    int aPreview = SCP_BankPolicy.ClampVoucherRatio(aVrV);
+                    m_Message = (aVtT.Length == 0 || aPreview == 0)
+                        ? "⚠ 待確認：這會把轉券**關掉**（之後只扣保管費，不發券）。"
+                        : $"⚠ 待確認：1 Token → **{aPreview} 張 `{aVtT}` 券**，發給被扣帳戶底下的每一位 persona（均分）。"
+                          + "　⛔ 券發出去**收不回來**。";
+                    return;
+                }
+
+                g.SetField(PendingId, "");
+                int aRatio = SCP_BankPolicy.ClampVoucherRatio(aVrV);
+                string aType = aVtT;
+                bool aVOk = SCP_BankPolicy.Write(m_DataRoot.Value, jd =>
+                {
+                    jd[SCP_BankPolicy.KeyVoucherType] = aType;
+                    jd[SCP_BankPolicy.KeyVoucherRatio] = aRatio;
+                }, out string? aVErr);
+                // 判準是回讀，⛔ 不是上面那個 bool。
+                SCP_BankPolicy.Reading aVBack = SCP_BankPolicy.Read(m_DataRoot.Value, out string? _);
+                m_Message = (aVOk ? "✅ 已寫入　" : "❌ " + aVErr + "　")
+                            + (aVBack.VoucherEnabled
+                               ? $"回讀：1 Token → {aVBack.VoucherRatio} 張 `{aVBack.VoucherType}` 券"
+                               : "回讀：**沒開**（不發券）")
+                            + (aRatio != aVrV ? $"　⚠ 比例被夾到上限 {SCP_BankPolicy.MaxVoucherRatio}" : "");
+            }
         }
     }
 
