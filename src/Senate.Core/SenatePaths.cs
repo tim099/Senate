@@ -20,6 +20,7 @@
 // ⛔ 呼叫端不要自己 `Path.Combine(repoRoot, "SenateData", ...)` —— 那就是第二個決定點。
 //    要新的落點就往本類別加一支具名成員。
 using System.IO;
+using SCP.Core.Proc;
 
 namespace Senate.Core;
 
@@ -68,20 +69,20 @@ public static class SenatePaths
     public static string UiSession(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "ui_session.json");
 
     /// <summary>常駐 Server 的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ Server 沒在跑，重生成本零。
-    /// <para>⚠ **一顆一份**（TASK-0244）：`main` 沿用舊檔名、其餘帶 `.&lt;id&gt;`；理由見 <see cref="ServerIds"/> 檔頭。</para></summary>
+    /// <para>⚠ **一顆一份**（TASK-0244）：`main` 沿用舊檔名、其餘帶 `.&lt;id&gt;`；理由見 <see cref="SCP_ServerIds"/> 檔頭。</para></summary>
     public static string ServerHeartbeat(string iRepoRoot, string iServerId)
-        => Path.Combine(RuntimeDir(iRepoRoot), "_server_heartbeat" + ServerIds.Suffix(iServerId) + ".json");
+        => Path.Combine(RuntimeDir(iRepoRoot), "_server_heartbeat" + SCP_ServerIds.Suffix(iServerId) + ".json");
 
     /// <summary>`senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉它）。**一顆一份。**</summary>
     public static string ServerStopRequest(string iRepoRoot, string iServerId)
-        => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop" + ServerIds.Suffix(iServerId) + ".request");
+        => Path.Combine(RuntimeDir(iRepoRoot), "_server_stop" + SCP_ServerIds.Suffix(iServerId) + ".request");
 
     /// <summary>
     /// 單例鎖（OS advisory lock ＝ 獨佔開檔；握著 handle 就是持有鎖）。**一顆一把。**
     /// <para>⛔ 兩顆共用一把的話，第二顆永遠起不來 —— 而那看起來會像「單例閘正常運作」。</para>
     /// </summary>
     public static string ServerSingletonLock(string iRepoRoot, string iServerId)
-        => Path.Combine(RuntimeDir(iRepoRoot), "_server_singleton" + ServerIds.Suffix(iServerId) + ".lock");
+        => Path.Combine(RuntimeDir(iRepoRoot), "_server_singleton" + SCP_ServerIds.Suffix(iServerId) + ".lock");
 
     /// <summary>常駐視窗的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ 窗沒在跑。</summary>
     public static string GuiHeartbeat(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_gui_heartbeat.json");
@@ -103,7 +104,7 @@ public static class SenatePaths
     /// `main` 沿用舊目錄名 `server`，其餘是 `server-&lt;id&gt;`。</para>
     /// </summary>
     public static string ServerRoot(string iRepoRoot, string iServerId)
-        => Path.Combine(RuntimeDir(iRepoRoot), ServerIds.RootDirName(iServerId));
+        => Path.Combine(RuntimeDir(iRepoRoot), SCP_ServerIds.RootDirName(iServerId));
 
     /// <summary>
     /// 把三層目錄建出來。**只建目錄、不寫任何檔**，重複呼叫無副作用。

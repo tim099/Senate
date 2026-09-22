@@ -10,6 +10,7 @@
 //           3 沒有結果（not_running／build_mismatch／queue_busy／timeout，細分走 🔢 delegate_failure）。
 //           ⛔ Server 沒在跑**不降級成本地跑**（Tim 2026-09-02 ⑦）—— 印怎麼啟動，exit 3，到此為止。
 using SCP.Core.Cmd;
+using SCP.Core.Proc;
 
 namespace Senate.Core;
 
@@ -43,11 +44,11 @@ public abstract class ServerDelegateCmd : SCP_Cmd
     /// <summary>
     /// 這支 Cmd 由**哪一顆** Server 服務（TASK-0244）。
     /// <para>預設 `main`（銀行與通用委派都在它身上）。
-    /// 酒館那支之後 override 成 <see cref="ServerIds.Tavern"/> ——
+    /// 酒館那支之後 override 成 <see cref="SCP_ServerIds.Tavern"/> ——
     /// ⭐ 這一格就是「分開動工」那條拍板的落點：
     /// 改這一行就招呼到另一顆，⛔ 不用動任何呼叫端。</para>
     /// </summary>
-    protected virtual string ServerId => ServerIds.Default;
+    protected virtual string ServerId => SCP_ServerIds.Default;
 
     /// <summary>本體 —— **只在 Server process 裡被呼叫**。這裡可以放心當作「我是唯一寫入者」。</summary>
     protected abstract SCP_CmdResult ExecuteOnServer(SCP_CmdArgs iArgs);
@@ -99,7 +100,7 @@ public abstract class ServerDelegateCmd : SCP_Cmd
                 "✗ 宿主沒有裝上 repo 根來源（ServerDelegateCmd.RepoRootProvider）——",
                 "  這是程式錯誤不是用法錯：委派需要知道 Server 根在哪，而本層不推導路徑。");
         string aRepoRoot = RepoRootProvider();
-        string aServerId = ServerIds.Normalize(ServerId);
+        string aServerId = SCP_ServerIds.Normalize(ServerId);
         string aServerRoot = SenatePaths.ServerRoot(aRepoRoot, aServerId);
         // ⚠ 報告路徑那邊要用它去找對樹（Program.cs）——少了這一值，錯誤報告會指到另一顆的根。
         aResult.AddValue("server_id", aServerId);
@@ -111,7 +112,14 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         ServerStatus aStatus = ServerHost.Probe(aRepoRoot, aServerId);
         if (!aStatus.IsRunning)
         {
-            ServerAutoStartReport aAuto = ServerAutoStart.Ensure(aRepoRoot, aServerId, iLine => aResult.Lines.Add(iLine));
+            // TASK-0267：決策迴圈住共用層（`SCP_ServerAutoStart`），**怎麼生出行程**留在宿主（`ServerSpawn`）
+            //   ⇒ 這裡是那條切線的接點：三格由本宿主注入，⛔ 共用層不自己判「在跑嗎」也不自己 spawn。
+            bool aSpawn(out int oPid, out string oErr) => ServerSpawn.TrySpawn(aRepoRoot, aServerId, out oPid, out oErr);
+            SCP_ServerAutoStartReport aAuto = SCP_ServerAutoStart.Ensure(
+                () => ServerHost.Probe(aRepoRoot, aServerId).IsRunning,
+                aSpawn,
+                iPid => ServerHost.StartLogPath(aRepoRoot, aServerId, iPid),
+                iLine => aResult.Lines.Add(iLine));
             if (!aAuto.Ok)
             {
                 aResult.ExitCode = 3;
@@ -119,14 +127,14 @@ public abstract class ServerDelegateCmd : SCP_Cmd
                 // ⚠ 兩個值刻意不同：「還沒好」與「起不來」處置相反（再等 ／ 去看 log），
                 //   共用一個值就是把兩種相反的處置塞進同一個出口。
                 aResult.AddValue("delegate_failure",
-                                 aAuto.Outcome == ServerAutoStartOutcome.TimedOut
+                                 aAuto.Outcome == SCP_ServerAutoStartOutcome.TimedOut
                                      ? "autostart_timeout" : "autostart_failed");
                 if (aAuto.LogPath != null) aResult.AddValue("server_start_log", aAuto.LogPath);
-                ServerAutoStart.Explain(aAuto, aResult.Lines);
+                SCP_ServerAutoStart.Explain(aAuto, aResult.Lines);
                 aResult.Lines.Add("  ⛔ 不會改成本地跑：本地跑就是第二個寫入者，而它的輸出跟 Server 跑的一模一樣。");
                 return aResult;
             }
-            if (aAuto.Outcome == ServerAutoStartOutcome.Started)
+            if (aAuto.Outcome == SCP_ServerAutoStartOutcome.Started)
                 aResult.Lines.Add($"⤷ Server 自動啟動完成（{aAuto.Detail}）");
             // 起來了 ⇒ 重取一次讀數。⛔ 不沿用上面那份：那是「還沒起來」時量的，
             //   拿它去填 pid／build 會印出一份**格式完整而內容過期**的定語。

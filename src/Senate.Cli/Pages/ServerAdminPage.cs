@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using SCP.Core.Gui;
 using Senate.Core;
+using SCP.Core.Proc;
 
 namespace Senate.Cli.Pages;
 
@@ -38,7 +39,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     /// <para>🔴 這一格不是裝飾：少了它，「酒館那顆挂了」跟「一切正常」在這頁上同形，
     /// 而「啟動 Server」那顆鈕會起到一顆你沒在看的。</para>
     /// </summary>
-    string m_ServerId = ServerIds.Default;
+    string m_ServerId = SCP_ServerIds.Default;
 
     public ServerAdminPage(SenateModel iModel) : base() { m_Model = iModel; }
 
@@ -221,7 +222,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
             aPsi.ArgumentList.Add("server");
             aPsi.ArgumentList.Add("start");
             // ⚠ 指名才不會起錯一顆 —— 不帶的話不管本頁現在看哪一顆，起來的都是 `main`。
-            if (!string.Equals(m_ServerId, ServerIds.Default, StringComparison.Ordinal))
+            if (!string.Equals(m_ServerId, SCP_ServerIds.Default, StringComparison.Ordinal))
             {
                 aPsi.ArgumentList.Add("--id");
                 aPsi.ArgumentList.Add(m_ServerId);

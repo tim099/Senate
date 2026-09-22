@@ -1657,7 +1657,7 @@ public static class Program
     static string ServerIdOf(SCP.Core.Cmd.SCP_CmdResult iResult)
     {
         foreach (var kv in iResult.Values) if (kv.Key == "server_id" && kv.Value.Length > 0) return kv.Value;
-        return Senate.Core.ServerIds.Default;
+        return SCP.Core.Proc.SCP_ServerIds.Default;
     }
 
     static Dictionary<string, string> WithClient(Dictionary<string, string> iArgs)

@@ -78,7 +78,7 @@ public sealed class ServerStatus
     public string MyBuildId = "";
 
     /// <summary>這份讀數問的是哪一顆（TASK-0244）。⚠ 印讀數時一定要帶上它 —— 少了它，兩顆的輸出同形。</summary>
-    public string ServerId = ServerIds.Default;
+    public string ServerId = SCP_ServerIds.Default;
 
     public bool IsRunning => Alive != null;
 
@@ -109,9 +109,9 @@ public static class ServerHost
     /// <summary>
     /// 某一顆 Server 在 registry 裡的 tag。`main` 逐字沿用舊值 <c>senate_server</c>：
     /// ⚠ 那不是美觀問題 —— 改掉的話**升級當下正在跑的那顆會從新版視野裡消失**，
-    /// 新版判「沒有人在跑」然後起第二顆，而那正是本檔要防的事。理由全文見 <see cref="ServerIds"/> 檔頭。
+    /// 新版判「沒有人在跑」然後起第二顆，而那正是本檔要防的事。理由全文見 <see cref="SCP_ServerIds"/> 檔頭。
     /// </summary>
-    public static string TagFor(string iServerId) => Tag + ServerIds.TagSuffix(iServerId);
+    public static string TagFor(string iServerId) => Tag + SCP_ServerIds.TagSuffix(iServerId);
 
     public const int HeartbeatIntervalMs = 500;
 
@@ -153,7 +153,7 @@ public static class ServerHost
 
     public static ServerStatus Probe(string iRepoRoot, string iServerId)
     {
-        string aServerId = ServerIds.Normalize(iServerId);
+        string aServerId = SCP_ServerIds.Normalize(iServerId);
         string aTag = TagFor(aServerId);
         var aStatus = new ServerStatus { MyBuildId = BuildId, ServerId = aServerId };
         foreach (var aKv in SCP_ProcessRegistry.LoadAllWithStatus())
@@ -182,11 +182,11 @@ public static class ServerHost
     /// </summary>
     public static List<string> KnownIds(string iRepoRoot)
     {
-        var aIds = new SortedSet<string>(StringComparer.Ordinal) { ServerIds.Default };
+        var aIds = new SortedSet<string>(StringComparer.Ordinal) { SCP_ServerIds.Default };
         foreach (var aKv in SCP_ProcessRegistry.LoadAllWithStatus())
         {
             string aTag = aKv.Key.Tag ?? "";
-            if (string.Equals(aTag, Tag, StringComparison.Ordinal)) { aIds.Add(ServerIds.Default); continue; }
+            if (string.Equals(aTag, Tag, StringComparison.Ordinal)) { aIds.Add(SCP_ServerIds.Default); continue; }
             if (aTag.StartsWith(Tag + "-", StringComparison.Ordinal))
                 aIds.Add(aTag.Substring(Tag.Length + 1));
         }
@@ -198,7 +198,7 @@ public static class ServerHost
                 foreach (string aFile in Directory.GetFiles(aDir, aStem0 + "*.json"))
                 {
                     string aStem = Path.GetFileNameWithoutExtension(aFile);
-                    if (aStem.Length == aStem0.Length) { aIds.Add(ServerIds.Default); continue; }
+                    if (aStem.Length == aStem0.Length) { aIds.Add(SCP_ServerIds.Default); continue; }
                     if (aStem.StartsWith(aStem0 + ".", StringComparison.Ordinal))
                         aIds.Add(aStem.Substring(aStem0.Length + 1));
                 }
@@ -217,7 +217,7 @@ public static class ServerHost
     public static int RunForeground(string iRepoRoot, string iServerId, Action<string> iOut, Action<string> iErr)
     {
         string aServerId;
-        try { aServerId = ServerIds.Normalize(iServerId); }
+        try { aServerId = SCP_ServerIds.Normalize(iServerId); }
         catch (ArgumentException e) { iErr("✗ " + e.Message); return 2; }
 
         // 🩸 **自己的輸出自己落檔**（TASK-0209 A5，2026-09-14 兩次實測換來的形狀）：
@@ -452,7 +452,7 @@ public static class ServerHost
     /// <summary>某顆 Server（pid）的啟動 log 路徑 —— 自動啟動那側要指得出**哪一份**。</summary>
     public static string StartLogPath(string iRepoRoot, string iServerId, int iPid)
         => Path.Combine(SenatePaths.RuntimeDir(iRepoRoot),
-                        $"_server_start{ServerIds.Suffix(iServerId)}_{iPid}.log");
+                        $"_server_start{SCP_ServerIds.Suffix(iServerId)}_{iPid}.log");
 
     /// <summary>
     /// 拿單例鎖：獨佔開檔（<see cref="FileShare.None"/>），**握著 handle ＝ 持有鎖**，
@@ -555,7 +555,7 @@ public static class ServerHost
     public static int Stop(string iRepoRoot, string iServerId, Action<string> iOut, Action<string> iErr)
     {
         string aServerId;
-        try { aServerId = ServerIds.Normalize(iServerId); }
+        try { aServerId = SCP_ServerIds.Normalize(iServerId); }
         catch (ArgumentException e) { iErr("✗ " + e.Message); return 2; }
 
         ServerStatus aStatus = Probe(iRepoRoot, aServerId);

@@ -112,6 +112,7 @@ public static class SelfTest
 
         One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
 
+        One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
@@ -139,6 +140,11 @@ public static class SelfTest
         One(nameof(LibraryBuilderGolden), "library", LibraryBuilderGolden),
         One(nameof(LibraryNoteCleanRoom), "library", LibraryNoteCleanRoom),
         One(nameof(LibraryCharacterCleanRoom), "library", LibraryCharacterCleanRoom),
+
+        One(nameof(InvokeValueThreeStates), "invoke", InvokeValueThreeStates),
+        One(nameof(InvokeSeparatesTargetThrowFromMisuse), "invoke", InvokeSeparatesTargetThrowFromMisuse),
+        One(nameof(InvokeChainStopsAndMarksNotExecuted), "invoke", InvokeChainStopsAndMarksNotExecuted),
+        One(nameof(InvokeRejectsUnknownStepKey), "invoke", InvokeRejectsUnknownStepKey),
     };
 
     /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
@@ -4418,6 +4424,75 @@ public static class SelfTest
     /// 🔴 這一格真正的閘是最後一種：**認不得的值不可以悄悄回 editor** ——
     /// 那會讓打錯字的人看到「一切正常」，然後以為自己切過去了。
     /// </summary>
+    /// <summary>
+    /// 自動啟動的**四態**（TASK-0267）—— 餵已知答案，⛔ 不起任何真的 Server。
+    /// <para>🔴 為什麼這一格必須存在：那四態的處置兩兩相反（再等／去看 log／不必等／什麼都不做），
+    /// 而在這之前它們**只有註解沒有讀數**。⚠ 而 `TimedOut` 原本結構上測不到（逾時寫死 20s）——
+    /// 那不是「還沒測」，是**一個量不到的態跟一個壞掉的態在計數上同形**。</para>
+    /// <para>⛔ 本格**不驗** spawn 怎麼生行程（那是宿主側 `ServerSpawn`，平台相依）——
+    /// 它驗的是「拿到什麼答案就走哪一條」。</para>
+    /// </summary>
+    static CheckRow ServerAutoStartFourStates()
+    {
+        const string aName = "自動啟動四態（AlreadyRunning／Started／TimedOut／SpawnFailed）";
+        try
+        {
+            Func<int, string> aLogPath = iPid => "log-" + iPid;
+
+            // ① 本來就在跑 ⇒ AlreadyRunning，而且 **spawn 一次都不准被呼叫**
+            int aSpawnCalls = 0;
+            bool aSpawnOk(out int oPid, out string oErr) { ++aSpawnCalls; oPid = 4242; oErr = ""; return true; }
+            var aAlready = SCP_ServerAutoStart.Ensure(() => true, aSpawnOk, aLogPath);
+            bool aOk1 = aAlready.Outcome == SCP_ServerAutoStartOutcome.AlreadyRunning
+                        && aAlready.Ok && aSpawnCalls == 0 && aAlready.LogPath == null;
+
+            // ② 連 spawn 都失敗 ⇒ SpawnFailed，Detail 一定有話，⛔ 而且不該有 log 路徑（沒生出來哪來的 log）
+            bool aSpawnFail(out int oPid, out string oErr) { oPid = 0; oErr = "探針：故意起不來"; return false; }
+            var aFailed = SCP_ServerAutoStart.Ensure(() => false, aSpawnFail, aLogPath);
+            bool aOk2 = aFailed.Outcome == SCP_ServerAutoStartOutcome.SpawnFailed
+                        && !aFailed.Ok && aFailed.Detail.Length > 0 && aFailed.LogPath == null;
+
+            // ③ 起來了 ⇒ Started。⚠ 第一次問是 false（否則走不到 spawn），之後才 true ——
+            //    這格順便驗判準①：**等的是「有沒有一顆」**，而不是「我那顆 pid」。
+            int aAsk = 0;
+            aSpawnCalls = 0;
+            var aStarted = SCP_ServerAutoStart.Ensure(() => ++aAsk > 1, aSpawnOk, aLogPath, null, 3000);
+            bool aOk3 = aStarted.Outcome == SCP_ServerAutoStartOutcome.Started
+                        && aStarted.Ok && aStarted.LogPath == "log-4242" && aSpawnCalls == 1;
+
+            // 🔴 ④ 一直等不到 ⇒ TimedOut（⛔ 不是 SpawnFailed）。窗口撐到 600ms 才測得出來。
+            var aTimeout = SCP_ServerAutoStart.Ensure(() => false, aSpawnOk, aLogPath, null, 600);
+            bool aOk4 = aTimeout.Outcome == SCP_ServerAutoStartOutcome.TimedOut
+                        && !aTimeout.Ok && aTimeout.Detail.Length > 0 && aTimeout.LogPath == "log-4242";
+
+            // 🔴 ⑤ 兩種失敗**說的話必須不同** —— 壓成同一段就是把兩種相反的處置塞進一個出口。
+            var aLinesT = new List<string>();
+            var aLinesF = new List<string>();
+            SCP_ServerAutoStart.Explain(aTimeout, aLinesT);
+            SCP_ServerAutoStart.Explain(aFailed, aLinesF);
+            bool aOk5 = aLinesT.Count > 0 && aLinesF.Count > 0
+                        && !string.Equals(string.Join("\n", aLinesT), string.Join("\n", aLinesF),
+                                          StringComparison.Ordinal);
+
+            // ⑥ 成功那兩態**不該說話**（它們沒有出口要指）
+            var aLinesA = new List<string>();
+            SCP_ServerAutoStart.Explain(aAlready, aLinesA);
+            SCP_ServerAutoStart.Explain(aStarted, aLinesA);
+            bool aOk6 = aLinesA.Count == 0;
+
+            bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5 && aOk6;
+            string aReading =
+                $"在跑 ⇒ AlreadyRunning 且 spawn 零呼叫：{aOk1}／spawn 失敗 ⇒ SpawnFailed 且無 log 路徑：{aOk2}"
+                + $"／起來了 ⇒ Started（spawn 恰一次）：{aOk3}"
+                + $"／🔴 等不到 ⇒ **TimedOut 不是 SpawnFailed**（窗口 600ms）：{aOk4}"
+                + $"／🔴 兩種失敗說的話不同：{aOk5}（{aLinesT.Count} 行 vs {aLinesF.Count} 行）"
+                + $"／成功兩態不說話：{aOk6}"
+                + "　⛔ 本格不驗 spawn 怎麼生行程（宿主側 ServerSpawn，平台相依）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
     static CheckRow TavernWriteModeFourStates()
     {
         const string aName = "酒館寫入開關四態（agent_settings.json）";
@@ -5011,6 +5086,196 @@ public static class SelfTest
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
         finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+
+    // 區塊職責：`cmd invoke` 的反射調用層（SCP_Invoker）—— 四格，全部是**兩兩不可同形**的那種。
+    // 物理意義：這支的用途就是「取一個讀數」與「按一下一支 API」，所以它的失效方式不是崩潰，
+    //           是把兩個意思不同的結果講成同一句話。⇒ 每一格都帶一個反向格。
+    // 數值影響：純記憶體反射，零 IO（受測體刻意挑 BCL 與 SCP_Core 自己的成員）。
+    // 🩸 為什麼這組存在：2026-09-22 新增這支時，`TryBuildStep` 漏了一行 `oStep = aStep` ——
+    //   開頭那句 `oStep = null` 已經讓編譯器滿意 ⇒ **「out 已指派」與「指派了對的值」在編譯期同形**，
+    //   0 錯 0 警告，而它從第一次呼叫就壞著。抓到它的是第一次真的跑它，⛔ 不是編譯器也不是警覺。
+    //   ⇒ 而「我手動跑過 14 條路徑」那件事**不會在未來自動重跑**，所以它得住在這裡。
+
+    /// <summary>void ／ null ／ value（**可能是空字串**）三態要兩兩可分。</summary>
+    static CheckRow InvokeValueThreeStates()
+    {
+        const string aName = "invoke 回傳三態（void／null／空字串不可同形）";
+        try
+        {
+            var aVars = new Dictionary<string, object?>();
+
+            // value：有值而且**是空字串** —— 這一格最容易被寫成 null
+            var aEmpty = new SCP_InvokeStep { TypeName = "System.String", MemberName = "Empty", Kind = "field" };
+            SCP_InvokeResult aR1 = SCP_Invoker.InvokeOne(aEmpty, aVars);
+            bool aEmptyOk = aR1.Success && aR1.ValueKind == "value" && aR1.ValueAsString.Length == 0;
+
+            // null：有回傳值而它是 null（Type.GetType 找不到時回 null，⛔ 不丟例外）
+            var aNull = new SCP_InvokeStep { TypeName = "System.Type", MemberName = "GetType", Kind = "method" };
+            aNull.ParamTypes.Add("System.String");
+            aNull.Args.Add("No.Such.Type.Exists.At.All");
+            SCP_InvokeResult aR2 = SCP_Invoker.InvokeOne(aNull, aVars);
+            bool aNullOk = aR2.Success && aR2.ValueKind == "null";
+
+            // void：沒有回傳值（setter）
+            var aVoid = new SCP_InvokeStep
+            { TypeName = "System.Environment", MemberName = "ExitCode", Kind = "property", IsGetter = false };
+            aVoid.Args.Add("0");
+            SCP_InvokeResult aR3 = SCP_Invoker.InvokeOne(aVoid, aVars);
+            bool aVoidOk = aR3.Success && aR3.ValueKind == "void";
+
+            // 🔴 反向格：三個 ValueKind 必須**互不相同** —— 只驗各自等於預期值的話，
+            //    有人把三個都改成同一個字串時，上面三格仍然會全綠。
+            bool aDistinct = aR1.ValueKind != aR2.ValueKind
+                             && aR2.ValueKind != aR3.ValueKind
+                             && aR1.ValueKind != aR3.ValueKind;
+
+            bool aOk = aEmptyOk && aNullOk && aVoidOk && aDistinct;
+            return new CheckRow(aName,
+                $"空字串 ⇒ `{aR1.ValueKind}` 且 value 長度 0：{aEmptyOk}"
+                + $"／null ⇒ `{aR2.ValueKind}`：{aNullOk}"
+                + $"／setter ⇒ `{aR3.ValueKind}`：{aVoidOk}"
+                + $"／🔴 反向：三態互異={aDistinct}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    /// <summary>
+    /// 「被呼叫的那支 API 自己丟了例外」與「我找錯成員／參數給錯」處置相反 ⇒ 不可同形。
+    /// ⚠ 判準是 <c>TargetThrew</c> 旗標，⛔ 不是比對錯誤訊息的字串（字串會被改，旗標不會）。
+    /// </summary>
+    static CheckRow InvokeSeparatesTargetThrowFromMisuse()
+    {
+        const string aName = "invoke 分得出「那支 API 炸了」與「我打錯了」";
+        try
+        {
+            var aVars = new Dictionary<string, object?>();
+
+            // ① 被呼叫的程式自己丟例外（指定多載，確定走到真的呼叫）
+            var aThrow = new SCP_InvokeStep { TypeName = "System.IO.File", MemberName = "ReadAllText" };
+            aThrow.ParamTypes.Add("System.String");
+            aThrow.Args.Add(Path.Combine(Path.GetTempPath(),
+                "senate-selftest-absent-" + Guid.NewGuid().ToString("N") + ".txt"));
+            SCP_InvokeResult aThrew = SCP_Invoker.InvokeOne(aThrow, aVars);
+            bool aThrewOk = !aThrew.Success && aThrew.TargetThrew;
+
+            // ② 成員根本不存在 ⇒ 用法錯，**不是**那支 API 炸了
+            var aMissing = new SCP_InvokeStep { TypeName = "System.String", MemberName = "NoSuchMemberHere" };
+            SCP_InvokeResult aMiss = SCP_Invoker.InvokeOne(aMissing, aVars);
+            bool aMissOk = !aMiss.Success && !aMiss.TargetThrew;
+
+            // ③ 型別找不到時，訊息要**把兩個成因都說出來**（名字不對／組件還沒載入）——
+            //    那兩個的處置相反，而它們預設都只是「找不到」
+            Type? aNone = SCP_Invoker.ResolveType("Totally.Absent.Type." + Guid.NewGuid().ToString("N"), out string aErr);
+            bool aTwoCauses = aNone == null
+                              && aErr.Contains("還沒被載入", StringComparison.Ordinal)
+                              && aErr.Contains("組件", StringComparison.Ordinal);
+
+            // 🔴 反向格：兩個失敗的 Success 都是 false ⇒ 光看它分不出來。旗標必須相異。
+            bool aFlagsDiffer = aThrew.TargetThrew != aMiss.TargetThrew;
+
+            bool aOk = aThrewOk && aMissOk && aTwoCauses && aFlagsDiffer;
+            return new CheckRow(aName,
+                $"API 炸了 ⇒ TargetThrew={aThrew.TargetThrew}：{aThrewOk}"
+                + $"／成員不存在 ⇒ TargetThrew={aMiss.TargetThrew}：{aMissOk}"
+                + $"／找不到型別的訊息帶兩個成因：{aTwoCauses}"
+                + $"／🔴 反向：兩者旗標相異={aFlagsDiffer}（⛔ 兩邊 Success 都是 false，光看它分不出來）",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    /// <summary>
+    /// 鏈式呼叫（store_as / $name）＋ 中途失敗後**後面那些沒有執行**。
+    /// ⚠ 「沒跑」與「跑了而失敗」不可同形 —— 呼叫端據此決定要不要重跑。
+    /// </summary>
+    static CheckRow InvokeChainStopsAndMarksNotExecuted()
+    {
+        const string aName = "invoke 鏈式呼叫 ＋ 中途失敗後「沒有執行」不可同形";
+        try
+        {
+            // ① 三步鏈：static method 帶參數 → $var 當引數 → instance property
+            var aS1 = new SCP_InvokeStep { TypeName = "System.Type", MemberName = "GetType", StoreAs = "t" };
+            aS1.ParamTypes.Add("System.String");
+            aS1.Args.Add("SCP.Core.Reflect.SCP_Reflect");
+            var aS2 = new SCP_InvokeStep
+            { TypeName = "SCP.Core.Reflect.SCP_Reflect", MemberName = "SchemaOf", StoreAs = "schema" };
+            aS2.ParamTypes.Add("System.Type");
+            aS2.Args.Add("$t");
+            var aS3 = new SCP_InvokeStep { Target = "t", MemberName = "FullName", Kind = "property" };
+
+            IReadOnlyList<SCP_InvokeResult> aChain =
+                SCP_Invoker.Run(new[] { aS1, aS2, aS3 }, out IReadOnlyDictionary<string, object?> aVars);
+            bool aChainOk = aChain.Count == 3 && aChain[0].Success && aChain[1].Success && aChain[2].Success
+                            && aChain[2].ValueAsString == "SCP.Core.Reflect.SCP_Reflect"
+                            && aVars.ContainsKey("t") && aVars.ContainsKey("schema");
+
+            // ② 中途失敗 ⇒ 只跑到那一步，後面**一步都沒跑**（結果筆數 < 步數就是那個讀數）
+            var aB1 = new SCP_InvokeStep { TypeName = "SCP.Core.Reflect.SCP_Reflect", MemberName = "Describe" };
+            var aB2 = new SCP_InvokeStep { TypeName = "SCP.Core.Reflect.SCP_Reflect", MemberName = "NoSuchThing" };
+            var aB3 = new SCP_InvokeStep { TypeName = "SCP.Core.Reflect.SCP_Reflect", MemberName = "Describe" };
+            IReadOnlyList<SCP_InvokeResult> aBroken = SCP_Invoker.Run(new[] { aB1, aB2, aB3 }, out _);
+            bool aStopOk = aBroken.Count == 2 && aBroken[0].Success && !aBroken[1].Success;
+
+            // 🔴 反向格：變數表**跑完就沒** —— 分兩次 Run 不得共用。
+            //    （CLI 每次呼叫都是新 process；照 Unity 那側的 static 字典寫法會讓 $var 永遠找不到，
+            //     而失敗訊息會長得像「變數名打錯了」。）
+            IReadOnlyList<SCP_InvokeResult> aSecond = SCP_Invoker.Run(new[] { aS3 }, out _);
+            bool aNoLeak = aSecond.Count == 1 && !aSecond[0].Success
+                           && aSecond[0].Error.Contains("變數表", StringComparison.Ordinal);
+
+            bool aOk = aChainOk && aStopOk && aNoLeak;
+            return new CheckRow(aName,
+                $"三步鏈（static＋參數／$var 傳參／instance property）={aChainOk}"
+                + $"／中途失敗 ⇒ 跑了 {aBroken.Count}/3 步（後面沒執行）：{aStopOk}"
+                + $"／🔴 反向：變數不跨 Run 洩漏={aNoLeak}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    /// <summary>
+    /// steps 裡認不得的鍵**不得靜默吞掉**（TASK-0109 那族：未知參數靜默取預設值）。
+    /// ⚠ 同時驗 camelCase 別名**真的有效** —— 不然「兩種都收」那句話是假的。
+    /// </summary>
+    static CheckRow InvokeRejectsUnknownStepKey()
+    {
+        const string aName = "invoke steps 未知鍵被擋 ＋ camelCase 別名真的有效";
+        try
+        {
+            // ① 認不得的鍵 ⇒ 擋下並**指名那個鍵**
+            bool aRejected = !SCP_Invoker.TryParseStep(
+                "type=System.String|member=Empty|kind=field|bogus=1", out _, out string aErr1)
+                && aErr1.Contains("bogus", StringComparison.Ordinal);
+
+            // ② camelCase 與 snake_case 解出**同一個** step
+            bool aCamel = SCP_Invoker.TryParseStep(
+                "type=System.IO.File|member=ReadAllText|paramTypes=System.String", out SCP_InvokeStep? aA, out _);
+            bool aSnake = SCP_Invoker.TryParseStep(
+                "type=System.IO.File|member=ReadAllText|param_types=System.String", out SCP_InvokeStep? aB, out _);
+            bool aSame = aCamel && aSnake && aA != null && aB != null
+                         && aA.ParamTypes.Count == 1 && aB.ParamTypes.Count == 1
+                         && aA.ParamTypes[0] == aB.ParamTypes[0];
+
+            // ③ 缺 member ⇒ 擋下（⛔ 不是帶著一個空成員名往下跑）
+            bool aNeedsMember = !SCP_Invoker.TryParseStep("type=System.String", out _, out string aErr3)
+                                && aErr3.Contains("member", StringComparison.Ordinal);
+
+            // 🔴 反向格：合法的一行**要真的解得出來** —— 否則上面三格可以靠「什麼都擋」全綠
+            bool aGoodPasses = SCP_Invoker.TryParseStep(
+                "type=System.String|member=Empty|kind=field", out SCP_InvokeStep? aGood, out _)
+                && aGood != null && aGood.MemberName == "Empty" && aGood.Kind == "field";
+
+            bool aOk = aRejected && aSame && aNeedsMember && aGoodPasses;
+            return new CheckRow(aName,
+                $"未知鍵被擋且指名={aRejected}／camelCase ≡ snake_case={aSame}／缺 member 被擋={aNeedsMember}"
+                + $"／🔴 反向：合法的一行解得出來={aGoodPasses}（⛔ 不然「什麼都擋」也會全綠）"
+                + "　⚠ 射程：camelCase 別名只在 **steps 這一層**；單步 `--arg` 那條路有 ArgSpec 預檢，只收 snake_case",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
     }
 
 }

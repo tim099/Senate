@@ -17,6 +17,7 @@
 using SCP.Core.Cmd;
 using SCP.Core.Json;
 using SCP.Core.Tavern;
+using SCP.Core.Proc;
 
 namespace Senate.Core;
 
@@ -39,7 +40,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     /// <para>⚠ 代價要講清楚：這代表要 `senate server start --id tavern` 另外掛一顆。
     /// 好處是酒館塞住時不會連帶卡住銀行那條 —— 兩者的停機代價差很多。</para>
     /// </summary>
-    protected override string ServerId => ServerIds.Tavern;
+    protected override string ServerId => SCP_ServerIds.Tavern;
 
     /// <summary>
     /// **固定一條 lane <c>tavern</c>**（留言 #3 的候選 A，PM @basecamp 2026-09-21 拍板，驗收條文 ③）。

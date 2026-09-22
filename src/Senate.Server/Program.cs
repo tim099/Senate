@@ -12,10 +12,11 @@
 //     ⇒ 這顆拿不到單例鎖自退 ⇒ 呼叫端等到 `autostart_timeout`，
 //     而 log 裡寫的是「拿不到單例鎖」—— **兩句話指不到彼此**。
 using Senate.Core;
+using SCP.Core.Proc;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-string aServerId = ServerIds.Default;
+string aServerId = SCP_ServerIds.Default;
 for (int i = 0; i < args.Length; i++)
 {
     if (!string.Equals(args[i], "--id", StringComparison.Ordinal)) continue;
@@ -28,7 +29,7 @@ for (int i = 0; i < args.Length; i++)
     break;
 }
 // 環境變數只在沒給 `--id` 時才看：命令列是顯式的，⛔ 不讓環境悄悄蓋掉人打出來的字。
-if (string.Equals(aServerId, ServerIds.Default, StringComparison.Ordinal)
+if (string.Equals(aServerId, SCP_ServerIds.Default, StringComparison.Ordinal)
     && Environment.GetEnvironmentVariable("SENATE_SERVER_ID") is { Length: > 0 } aEnvId)
     aServerId = aEnvId;
 

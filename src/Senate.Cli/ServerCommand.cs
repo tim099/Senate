@@ -5,6 +5,7 @@
 //           stop：0 停掉或本來就沒在跑／1 停不掉；status：0 活著且心跳新鮮／3 沒在跑或心跳停了。
 //           ⚠ status 的 3 對齊委派 Cmd「沒有結果」那格（腳本已經在吃 0/1/2/3 四格，不發明第五格）。
 using Senate.Core;
+using SCP.Core.Proc;
 
 namespace Senate.Cli;
 
@@ -20,7 +21,7 @@ static class ServerCommand
         {
             // start 不指名 ⇒ `main`：起一顆是明確的動作，有預設不會讓人損失什麼。
             case "start":
-                return ServerHost.RunForeground(iRepoRoot, aId ?? ServerIds.Default,
+                return ServerHost.RunForeground(iRepoRoot, aId ?? SCP_ServerIds.Default,
                                                 Console.WriteLine, Console.Error.WriteLine);
             // 🔴 stop 不指名則**不猜**：只有一顆在跑就停它，兩顆以上擋下並要求指名。
             //   ⛔ 預設停 `main` 是一把裝填好的槍：人想停酒館那顆而停掉銀行那顆，而兩者的輸出同形。
@@ -40,7 +41,7 @@ static class ServerCommand
         {
             if (!string.Equals(iArgs[i], "--id", StringComparison.Ordinal)) continue;
             if (i + 1 >= iArgs.Length) { oErr = "--id 後面沒有值"; return null; }
-            try { return ServerIds.Normalize(iArgs[i + 1]); }
+            try { return SCP_ServerIds.Normalize(iArgs[i + 1]); }
             catch (ArgumentException e) { oErr = e.Message; return null; }
         }
         return null;
@@ -91,7 +92,7 @@ static class ServerCommand
         }
         // 0 顆在跑也走 `main`：`Stop` 本來就是幂等的（build 腳本每次都呼叫它），
         // 而順手清殘留心跳檔那一格還是要發生。
-        return ServerHost.Stop(iRepoRoot, aRunning.Count == 1 ? aRunning[0] : ServerIds.Default,
+        return ServerHost.Stop(iRepoRoot, aRunning.Count == 1 ? aRunning[0] : SCP_ServerIds.Default,
                                Console.WriteLine, Console.Error.WriteLine);
     }
 
@@ -129,7 +130,7 @@ static class ServerCommand
         // 不指名 ⇒ 全部列出來。⛔ 不預設只看 `main`：
         //   那樣的話「酒館那顆挂了」跟「一切正常」在畫面上同形。
         if (iId == null && ServerHost.KnownIds(iRepoRoot).Count > 1) return List(iRepoRoot);
-        string aId = iId ?? ServerIds.Default;
+        string aId = iId ?? SCP_ServerIds.Default;
         ServerStatus s = ServerHost.Probe(iRepoRoot, aId);
         Console.WriteLine($"· 本 CLI build={s.MyBuildId}　serverId={aId}");
 
@@ -148,7 +149,7 @@ static class ServerCommand
             }
             if (s.Heartbeat != null)
                 Console.WriteLine($"⚠ 但心跳檔還在（pid={s.Heartbeat.Pid}，{DescribeAge(s)}）—— 上一顆沒收乾淨；`senate server stop` 會順手清掉");
-            Console.WriteLine($"  啟動：senate server start{(aId == ServerIds.Default ? "" : " --id " + aId)}（前景，開一個終端機掛著）");
+            Console.WriteLine($"  啟動：senate server start{(aId == SCP_ServerIds.Default ? "" : " --id " + aId)}（前景，開一個終端機掛著）");
             Console.WriteLine("🔢 server_state = not_running");
             return 3;
         }
