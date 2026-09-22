@@ -39,9 +39,6 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "preview",
                     iChoices: new[] { "preview", "run", "parity" }),
                 new SCP_CmdArgSpec("data_root", "資料根（政策設定從這裡找）", iRequired: true),
-                new SCP_CmdArgSpec("letters_root",
-                    "persona 信件夾根 —— **帳號歸一要它**（`sirius` → `Spectre`）。"
-                    + "⛔ 少了它就不歸一，而錢會落在不同帳戶上（本 Cmd 會出聲，不靜默）", iRequired: true),
                 new SCP_CmdArgSpec("bank_root",
                     "銀行帳本根（絕對路徑）。CLI 沒給時會用 `<資料根>/Bank` 補上並印出來（推導值，不可設定）",
                     iRequired: true),
@@ -62,7 +59,6 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
         string aData = iArgs.Get("data_root").Trim();
         string aBank = iArgs.Get("bank_root").Trim();
         string aOp = iArgs.Get("op").Trim();
-        string aLetters = iArgs.Get("letters_root").Trim();
         string aDate = iArgs.Get("date").Trim();
         if (aDate.Length == 0) aDate = SCP_Demurrage.TodayUtc();
 
@@ -73,14 +69,14 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
                 $"✗ `bank_root` 底下沒有 `{SCP_BankAccounts.AccountsDirName}/` ⇒ **這個根給錯了**，⛔ 不是「帳號不存在」",
                 $"  · 給的是：`{aBank}`");
 
-        if (aOp == "parity") return OpParity(aData, aBank, aLetters, aDate);
+        if (aOp == "parity") return OpParity(aData, aBank, aDate);
 
         bool aRun = aOp == "run";
         if (aRun && iArgs.Get("confirm").Trim() != "1")
             return SCP_CmdResult.Fail(2, "✗ `op=run` 會真的動錢 ⇒ 要 `--arg confirm=1`",
                                       "  · 只想看帳單：`--arg op=preview`（零寫入）");
 
-        SCP_DemurrageOutcome aOut = SCP_Demurrage.Apply(aData, aBank, aLetters, aDate, iDryRun: !aRun);
+        SCP_DemurrageOutcome aOut = SCP_Demurrage.Apply(aData, aBank, aDate, iDryRun: !aRun);
 
         var aR = new SCP_CmdResult();
         aR.Lines.Add($"# 跨日存款保管費　`{aDate}`　{(aRun ? "**op=run（真的扣了）**" : "op=preview（**零寫入**）")}");
@@ -145,9 +141,9 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
     // 區塊職責：TASK-0278 ② 那道閘 —— 拿舊實作**已經寫在帳本上**的輸出跟新實作對拍。
     // ⚠ 它比的是逐帳戶的金額，⛔ 不是抽樣、⛔ 不是「我算過了」。
     // ===========================================================
-    static SCP_CmdResult OpParity(string iData, string iBank, string iLetters, string iDate)
+    static SCP_CmdResult OpParity(string iData, string iBank, string iDate)
     {
-        SCP_DemurrageParityReport aRep = SCP_DemurrageParity.Run(iData, iBank, iLetters, iDate);
+        SCP_DemurrageParityReport aRep = SCP_DemurrageParity.Run(iData, iBank, iDate);
         var aR = new SCP_CmdResult();
         aR.Lines.Add($"# 對拍（舊實作的帳本產物 ↔ 新實作同快照重算）　`{iDate}`");
         foreach (string p in aRep.Problems) aR.Lines.Add("⚠ " + p);

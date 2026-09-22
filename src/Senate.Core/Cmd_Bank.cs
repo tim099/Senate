@@ -95,7 +95,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 //   ⛔ 不從 `bank_root` 往上推 `data_root`：那是在本層多養一份「路徑住哪」的答案，
                 //   而它會跟宿主那份漂（同檔頭判準②）。
                 new SCP_CmdArgSpec("data_root",
-                    "資料根（絕對路徑）—— `requests`／`approve`／`reject` 必填；待審單在 `<data_root>/Treasury/`。"
+                    "資料根（絕對路徑）—— `requests`／`approve`／`reject` 必填；待審單在 `<data_root>/Bank/`（TASK-0275 ⑥ 起，⛔ 不再是 `Treasury/`）。"
                     + "⛔ 本層不從 `bank_root` 推導它", iDefault: ""),
                 new SCP_CmdArgSpec("request_id",
                     "要裁決的單號（`approve`／`reject` 必填）—— 請款與轉帳共用這一格；"
@@ -709,7 +709,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     {
         string aData = iArgs.Get("data_root");
         if (string.IsNullOrWhiteSpace(aData))
-            return SCP_CmdResult.Fail(2, "✗ 缺 `data_root` —— 待審單在 `<data_root>/Treasury/`，本層不推導它");
+            return SCP_CmdResult.Fail(2, "✗ 缺 `data_root` —— 待審單在 `<data_root>/Bank/`，本層不推導它");
 
         var aProblems = new List<string>();
         List<SCP_PayoutRequest> aPayouts = SCP_TreasuryRequests.LoadPendingPayouts(aData, aProblems);
@@ -771,7 +771,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         string aData = iArgs.Get("data_root");
         string aId = iArgs.Get("request_id").Trim();
         var aMissing = new List<string>();
-        if (string.IsNullOrWhiteSpace(aData)) aMissing.Add("data_root（待審單在 `<data_root>/Treasury/`）");
+        if (string.IsNullOrWhiteSpace(aData)) aMissing.Add("data_root（待審單在 `<data_root>/Bank/`）");
         if (aId.Length == 0) aMissing.Add("request_id（要裁決哪一張）");
         if (aMissing.Count > 0)
             return SCP_CmdResult.Fail(2, "✗ 缺 " + aMissing.Count + " 欄：", "  · " + string.Join("\n  · ", aMissing));

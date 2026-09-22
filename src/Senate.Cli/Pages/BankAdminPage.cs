@@ -353,7 +353,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         using (g.Row())
         {
             g.Label("區域（＝幣別軸）：**" + m_Region + "**");
-            g.Label("來源=" + (m_RegionWhy == null ? "`Treasury/bank_settings.json` 的 `currency_id`"
+            g.Label("來源=" + (m_RegionWhy == null ? "`Bank/bank_settings.json` 的 `currency_id`"
                                                    : "⚠ 預設（" + m_RegionWhy + "）"));
         }
         if (m_Regions.Count > 1)
