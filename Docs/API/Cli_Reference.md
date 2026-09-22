@@ -368,6 +368,46 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 ⛔ **沒有白名單**：能呼叫什麼由「這個 process 載入了什麼」決定 —— 它寫檔就會真的寫檔。
 （一份「安全成員」清單永遠不夠用，而它最大的作用是讓人以為已經擋住了。）
 
+#### 領薪差集稽核：`payroll-audit`（2026-09-22，TASK-0273 ⑥）
+
+那一天**有幾則訊息**對上**帳上有幾筆 `work_post`**，相減。**原生、唯讀、不需要 Editor／Server。**
+
+```bash
+senate cmd payroll-audit --arg data_root=<AgentCommands> --arg region=Florin \
+    --arg letters_root=<letters> [--arg day=2026-09-21 | --arg days=10]
+```
+
+🩸 **由來**：2026-09-22 整天 **0 筆** `work_post` 落帳而酒館有 **135 則**訊息，
+而每一筆發文都回 `announce = Posted` —— **沒有任何一層喊**。
+發現它的是同事自己去翻 `Bank/ledger` 逐日數檔案。
+
+⭐ **判準是量差集，⛔ 不偵測成因。** 同一天量到那個外觀有**三種**成因，三者畫面完全相同：
+① 呼叫端手填了 Cmd 端已拒收的參數　② persona 解析不到（⚠ **那是刻意的**，不是病）
+③ Server 與 CLI 的 build 不符。⇒ 偵測成因的守衛，明天會被第四種繞過去。
+
+**判決**（走 `verdict` 值，⛔ **不走退出碼** —— 它掛在早安 brief 那條必經路上，
+讓它 exit 非零會把整套儀式染紅，而人會開始略過整段，那就把警報本身弄壞了）：
+
+| verdict | 意思 |
+|---|---|
+| `alarm` | 🔴 有一堆應計酬而帳上 **0 筆** ⇒ 那條路整條斷了 |
+| `warn` | 有缺口 |
+| `clean` | 對得上 |
+| `no_sample` | 那天沒訊息 —— ⛔ **不是**「沒問題」 |
+| `unmeasurable` | **量不動** —— ⛔ **不是**「全部漏發」 |
+
+🔴 `unmeasurable` 有兩個來源，而它們都在防同一件事（**一面永遠亮紅燈的儀表比沒有儀表更糟**）：
+- **早於 `2026-09-17`**：那時的帳在舊 `Treasury/ledger`，而它已於 2026-09-22 刪除（TASK-0274）
+  ⇒ 本層**查無帳**。🩸 加這道閘之前的實跑把 09-14／15／16 判成「整天沒發薪」共 **768 則** —— 那三天其實好好的。
+- **`ref` 形狀對不上**：帳上有 `work_post` 卻沒有一筆 ref 對得上任何訊息
+  ⇒ 那是比對關係壞了（`SCP_PayrollAudit.SourceRef` 與 Unity 的 `Cmd_Tavern.PostRewardSourceRef` 分岔），⛔ 不是漏發。
+
+⚠ **本層量不到的**：category 計不計酬的規則在 Unity 的 routing 資產裡
+⇒ 差集**按 category／persona／room 分組印出來**讓人自己判斷，⛔ 不自己下「該補多少」。
+⚠ **請款補發沖不掉差集**：`payout_request` 分錄不帶逐則 `ref` ⇒ 報告把它**並排**顯示，⛔ 不自動清零。
+
+📌 早安 brief **§6.1 領薪差集（昨天）** 是同一支的投影 —— 量昨天不量今天（今天還在長，差集一定偏高）。
+
 #### exit code
 
 | code | 意思 |
