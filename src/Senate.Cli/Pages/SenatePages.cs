@@ -26,21 +26,23 @@ public static class SenatePages
     public static SCP_GuiPageCatalog BuildCatalog(SenateModel iModel)
     {
         var aCatalog = new SCP_GuiPageCatalog();
-        // 入口頁要拿著目錄才畫得出清單 ⇒ 用閉包把 aCatalog 帶進去
-        //（它自己 MenuGroup = null，所以不會把自己列進自己的清單 —— 同 UCL 排除 EditorMenuPage 那一格）
+
+        // 🔴 **只有這一行是顯式的，而它逃不掉**（雞生蛋）：入口頁要拿著目錄才畫得出清單，
+        //    而目錄正在被建 ⇒ 反射沒有第二個參數可以遞。⇒ 它的 ctor 是 `(ctx, catalog)`，
+        //    落在 `AutoRegister` 的「形狀不符」那一格，所以這裡先佔住 key（顯式優先，不算缺陷）。
+        //   （它自己 MenuGroup = null，所以不會把自己列進自己的清單 —— 同 UCL 排除 EditorMenuPage 那一格）
         aCatalog.Register(SCP_GuiHomePage.PageKey, () => new SCP_GuiHomePage(iModel, aCatalog));
-        aCatalog.Register(DoctorPage.PageKey, () => new DoctorPage(iModel));
-        aCatalog.Register(SubmoduleSyncPage.PageKey, () => new SubmoduleSyncPage(iModel));
-        aCatalog.Register(SCP_GuiStylePage.PageKey, () => new SCP_GuiStylePage(iModel));
-        aCatalog.Register(SettingsPage.PageKey, () => new SettingsPage(iModel));
-        aCatalog.Register(ProjectsPage.PageKey, () => new ProjectsPage(iModel));
-        aCatalog.Register(PathsPage.PageKey, () => new PathsPage(iModel));
-        aCatalog.Register(SCP_GuiLoginStatusPage.PageKey, () => new SCP_GuiLoginStatusPage(iModel));
-        aCatalog.Register(SCP_GuiSkillManagerPage.PageKey, () => new SCP_GuiSkillManagerPage(iModel));
-        aCatalog.Register(SCP_GuiProcessAdminPage.PageKey, () => new SCP_GuiProcessAdminPage());
-        aCatalog.Register(SCP_GuiSessionAdminPage.PageKey, () => new SCP_GuiSessionAdminPage(iModel));
-        aCatalog.Register(BankAdminPage.PageKey, () => new BankAdminPage(iModel));
-        aCatalog.Register(ServerAdminPage.PageKey, () => new ServerAdminPage(iModel));
+
+        // ⭐ 其餘**全部自動收**（TASK-0276，Tim 2026-09-22 拍板 C）：
+        //    判準是「繼承 `SCP_GuiPage`」，⛔ 不看建構子；不想被收的頁貼 `[SCP_PageIgnore("理由")]`。
+        //    ⇒ 以後在 SCP_Core 加一支頁，**這個檔案一個字都不用改**（那才是這一筆要買的東西：
+        //      此前 13 支裡有 6 支住 SCP_Core，每加一支都要跑來這裡補一行、再 bump 一次父層指標）。
+        //    ⚠ assembly 清單**顯式給**（見 SenateModel.PageAssemblies）——
+        //      ⛔ 不是 `AppDomain.GetAssemblies()`：CLI 是用到才載，那個差異不報錯。
+        //    缺陷（沒有 PageKey／key 撞名／ctor 形狀不符）落進 `aCatalog.Diagnostics`，
+        //    由入口頁畫出來；build 階段另有一道閘會讓撞名變成紅的（`senate pages-check`）。
+        aCatalog.AutoRegister(iModel.PageAssemblies, iModel);
+
         return aCatalog;
     }
 

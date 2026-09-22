@@ -175,6 +175,7 @@ public static class Program
                 "ucmd" => CmdAgent(aRepoRoot, iArgs),   // Unity 那套（AgentCommand，走檔案協議）
                 "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
+                "pages-check" => CmdPagesCheck(aRepoRoot),   // TASK-0276：page key 撞名在 build 階段就要紅
                 "server" => ServerCommand.Run(aRepoRoot, iArgs),   // 常駐 Server 生命週期（TASK-0102；前景、永駐、手動啟動）
                 // ⚠ `--version` 是**第一個會被打**的字（TASK-0138），而它原本回「認不得的指令」
                 //   ⇒ 想確認「我手上這顆是哪一顆」的人，在最需要那個答案的那一刻被推去猜。
@@ -606,6 +607,59 @@ public static class Program
             return aOk ? 0 : 1;
         }
         return 0;
+    }
+
+    // ── senate pages-check（TASK-0276）─────────────────────────
+    // 區塊職責：頁面目錄的**建置期**閘 —— page key 撞名、ctor 形狀不符、沒有 PageKey。
+    // 物理意義：Tim 2026-09-22 逐字：「那 key 應該自檢 不能重複（**必須報錯 且 build 階段就要發現**）」。
+    //          ⇒ 自動收頁之後 key 是唯一還會撞的東西（身分是 TypeFullName，它撞不起來），
+    //            而 key 是 `--page` 與 session `nav` 吃的那個字 ⇒ 撞名的症狀是
+    //            **同一行指令有時開到另一頁**，而那要靠有人剛好注意到。
+    //
+    // 🔴 為什麼是「build 完跑真貨」而不是「編譯前 grep 原始碼」：
+    //   grep `PageKey = "..."` 會把**註解與字串裡的範例**數成宣告 ——
+    //   2026-09-22 同一天咬了兩次（把註解數成類別宣告／反引號讓計數變 0）。
+    //   ⇒ 這裡用的是**執行時同一套反射**，⛔ 不是第二把尺。
+    //   ⚠ 代價：要先編得起來才驗得到。那可以接受 —— 編不起來的話 build 本來就紅了。
+    //
+    // ⚠ 射程：只涵蓋 `SenateModel.PageAssemblies` 那幾顆（SCP_Core ＋ Senate.Cli）。
+    //   Unity 那側編 SCP_Core 但**自己零支頁面**（2026-09-22 量）⇒ 這道閘在 Senate build 就夠。
+    //   哪天 Unity 端長出自己的頁，這句話就過期。
+    static int CmdPagesCheck(string iRepoRoot)
+    {
+        var aModel = new SenateModel(iRepoRoot);
+        SCP_GuiPageCatalog aCatalog = SenatePages.BuildCatalog(aModel);
+        IReadOnlyList<string> aDefects = aCatalog.Diagnostics;   // ⚠ 這一步會把每一頁建一次（ctor 必須便宜）
+
+        if (aDefects.Count == 0)
+        {
+            Console.WriteLine($"✓ 頁面目錄乾淨：收了 {aCatalog.AllKeys.Count} 支，key 無重複、ctor 形狀全部收得進來。");
+            Console.WriteLine($"🔢 pages = {aCatalog.AllKeys.Count}");
+            Console.WriteLine("🔢 defects = 0");
+            return 0;
+        }
+
+        // 🔴 **先印純 ASCII 的摘要**，而這不是美觀問題：
+        //   MSBuild 的 Exec 用系統字碼頁解這條管線 ⇒ 下面那幾行中文在 build log 裡是亂碼
+        //   （2026-09-22 實測兩次；`chcp 65001` 不管用，它動的是 console 不是管線）。
+        //   ⇒ 至少讓「壞在哪個 key、哪兩個型別」活得過任何字碼頁 —— 那幾格本來就是 ASCII。
+        Console.Error.WriteLine($"[pages-check] FAILED: {aDefects.Count} defect(s). "
+                                + "Run `senate pages-check` by hand for the readable (Chinese) report.");
+        foreach (string d in aDefects)
+        {
+            // 撈出訊息裡的 ASCII 片段（key／TypeFullName 都是 ASCII）—— 中文被濾掉也還看得出是誰。
+            var aAscii = new System.Text.StringBuilder();
+            foreach (char c in d) aAscii.Append(c < 128 ? c : ' ');
+            string aLine = System.Text.RegularExpressions.Regex.Replace(aAscii.ToString(), @"\s+", " ").Trim();
+            if (aLine.Length > 0) Console.Error.WriteLine("[pages-check]   " + aLine);
+        }
+        Console.Error.WriteLine($"⛔ 頁面目錄有 {aDefects.Count} 個問題 —— **build 在這裡停下**：");
+        foreach (string d in aDefects) Console.Error.WriteLine("  · " + d);
+        Console.Error.WriteLine("  ⇒ page key 是 `--page` 與 session `nav` 吃的那個字；"
+                                + "重複的症狀是**同一行指令有時開到另一頁**，⛔ 不會有人來報。");
+        Console.WriteLine($"🔢 pages = {aCatalog.AllKeys.Count}");
+        Console.WriteLine($"🔢 defects = {aDefects.Count}");
+        return 2;
     }
 
     // ── senate selftest ───────────────────────────────────────
@@ -1346,6 +1400,9 @@ public static class Program
         //   （那要每支子命令各自處理它，而沒處理的那幾支會回一個看起來像壞掉的答案）。
         ["cmd"] = new[] { "--arg", "--arg-file", "--help" },
         ["selftest"] = new[] { "--list", "--only", "--clipboard", "--width", "--scale", "--size" },
+        // TASK-0276：不吃任何旗標。⚠ 仍要登記 —— 不在表上的子命令會被旗標閘先擋，
+        //   而那個訊息讀起來像「設計上沒這個能力」，不像漏登記。
+        ["pages-check"] = new string[0],
         // TASK-0244：`--id <serverId>` 選哪一顆；`--all` 只給 `stop`（build 腳本用）。
         // ⚠ 不加進這張表的話，旗標閘會在 `ServerCommand` 看到它之前就 exit 2 ——
         //   而那個錯誤訊息逐字是「這支子命令**不吃任何旗標**」，
@@ -1792,6 +1849,8 @@ public static class Program
                 ⚠ 需要目標專案的 Unity Editor 開著（Watcher 執行）—— 這是派遣不是代跑
               ucmd status         看各 persona queue 的 trigger 狀態與殘量（唯讀）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
+              pages-check         頁面目錄的建置期閘：page key 撞名／ctor 形狀不符 ⇒ 非零退出
+                                  （`Senate.Cli.csproj` 的 AfterBuild 會跑它 —— 這格要在 build 階段紅）
               server start        常駐 Server（**前景**，開一個終端機掛著；Ctrl+C 停）。已有一顆在跑會拒絕
               server stop         請 Server 自退，5 秒等不到才 kill；沒在跑也 exit 0（build 腳本每次都先呼叫它）
               server status       身分／心跳／build id 三格分開印；沒在跑 exit 3

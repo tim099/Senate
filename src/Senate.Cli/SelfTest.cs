@@ -89,7 +89,7 @@ public static class SelfTest
         One(nameof(FoldSemantics), "gui", FoldSemantics),
         One(nameof(DropdownWidget), "gui", DropdownWidget),
         One(nameof(PageCatalogShape), "gui", PageCatalogShape),
-        One(nameof(PageDiscovery), "gui", PageDiscovery),
+        One(nameof(PageAutoRegister), "gui", PageAutoRegister),
         One(nameof(RowLayout), "gui", RowLayout),
         One(nameof(SourceHint), "gui", SourceHint),
         One(nameof(SourceCapabilityFallback), "gui", SourceCapabilityFallback),
@@ -1593,6 +1593,57 @@ public static class SelfTest
         protected override void DrawContent(SCP_Ui iUi) => iUi.Label($"我是 {m_Key}");
     }
 
+    /// <summary>
+    /// 對拍用：與 <see cref="ProbeDupB"/> **共用同一個 `PageKey`** —— 「key 撞名」那格的受測體。
+    /// <para>🩸 為什麼要合成：撞名**在產品型別上造不出來**（造得出來就代表產品已經壞了）
+    /// ⇒ 沒有受測體的話那個不變量只有註解沒有讀數。</para>
+    /// </summary>
+    [SCP_PageIgnore("自我對拍用的探針頁（key 撞名受測體 A），不是給人開的頁")]
+    sealed class ProbeDupA : SCP_GuiToolPage
+    {
+        public const string PageKey = "probe-dup";
+        public ProbeDupA() : base() { }
+        public override string Key => PageKey;
+        public override string? MenuGroup => "探針";
+        protected override void DrawContent(SCP_Ui iUi) { }
+    }
+
+    /// <summary>對拍用：與 <see cref="ProbeDupA"/> 撞 key 的另一半。</summary>
+    [SCP_PageIgnore("自我對拍用的探針頁（key 撞名受測體 B），不是給人開的頁")]
+    sealed class ProbeDupB : SCP_GuiToolPage
+    {
+        public const string PageKey = "probe-dup";
+        public ProbeDupB() : base() { }
+        public override string Key => PageKey;
+        public override string? MenuGroup => "探針";
+        protected override void DrawContent(SCP_Ui iUi) { }
+    }
+
+    /// <summary>對拍用：ctor 形狀不符（吃一個**不是** context 的東西）—— 它必須被點名，⛔ 不是靜默跳過。</summary>
+    [SCP_PageIgnore("自我對拍用的探針頁（ctor 形狀不符受測體），不是給人開的頁")]
+    sealed class ProbeBadCtorPage : SCP_GuiToolPage
+    {
+        public const string PageKey = "probe-badctor";
+        public ProbeBadCtorPage(int iNotAContext) : base() { _ = iNotAContext; }
+        public override string Key => PageKey;
+        protected override void DrawContent(SCP_Ui iUi) { }
+    }
+
+    /// <summary>
+    /// 對拍用：`PageKey` **逐字等於型別名** —— 下拉標籤那條規則的第二臂。
+    /// <para>⚠ 2026-09-22 實測：產品 13 支頁的 key 與型別名 **13/13 全不相等**
+    /// ⇒ 那一臂**在產品上零樣本**，而零樣本與失效在計數上同形。⇒ 只能靠這一支。</para>
+    /// </summary>
+    [SCP_PageIgnore("自我對拍用的探針頁（Key == TypeName 的標籤受測體），不是給人開的頁")]
+    sealed class ProbeSameNamePage : SCP_GuiToolPage
+    {
+        public const string PageKey = nameof(ProbeSameNamePage);
+        public ProbeSameNamePage() : base() { }
+        public override string Key => PageKey;
+        public override string? MenuGroup => "探針";
+        protected override void DrawContent(SCP_Ui iUi) { }
+    }
+
     /// <summary>對拍用的假頁 —— 把生命週期呼叫記成可比對的字串。</summary>
     [SCP_PageIgnore("自我對拍用的探針頁，不是給人開的頁")]
     sealed class ProbePage : SCP_GuiPage
@@ -1784,38 +1835,73 @@ public static class SelfTest
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
-    // 區塊職責：反射發現**真的會叫** —— 而且常態下不叫。
-    // 物理意義: 🩸 這一格存在的理由：「畫面上沒有紅字」有兩種成因 ——
-    //          真的沒漏登記，或**這支檢查根本沒在跑**。兩者在畫面上一模一樣。
-    //          ⇒ 一定要有一次「故意漏掉」的讀數，證明它會叫。
-    // 數值影響: 純反射，零 IO。
-    static CheckRow PageDiscovery()
+    // 區塊職責：自動收頁的五個不變量 —— 而**每一個都要有一次「它會叫」的讀數**。
+    // 物理意義: TASK-0276（Tim 2026-09-22 拍板 C）。此前這一格叫 `PageDiscovery`，
+    //          驗的是「程式碼裡有、目錄裡沒有」的差集。改成自動收頁之後**那個差集不存在了**
+    //          （目錄就是程式碼）⇒ 那支會永遠回 0 筆。
+    //          🩸 而 0 筆現在的意思是「對得上」⇒ **一個永遠綠的燈，而它看起來像有人在看**。
+    //          ⇒ 整支重新指向新的不變量，⛔ 不是把舊的留著打折。
+    // 🔴 三格的受測體是**合成的**（撞名／ctor 形狀／key＝型別名）——
+    //   那三件事在產品型別上造不出來，而「造不出來」與「驗過了」在計數上同形。
+    // 數值影響: 純反射 ＋ 幾次便宜的 ctor，零 IO。
+    static CheckRow PageAutoRegister()
     {
-        var aAsms = new[] { typeof(SCP_GuiToolPage).Assembly, typeof(SenateModel).Assembly };
-
-        // ① 完整目錄 ⇒ 零筆（探針頁靠 [SCP_PageIgnore] 排除，不是靠命名）
         var aModel = new SenateModel(SenateRepoRoot());
-        var aFull = SenatePages.BuildCatalog(aModel);
-        List<string> aQuiet = aFull.Discover(aAsms);
 
-        // ② 故意漏登記一頁 ⇒ 必須點名它（含 key），而不是靜靜通過
-        var aPartial = new SCP_GuiPageCatalog();
-        aPartial.Register(SCP_GuiHomePage.PageKey, () => new SCP_GuiHomePage(aModel, aPartial));
-        List<string> aLoud = aPartial.Discover(aAsms);
-        bool aNamesIt = false;
-        foreach (string d in aLoud)
-            if (d.Contains(SCP_GuiLoginStatusPage.PageKey, StringComparison.Ordinal)
-                && d.Contains("沒有登記", StringComparison.Ordinal)) { aNamesIt = true; break; }
+        // ① 產品路徑：真的 BuildCatalog ⇒ 零缺陷，而且三種 ctor 形狀都收得到
+        SCP_GuiPageCatalog aReal = SenatePages.BuildCatalog(aModel);
+        List<string> aKeys = aReal.AllKeys;
+        int aDefectCount = aReal.Diagnostics.Count;
+        bool aQuiet = aDefectCount == 0;
+        bool aHasThem = aKeys.Contains(SCP_GuiHomePage.PageKey)              // 顯式（吃 catalog）
+                        && aKeys.Contains(SCP_GuiProcessAdminPage.PageKey)   // 無參 ctor
+                        && aKeys.Contains(BankAdminPage.PageKey)             // 吃 SenateModel
+                        && aKeys.Contains(SCP_GuiStylePage.PageKey);         // 吃 ISCP_GuiAppContext
 
-        // ③ [SCP_PageIgnore] 真的有排除（探針頁在同一顆 assembly 裡）
-        bool aIgnoreWorks = true;
-        foreach (string d in aLoud)
-            if (d.Contains("ProbeToolPage", StringComparison.Ordinal)) { aIgnoreWorks = false; break; }
+        // ② [SCP_PageIgnore] 擋的是**收錄**（⇒ 連建構都不會發生），⛔ 不只是不列清單
+        bool aIgnoreWorks = !aKeys.Contains("probe-source") && !aKeys.Contains(ProbeDupA.PageKey)
+                            && !aKeys.Contains(ProbeBadCtorPage.PageKey);
 
-        bool aOk = aQuiet.Count == 0 && aNamesIt && aIgnoreWorks;
-        return new CheckRow("頁面發現（反射）",
-            $"完整目錄零噪音={aQuiet.Count == 0}（{aQuiet.Count} 筆）／故意漏一頁會點名它={aNamesIt}"
-            + $"（漏掉時報 {aLoud.Count} 筆）／[SCP_PageIgnore] 有排除探針={aIgnoreWorks}",
+        // ③ 🔴 key 撞名要**點名兩邊**（身分是 TypeFullName ⇒ 說得出是誰跟誰）
+        List<string> aDupDefects = new SCP_GuiPageCatalog().AutoRegisterTypes(
+            new Type?[] { typeof(ProbeDupA), typeof(ProbeDupB) }, aModel, iIncludeIgnored: true);
+        bool aNamesBoth = false;
+        foreach (string d in aDupDefects)
+            if (d.Contains(nameof(ProbeDupA), StringComparison.Ordinal)
+                && d.Contains(nameof(ProbeDupB), StringComparison.Ordinal)) { aNamesBoth = true; break; }
+        // 反向對照：只餵一個 ⇒ **零缺陷**。⛔ 少了這一格，「它會叫」可能只是它對什麼都叫
+        bool aQuietOnOne = new SCP_GuiPageCatalog().AutoRegisterTypes(
+            new Type?[] { typeof(ProbeDupA) }, aModel, iIncludeIgnored: true).Count == 0;
+
+        // ④ ctor 形狀不符要被點名，⛔ 不是靜默跳過（UCL 那版是 LogWarning + continue）
+        List<string> aBad = new SCP_GuiPageCatalog().AutoRegisterTypes(
+            new Type?[] { typeof(ProbeBadCtorPage) }, aModel, iIncludeIgnored: true);
+        bool aNamesBadCtor = false;
+        foreach (string d in aBad)
+            if (d.Contains(nameof(ProbeBadCtorPage), StringComparison.Ordinal)
+                && d.Contains("建構子形狀不符", StringComparison.Ordinal)) { aNamesBadCtor = true; break; }
+
+        // ⑤ 標籤 ＝ `Key(TypeName)`，而 `Key == TypeName` 時只印型別名
+        var aLabelCat = new SCP_GuiPageCatalog();
+        aLabelCat.AutoRegisterTypes(new Type?[] { typeof(ProbeSameNamePage), typeof(ProbeDupA) },
+                                    aModel, iIncludeIgnored: true);
+        string aSame = "(沒找到)", aDiff = "(沒找到)";
+        foreach (SCP_GuiPageEntry e in aLabelCat.Entries)
+        {
+            if (e.TypeName == nameof(ProbeSameNamePage)) aSame = e.Label;
+            if (e.TypeName == nameof(ProbeDupA)) aDiff = e.Label;
+        }
+        bool aLabelOk = aSame == nameof(ProbeSameNamePage)
+                        && aDiff == ProbeDupA.PageKey + "(" + nameof(ProbeDupA) + ")";
+
+        bool aOk = aQuiet && aHasThem && aIgnoreWorks && aNamesBoth && aQuietOnOne
+                   && aNamesBadCtor && aLabelOk;
+        return new CheckRow("自動收頁（反射）",
+            $"產品目錄零缺陷={aQuiet}（{aDefectCount} 筆／收了 {aKeys.Count} 支，三種 ctor 形狀都在={aHasThem}）"
+            + $"／[SCP_PageIgnore] 連收錄都擋={aIgnoreWorks}"
+            + $"／🔴 撞 key 點名兩邊={aNamesBoth}（🔴 反向對照：只餵一個 ⇒ 零缺陷={aQuietOnOne}）"
+            + $"／ctor 形狀不符會點名={aNamesBadCtor}"
+            + $"／標籤={aLabelOk}（相等⇒'{aSame}'／不等⇒'{aDiff}'）",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 

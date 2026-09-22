@@ -30,4 +30,34 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- ═══ 護欄：page key 撞名在 **build 階段** 就要紅（TASK-0276，Tim 2026-09-22 拍板）═══
+       Tim 逐字：「那 key 應該自檢 不能重複（必須報錯 且 build 階段就要發現）」。
+
+       🔴 為什麼是「build 完跑真貨」而不是「編譯前掃原始碼」：
+         grep `PageKey = "..."` 會把**註解與字串裡的範例**數成宣告 ——
+         2026-09-22 同一天咬了兩次（把註解數成類別宣告／反引號讓計數變 0）。
+         ⇒ 這裡跑的是**執行時同一套反射**，⛔ 不是第二把尺。
+       ⚠ 代價：要先編得起來才驗得到。可以接受 —— 編不起來的話 build 本來就紅了。
+
+       ⚠ 同一個判準的另一半寫在 `Senate.Server.csproj` 的 `GuardNoDesktopReference`：
+         **靠記得的規矩，遲早有一次沒記得**。本檔這道是同一族，⛔ 不是新機制。
+
+       🩸 `ContinueOnError="false"` 是這道閘的全部價值：拿掉它就變成一行沒有人讀的警告，
+         而「頁面目錄壞了」與「頁面目錄好的」在 build 輸出上會長得一樣。
+       ⚠ 出口：`-p:GuardPages=off`（給「我知道它壞、我就是要先編出來」那種時刻）——
+         ⛔ 放棄要有痕跡，而那個痕跡就是命令列上那一格。 -->
+  <Target Name="GuardPageKeysUnique" AfterTargets="Build" Condition="'$(GuardPages)' != 'off'">
+    <!-- 🩸 2026-09-22 實測兩次：MSBuild 的 Exec 用**系統字碼頁**解子行程的輸出，
+         而本閘的中文細節會變成亂碼（`繚 page key ... 鋡怠???亙恐??`）。
+         ⛔ 試過 `chcp 65001 && …`：**沒有用**（chcp 動的是 console，不是 MSBuild 讀的那條管線）
+         ⇒ 所以沒有留那一行 —— 一個沒作用的修法比沒有修法糟，它會讓下一個人以為這格處理過了。
+         ⭐ 改法在程式那側：失敗時**先印一段純 ASCII 的摘要**（任何字碼頁都活得下來），
+         中文細節留給人手動跑 `senate pages-check` 時看。 -->
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; pages-check"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ContinueOnError="false"
+          StandardOutputImportance="low"
+          CustomErrorRegularExpression="^⛔" />
+  </Target>
+
 </Project>
