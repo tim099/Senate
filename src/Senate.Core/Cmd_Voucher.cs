@@ -41,13 +41,17 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             var aSpecs = new List<SCP_CmdArgSpec>
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "balance",
-                    iChoices: new[] { "balance", "list", "usage", "grant", "consume", "migrate" }),
+                    iChoices: new[] { "balance", "list", "usage", "grant", "consume", "migrate", "swap" }),
                 new SCP_CmdArgSpec("letters_root",
                     "persona 信件夾根（絕對路徑）。⛔ 本層**不推導**它 —— 跨專案共用的根，推導就會跟著專案漂",
                     iRequired: true),
                 new SCP_CmdArgSpec("persona", "誰的券", iDefault: ""),
-                new SCP_CmdArgSpec("voucher", "券名（＝檔名）—— `list` 以外都必填", iDefault: ""),
+                new SCP_CmdArgSpec("voucher", "券名（＝檔名）—— `list` / `swap` 以外都必填", iDefault: ""),
                 new SCP_CmdArgSpec("amount", "張數（正整數）", iDefault: "0"),
+                new SCP_CmdArgSpec("from", "來源券種（`swap` 用，可代替 `voucher`）", iDefault: ""),
+                new SCP_CmdArgSpec("to", "目標券種（`swap` 用）", iDefault: ""),
+                new SCP_CmdArgSpec("confirm", "=1 ⇒ `swap` 才會真的扣換落盤；預設試算", iDefault: "0"),
+                new SCP_CmdArgSpec("data_root", "資料根（`Market/rates_cache.json` 所在，`swap` 用）", iDefault: ""),
                 new SCP_CmdArgSpec("expires_at",
                     "限時券的到期時刻（ISO-8601 UTC）。**空 ＝ 永久券**", iDefault: ""),
                 new SCP_CmdArgSpec("region",
@@ -80,6 +84,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
 
         string aOp = iArgs.Get("op");
         if (aOp == "list") return OpList(aLetters, aPersona);
+        if (aOp == "swap") return OpSwap(aLetters, aPersona, iArgs);
 
         string aVoucher = iArgs.Get("voucher").Trim();
         if (aVoucher.Length == 0)
@@ -148,6 +153,62 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         aResult.AddValue("permanent", aBook.Permanent.ToString());
         aResult.AddValue("expiring", aBook.ExpiringAlive(aNow).ToString());
         return aResult;
+    }
+
+    static SCP_CmdResult OpSwap(SCP_LettersRoot iLetters, string iPersona, SCP_CmdArgs iArgs)
+    {
+        string aFrom = iArgs.Get("from").Trim().ToLowerInvariant();
+        if (aFrom.Length == 0) aFrom = iArgs.Get("voucher").Trim().ToLowerInvariant();
+        string aTo = iArgs.Get("to").Trim().ToLowerInvariant();
+        if (aFrom.Length == 0) return SCP_CmdResult.Fail(2, "✗ op=swap 缺 `from`（或 `voucher`）");
+        if (aTo.Length == 0) return SCP_CmdResult.Fail(2, "✗ op=swap 缺 `to`");
+
+        if (!int.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int aAmount) || aAmount <= 0)
+            return SCP_CmdResult.Fail(2, $"✗ amount 必須是正整數（收到 '{iArgs.Get("amount")}'）");
+
+        string aData = iArgs.Get("data_root").Trim();
+        if (aData.Length == 0)
+        {
+            aData = Path.GetFullPath(Path.Combine(iLetters.Value, "../../..")).Replace('\\', '/');
+        }
+
+        bool aConfirm = iArgs.Get("confirm").Trim() == "1";
+        DateTime aNow = DateTime.UtcNow;
+
+        var aRes = aConfirm
+            ? SCP_VoucherSwap.ExecuteSwap(iLetters, aData, iPersona, aFrom, aTo, aAmount, aNow)
+            : SCP_VoucherSwap.PreviewSwap(iLetters, aData, iPersona, aFrom, aTo, aAmount, aNow);
+
+        if (!aRes.Success) return SCP_CmdResult.Fail(1, $"🔴 兌換失敗：{aRes.Error}");
+
+        var aR = SCP_CmdResult.Success(aConfirm
+            ? $"# ✅ 券互換成功：`{iPersona}` 的 `{aFrom}` ➔ `{aTo}`"
+            : $"# 🔍 券互換試算預覽（零寫入）：`{iPersona}` 的 `{aFrom}` ➔ `{aTo}`");
+
+        aR.Lines.Add($"- 兌換折算率：1 `{aFrom}` ➔ **{aRes.EffectiveRate:0.########}** `{aTo}`");
+        aR.Lines.Add($"- 來源券 `{aFrom}`：扣除 **{aRes.FromConsumed}** 張（扣除後永久券餘額：{aRes.FromRemainingPermanent}，可花餘額：{aRes.FromRemainingSpendable}）");
+        aR.Lines.Add($"- 目標券 `{aTo}` 產出：**{(decimal)aRes.ToAddedUnitsE8 / SCP_VoucherBook.FractionScale:0.########}** 張（+{aRes.ToAddedUnitsE8} 聰級單位）");
+        aR.Lines.Add($"  · 本次進位新增可用永久券：**+{aRes.ToPermanentAdded}** 張");
+        aR.Lines.Add($"  · 最新永久券餘額：**{aRes.ToNewPermanent}** 張");
+        aR.Lines.Add($"  · 最新零頭小數池：**{aRes.ToNewFractionalValue:0.########}** 張（`{aRes.ToNewFractionalE8}` / 100,000,000）");
+
+        if (!aConfirm)
+        {
+            aR.Lines.Add("");
+            aR.Lines.Add("💡 **這是純試算預覽，券本一個 byte 都未改動。** 欲正式執行扣換，請加上 `--arg confirm=1`。");
+        }
+
+        aR.AddValue("persona", iPersona);
+        aR.AddValue("from", aFrom);
+        aR.AddValue("to", aTo);
+        aR.AddValue("consumed", aRes.FromConsumed.ToString());
+        aR.AddValue("effective_rate", aRes.EffectiveRate.ToString());
+        aR.AddValue("to_added_units_e8", aRes.ToAddedUnitsE8.ToString());
+        aR.AddValue("to_permanent_added", aRes.ToPermanentAdded.ToString());
+        aR.AddValue("to_new_permanent", aRes.ToNewPermanent.ToString());
+        aR.AddValue("to_new_fractional_e8", aRes.ToNewFractionalE8.ToString());
+        aR.AddValue("is_preview", aConfirm ? "0" : "1");
+        return aR;
     }
 
     // ===========================================================
