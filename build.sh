@@ -23,6 +23,32 @@ set -e
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 
+# ── 失敗時讓視窗留著（Tim 2026-09-22 報的）─────────────────────────────
+# 🩸 病灶：雙擊跑 build，它失敗 ⇒ 腳本結束、視窗跟著關，**錯誤原因跟著走**。
+#   而 `set -e` 讓本檔可以在**任何一行**結束（另有 6 處顯式 exit）
+#   ⇒ 補在「每個 exit 前面」一定會漏一個，而漏掉那個的症狀是「**有時候**會關」——
+#   那種偶發比每次都關更難回報。⇒ 用 `trap ... EXIT`：它是**單一出口**，
+#   涵蓋顯式 exit、`set -e` 中止與訊號。
+# 🔴 **只有互動時才停**，判準沿用本檔既有的 `[ -t 1 ]`（⛔ 不新增第二把尺）：
+#   少了這個條件，agent 跑 build 會被一個等按鍵的指令**卡死到逾時**，
+#   而那個症狀（「build 沒反應」）比看不到錯誤更難查 —— 換一個更貴的病。
+# ⚠ 成功（exit 0）**不停** —— 停在成功路上會讓自動化每次都多等一個人。
+_build_on_exit() {
+  _rc=$?
+  [ "$_rc" -eq 0 ] && return 0
+  echo ''
+  echo "✗ build 以 exit $_rc 結束 —— **上面最後幾行就是原因**。"
+  echo "   log 在 $root/build/（build_check.log／build_server.log／build_ping.log…）"
+  if [ -t 1 ]; then
+    printf '   按 Enter 關閉（留著這個視窗是刻意的 —— 關掉就看不到了）… '
+    read -r _ || true
+  else
+    echo '   （stdout 不是終端機 ⇒ **不等按鍵**，直接結束）'
+  fi
+}
+trap _build_on_exit EXIT
+
+
 # ── 參數：驗收**預設不跑**（Tim 2026-09-07：測試流程跟 build 分離、另外跑）────────
 #   `--check` ＝ build 完接著跑 `check.sh`（把兩件事串起來的便利入口，實作只有一份）。
 #   `--only` / `--gates` 原樣轉給 `check.sh` ⇒ 挑項目的規則只有一份，不在這裡再解一次。
