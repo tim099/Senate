@@ -101,6 +101,13 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                     "要裁決的單號（`approve`／`reject` 必填）—— 請款與轉帳共用這一格；"
                     + "兩種都找不到時**明說兩種都找過**，⛔ 不回一個看起來像「沒有待審」的成功", iDefault: ""),
                 new SCP_CmdArgSpec("note", "裁決備註（落進單子的裁決欄）", iDefault: ""),
+                new SCP_CmdArgSpec("funding",
+                    "請款的資金來源（`approve` 用）：`central`＝央行撥款（公庫變少）／"
+                    + "`mint`＝**增發**（憑空生出，⛔ 不碰公庫，總量變多）。"
+                    + "不給就用單子自己宣告的；單子也沒宣告 ⇒ `central`（維持舊行為，⛔ 不默默改成增發）。"
+                    + "⛔ 轉帳單不吃這一格 —— 它的語意是 A→B 守恆。"
+                    + "📌 **補薪該用 `mint`**：那是勞動新產生的價值，不是從公庫搬的（Tim 2026-09-22）",
+                    iDefault: ""),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -713,13 +720,28 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             $"# 待審：請款 **{aPayouts.Count}** 張／轉帳 **{aTransfers.Count}** 張");
         aR.Lines.Add($"・請款＝**央行撥款**（從 `{aCentral}` 出，公庫變少）；轉帳＝**A→B**（總量守恆）");
 
+        // 🚚 自動遷移有話要說就印出來（TASK-0275）—— ⛔ 一次靜默的搬檔跟沒搬長得一樣。
+        if (SCP_BankMigration.LastReport != null && SCP_BankMigration.LastReport.Count > 0)
+        {
+            aR.Lines.Add("");
+            foreach (string aLine in SCP_BankMigration.LastReport) aR.Lines.Add("・" + aLine);
+        }
+
         aR.Lines.Add("");
         aR.Lines.Add("## 📨 請款");
         if (aPayouts.Count == 0) aR.Lines.Add("・（沒有待審請款單）");
         foreach (SCP_PayoutRequest r in aPayouts)
+        {
+            // 🔴 **資金來源要印在金額旁邊** —— 央行撥款與增發對公庫的影響相反，
+            //   而它們在單子上原本長得一模一樣（都是「請款 N token 給 X」）。
+            bool aDeclared = SCP_PayoutFunding.IsValid(r.Funding);
+            string aF = aDeclared ? r.Funding : SCP_PayoutFunding.Default;
             aR.Lines.Add($"・`{r.RequestId}`　**{r.Amount}** {r.Currency} → **{r.TargetBank}**"
+                         + $"　{SCP_PayoutFunding.Describe(aF)}"
+                         + (aDeclared ? "" : "⚠ 單子沒宣告，用預設")
                          + $"　請款人 {r.RequesterPersona}　{r.RequestedAt}"
                          + (r.Reason.Length > 0 ? "　理由：" + r.Reason : ""));
+        }
 
         aR.Lines.Add("");
         aR.Lines.Add("## 💸 轉帳");
@@ -784,7 +806,29 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         string aTo = aIsPayout ? aPay!.TargetBank : aTr!.ToBank;
         int aAmount = aIsPayout ? aPay!.Amount : aTr!.Amount;
         string aPath = aIsPayout ? aPay!.Path : aTr!.Path;
-        string aWhat = aIsPayout ? "請款（央行撥款）" : "轉帳（A→B）";
+
+        // ── 🔴 資金來源：央行撥款 vs 增發（Tim 2026-09-22 拍板）────────────────
+        // 優先序：本次裁決帶的 `funding` > 單子自己宣告的 > 預設（央行，維持舊行為）。
+        // ⛔ 轉帳單沒有這一格：它的語意就是 A→B 守恆，增發在那裡不成立。
+        // 🩸 為什麼要分：**補薪本來就該是增發** —— 那是勞動新產生的價值，不是從公庫搬的。
+        //   而 2026-09-22 那 114 token 的補發走了央行撥款 ⇒ 公庫平白少 114，
+        //   事後得再增發一筆補回去。⇒ 兩種錢在單子上長得一樣而對公庫的影響相反，
+        //   **審批的人要看得出自己在批哪一種**。
+        string aFundingArg = iArgs.Get("funding").Trim();
+        if (aFundingArg.Length > 0 && !SCP_PayoutFunding.IsValid(aFundingArg))
+            return SCP_CmdResult.Fail(2, $"✗ `funding` 只吃 `{SCP_PayoutFunding.Central}` 或 "
+                                       + $"`{SCP_PayoutFunding.Mint}`（給的是 `{aFundingArg}`）");
+        if (aFundingArg.Length > 0 && !aIsPayout)
+            return SCP_CmdResult.Fail(2, "✗ `funding` 只用於**請款**單 —— 轉帳是 A→B 守恆，"
+                                       + "「增發」在那裡不成立（要憑空生錢請開請款單）");
+        string aFunding = !aIsPayout ? ""
+            : (aFundingArg.Length > 0 ? aFundingArg
+               : (SCP_PayoutFunding.IsValid(aPay!.Funding) ? aPay!.Funding : SCP_PayoutFunding.Default));
+        bool aMint = string.Equals(aFunding, SCP_PayoutFunding.Mint, StringComparison.Ordinal);
+
+        string aWhat = aIsPayout
+            ? (aMint ? "請款（**增發**）" : "請款（央行撥款）")
+            : "轉帳（A→B）";
 
         // ⭐ 反向對照那一格：不帶 `confirm=1` ⇒ **一毛錢沒動、單子狀態不變**，只印會發生什麼。
         //   ⚠ 駁回也要 confirm —— 它不動錢，但它**改變單子的狀態且不可逆**
@@ -792,7 +836,17 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         if (iArgs.Get("confirm") != "1")
         {
             var aDry = SCP_CmdResult.Success("・**乾跑**（沒帶 `confirm=1`）⇒ 一毛錢沒動、單子狀態沒變");
-            aDry.Lines.Add($"  · 這一張：`{aId}`　{aWhat}　**{aAmount}**　**{aFrom}** → **{aTo}**");
+            aDry.Lines.Add(aMint
+                ? $"  · 這一張：`{aId}`　{aWhat}　**{aAmount}** → **{aTo}**　⛔ 不碰公庫"
+                : $"  · 這一張：`{aId}`　{aWhat}　**{aAmount}**　**{aFrom}** → **{aTo}**");
+            if (aIsPayout)
+            {
+                aDry.Lines.Add("  · 資金來源：" + SCP_PayoutFunding.Describe(aFunding)
+                               + (aFundingArg.Length > 0 ? "（本次裁決指定）"
+                                  : SCP_PayoutFunding.IsValid(aPay!.Funding) ? "（單子自己宣告的）"
+                                  : "　⚠ **單子沒宣告** ⇒ 用預設；要改帶 `--arg funding=mint`"));
+                aDry.AddValue("funding", aFunding);
+            }
             aDry.Lines.Add(iApprove
                 ? "  · 帶 `confirm=1` 會：**先動錢**（走本檔 `transfer` 那條路，冪等鍵綁單號），成功了才寫裁決欄 `approved`"
                 : "  · 帶 `confirm=1` 會：只寫裁決欄 `rejected`，⛔ 一毛錢不動");
@@ -818,12 +872,14 @@ public sealed class Cmd_Bank : ServerDelegateCmd
 
         // ── 核准：先動錢，成功了才寫裁決欄 ──────────────────────
         // ⭐ 冪等鍵綁單號 ⇒ 同一張單重送不會撥第二次（與視窗那條路同一把鍵）。
+        // ⭐ 增發走 `credit`（憑空生出，⛔ 沒有出款方）；央行撥款走 `transfer`（公庫 → 目標戶）。
+        //   兩條路**共用同一把冪等鍵**（綁單號）⇒ 同一張單無論走哪一種都只會生效一次。
         var aRaw = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["op"] = "transfer",
+            ["op"] = aMint ? "credit" : "transfer",
             ["bank_root"] = iRoot,
-            ["account"] = aFrom,
-            ["to_account"] = aTo,
+            ["account"] = aMint ? aTo : aFrom,
+            ["to_account"] = aMint ? "" : aTo,
             ["amount"] = aAmount.ToString(),
             ["kind"] = aIsPayout ? "payout_request"
                                  : (aTr!.Kind.Length > 0 ? aTr!.Kind : "transfer_request"),
@@ -838,7 +894,8 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             return SCP_CmdResult.Fail(1, "✗ 內部組參數失敗（本 Cmd 的規格與實作不同步）：",
                                       "  · " + string.Join("\n  · ", aBindErrors));
 
-        SCP_CmdResult aXfer = OpTransfer(iRoot, aXferArgs);
+        SCP_CmdResult aXfer = aMint ? OpPost(iRoot, aXferArgs, iDebit: false)
+                                    : OpTransfer(iRoot, aXferArgs);
         if (!aXfer.Ok)
         {
             var aFail = SCP_CmdResult.Fail(aXfer.ExitCode,
@@ -850,8 +907,10 @@ public sealed class Cmd_Bank : ServerDelegateCmd
         }
 
         bool aOk = SCP_TreasuryRequests.Decide(aPath, "approved", aActor, aNote, null, out string aErr);
+        string aFlow = aMint ? $"**{aAmount}** → **{aTo}**（增發，⛔ 公庫未動）"
+                             : $"**{aAmount}**　**{aFrom}** → **{aTo}**";
         var aRes = SCP_CmdResult.Success(aOk
-            ? $"✅ 已{aWhat}並結單 `{aId}`：**{aAmount}**　**{aFrom}** → **{aTo}**"
+            ? $"✅ 已{aWhat}並結單 `{aId}`：{aFlow}"
             // 🩸 這一行是三本帳分開結算：錢動了（處置成立）而單子沒結（結果沒成立）——
             //    ⛔ 不可以印成一個乾淨的 ✅，否則下一個人會以為兩件事都完成了。
             : $"⚠ **錢已經動了**（{aAmount}　{aFrom} → {aTo}），而裁決欄沒寫成功：{aErr}"
