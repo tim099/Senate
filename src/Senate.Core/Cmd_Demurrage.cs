@@ -46,6 +46,18 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
                 // ⭐ 為什麼 preview 是預設、run 還要 confirm：扣款的錯**不會在當下叫** ——
                 //   每一欄都合法，錢也真的動了。⇒ 讓「看一眼」比「做下去」更容易打。
                 new SCP_CmdArgSpec("confirm", "=1 ⇒ `op=run` 才會真的動錢", iDefault: ""),
+                // ⚠ 這個參數 2026-09-22 21:49（dd9817e）才被拿掉，而我把它加回來 ——
+                //   ⛔ 不是把那個決定推翻：當時移除的理由是「它存在的唯一理由是**保管費要做
+                //   persona 歸一**，而那條路在 TASK-0279 被拍掉了」。那個理由**今天仍然成立**
+                //   （保管費照樣對帳戶收，⛔ 沒有任何一格再去解析 persona）。
+                //   ⇒ 現在它回來是為了**另一件事**（TASK-0270 ③）：券是一人一本、住在
+                //     `letters/<persona>/`，發券那一腳必須知道信件夾根在哪。
+                //   📌 同一個參數名、不同的受詞 —— 寫在這裡是為了讓下一個想再刪它的人看得到。
+                new SCP_CmdArgSpec("letters_root",
+                    "信件夾根（券一人一本，住在 `letters/<persona>/`）。⚠ CLI 這條路沒給時由設定檔的 "
+                    + "`awakening.lettersRoot` 補上並印出來；⛔ 連那一格都空的時候本支才退到慣例值 "
+                    + "`<資料根>/ChatTavern/baton/letters`（實測 2026-09-22：CLI 先補，所以慣例值那條在 CLI 上跑不到）",
+                    iDefault: ""),
                 new SCP_CmdArgSpec("body_out",
                     "把廣播本文寫進這個檔（觸發端讀去貼酒館）。不給＝不寫檔，只印在輸出裡", iDefault: ""),
             };
@@ -78,6 +90,35 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
 
         SCP_DemurrageOutcome aOut = SCP_Demurrage.Apply(aData, aBank, aDate, iDryRun: !aRun);
 
+        // ── TASK-0270 ③：扣繳落帳之後**接著發券** ─────────────────────────────
+        //   ⚠ 順序不可換：發券端讀的是**帳本上已經發生的事實**（`kind=overnight_storage_fee`
+        //     的 debit），⇒ 它必須跑在 `Apply` 之後。`op=preview` 這一趟兩邊都是零寫入。
+        //   ⛔ 發券的失敗**不改扣繳的結果**：錢已經動了，那是既成事實；
+        //     券沒發成功由下面的 problems 大聲說出來，補跑走 `cmd demurrage-voucher`
+        //     （它有自己的轉券簿擋重複，⛔ 不會因為補跑而發兩次）。
+        string aLetters = iArgs.Get("letters_root").Trim();
+        bool aLettersDerived = aLetters.Length == 0;
+        // ⚠ 這條退路在 CLI 上**跑不到**（設定檔那一格先補）—— 它是給沒有設定檔的宿主留的，
+        //   而 `SCP_DataPaths` 自己寫著「信件夾根是**慣例值**不是唯一解」⇒ 用到它就印出來，
+        //   ⛔ 不靜默地替別人決定券要寫到哪一棵樹。
+        if (aLettersDerived) aLetters = Path.Combine(aData, "ChatTavern", "baton", "letters");
+        string aRegion = SCP_BankRegion.Read(aData, out string? aRegionWhy);
+        var aVoucherLines = new List<string>();
+        var aVoucherProblems = new List<string>();
+        SCP_DemurragePlan? aVPlan = null;
+        try
+        {
+            aVPlan = SCP_DemurrageVoucher.RunForDate(aData, aLetters, aRegion, aDate,
+                                                     iDryRun: !aRun, aVoucherLines, aVoucherProblems);
+        }
+        catch (Exception e)
+        {
+            // ⚠ 轉券簿讀不了會丟例外（那是刻意的：讀不了≠沒發過）⇒ 在這裡收，
+            //   ⛔ 不讓它把「扣繳已經成功」那半個結果一起帶走。
+            aVoucherProblems.Add($"🔴 發券整段沒跑（{e.GetType().Name}: {e.Message}）—— "
+                                 + "⚠ **扣繳照上表已經發生**；補發走 `cmd demurrage-voucher`");
+        }
+
         var aR = new SCP_CmdResult();
         aR.Lines.Add($"# 跨日存款保管費　`{aDate}`　{(aRun ? "**op=run（真的扣了）**" : "op=preview（**零寫入**）")}");
         aR.Lines.Add($"- 政策：門檻 {aOut.Plan.Threshold} ／ 費率 {aOut.Plan.FeeRateDisplay}%"
@@ -96,8 +137,32 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
                          + " |");
         if (aOut.Charges.Count == 0) aR.Lines.Add("| —— | | | | 這一輪沒有人要繳 |");
 
+        // ── TASK-0270 ④：發券結果**顯式**印進報告與廣播本文 ────────────────────
+        aR.Lines.Add("");
+        aR.Lines.Add("## 🎟 保管費轉券");
+        aR.Lines.Add($"- 政策來源：{(aVPlan != null ? aVPlan.VoucherType.Length > 0 ? "`" + aVPlan.VoucherType + "` 券" : "（券種空）" : "—")}"
+                     + $"　區域 `{aRegion}`" + (aRegionWhy != null ? $"（⚠ {aRegionWhy}）" : "")
+                     + (aLettersDerived ? $"　信件夾根＝推導值 `{aLetters}`" : ""));
+        foreach (string l in aVoucherLines) aR.Lines.Add(l);
+        foreach (string p in aVoucherProblems) aR.Lines.Add("⚠ " + p);
+
+        // 廣播本文接在扣繳那段後面 —— ⚠ 錢的流向與券的流向要在**同一則**訊息裡，
+        //   ⛔ 分兩則的話「扣了多少」與「發了什麼」會各自被引用，而它們是同一件事的兩半。
+        if (aVoucherLines.Count > 0 || aVoucherProblems.Count > 0)
+        {
+            var aB = new System.Text.StringBuilder(aOut.BroadcastBody);
+            aB.Append("\n\n### 🎟 保管費轉券\n");
+            foreach (string l in aVoucherLines) aB.Append(l).Append('\n');
+            foreach (string p in aVoucherProblems) aB.Append("⚠ ").Append(p).Append('\n');
+            aOut.BroadcastBody = aB.ToString();
+        }
+
         aR.AddValue("date", aDate);
         aR.AddValue("dry_run", aRun ? "0" : "1");
+        aR.AddValue("voucher_type", aVPlan?.VoucherType ?? "");
+        aR.AddValue("voucher_ratio", (aVPlan?.RatioPerToken ?? 0).ToString());
+        aR.AddValue("voucher_enabled", (aVPlan?.PolicyEnabled ?? false) ? "1" : "0");
+        aR.AddValue("voucher_problems", aVoucherProblems.Count.ToString());
         aR.AddValue("accounts_charged", aOut.BroadcastMeta["accounts_charged"]);
         aR.AddValue("accounts_safe", aOut.BroadcastMeta["accounts_safe"]);
         aR.AddValue("total_fee", aOut.TotalMoved.ToString());
