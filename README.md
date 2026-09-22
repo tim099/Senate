@@ -15,23 +15,25 @@
 | .NET 10 SDK | <https://dotnet.microsoft.com/download> |
 | Git（2.25 以上） | <https://git-scm.com/download/win> |
 
-裝好之後，在 Senate 這個資料夾裡執行：
+裝好之後，在 Senate 這個資料夾裡（用 **Git Bash**）執行：
 
-```powershell
-.\install.ps1
+```bash
+./install.sh
 ```
 
 它會自己檢查東西齊不齊、編譯一次、幫你建立設定檔，最後把 Senate 加進**你自己的 PATH**
 （不碰系統 PATH、不用系統管理員）。**畫面最後會印一張表**，每一列後面有 `✓` 就是那一項沒問題。
 
-> 用 Git Bash 的話跑 `./install.sh`，效果一樣。
+> ⚠ **`install.ps1` / `build.ps1` 已於 2026-09-22 退場**（Tim：沒再用）——
+> `.sh` 那兩支是**唯一入口**。⇒ 好處不只是少兩個檔：此前兩邊行為已經不同
+> （常駐視窗那一格 `.sh` 加了判準、`.ps1` 沒跟上），而那種不對稱**不會叫**。
 
 ---
 
 ## 打包（改過程式之後跑一次）
 
-```powershell
-.\build.ps1
+```bash
+./build.sh
 ```
 
 跑完你會在 Senate 資料夾裡看到 **`senate.exe`** —— 那就是執行檔（旁邊那兩顆 `cimgui.dll` / `glfw3.dll` 是它要用的，別刪）。
@@ -54,14 +56,14 @@ senate doctor
 ⚠ 已經開著的終端機不會自動生效（PATH 是視窗開起來那一刻複製的）—— 開新的。
 ### 要移除
 
-```powershell
-.\install.ps1 -Uninstall
+```bash
+./install.sh --uninstall
 ```
 
 拿掉 PATH，並清掉編譯產生的東西（`senate.exe`、原生 DLL、`publish/`、`build/`、各專案的 `bin` `obj`）。
 
 **你設定過的東西會留著**（`SenateData/` —— 專案清單、頁面偏好），因為那些掉了要重設。
-真的要一併清掉：`.\install.ps1 -Uninstall -Purge`。
+真的要一併清掉：`./install.sh --uninstall --purge`。
 
 ⚠ 兩種都**不會動原始碼**。要徹底移除，自己把 Senate 這個資料夾刪掉就好。
 

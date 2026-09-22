@@ -133,7 +133,7 @@ public static class ServerHost
     public const int DrainMaxSeconds = 30;
 
     /// <summary>
-    /// 這顆執行檔的 build id ＝ AssemblyInformationalVersion（由 build.sh／build.ps1 在 publish 時塞入 git SHA＋時間）。
+    /// 這顆執行檔的 build id ＝ AssemblyInformationalVersion（由 build.sh 在 publish 時塞入 git SHA＋時間）。
     /// <para>⚠ `dotnet run`（Debug DLL）沒有那個屬性或是 SDK 預設的 `1.0.0` ⇒ 回 <c>unversioned</c> ——
     /// 這不是缺陷，是**定語**：它讓「Debug 在跑」跟「exe 在跑」在心跳裡分得出來。</para>
     /// </summary>

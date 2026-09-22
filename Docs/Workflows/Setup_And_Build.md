@@ -11,8 +11,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | 腳本 | 做什麼 |
 |---|---|
-| `install.ps1` / `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
-| `build.ps1` / `build.sh` | `dotnet publish` **兩次**（self-contained）：`publish/senate.exe` ＋ `publish/server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）→ 在根層放雙擊用的 `senate.lnk`。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
+| `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
+| `build.sh` | `dotnet publish` **兩次**（self-contained）：`publish/senate.exe` ＋ `publish/server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）→ 在根層放雙擊用的 `senate.lnk`。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
 | `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
 
 > ⛔ **build 只有一個入口。** install 不准自己另寫一條 `dotnet build`。
@@ -160,10 +160,10 @@ senate selftest --list          # 有哪些項目與群
 - ⛔ 刻意**不做**「開了再自己收掉」：那等於在 Claude 樹裡先種一顆再拔，
   而拔的那一步只要失敗一次就回到原病。**不種就不必拔。**
 - ⛔ 刻意**不靜默**：三條路各印一行 —— 不然「這次沒開」與「開了但當掉」在畫面上同形。
-- ⚠ **`build.ps1` 還沒跟上**（兩邊行為已經不同，而那一格寫在它的註解裡）：
-  本環境的 agent 跑不了 PowerShell（enterprise policy 擋 sandbox）⇒ 那條路目前沒有這個病，
-  而改完的樣子**驗不了**。而「.ps1 與 .sh 等價」正是 2026-08-22 咬過的那一格
-  ⇒ 寧可留一個看得見的不對稱，也不塞一段沒有讀數的碼進人的主路。
+- ✅ **那個不對稱已經不存在了**（2026-09-22）：此前這一格是「`.sh` 加了判準、`.ps1` 沒跟上」，
+  而修法不是把 `.ps1` 補齊，是 **Tim 說他沒再用 ⇒ 整支退場**。
+  📌 判準記一下：**兩個宿主實作要維持等價，成本是每一次改動都付兩次**，
+  而其中一份沒有人跑 ⇒ 它不會被發現漂掉。⇒ 少一份實作比多一份讀數便宜。
 - ⚠ **未量的那一格**：`stdout` 是終端機那條路我**沒有讀數** —— 我是 agent，定義上就沒有 TTY
   （`winpty` 也造不出來：這個 sandbox 沒有真的 console）。
   ⇒ 決策邏輯我用 clean-room 逐字照抄跑過四支中的三支（`--no-window` / `--window` / auto+非TTY 全對），
@@ -253,7 +253,7 @@ powershell -NoProfile -Command "\$e=\$null; [void][System.Management.Automation.
 
 ⇒ 這一格是 §「先 build 再對 exe 跑」的機械版：**兩顆長得一樣的 exe，現在有一個地方會說出它們不一樣。**
 
-## 安裝與移除（install.sh / install.ps1）
+## 安裝與移除（install.sh）
 
 「像 python 一樣全域」＝ **PATH 找得到**，所以安裝工具只做一件事：把 repo 根
 （senate.exe 與原生 DLL 的所在）寫進**使用者 PATH**（HKCU，不碰系統 PATH、免管理員）。
@@ -283,8 +283,9 @@ PATH 上還是舊的，而兩顆 exe 印一樣的 usage）。
 | `SenateData/`（人編輯過的設定與偏好） | ⛔ **保留**，並印出怎麼刪 | ✅ 移除 |
 | 原始碼與 git 歷史 | ⛔ 一個字都不動 | ⛔ 一個字都不動 |
 
-⚠ 移除清單在 `install.sh` 與 `install.ps1` **各有一份**，改一邊要同時改另一邊 ——
-漂掉的症狀是「用 .sh 裝、用 .ps1 移除，結果少刪兩樣」，而那不會有人喊。
+✅ 移除清單現在**只有一份**（`install.sh`）—— `install.ps1` 已於 2026-09-22 退場。
+🩸 而它退場前的風險逐字留在這裡：兩份清單漂掉的症狀是「用 .sh 裝、用 .ps1 移除，
+結果少刪兩樣」，**而那不會有人喊**。⇒ 以後要再加第二個宿主實作，先想這一格。
   `senate --help` —— 寫進 registry 不算數，解析得到才算。
 - ⚠ 已開著的終端機不會生效：PATH 是 process 啟動時複製的，開新視窗。
 

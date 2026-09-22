@@ -56,7 +56,7 @@ public sealed class DoctorPage : SCP_GuiToolPage
                 //   而那個量法**不在任何指路牌上**（`senate --version` 還回「認不得的指令」）。
                 //   ⇒ 代價落在下一個回驗的人身上，所以擋在這裡。
                 // 📌 值不是新造的：`ServerHost.BuildId` 早就在（AssemblyInformationalVersion，
-                //   由 build.sh／build.ps1 在 publish 時塞入 git SHA＋時間）。它讀的是
+                //   由 build.sh 在 publish 時塞入 git SHA＋時間）。它讀的是
                 //   **本執行檔自己**，跟 Server 無關 —— 在此之前它只在 Server 卡片上露過臉。
                 // ⚠ `unversioned` 不是壞掉，是**定語**：`dotnet run`（Debug）就會是它，
                 //   而「Debug 在跑」正是最需要被看見的那一種 ⇒ 判定欄標 `· Debug` 不標 ✗。

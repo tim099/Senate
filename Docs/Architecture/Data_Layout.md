@@ -17,8 +17,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 狀態放在那裡等於託付給一個隨時會被**合理**刪除的位置，而消失之後的行為
 跟「這台機器沒設定過」**一模一樣**：沒有錯誤、沒有紅字，畫面完全正常。
 
-> ⚠ 讀數（2026-09-01 實測）：`build.sh` 與 `build.ps1` 目前**並不會**清 `build/`
-> （`grep -n "rm -rf\|Remove-Item" build.sh build.ps1` 零命中）。
+> ⚠ 讀數（2026-09-01 實測）：`build.sh` 目前**並不會**清 `build/`
+> （`grep -n "rm -rf" build.sh` 零命中）。
 > ⇒ 危險不是「每次 build 都會沒」，是**「它沒有任何理由被保住」** ——
 > 沒有人承諾過那個目錄的壽命，而現在也沒有人需要承諾了。
 
@@ -188,7 +188,7 @@ git check-ignore -v SenateData/config/senate.local.example.json  # 該放行
 | 留在根 | 為什麼不收進來 |
 |---|---|
 | `src/` `SCP_Core/` `Docs/` | 原始碼與文件，不是執行期資料 |
-| `build.sh` `build.ps1` `install.*` `Senate.slnx` | 建置與安裝入口，人要找得到 |
+| `build.sh` `install.sh` `Senate.slnx` | 建置與安裝入口，人要找得到 |
 | `build/` `publish/` | **產物**，跟資料是兩回事（產物可以整個刪掉重建，資料不行）。執行檔 `publish/senate.exe` 住這裡 |
 | `senate.lnk` | 一鍵 build 放的雙擊捷徑，**只服務滑鼠**（PATH 掛的是 `publish/`） |
 | `.claude/` `.codex/` `.agents/` | 那是 agent 工具的家，不是 Senate 的 |

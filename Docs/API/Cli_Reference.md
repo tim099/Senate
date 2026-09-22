@@ -515,7 +515,7 @@ verdict 在 result 檔。啟動時把上一顆留下的 `.running` 翻回 pendin
 ⚠ 它**只接 `⤷Server` 的 Cmd**（`ServerDelegateCmd`）；別的型別送進來會 Failed 並說「直接 `senate cmd` 跑」。
 探針：`senate cmd server-ping --arg echo=hi`（回 Server 的 pid／build／thread）。
 
-**build id**：`build.sh`／`build.ps1` publish 時把 `<git short sha>[-dirty].<UTC 時間>` 塞進
+**build id**：`build.sh` publish 時把 `<git short sha>[-dirty].<UTC 時間>` 塞進
 `AssemblyInformationalVersion`；Server 把它寫進心跳，CLI 拿自己的比。`dotnet run`（Debug DLL）沒有那個屬性
 ⇒ `unversioned`，跟 exe 對比一定不符 —— **那是定語不是缺陷**：Debug 在跑與 exe 在跑從此分得出來。
 
