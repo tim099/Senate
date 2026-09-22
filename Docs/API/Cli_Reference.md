@@ -340,6 +340,34 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 - ⛔ 只讀、不 fetch、不 checkout ⇒ 印的 tip 是**上次 fetch 的快照**，不是遠端此刻。
 - 日常讀訊息**不走這裡**（走酒館自己的 `catchup` / `op=read`）；這兩支是「手上有一筆跨區引用」時用的。
 
+#### 反射呼叫本 process 的成員：`invoke`（2026-09-22）
+
+沒有專用 Cmd 的內部 API，用它按一下或讀一個值出來。
+
+```bash
+./senate.exe cmd invoke --arg type=SCP.Core.Reflect.SCP_Reflect --arg member=Describe
+./senate.exe cmd invoke --arg assembly=System.Text.Json --arg type=System.Text.Json.JsonSerializerOptions --arg member=Default --arg kind=property
+./senate.exe cmd invoke --arg-file steps=<檔>          # 多步鏈式呼叫，一行一步
+```
+
+三格定語，**每一格都是會咬人的**：
+
+- 🔴 **射程＝這個 process 已載入的組件**（`Senate.Core` / `SCP_Core` / BCL）。
+  ⛔ 打 `UnityEditor.*` 在這裡一定找不到，那要走 Unity 端的 `ucmd run Invoke` ——
+  **兩支同名而受詞不同**。
+- ⚠ **變數（`store_as` / `$name`）只活在同一次呼叫內。**
+  Unity 那側是常駐 process 所以跨 Cmd 呼叫存活；CLI 每次都是新 process ⇒ 分兩次跑的話
+  `$var` 永遠找不到。⇒ 鏈式呼叫**把每一步寫在同一份 `steps` 裡**（一行一步，`k=v|k=v`；
+  ⚠ 分隔符是 `|`，因為 `;` 是 `args` 自己在用的）。
+- ⚠ **回傳三態**（`value_kind`）：`void` ／ `null` ／ `value`（**可能是空字串**）。
+  🩸 判準是這一欄，⛔ 不是「`value` 有沒有出現」—— 空字串與 null 在這支上都是常見的真實回答。
+
+**`--arg assembly=<組件名>`**：.NET 是用到才載 ⇒ 「找不到型別」有兩個成因
+（名字不對／組件還沒被碰過），而它們的處置相反。失敗訊息把兩個都列出來，並印出目前載入了幾個組件。
+
+⛔ **沒有白名單**：能呼叫什麼由「這個 process 載入了什麼」決定 —— 它寫檔就會真的寫檔。
+（一份「安全成員」清單永遠不夠用，而它最大的作用是讓人以為已經擋住了。）
+
 #### exit code
 
 | code | 意思 |
@@ -348,6 +376,11 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 | 1 | Cmd 自己回報失敗（例：persona 的信件夾不存在） |
 | 2 | 用法錯：認不得的指令名／沒宣告的參數名／缺必填／值不在可選清單裡 |
 | 70 | Cmd 執行時丟出例外 —— ⚠ 跟 2 分開，否則腳本會把**程式 bug** 當成「我自己打錯」 |
+
+⚠ **這張表是通用碼；個別 Cmd 可能另外定義自己的碼** —— 以 `cmd help <name>` 印的為準。
+　 例：`invoke` 的 **5 ＝ 被反射呼叫的那支 API 自己丟了例外**。
+　 ⛔ 跟 `70` 不同：`70` 是 **Cmd 自己**的程式炸了，`5` 是我找對了成員也按下去了、是**那邊**炸的。
+　 📌 兩者刻意分開，因為處置相反：一個去修 Cmd，一個去修被呼叫的那支。
 
 #### 錯誤報告（TASK-0104）
 
