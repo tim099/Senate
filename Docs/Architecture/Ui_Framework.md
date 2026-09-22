@@ -299,7 +299,8 @@ SCP_GuiPage（abstract）
 
 ```
 SCP_GuiToolPage : SCP_GuiPage
-  ├── MenuGroup (string?)    ← 入口頁清單的 opt-in ＋ 分組名（null ＝ 不列）
+  ├── MenuGroup (string?)    ← 入口頁清單的 opt-in ＋ 分組名（null ＝ 不列；"" ＝ 列但沒分組）
+  │                             ⚠ 什麼時候該回 null、以及它跟 [SCP_PageIgnore] 的界線見下方
   ├── DrawTopBar(ui)        ← ◀ 返回｜⌂ 首頁｜<子類的鈕>｜page key
   │     ├── TopBarButtons(ui)   ← 子類的擴充點（＝ UCL 的 TopBarButtons）
   │     └── ShowBackButton / ShowHomeButton / ShowKeyHint
@@ -391,6 +392,28 @@ SCP_GuiPage? aPage = aCatalog.Create("doctor");    // 認不得回 null
 | 同一個 key 登記兩次 ⇒ 丟例外 | 後蓋前 —— `Create` 回哪個、清單列哪個會變成看運氣 |
 | 登記的 key 與頁面自己的 `Key` 不一致 ⇒ 記一筆診斷，**以頁面為準** | 沉默 —— session 的 `nav` 存的是頁面的 `Key`，兩份不一致會讓復原失敗 |
 | `MenuGroup` 為 null 的頁**仍然造得出來** | 不列＝不存在（`--page` 應該還是進得去） |
+
+### 🔴 `MenuGroup = null` vs `[SCP_PageIgnore]` vs `abstract` —— 三種「不要出現」，選錯有代價
+
+同一個模糊的需求（「這頁不要出現在那份清單上」）底下其實有四個不同的類別，
+而它們對**要不要收錄**的答案不一樣。⛔ 沒有第五套機制，別發明：
+
+| 類別 | 用什麼 | 收錄 | 入口頁列 | `Create` / `--page` |
+|---|---|---|---|---|
+| **根本不是頁**（測試探針） | `[SCP_PageIgnore("理由")]` | ❌ | ❌ | ❌ |
+| **彈窗／選項頁**（內容由母頁決定） | `MenuGroup => null` | ✅ | ❌ | ✅ |
+| **入口頁自己**／**只從工具列進去的頁**（例：介面尺寸） | `MenuGroup => null` | ✅ | ❌ | ✅ |
+| **給人繼承的基底頁** | **`abstract`**（語言自帶，編譯期擋 `new`） | ❌ | ❌ | ❌ |
+
+🩸 **選錯的代價不是風格問題**（2026-09-22 實測）：把彈窗頁貼成 `[SCP_PageIgnore]` ⇒ 不收錄
+⇒ `Create` 回 null ⇒ CLI 每次呼叫都是新 process，下一趟走 `RestorePath` 時會
+**停在彈窗那一層並回報**（D13 的規矩：做不出來就停手，不要跳過繼續往上疊）
+⇒ 症狀是「在彈窗裡按第二下時，人其實已經掉回母頁了」。
+⚠ 而「彈窗選項頁按下去」就是第二步 ⇒ 那是主路不是邊角。
+📌 射程：**只有 CLI／文字模式**會踩到；視窗模式的導覽狀態活在記憶體裡，不走 `RestorePath`。
+
+📌 反過來也一樣：探針頁改用 `MenuGroup => null` 也不對 ——
+它會被收錄、ctor 會被呼叫、`--page` 叫得到，而它本來就不該在那個命名空間裡。
 
 ⚠ **這個設計的隱含前提：頁面的建構子必須便宜。** 目錄為了讀標題與分組會把每一頁
 **建一次再丟掉**（中繼資料快取一次，`Invalidate()` 可重掃）。
