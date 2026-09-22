@@ -70,6 +70,7 @@ public static class SelfTest
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
         One(nameof(QueueSubLaneShape), "core", QueueSubLaneShape),
         One(nameof(ServerResultRoundTrip), "core", ServerResultRoundTrip),
+        One(nameof(DelegateCarriesCmdExitCode), "core", DelegateCarriesCmdExitCode),
         One(nameof(AtomicFileDistinguishesCollisionFromOtherIo), "core", AtomicFileDistinguishesCollisionFromOtherIo),
         One(nameof(ServerEndpointFourStates), "core", ServerEndpointFourStates),
         One(nameof(ServerCmdClientMatchesAgentCmdClient), "core", ServerCmdClientMatchesAgentCmdClient),
@@ -747,6 +748,49 @@ public static class SelfTest
             bool aOk = aOutOk && aValOk && aLineOk && aClientOk && aFailOk;
             return new CheckRow("Server result 檔 round-trip",
                 $"outputs 讀回={aOutOk}／同 key 兩筆 values 都在={aValOk}／lines 讀回={aLineOk}／client 欄={aClientOk}／Failed 落檔={aFailOk}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
+    }
+
+    // 區塊職責：執行端 Cmd 自己回的退出碼，要能原樣被讀回；而錯誤報告的宣告要跟「真的有寫」同一個判準（TASK-0262）。
+    // 物理意義：以前委派閘把任何 Failed 都寫死成 exit 1 ⇒ 用法錯（2）在呼叫端跟執行失敗（1）同形，
+    //          而 1 那條規矩會去宣告一份報告路徑、寫檔那端照 2 的規矩（正確地）沒寫
+    //          ⇒ CLI 自己承認找不到，再猜「Server 端沒寫成？」。
+    //          ⇒ 這一格量的是**接縫的兩側**：result 檔寫得對不對（exit_code／error_report），
+    //             以及 AgentCmdClient 讀不讀得回來。
+    // 🩸 為什麼是 selftest 而不是只靠活體：活體那半要真的起一顆 Server（會打斷所有在線的人），
+    //   ⇒ 活體是另外一格、由人挑時機跑；這一格是**每天都會跑到的那條路上的錨**。
+    //   ⚠ 它**不涵蓋** ServerDelegateCmd 那一段的接線（那要活體）—— 兩者不可同形，所以這裡寫明。
+    // 數值影響：純寫暫存根 + 讀回，零 Cmd 派遣、不碰任何真的資料根。
+    static CheckRow DelegateCarriesCmdExitCode()
+    {
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_exit_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aArgs = new Dictionary<string, string> { ["_caller_client"] = "selftest" };
+
+            // ① exit 2（用法錯）：exit_code 讀得回 2，而 result 檔**不宣告**報告路徑（那份檔設計上就不該存在）
+            ServerExecutor.WriteResult(aRoot, "id-usage", "server-ping", "OneShot", aArgs,
+                SCP.Core.Cmd.SCP_CmdResult.Fail(2, "✗ 用法錯"));
+            int? aUsageExit = AgentCmdClient.ResultExitCode(aRoot, "id-usage");
+            bool aUsageNoReport = !File.ReadAllText(Path.Combine(aRoot, "_cmd_results", "id-usage.json"))
+                .Contains("error_report", StringComparison.Ordinal);
+
+            // ② exit 1（回報失敗）：一字不變 —— 仍是 1，仍然宣告報告路徑（反向對照）
+            ServerExecutor.WriteResult(aRoot, "id-failed", "server-ping", "OneShot", aArgs,
+                SCP.Core.Cmd.SCP_CmdResult.Fail(1, "✗ 真的爆了"));
+            int? aFailedExit = AgentCmdClient.ResultExitCode(aRoot, "id-failed");
+            bool aFailedHasReport = File.ReadAllText(Path.Combine(aRoot, "_cmd_results", "id-failed.json"))
+                .Contains("error_report", StringComparison.Ordinal);
+
+            // ③ 沒有 result 檔 ⇒ null，⛔ 不是 0（「這一欄不存在」與「它回了 0」是兩件事）
+            bool aMissingIsNull = AgentCmdClient.ResultExitCode(aRoot, "id-not-there") == null;
+
+            bool aOk = aUsageExit == 2 && aUsageNoReport && aFailedExit == 1 && aFailedHasReport && aMissingIsNull;
+            return new CheckRow("委派帶回 Cmd 自己的退出碼",
+                $"exit 2 讀回={aUsageExit?.ToString() ?? "null"}／exit 2 不宣告報告={aUsageNoReport}／"
+                + $"exit 1 讀回={aFailedExit?.ToString() ?? "null"}／exit 1 仍宣告報告={aFailedHasReport}／缺檔回 null={aMissingIsNull}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }

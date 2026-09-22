@@ -511,6 +511,20 @@ public static class AgentCmdClient
     }
 
     /// <summary>
+    /// result 檔裡**執行端 Cmd 自己回的退出碼**（`exit_code`）—— 委派閘要把它原樣帶回呼叫端（TASK-0262）。
+    /// <para>回 <c>null</c> ＝ 沒有 result 檔／沒有這一欄（舊版執行端）。
+    /// ⚠ <c>null</c> 與 <c>0</c> 是兩件事，所以型別是 <c>int?</c> 不是 <c>int</c> ——
+    /// 把「這一欄不存在」壓成 0，呼叫端會把一筆失敗讀成成功，而那正是本單在治的那個病的鏡像。</para>
+    /// <para>⛔ 同 <see cref="ResultReport"/>：只在判定成功之後才准呼叫（逾時時讀到的是上一輪那份）。</para>
+    /// </summary>
+    public static int? ResultExitCode(string iDataRoot, string iCmdId)
+    {
+        JsonObject? aVerdict = ReadCmdResult(iDataRoot, iCmdId);
+        if (aVerdict?["exit_code"] is not JsonValue aNode) return null;
+        return aNode.TryGetValue(out int aExit) ? aExit : null;
+    }
+
+    /// <summary>
     /// result 檔裡執行端留下的人可讀行（`lines`）—— Senate Server 會寫，Editor 端不寫（回空清單，不是錯）。
     /// <para>⛔ 同 <see cref="ResultReport"/>：只在判定成功之後才准呼叫。</para>
     /// </summary>

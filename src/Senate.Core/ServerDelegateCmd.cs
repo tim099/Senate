@@ -213,7 +213,33 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         foreach (string aLine in AgentCmdClient.ResultLines(aServerRoot, aCmdId)) aResult.Lines.Add("  " + aLine);
         if (aVerdict == AgentCmdWaitResult.Failed)
         {
-            aResult.ExitCode = 1;
+            // 區塊職責：把**執行端 Cmd 自己回的退出碼**帶回呼叫端，⛔ 不再寫死 1（TASK-0262）。
+            // 物理意義：exit 1（回報失敗）與 exit 2（用法錯）在下游是兩種處置 ——
+            //          1 有一份錯誤報告可讀，2 刻意沒有（`CmdErrorReport.ShouldReport`：
+            //          「打錯字配一份 stack 只會訓練人忽略這個目錄」）。
+            //          壓成 1 之後，宣告報告路徑的那一段照 1 的規矩跑、寫檔那端照 2 的規矩（正確地）沒寫
+            //          ⇒ CLI 自己承認找不到，再猜「Server 端沒寫成？」。
+            //          ⇒ 治的是接縫，不是任何一端：兩端各自都對。
+            // 數值影響：走 Server 委派且 Cmd 回非 1 退出碼的那些呼叫，`exit_code` 從 1 變成真值。
+            //
+            // ⚠ 三種讀不到真值的情況**不共用一個結局**，因為它們不是同一件事：
+            //   · 沒有 result 檔／沒有 `exit_code` 欄（舊版執行端）⇒ 退回 1，那是本次改動前的行為。
+            //   · 讀到 0 而判定是 Failed ⇒ **矛盾**：退回 1 並把矛盾印出來，
+            //     ⛔ 不靜默採信 0（那會把一筆失敗變成 exit 0，比本單在治的病更貴）。
+            int? aCmdExit = AgentCmdClient.ResultExitCode(aServerRoot, aCmdId);
+            if (aCmdExit is int aExit && aExit != 0)
+            {
+                aResult.ExitCode = aExit;
+            }
+            else
+            {
+                aResult.ExitCode = 1;
+                if (aCmdExit == 0)
+                {
+                    aResult.Lines.Add("⚠ result 檔說判定 Failed 而 `exit_code` 是 0（互相矛盾）"
+                                      + " ⇒ 本 Cmd 取 1，⛔ 不採信那個 0。");
+                }
+            }
             aResult.AddValue("delegate_failure", "cmd_failed");
             UnityDelegateCmd.AppendReport(aResult, aServerRoot, aCmdId);
             return aResult;

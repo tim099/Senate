@@ -269,7 +269,13 @@ public sealed class ServerExecutor
         if (!iResult.Ok)
         {
             aJson["error"] = FirstLine(iResult);
-            aJson["error_report"] = Path.Combine(iServerRoot, CmdErrorReport.DirName, iCmdId + ".md");
+            // ⚠ `error_report` 只在**真的有寫那份檔**時才宣告（TASK-0262，第二個入口）。
+            //   上面 RunOne 之後寫檔那一段的條件就是 `ShouldReport`；這一欄以前無條件寫
+            //   ⇒ exit 2／3 的 result 檔裡躺著一條指向不存在檔案的路徑。
+            //   🩸 它今天還沒有消費端，所以它不會叫 —— 而「沒有人讀」不是「它是對的」。
+            //   ⇒ 判準與寫檔那端共用同一支 `ShouldReport`，⛔ 不在這裡抄第二份條件。
+            if (CmdErrorReport.ShouldReport(iResult.ExitCode))
+                aJson["error_report"] = Path.Combine(iServerRoot, CmdErrorReport.DirName, iCmdId + ".md");
         }
         string aPath = Path.Combine(aDir, iCmdId + ".json");
         string aTmp = aPath + ".tmp";
