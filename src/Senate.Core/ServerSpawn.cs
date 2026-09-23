@@ -20,6 +20,13 @@ namespace Senate.Core;
 public static class ServerSpawn
 {
     /// <summary>
+    /// ⚠ **測試專用**：spawn 故障注入的環境變數名（TASK-0283）。
+    /// <para><c>fail</c> ＝ 連子行程都沒起來（走 <c>SpawnFailed</c>）／
+    /// <c>noop</c> ＝ 回報起來了而其實沒有（走 <c>TimedOut</c>）。⛔ 生產環境不得設定它。</para>
+    /// </summary>
+    public const string TestSpawnFaultEnv = "SENATE_TEST_SPAWN_FAULT";
+
+    /// <summary>
     /// 起一個 detached 的 `server start`。
     /// <para>⚠ 用**這顆 CLI 自己**的執行方式去起（exe 就起 exe、`dotnet x.dll` 就起 dotnet）——
     /// 起錯一顆的症狀是 build id 不符，而那個錯訊息會把人帶去查一個不存在的版本問題。</para>
@@ -27,6 +34,44 @@ public static class ServerSpawn
     public static bool TrySpawn(string iRepoRoot, string iServerId, out int oChildPid, out string oErr)
     {
         oErr = ""; oChildPid = 0;
+
+        // 區塊職責：**測試縫** —— 讓 autostart 的兩個失敗臂在**真實委派路徑**上走得到（TASK-0283，承接 0267 ⑦）。
+        // 物理意義：`fail` ⇒ 連子行程都沒起來（`SpawnFailed`）／`noop` ⇒ 回報起來了而其實沒有（`TimedOut`）。
+        // 數值影響：未設定時**零成本、零分支效果** —— 取值路徑直接回到生產常態（驗收 ⑥(b)）。
+        //
+        // 🩸 為什麼不照 TASK-0280 用靜態覆寫：那條縫住在 Editor 這顆**長駐** process，
+        //   靠 `ucmd run Invoke` 先設再用；而 `senate` 是**一次性 CLI**
+        //   ⇒ 一個靜態欄位**沒有任何呼叫者設得到它**。⇒ 同一個形狀在這一側沒有受詞。
+        // ⛔ 而 0280 的判準原樣保留：**這不是一個設定** —— 沒有設定檔、沒有 CLI 參數、不生第四套解析器。
+        // ⚠ 它跟 0280 那條縫有一個**真實的差別**，別假裝沒有：環境變數會活在設它的那個 shell 裡
+        //   ⇒ 「有人測完就走」的失效樣子是那個 shell 之後每一次委派都失敗
+        //   ⇒ 所以**每一次生效都出聲**（下面那行 stderr），而那行是刻意寫得很吵的。
+        string aFault = Environment.GetEnvironmentVariable(TestSpawnFaultEnv) ?? "";
+        if (aFault.Length > 0)
+        {
+            Console.Error.WriteLine($"⚠ 測試縫（TASK-0283）：{TestSpawnFaultEnv}={aFault} ⇒ 這一趟 spawn **不是生產行為**。"
+                                    + $"　⛔ 測完請清掉它 —— 沒清的話這個 shell 之後每一次委派都會失敗。");
+            switch (aFault)
+            {
+                case "fail":
+                    oErr = $"測試縫（TASK-0283）：{TestSpawnFaultEnv}=fail ⇒ 刻意讓 spawn 失敗（⛔ 不是環境有問題）";
+                    return false;
+
+                case "noop":
+                    // 回 true 但**不生任何行程** ⇒ Server 永遠不上線 ⇒ 決策迴圈走到 `TimedOut`。
+                    // ⚠ pid 回 0：它只被拿去組啟動 log 的路徑，而這一趟**沒有 child 會去寫那個檔**
+                    //   —— 那正好是 TimedOut 的現場樣子（log 路徑指得出來，而裡面可能一個字都沒有）。
+                    oChildPid = 0;
+                    return true;
+
+                default:
+                    // ⛔ 一個打錯的值**不可以靜默變成生產行為** —— 那會讓「我注入了」與「我以為我注入了」同形，
+                    //   而後者會讓整趟測試印出一個漂亮的綠燈。
+                    oErr = $"測試縫（TASK-0283）：{TestSpawnFaultEnv} 只認 `fail` 或 `noop`，而它是 `{aFault}`"
+                           + " ⇒ 本層不猜，整趟失敗";
+                    return false;
+            }
+        }
         try
         {
             Directory.CreateDirectory(SenatePaths.RuntimeDir(iRepoRoot));
