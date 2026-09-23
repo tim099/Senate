@@ -22,6 +22,13 @@ public static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         string aRepoRoot = RepoRoot();
 
+        // 宿主的網路出口：把 HTTP 抓取器插進 SCP_Core 的插座（TASK-0272 ②）。
+        // ⚠ 這一行是 `rate op=sync` 能不能動的**唯一開關** —— SCP_Core 自己沒有網路
+        //   （它釘在 netstandard2.1 而且 Unity 也要編它，見 SCP_RateSource.cs 守衛①）。
+        // ⛔ 拿掉這行**不會有編譯錯誤**，只會讓 sync 回「本宿主未註冊抓取器」（exit 3）——
+        //   那正是設計要的樣子：沒有出口要大聲說，不可靜默當成「沒有新報價」。
+        SCP.Core.Market.SCP_HttpFetch.Current = new SenateHttpFetcher();
+
         // 資料根版面（`SenateData/`）與舊版面搬遷 —— **必須在任何讀設定的動作之前**。
         // 順序不是風格問題：晚一步跑，前面那些讀取端就會在空的新位置讀到「沒設定過」，
         // 而那個狀態看起來完全正常（三態同形）。搬完一定印出來，⛔ 不做靜默搬檔。
