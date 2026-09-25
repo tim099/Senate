@@ -147,6 +147,61 @@ public class Cmd_TavernWrite : ServerDelegateCmd
         aResult.AddValue("seq", aW.Seq.ToString());
         aResult.AddValue("path", aW.FullPath);
         aResult.AddValue("heal_attempts", aW.HealAttempts.ToString());
+        AppendPayroll(aDataRoot, aRoom, aW.Seq, aMsg, aResult);
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：**寫完就發薪**（TASK-0296）—— 規則在 SCP_TavernPayroll（與 Editor 本地寫那條同一支），入帳交銀行那顆。
+    // 物理意義：發薪掛在寫入端而不是 `op=post` ⇒ 任何入口寫進來的訊息都照同一套規則付
+    //          （TASK-0106 #24：直打本支的 4 則以前不付，照構造就不付）。
+    //          `bank` 的 ServerId 是 main、本 process 是 tavern ⇒ ServerDelegateCmd 會**委派**過去，
+    //          ⛔ 不在這裡寫帳本（那是銀行的第二個寫入端）。
+    // 數值影響：發薪失敗**不讓寫入失敗**（訊息已經落檔、seq 已經給出去了），但每一筆都印、並回報計數，
+    //          讓 `payroll-audit` 與呼叫端都看得到。冪等命中（同一則被第二條路規劃）另計，⛔ 不算成「付了」。
+    // ===========================================================
+    static void AppendPayroll(string iDataRoot, string iRoom, int iSeq, SCP_TavernMessage iMsg, SCP_CmdResult ioResult)
+    {
+        SCP_TavernPayPlan aPlan;
+        try { aPlan = SCP_TavernPayroll.Plan(iDataRoot, SCP_TavernPayInput.From(iMsg, iRoom, iSeq)); }
+        catch (Exception e)
+        {
+            ioResult.Lines.Add("⚠ 發薪規劃例外（訊息已落檔，⛔ 這一則沒發）：" + e.GetType().Name + ": " + e.Message);
+            ioResult.AddValue("pay_failed", "plan");
+            return;
+        }
+        foreach (string aWarn in aPlan.Warnings) ioResult.Lines.Add("⚠ 發薪：" + aWarn);
+        ioResult.AddValue("pay_items", aPlan.Items.Count.ToString());
+        if (aPlan.Items.Count == 0) return;
+
+        var aBankRoot = SCP_TavernPayroll.BankRootOf(iDataRoot);
+        if (aBankRoot.Error != null || aBankRoot.Value.Length == 0)
+        {
+            ioResult.Lines.Add($"⚠ 發薪：銀行根解不出來（{aBankRoot.Error}）⇒ {aPlan.Items.Count} 筆**都沒發**");
+            ioResult.AddValue("pay_failed", aPlan.Items.Count.ToString());
+            return;
+        }
+        int aOk = 0, aDup = 0, aBad = 0;
+        foreach (SCP_TavernPayItem aItem in aPlan.Items)
+        {
+            SCP_CmdResult aR;
+            try { aR = SCP_CmdRegistry.Dispatch("bank", SCP_TavernPayroll.ToBankArgs(aItem, aBankRoot.Value)); }
+            catch (Exception e) { aR = SCP_CmdResult.Fail(1, "例外：" + e.GetType().Name + ": " + e.Message); }
+            if (aR.Ok)
+            {
+                bool aIsDup = aR.Values.Any(v => v.Key == "duplicate" && v.Value == "1");
+                if (aIsDup) aDup++; else aOk++;
+                ioResult.Lines.Add("💰 " + SCP_TavernPayroll.Describe(aItem) + (aIsDup ? "　（冪等命中，錢沒動）" : ""));
+            }
+            else
+            {
+                aBad++;
+                ioResult.Lines.Add("✗ 發薪失敗 " + SCP_TavernPayroll.Describe(aItem) + "　exit=" + aR.ExitCode);
+                foreach (string aLine in aR.Lines.Take(4)) ioResult.Lines.Add("    " + aLine);
+            }
+        }
+        ioResult.AddValue("pay_ok", aOk.ToString());
+        ioResult.AddValue("pay_dup", aDup.ToString());
+        ioResult.AddValue("pay_failed", aBad.ToString());
     }
 }

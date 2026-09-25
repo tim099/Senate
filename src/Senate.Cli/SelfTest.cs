@@ -4645,11 +4645,14 @@ public static class SelfTest
         const string aName = "tavern-write 三道閘（開關未切 ⇒ 零寫入）";
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernwritecmd_" + Guid.NewGuid().ToString("N")[..8]);
         bool aWas = Senate.Core.ServerContext.InServer;
+        string aWasId = Senate.Core.ServerContext.ServerId;
         try
         {
             Directory.CreateDirectory(aTmp);
             var aCmd = new Senate.Core.Cmd_TavernWrite();
             Senate.Core.ServerContext.InServer = true;
+            // TASK-0296：本體只在「我就是這支指定的那一顆」時才跑 ⇒ 要扮成酒館那顆，⛔ 不是任意一顆
+            Senate.Core.ServerContext.ServerId = SCP.Core.Proc.SCP_ServerIds.Tavern;
 
             const string aRoom = "probe";
             string aMsgJson = "{\"ts\":\"2026-09-21T02:00:00.000Z\",\"uuid\":\"aa11bb\",\"sender_id\":\"zeta\","
@@ -4739,6 +4742,7 @@ public static class SelfTest
         finally
         {
             Senate.Core.ServerContext.InServer = aWas;
+            Senate.Core.ServerContext.ServerId = aWasId;
             try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
         }
     }

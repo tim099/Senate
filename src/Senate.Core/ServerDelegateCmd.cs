@@ -21,6 +21,13 @@ namespace Senate.Core;
 public static class ServerContext
 {
     public static bool InServer;
+    /// <summary>
+    /// 本 process 是**哪一顆** Server（正規化後的 id）。由 <see cref="ServerHost.RunForeground"/> 設。
+    /// <para>🩸 TASK-0296：只有 <see cref="InServer"/> 的話，酒館那顆呼叫銀行的 Cmd 會判成「我在 Server 裡」
+    /// ⇒ **在酒館 process 裡直接寫帳本** ＝ 銀行多一個寫入端，而輸出跟正常一模一樣。
+    /// ⇒ 本體只在「我是 Server ＋ 我就是這支 Cmd 指定的那一顆」時才跑，其餘一律委派。</para>
+    /// </summary>
+    public static string ServerId = "";
     public static int Pid;
     public static string BuildId = "";
 
@@ -83,7 +90,10 @@ public abstract class ServerDelegateCmd : SCP_Cmd
 
     public sealed override SCP_CmdResult Execute(SCP_CmdArgs iArgs)
     {
-        if (ServerContext.InServer)
+        // ⚠ 兩個條件缺一不可：只看 InServer 的話，另一顆 Server 呼叫本支會在**錯的 process** 裡跑本體
+        //   （見 ServerContext.ServerId）。不是這一顆 ⇒ 往下走委派，跟 CLI 打過來同一條路。
+        if (ServerContext.InServer
+            && string.Equals(ServerContext.ServerId, SCP_ServerIds.Normalize(ServerId), StringComparison.Ordinal))
         {
             SCP_CmdResult aServerResult = ExecuteOnServer(iArgs);
             // 定語第一行：這一則是 Server 跑的。⚠ 插在最前面 —— 失敗訊息也要帶著它。

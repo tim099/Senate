@@ -331,6 +331,7 @@ public static class ServerHost
 
         // 身分旗標：從這一行起，本 process 裡的 ServerDelegateCmd 走「本體」那條路。
         ServerContext.InServer = true;
+        ServerContext.ServerId = aServerId;   // 「我是哪一顆」—— 委派判斷要它（TASK-0296）
         ServerContext.Pid = aSelf.Id;
         ServerContext.BuildId = aBuild;
         string aServerRoot = SenatePaths.ServerRoot(iRepoRoot, aServerId);
@@ -412,6 +413,7 @@ public static class ServerHost
                                           aLanes => BeatAndReport(aHb, aHbPath, aLanes, iOut));
             if (aLeft == 0 && aExecutor.Completed > 0) iOut($"· 執行器收尾：本次共跑 {aExecutor.Completed} 筆");
             ServerContext.InServer = false;
+            ServerContext.ServerId = "";
             // 三件遺物一起收；任何一件收不掉都要說 —— 留下來的心跳檔會讓下一次 status 讀到一個「剛剛還在跳」的假象。
             TryDelete(aHbPath, iErr);
             TryDelete(aStopReq, iErr);
