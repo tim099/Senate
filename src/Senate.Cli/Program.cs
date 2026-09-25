@@ -133,6 +133,8 @@ public static class Program
         // 書店閘（TASK-0234 ②的另一半，2026-09-18）：錢與券**直接串 Server**（`bank` / `voucher`）。
         // ⇒ 裝上它之後，`cmd book op=donate|publish|tip|retry-tips` 與 Editor **共用同一份實作**。
         SCP.Core.Books.SCP_BooksGatewayHost.Factory = aDataRoot => new SenateBooksGateway(aDataRoot);
+        // 棋局閘（TASK-0268 ⑥）：廣播派給 Editor 的 Cmd_Tavern（同 process，⛔ 不再 spawn senate.exe）、券走 `voucher`。
+        SCP.Core.Chess.SCP_ChessGatewayHost.Factory = aDataRoot => new SenateChessGateway(aDataRoot);
         // 活動 session 的關場閘（TASK-0127 ⑤）：Senate 這側**不寫 session 檔、不算錢** ——
         // 整步委派 Editor 的 SessionClose（結算就是金流，而金流搬家是 TASK-0106，Tim 拍 B 不動）。
         // ⏳ 過渡（退場條件：TASK-0106）—— 那天換掉 SenateSessionCloseGateway 一個 class 就好。
