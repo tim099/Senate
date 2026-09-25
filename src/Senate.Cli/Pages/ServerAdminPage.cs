@@ -1,16 +1,25 @@
-// 區塊職責：**Server 管理頁** —— 列出**所有**常駐 Server（main／tavern／…），逐顆看它活著沒、
-//           心跳新不新鮮、build 對不對，並且逐顆啟動／停止。
+// 區塊職責：**Server 管理頁** —— 管所有常駐 Server（main／tavern／…）：
+//           TopBar 用下拉選「現在操作哪一顆」＋ 一鍵全部啟動／全部停止；內容畫那一顆的狀態與操作，
+//           底下附一張全部的總覽。
 // 物理意義：Tim 2026-09-18 交辦（「新增一個 Page 用來管理 Server 狀態，至少包含啟動＆關閉」）；
-//           2026-09-25 擴成多顆（「酒館&銀行兩個常駐 Server …管理所有常駐 Server」）。
+//           2026-09-25 擴成多顆（「酒館&銀行兩個常駐 Server …管理所有常駐 Server」），
+//           同日再加：一鍵全部啟動／關閉、TopBar 下拉選當前操作的那一顆、
+//           以及「Server 不能多開：啟動狀態只能關閉、關閉狀態只能啟動」。
 //           🩸 擴之前本頁寫死只看 `main`，要看酒館那顆得去終端機打 `--id` ⇒
 //             **酒館那顆掛了，這一頁照樣全綠**，而那正是 TASK-0244 那格警告過的形狀。
 //           讀數本體全部來自 `ServerHost.Probe`，⛔ 本頁**不自己判活著**——
 //           那會變成同一件事的第二個判準，而兩份漂掉時**兩邊都說得通**。
 //           ⇒ 這一頁跟 `senate server status` 是同一份事實的兩個投影，不是兩個真相源。
-// 數值影響：只有兩顆鈕會寫東西：
+// 數值影響：只有這幾顆鈕會寫東西：
 //           · 啟動 ＝ **另開一個行程**（`senate server start` 是前景常駐，⛔ 不能在本頁 inline 跑
 //             —— 那會把 GUI 卡死在它的迴圈裡）
 //           · 停止 ＝ `ServerHost.Stop`（先請它自退，5 秒等不到才 kill）
+//           · 全部停止 ＝ 對「允許停止」的每一顆逐顆 `ServerHost.Stop`（見 StopAllNow 的註解）
+//
+// 🔴 一顆 Server 在任何時刻**只畫一顆動作鈕**（Tim 2026-09-25）：
+//   沒在跑 ⇒ 只有「啟動」；在跑 ⇒ 只有「停止」；**量不到／身分驗不出來 ⇒ 兩顆都不畫**。
+//   ⛔ 最後那格不是省略：狀態不知道時，「啟動」可能是多開一顆、「停止」可能是停錯東西，
+//     而兩顆鈕都按得下去的樣子，跟「這兩個動作都安全」一模一樣。
 //
 // 🩸 為什麼停止要二段確認，而啟動不用：
 //   停掉 Server ＝ **全體的金流當場失敗**（2026-09-18 起權威在新銀行，而寫入端只有 Server）。
@@ -33,9 +42,15 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     /// <summary>待確認的動作（session 欄位；空 ＝ 沒有待確認）。⚠ **每一顆各一格**：見 <see cref="PendingIdFor"/>。</summary>
     public const string PendingId = "server/pending";
 
+    /// <summary>「全部停止」的待確認欄位 —— 與單顆的分開（它停的是全部，警告內容也不同）。</summary>
+    public const string PendingAllId = "server/pending/__all";
+
+    /// <summary>TopBar 下拉的 key（選中的值在 <c>server/sel/value</c>）。</summary>
+    public const string SelectKey = "server/sel";
+
     /// <summary>
     /// 某一顆的「待確認停止」欄位。
-    /// <para>🔴 一顆一格，⛔ 不共用：共用的話，在 `main` 按下第一次、再去 `tavern` 按一次，
+    /// <para>🔴 一顆一格，⛔ 不共用：共用的話，在 `main` 按下第一次、再切到 `tavern` 按一次，
     /// 就會停掉**你第二次按的那顆**，而你只對第一顆看過那句警告。</para>
     /// </summary>
     static string PendingIdFor(string iServerId) => PendingId + "/" + iServerId;
@@ -49,7 +64,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     readonly SenateModel m_Model;
 
     /// <summary>
-    /// 每一顆的探測結果（TASK-0244 之後 Server 不只一顆 ⇒ 本頁一次列全部）。
+    /// 每一顆的探測結果（TASK-0244 之後 Server 不只一顆）。
     /// <para>值為 null ＝ **探針自己失敗**，⛔ 不是沒在跑 —— 原因在 <see cref="m_ProbeErrors"/>。</para>
     /// </summary>
     readonly SortedDictionary<string, ServerStatus?> m_Statuses = new SortedDictionary<string, ServerStatus?>(StringComparer.Ordinal);
@@ -69,6 +84,10 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         Reload();
     }
 
+    // ===========================================================
+    // 區塊職責：探測
+    // ===========================================================
+
     /// <summary>要列哪幾顆：`KnownIds`（registry ∪ 心跳檔）∪ 常駐清單。</summary>
     List<string> ListIds()
     {
@@ -78,7 +97,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         catch (Exception e)
         {
             // ⚠ 列不到 ≠ 只有常駐那幾顆：可能正好漏掉一顆還在寫檔的。
-            m_ListError = "⚠ 列舉失敗（" + e.GetType().Name + "：" + e.Message + "）⇒ 下面只有常駐清單那幾顆，"
+            m_ListError = "⚠ 列舉失敗（" + e.GetType().Name + "：" + e.Message + "）⇒ 下拉裡只有常駐清單那幾顆，"
                           + "⛔ 不代表這棵樹上只有它們。";
         }
         return new List<string>(aIds);
@@ -104,10 +123,109 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         }
     }
 
+    // ===========================================================
+    // 區塊職責：一顆 Server 現在**允許哪一個動作**（唯一判準；按鈕、一鍵全部都問它）
+    // ===========================================================
+    enum Allowed { None, Start, Stop }
+
+    static Allowed AllowedAction(ServerStatus? iStatus)
+    {
+        if (iStatus == null) return Allowed.None;                      // 量不到 ⇒ 不知道該做哪個
+        if (iStatus.IsRunning) return Allowed.Stop;                    // 在跑 ⇒ 只能停（含卡住、版本不符：出口都是先停）
+        if (iStatus.Unverifiable.Count > 0) return Allowed.None;       // registry 有認不出來的 ⇒ 可能其實在跑，⛔ 不給啟動
+        return Allowed.Start;                                          // 確定沒在跑 ⇒ 只能啟動
+    }
+
+    List<string> IdsAllowing(Allowed iAction)
+    {
+        var aIds = new List<string>();
+        foreach (var aKv in m_Statuses) if (AllowedAction(aKv.Value) == iAction) aIds.Add(aKv.Key);
+        return aIds;
+    }
+
+    /// <summary>
+    /// 現在操作哪一顆。清單變了而選中的那顆不在了 ⇒ 退回第一顆，⛔ 不留一個畫面上不存在的選取。
+    /// </summary>
+    string SelectedId(SCP_Ui iUi)
+    {
+        string aSel = iUi.FieldValue(SelectKey + "/value", SCP_ServerIds.Default);
+        if (m_Statuses.ContainsKey(aSel)) return aSel;
+        foreach (var aKv in m_Statuses) return aKv.Key;
+        return SCP_ServerIds.Default;
+    }
+
+    // ===========================================================
+    // 區塊職責：TopBar —— 重新探測 ／ 下拉選當前那顆 ／ 一鍵全部 ／ 摘要
+    // ===========================================================
     protected override void TopBarButtons(SCP_Ui iUi)
     {
-        if (iUi.Button("重新探測全部", "server/reload")) { Reload(); m_Message = "・已重新探測全部"; }
+        if (iUi.Button("重新探測", "server/reload")) { Reload(); m_Message = "・已重新探測全部"; }
+
+        string aSel = SelectedId(iUi);
+        var aOpts = new List<SCP_GuiOption>(m_Statuses.Count);
+        foreach (var aKv in m_Statuses) aOpts.Add(new SCP_GuiOption(aKv.Key, aKv.Key + "　" + StateLabel(aKv.Value)));
+        string aPick = iUi.Dropdown("Server", aOpts, aSel, SelectKey);
+        if (aPick != aSel && aPick.Length > 0)
+        {
+            iUi.SetField(SelectKey + "/value", aPick);
+            // ⚠ 換了一顆就把所有待確認清掉：留著上一顆（或「全部」）的待確認，
+            //   下一次按下去動的會是**新選到的那一顆**，而警告是對上一顆說的。
+            ClearAllPending(iUi);
+            m_Message = "・現在操作 `" + aPick + "`";
+        }
+
+        DrawAllButtons(iUi);
         iUi.Label("｜" + SummaryLabel());
+    }
+
+    void ClearAllPending(SCP_Ui iUi)
+    {
+        iUi.SetField(PendingAllId, "");
+        foreach (var aKv in m_Statuses) iUi.SetField(PendingIdFor(aKv.Key), "");
+    }
+
+    /// <summary>
+    /// 一鍵全部。⚠ 各自只在「有東西可做」時才畫 —— 全部都在跑就沒有「全部啟動」，全部都沒在跑就沒有「全部停止」。
+    /// 全部啟動只起「確定沒在跑」的那幾顆；量不到的那顆**不碰**，並說出來。
+    /// </summary>
+    void DrawAllButtons(SCP_Ui iUi)
+    {
+        List<string> aToStart = IdsAllowing(Allowed.Start);
+        List<string> aToStop = IdsAllowing(Allowed.Stop);
+
+        if (aToStart.Count > 0 && iUi.Button("全部啟動（" + aToStart.Count + "）", "server/start-all"))
+        {
+            var aLines = new List<string>();
+            foreach (string aId in aToStart) aLines.Add(StartDetached(aId));
+            List<string> aSkipped = IdsAllowing(Allowed.None);
+            if (aSkipped.Count > 0)
+                aLines.Add("⚠ 狀態量不到的沒有碰：" + string.Join("、", aSkipped) + "（⛔ 不替它猜要不要起）");
+            m_Message = string.Join("\n", aLines);
+        }
+
+        if (aToStop.Count == 0) { iUi.SetField(PendingAllId, ""); return; }
+
+        bool aArmed = iUi.FieldValue(PendingAllId, "") == "stop";
+        if (iUi.Button(aArmed ? "⚠ 再按一次＝真的全部停掉" : "全部停止（" + aToStop.Count + "）", "server/stop-all"))
+        {
+            if (!aArmed)
+            {
+                ClearAllPending(iUi);
+                iUi.SetField(PendingAllId, "stop");
+                var aImpacts = new List<string>();
+                foreach (string aId in aToStop) aImpacts.Add("`" + aId + "`：" + StopImpact(aId));
+                m_Message = "⚠ 待確認**全部停止**（" + string.Join("、", aToStop) + "）：\n· "
+                            + string.Join("\n· ", aImpacts) + "\n再按一次才會真的停。";
+            }
+            else
+            {
+                iUi.SetField(PendingAllId, "");
+                m_Message = StopAllNow();
+                Reload();
+            }
+        }
+        if (aArmed && iUi.Button("取消", "server/stop-all/cancel"))
+        { iUi.SetField(PendingAllId, ""); m_Message = "・已取消（一顆都沒動）"; }
     }
 
     /// <summary>頂欄一句話：幾顆在跑／共幾顆，有異常就點名。</summary>
@@ -133,7 +251,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     static string StateLabel(ServerStatus? iStatus)
     {
         if (iStatus == null) return "**量不到**（探針失敗）";
-        if (!iStatus.IsRunning) return "・**沒在跑**";
+        if (!iStatus.IsRunning) return iStatus.Unverifiable.Count > 0 ? "？ **身分驗不出來**" : "・**沒在跑**";
         if (iStatus.Heartbeat == null) return "⚠ **活著但沒心跳**（卡住）";
         if (!iStatus.HeartbeatFresh) return "⚠ **心跳停了**（卡住）";
         if (!iStatus.BuildMatches) return "⚠ **在跑，但版本不符**";
@@ -153,9 +271,12 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         return "`" + iServerId + "` 這一顆的分工本頁不認得 ⇒ ⛔ 不替它猜停掉的代價";
     }
 
+    // ===========================================================
+    // 區塊職責：內容 —— 選中那一顆的狀態與操作，底下一張全部的總覽
+    // ===========================================================
     protected override void DrawContent(SCP_Ui g)
     {
-        g.Note("所有常駐 Senate Server 的狀態與生命週期。讀數來自 `ServerHost.Probe`，"
+        g.Note("常駐 Senate Server 的狀態與生命週期。讀數來自 `ServerHost.Probe`，"
                + "與 `senate server status --id <id>` **同一份事實**（⛔ 本頁不自己判活著）。");
         g.Note("⚠ 需要 Server 的 Cmd 在它沒在跑時會**自己拉一顆**（TASK-0267 autostart）⇒ "
                + "「停止」只停得了現在這一顆，⛔ 不是關掉那條路 —— 下一筆需要它的寫入會把它再拉起來。"
@@ -164,10 +285,25 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         if (m_Message != null) g.Note(m_Message);
         if (m_ListError != null) g.Note(m_ListError);
 
-        foreach (var aKv in m_Statuses)
+        string aSel = SelectedId(g);
+        g.Separator();
+        m_Statuses.TryGetValue(aSel, out ServerStatus? aStatus);
+        DrawServer(g, aSel, aStatus);
+
+        // 總覽：選一顆操作時，其餘幾顆的狀態仍然要看得到 —— 否則「另一顆掛了」又回到看不見。
+        g.Separator();
+        g.Label("**全部**（" + m_Statuses.Count + " 顆；切換操作對象用上方下拉）");
+        // ⚠ TableRow 一定要包在 Table scope 裡 —— 裸呼叫不報錯，只是**一列都不畫**（第一版就這樣空白過）。
+        using (g.Table("serverId", "狀態", "pid", "心跳"))
         {
-            g.Separator();
-            DrawServer(g, aKv.Key, aKv.Value);
+            foreach (var aKv in m_Statuses)
+            {
+                ServerStatus? s = aKv.Value;
+                string aPid = s?.Alive != null ? s.Alive.Pid.ToString() : "—";
+                double? aAge = s?.Heartbeat?.AgeSeconds();
+                string aHb = s == null ? "—" : (aAge.HasValue ? aAge.Value.ToString("0.0") + "s 前" : "（無）");
+                g.TableRow((aKv.Key == aSel ? "▶ " : "") + aKv.Key, StateLabel(s), aPid, aHb);
+            }
         }
     }
 
@@ -179,13 +315,13 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         if (iStatus == null)
         {
             g.Note(m_ProbeErrors.TryGetValue(iServerId, out string? aErr) ? aErr : "🔴 量不到（沒有說明）");
-            g.Note("⛔ 沒有讀數 —— 修好探針之前，⛔ 不要拿這一格的空白當「沒在跑」。");
-            DrawButtons(g, iServerId, iAllowStop: false);
+            g.Note("⛔ 沒有讀數 ⇒ **不給啟動也不給停止**（不知道它在不在跑）。先「重新探測」。");
+            g.SetField(PendingIdFor(iServerId), "");
             return;
         }
 
         DrawReadings(g, iServerId, iStatus);
-        DrawButtons(g, iServerId, iAllowStop: iStatus.IsRunning);
+        DrawButton(g, iServerId, AllowedAction(iStatus));
     }
 
     void DrawReadings(SCP_Ui g, string iServerId, ServerStatus s)
@@ -200,13 +336,13 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
                 g.Label("？ 沒有 Alive 的 Server，而 registry 裡有 **" + s.Unverifiable.Count
                         + "** 筆 `" + ServerHost.TagFor(iServerId) + "` 身分**驗不出來**"
                         + "（pid=" + string.Join(",", s.Unverifiable.ConvertAll(r => r.Pid.ToString())) + "）");
-                g.Note("⛔ 那幾筆不能當活著，也不能當死了 —— 去 ProcessAdminPage 看它們。");
+                g.Note("⛔ 那幾筆不能當活著，也不能當死了 ⇒ 本頁**不給啟動**（可能是多開一顆）—— 去 ProcessAdminPage 看它們。");
             }
             else g.Label("・Server **沒在跑**");
 
             if (s.Heartbeat != null)
                 g.Note("⚠ 但心跳檔還在（pid=" + s.Heartbeat.Pid + "）—— 上一顆沒收乾淨；"
-                       + "「停止」會順手清掉。");
+                       + "終端機 `senate server stop --id " + iServerId + "` 會順手清掉（沒在跑時它只清遺物）。");
             return;
         }
 
@@ -234,27 +370,27 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
                    + s.MyBuildId + "` ⇒ 先停止再啟動，⛔ 別讓舊的那顆替新的跑。");
     }
 
-    void DrawButtons(SCP_Ui g, string iServerId, bool iAllowStop)
+    /// <summary>選中那一顆的**唯一一顆**動作鈕（由 <see cref="AllowedAction"/> 決定是哪一顆）。</summary>
+    void DrawButton(SCP_Ui g, string iServerId, Allowed iAction)
     {
         string aPending = PendingIdFor(iServerId);
 
-        // ── 啟動 ───────────────────────────────────────────
-        // ⚠ 在跑的那顆不畫啟動鈕：按了也只會被單例鎖拒絕，而「按得下去」會讓人以為它有作用。
-        if (!iAllowStop && g.Button("啟動 `" + iServerId + "`（另開視窗）", "server/start/" + iServerId))
-            m_Message = StartDetached(iServerId);
-
-        // ── 停止（二段確認，每一顆各自一格）──────────────────
-        if (!iAllowStop)
+        if (iAction == Allowed.Start)
         {
             g.SetField(aPending, "");
+            if (g.Button("啟動 `" + iServerId + "`（另開視窗）", "server/start/" + iServerId))
+                m_Message = StartDetached(iServerId);
             return;
         }
+        if (iAction != Allowed.Stop) { g.SetField(aPending, ""); return; }
 
+        // ── 停止（二段確認，每一顆各自一格）──────────────────
         bool aArmed = g.FieldValue(aPending, "") == "stop";
         if (g.Button(aArmed ? "⚠ 再按一次＝真的停掉 `" + iServerId + "`" : "停止 `" + iServerId + "`", "server/stop/" + iServerId))
         {
             if (!aArmed)
             {
+                ClearAllPending(g);
                 g.SetField(aPending, "stop");
                 m_Message = "⚠ 待確認停止 `" + iServerId + "`：它是" + StopImpact(iServerId) + "。再按一次才會真的停。";
             }
@@ -279,13 +415,16 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     // ===========================================================
     string StartDetached(string iServerId)
     {
-        // ⚠ 這道閘量的是**上一次探測**的結果，而那可能是幾秒鐘以前的 ⇒ 現場重採一次。
+        // ⚠ 這道閘量的是**上一次探測**的結果，而那可能是幾秒鐘以前的 ⇒ 現場重採一次，
+        //   並且用同一個判準（AllowedAction）重判 —— 不只看「在不在跑」。
         //   ⛔ 真正擋得住第二顆的不是本頁，是 Server 自己的單例鎖（OS advisory lock）——
         //   本頁這一格只是讓人少看一個失敗視窗。
         ServerStatus aNow = ServerHost.Probe(m_Model.RepoRoot, iServerId);
         m_Statuses[iServerId] = aNow;
         if (aNow.IsRunning)
             return "・[" + iServerId + "] 已經有一顆在跑（pid=" + aNow.Alive!.Pid + "）⇒ **沒有啟動第二顆**。";
+        if (AllowedAction(aNow) != Allowed.Start)
+            return "・[" + iServerId + "] 身分驗不出來的記錄還在 ⇒ **沒有啟動**（可能其實在跑）。";
 
         string? aExe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(aExe))
@@ -315,13 +454,13 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         }
         catch (Exception e)
         {
-            return "🔴 啟動失敗（" + e.GetType().Name + "：" + e.Message + "）⇒ **沒有起來**。";
+            return "🔴 `" + iServerId + "` 啟動失敗（" + e.GetType().Name + "：" + e.Message + "）⇒ **沒有起來**。";
         }
 
         // ⛔ 這裡刻意**不回報「已啟動」** —— 我只知道「我送出了」。
         //   那兩件事在 2026-08 咬過我一次：回報字串會替自己說謊。
         return "・已送出啟動 `" + iServerId + "`（另一個視窗）。⚠ 這句話的意思是**我按下去了**，"
-               + "⛔ 不是「它起來了」—— 按「重新探測全部」看心跳才算數。";
+               + "⛔ 不是「它起來了」—— 按「重新探測」看心跳才算數。";
     }
 
     string StopNow(string iServerId)
@@ -335,5 +474,30 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         return aExit == 0
             ? "・`" + iServerId + "` 已停止（或本來就沒在跑）" + aTail
             : "🔴 `" + iServerId + "` 停不掉（exit " + aExit + "）" + aTail;
+    }
+
+    // ⚠ 與 `senate server stop --all`（ServerCommand.Stop）是**兩份迴圈**，形狀刻意照抄：
+    //   現場重採 → 在跑的才停 → 一顆停不掉就回非零（⛔ 不向下取最好的那一顆）。
+    //   📌 該收成一份（ServerHost.StopAll）—— 2026-09-25 寫這頁時 @summit 的 Coding 場（TASK-0296）
+    //     正握著 ServerHost.cs，⛔ 所以沒有動那支，只在這裡留一份。之後收斂時兩邊一起改。
+    string StopAllNow()
+    {
+        var aStopped = new List<string>();
+        var aFailed = new List<string>();
+        var aLines = new List<string>();
+        foreach (string aId in new List<string>(m_Statuses.Keys))
+        {
+            ServerStatus aNow;
+            try { aNow = ServerHost.Probe(m_Model.RepoRoot, aId); }
+            catch (Exception e) { aLines.Add("⚠ `" + aId + "` 量不到 ⇒ 沒有停（" + e.GetType().Name + "）"); continue; }
+            if (AllowedAction(aNow) != Allowed.Stop) continue;
+            string aOne = StopNow(aId);
+            aLines.Add(aOne);
+            if (aOne.StartsWith("🔴", StringComparison.Ordinal)) aFailed.Add(aId); else aStopped.Add(aId);
+        }
+        string aHead = aFailed.Count == 0
+            ? "・全部停止完成（" + aStopped.Count + " 顆" + (aStopped.Count > 0 ? "：" + string.Join("、", aStopped) : "") + "）"
+            : "🔴 有停不掉的：" + string.Join("、", aFailed);
+        return aHead + (aLines.Count > 0 ? "\n" + string.Join("\n", aLines) : "");
     }
 }
