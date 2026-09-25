@@ -147,8 +147,37 @@ public class Cmd_TavernWrite : ServerDelegateCmd
         aResult.AddValue("seq", aW.Seq.ToString());
         aResult.AddValue("path", aW.FullPath);
         aResult.AddValue("heal_attempts", aW.HealAttempts.ToString());
+        AppendMentions(aDataRoot, aRoom, aW.Seq, aW.FullPath, aMsg, aResult);
         AppendPayroll(aDataRoot, aRoom, aW.Seq, aMsg, aResult);
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：**寫完就通知 @ 到的人**（TASK-0299）—— 規則在 SCP_TavernMentions（與 Editor 本地寫那條同一支）。
+    // 物理意義：通知是寫入不變量（任何進到房間的訊息都該觸發），⇒ 掛在寫入端；直打本支的訊息以前沒人通知。
+    //          這裡拿得到**真的訊息檔路徑**（Editor 在 server 模式委派之後拿不到）⇒ 截斷的條目會指出全文在哪。
+    // 數值影響：通知失敗不讓寫入失敗；逐人回報。repo 根＝資料根的上一層（只用來把路徑印成 repo 相對，
+    //          資料根不在 repo 底下時退回印絕對路徑，⛔ 不影響通知本身）。
+    // ===========================================================
+    static void AppendMentions(string iDataRoot, string iRoom, int iSeq, string iMsgPath, SCP_TavernMessage iMsg, SCP_CmdResult ioResult)
+    {
+        try
+        {
+            string aRepoRoot = System.IO.Directory.GetParent(iDataRoot.TrimEnd('/', '\\'))?.FullName ?? "";
+            SCP_MentionResult r = SCP_TavernMentions.Notify(iDataRoot, SCP_MentionInput.From(iMsg, iRoom, iSeq, iMsgPath), aRepoRoot,
+                                                            iLine => ioResult.Lines.Add("· " + iLine));
+            if (r.Notified.Count > 0) ioResult.Lines.Add("📥 已通知：" + string.Join("、", r.Notified));
+            if (r.Duplicates.Count > 0) ioResult.Lines.Add("📥 已經通知過（冪等，未重寫）：" + string.Join("、", r.Duplicates));
+            foreach (string f in r.Failures) ioResult.Lines.Add("⚠ 通知失敗 " + f);
+            ioResult.AddValue("mention_notified", r.Notified.Count.ToString());
+            ioResult.AddValue("mention_dup", r.Duplicates.Count.ToString());
+            ioResult.AddValue("mention_failed", r.Failures.Count.ToString());
+        }
+        catch (Exception e)
+        {
+            ioResult.Lines.Add("⚠ 通知例外（訊息已落檔，⛔ 這一則沒通知）：" + e.GetType().Name + ": " + e.Message);
+            ioResult.AddValue("mention_failed", "exception");
+        }
     }
 
     // ===========================================================
