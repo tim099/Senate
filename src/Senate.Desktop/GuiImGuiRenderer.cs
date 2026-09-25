@@ -247,7 +247,9 @@ public sealed class GuiImGuiRenderer
                     LabelLeft(iNode.Text);
                     ImGui.SetNextItemWidth(m_Style.TextFieldWidth);
                 }
-                if (ImGui.InputText("##" + iNode.Id, ref aVal, 4096)) Fields[iNode.Id] = aVal;
+                // 密碼欄（SCP_Ui.PasswordField，TASK-0300）⇒ ImGui 自帶的遮罩輸入：畫面上是 *、也不能被複製出去
+                ImGuiInputTextFlags aFlags = iNode.Masked ? ImGuiInputTextFlags.Password : ImGuiInputTextFlags.None;
+                if (ImGui.InputText("##" + iNode.Id, ref aVal, 4096, aFlags)) Fields[iNode.Id] = aVal;
                 break;
             }
 

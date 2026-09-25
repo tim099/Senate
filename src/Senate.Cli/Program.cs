@@ -360,7 +360,10 @@ public static class Program
                 return 2;
             }
             aState.Fields[aSetId] = aVal;
-            Console.WriteLine($"・已設定 {aSetId} = {aVal}");
+            // 密碼欄（id 帶 #secret，TASK-0300）⛔ 不回顯值 —— stdout 常被導進 log／agent 的對話紀錄
+            Console.WriteLine(SCP_Ui.IsMaskedId(aSetId)
+                ? $"・已設定 {aSetId} = {SCP_GuiTextRenderer.MaskedText(aVal)}　⚠ 密碼走 --set 會留在指令歷程裡，只適合測試"
+                : $"・已設定 {aSetId} = {aVal}");
         }
 
         if (aToggle != null)
