@@ -210,27 +210,43 @@ public class Cmd_TavernWrite : ServerDelegateCmd
             ioResult.AddValue("pay_failed", aPlan.Items.Count.ToString());
             return;
         }
-        int aOk = 0, aDup = 0, aBad = 0;
+        int aOk = 0, aDup = 0, aBad = 0, aQueued = 0;
         foreach (SCP_TavernPayItem aItem in aPlan.Items)
         {
+            Dictionary<string, string> aArgs = SCP_TavernPayroll.ToBankArgs(aItem, aBankRoot.Value);
             SCP_CmdResult aR;
-            try { aR = SCP_CmdRegistry.Dispatch("bank", SCP_TavernPayroll.ToBankArgs(aItem, aBankRoot.Value)); }
+            try { aR = SCP_CmdRegistry.Dispatch("bank", aArgs); }
             catch (Exception e) { aR = SCP_CmdResult.Fail(1, "例外：" + e.GetType().Name + ": " + e.Message); }
             if (aR.Ok)
             {
                 bool aIsDup = aR.Values.Any(v => v.Key == "duplicate" && v.Value == "1");
                 if (aIsDup) aDup++; else aOk++;
                 ioResult.Lines.Add("💰 " + SCP_TavernPayroll.Describe(aItem) + (aIsDup ? "　（冪等命中，錢沒動）" : ""));
+                continue;
             }
-            else
+
+            // ── TASK-0297：銀行那顆**還在啟動／等不到**（這一筆確定還沒送進去）⇒ 照正常協議排進它的 queue，
+            //    不等結果；它起來之後的下一個心跳會自己接手，跟正常 CLI 觸發是同一條路。
+            //    🩸 此前這裡只印一行就結束 ⇒ 2026-09-20 兩則漏薪就是這樣沒的（exe 重建、Server 換手的空窗）。
+            string aWhy = aR.Values.Where(v => v.Key == "delegate_failure").Select(v => v.Value).LastOrDefault() ?? "";
+            if (ServerDelegateCmd.ShouldQueueForLater(aWhy)
+                && ServerDelegateCmd.TryQueueWithoutWaiting("bank", aArgs, out string aCmdId, out string aDetail))
             {
-                aBad++;
-                ioResult.Lines.Add("✗ 發薪失敗 " + SCP_TavernPayroll.Describe(aItem) + "　exit=" + aR.ExitCode);
-                foreach (string aLine in aR.Lines.Take(4)) ioResult.Lines.Add("    " + aLine);
+                aQueued++;
+                ioResult.Lines.Add("📥 發薪已排進銀行 queue（delegate_failure=" + aWhy + "）"
+                                   + SCP_TavernPayroll.Describe(aItem) + "　cmd_id=" + aCmdId
+                                   + " ⇒ 銀行那顆起來後自己跑");
+                continue;
             }
+
+            aBad++;
+            ioResult.Lines.Add("✗ 發薪失敗 " + SCP_TavernPayroll.Describe(aItem) + "　exit=" + aR.ExitCode
+                               + (aWhy.Length > 0 ? "　delegate_failure=" + aWhy : ""));
+            foreach (string aLine in aR.Lines.Take(4)) ioResult.Lines.Add("    " + aLine);
         }
         ioResult.AddValue("pay_ok", aOk.ToString());
         ioResult.AddValue("pay_dup", aDup.ToString());
+        ioResult.AddValue("pay_queued", aQueued.ToString());
         ioResult.AddValue("pay_failed", aBad.ToString());
     }
 }

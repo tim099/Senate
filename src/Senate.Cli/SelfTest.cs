@@ -79,6 +79,7 @@ public static class SelfTest
         One(nameof(QueueCommitKeepsEntriesAppendedDuringBatch), "core", QueueCommitKeepsEntriesAppendedDuringBatch),
         One(nameof(VanishedCmdIsUnknownNotSuccess), "core", VanishedCmdIsUnknownNotSuccess),
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
+        One(nameof(QueueForLaterWhenServerUnavailable), "core", QueueForLaterWhenServerUnavailable),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
         One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
@@ -196,6 +197,58 @@ public static class SelfTest
             if (iEntry.Group.Contains(aTok, StringComparison.OrdinalIgnoreCase)) return true;
         }
         return false;
+    }
+
+    // ── TASK-0297：Server 等不到 ⇒ 照正常協議排進它的 queue、不等（它起來之後自己接手）──────
+    // ⚠ RepoRootProvider 暫時指到拋棄式目錄 ⇒ 寫的是**假的** Server 根，⛔ 不碰線上兩顆 Server 的 queue。
+    static CheckRow QueueForLaterWhenServerUnavailable()
+    {
+        const string aName = "Server 等不到時排進 queue 不等（TASK-0297）";
+        var aFails = new List<string>();
+        // ① 分類：只排「確定還沒送進去」的；已送出（timeout／unknown）與刻意拒絕（build_mismatch）不排
+        foreach (string s in new[] { "autostart_timeout", "autostart_failed", "not_running", "queue_busy" })
+            if (!ServerDelegateCmd.ShouldQueueForLater(s)) aFails.Add(s + " 應排");
+        foreach (string s in new[] { "timeout", "unknown", "build_mismatch", "submit_failed", "cmd_failed", "" })
+            if (ServerDelegateCmd.ShouldQueueForLater(s)) aFails.Add("'" + s + "' 不該排");
+
+        Func<string>? aSaved = ServerDelegateCmd.RepoRootProvider;
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_q4l_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        try
+        {
+            ServerDelegateCmd.RepoRootProvider = () => aRoot;
+            var aArgs = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["op"] = "credit", ["bank_root"] = Path.Combine(aRoot, "Bank"), ["account"] = "template",
+                ["amount"] = "1", ["kind"] = "work_post", ["ref"] = "demo#seq=1", ["caller"] = "system",
+                ["idem_key"] = "work_post_demo_1",
+            };
+            // ② 真的寫一次：queue 裡有這一筆、trigger 在（＝Server 起來的下一個心跳會接手）
+            bool aOk = ServerDelegateCmd.TryQueueWithoutWaiting("bank", aArgs, out string aCmdId, out string aDetail);
+            string aServerRoot = SenatePaths.ServerRoot(aRoot, SCP.Core.Proc.SCP_ServerIds.Default);
+            string aQueue = AgentCmdClient.QueuePath(aServerRoot, ServerDelegateCmd.DefaultLane);
+            string aTrigger = AgentCmdClient.TriggerPath(aServerRoot, ServerDelegateCmd.DefaultLane);
+            string aText = File.Exists(aQueue) ? File.ReadAllText(aQueue) : "";
+            if (!aOk) aFails.Add("沒排進去：" + aDetail);
+            else
+            {
+                if (!aText.Contains(aCmdId)) aFails.Add("queue.json 裡找不到 cmd_id " + aCmdId);
+                if (!aText.Contains("work_post_demo_1")) aFails.Add("queue.json 裡沒有原封的 idem_key");
+                if (aText.Contains("\"timeout\"")) aFails.Add("timeout（CLI 端參數）被送進 queue 了");
+                if (!File.Exists(aTrigger)) aFails.Add("pending.trigger 不在 ⇒ Server 起來不會接手");
+            }
+            // ③ 反向對照：不是委派 Cmd ⇒ 不寫任何東西
+            if (ServerDelegateCmd.TryQueueWithoutWaiting("help", aArgs, out _, out _)) aFails.Add("非委派 Cmd 也排進去了");
+
+            return new CheckRow(aName,
+                aFails.Count == 0 ? "分類 10 格＋真寫 queue／trigger＋原封參數＋不帶 timeout＋反向對照 全過" : string.Join("；", aFails),
+                aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally
+        {
+            ServerDelegateCmd.RepoRootProvider = aSaved;
+            try { Directory.Delete(aRoot, true); } catch { }
+        }
     }
 
     // 區塊職責：queue 子分道（`<persona>/<lane>`）的路徑與**身分不被污染**。

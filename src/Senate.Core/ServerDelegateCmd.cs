@@ -266,6 +266,57 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         return aResult;
     }
 
+    // ===========================================================
+    // 區塊職責：**送進 queue 但不等**（TASK-0297）—— Server 等不到的時候，把這一筆照正常協議排進它的 queue，
+    //           讓它起來之後自己接手跑。
+    // 物理意義：Tim 2026-09-25：「Server 還在啟動中而 CLI 等待有限 ⇒ 超時就寫檔，等 Server 重啟後讀檔補上 ——
+    //           跟正常 CLI 觸發一樣，不用處理重複。」
+    //           ⇒ 那個「檔」就是 Server 自己的 queue：`ServerExecutor.Tick` 每個心跳都掃 `pending.trigger`，
+    //             起來之前就排著的那一筆，起來後的下一個心跳就會被接手（⛔ 不另造一個待補目錄／補送機制）。
+    // 數值影響：只寫 Server 根的 queue／trigger，⛔ 不等 result、不讀回傳檔。
+    //
+    // ⚠ 只在 <see cref="ShouldQueueForLater"/> 為 true 時用 —— 那幾種失敗全部發生在**送出之前**
+    //   （autostart 等不到／拉不起來／起來又不見／分道前一筆沒收），⇒ 這一筆**確定還沒進 Server**，
+    //   排進去就是它的第一次，⛔ 不會跟任何一次撞。
+    //   ⛔ `timeout`／`unknown` 不排：那兩種是**已經送出**了（在 Server 手上），再排一次才是重複。
+    //   ⛔ `build_mismatch` 不排：那是刻意拒絕讓舊的 exe 替新的跑。
+    // ===========================================================
+
+    /// <summary>這一種委派失敗，是不是「確定還沒送進 Server」—— 是 ⇒ 可以排進 queue 等它起來。</summary>
+    public static bool ShouldQueueForLater(string? iDelegateFailure)
+        => iDelegateFailure is "autostart_timeout" or "autostart_failed" or "not_running" or "queue_busy";
+
+    /// <summary>
+    /// 把 <paramref name="iCmdName"/> 照正常協議排進它那顆 Server 的 queue，**不等結果**。
+    /// 回 <c>true</c> ＝ 已寫進 queue（<paramref name="oCmdId"/> 可拿去對 result 檔）。
+    /// </summary>
+    public static bool TryQueueWithoutWaiting(string iCmdName, IReadOnlyDictionary<string, string> iRawArgs,
+                                              out string oCmdId, out string oDetail)
+    {
+        oCmdId = "";
+        if (SCP_CmdRegistry.Find(iCmdName) is not ServerDelegateCmd aCmd)
+        { oDetail = $"`{iCmdName}` 不是委派給 Server 的 Cmd"; return false; }
+        if (RepoRootProvider == null) { oDetail = "宿主沒有裝上 RepoRootProvider"; return false; }
+
+        (SCP_CmdArgs? aArgs, List<string> aErrors) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRawArgs);
+        if (aArgs == null) { oDetail = "參數不合：" + string.Join("；", aErrors); return false; }
+
+        string aServerRoot = SenatePaths.ServerRoot(RepoRootProvider(), SCP_ServerIds.Normalize(aCmd.ServerId));
+        string aLane = aCmd.Lane(aArgs);
+        // 跟 Execute ③ 同一個形狀：只帶宣告過的參數，timeout 是 CLI 端的不送。
+        var aSend = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (SCP_CmdArgSpec aSpec in aCmd.ArgSpecs)
+            if (aSpec.Name != "timeout") aSend[aSpec.Name] = aArgs.Get(aSpec.Name);
+        try
+        {
+            oCmdId = AgentCmdClient.Submit(aServerRoot, aLane, aCmd.Name, aSend, _ => { },
+                iInjectPersona: aLane != DefaultLane);
+        }
+        catch (Exception e) { oDetail = "寫不進 queue：" + e.GetType().Name + ": " + e.Message; return false; }
+        oDetail = $"已排進 `{SCP_ServerIds.Normalize(aCmd.ServerId)}` 的 queue（lane={aLane}）";
+        return true;
+    }
+
     static double ParseTimeout(SCP_CmdArgs iArgs, SCP_CmdResult oResult)
     {
         string aRaw = iArgs.Get("timeout");
