@@ -159,9 +159,28 @@ public abstract class ServerDelegateCmd : SCP_Cmd
                 return aResult;
             }
         }
-        aResult.Lines.Add($"⤷ 由 senate server 執行 @ pid={aStatus.Alive!.Pid} build={aStatus.Heartbeat?.BuildId ?? "?"}");
+        // TASK-0304：心跳還不是這顆寫的（剛起來、或檔是上一顆的遺物）⇒ 等它寫出來再比。
+        //   ⛔ 不在這個窗裡下「版本不符」—— 那會把「還不知道」當成「確定不符」拒掉。
+        if (!aStatus.BuildKnown)
+            aStatus = WaitForBuildKnown(aRepoRoot, aServerId, aStatus, BuildKnownWaitMs);
+        aResult.Lines.Add($"⤷ 由 senate server 執行 @ pid={aStatus.Alive?.Pid.ToString() ?? "?"} build={aStatus.Heartbeat?.BuildId ?? "?"}");
         aResult.AddValue("delegate_host", "server");
+        if (aStatus.Alive == null)
+        {
+            aResult.ExitCode = 3;
+            aResult.AddValue("delegate_failure", "not_running");
+            aResult.Lines.Add("✗ 等心跳的時候 Server 不在了 —— 這一筆**沒有送出**。");
+            return aResult;
+        }
         aResult.AddValue("server_pid", aStatus.Alive.Pid.ToString());
+        if (!aStatus.BuildKnown)
+        {
+            aResult.ExitCode = 3;
+            aResult.AddValue("delegate_failure", "build_unknown");
+            aResult.Lines.Add($"✗ Server pid={aStatus.Alive.Pid} 活著，但等了 {BuildKnownWaitMs / 1000.0:0.#}s 心跳還不是它寫的"
+                              + $"（心跳 pid={aStatus.Heartbeat?.Pid.ToString() ?? "無"}）⇒ 比不出版本 —— 這一筆**沒有送出**。");
+            return aResult;
+        }
         if (!aStatus.BuildMatches)
         {
             aResult.ExitCode = 3;
@@ -280,11 +299,31 @@ public abstract class ServerDelegateCmd : SCP_Cmd
     //   排進去就是它的第一次，⛔ 不會跟任何一次撞。
     //   ⛔ `timeout`／`unknown` 不排：那兩種是**已經送出**了（在 Server 手上），再排一次才是重複。
     //   ⛔ `build_mismatch` 不排：那是刻意拒絕讓舊的 exe 替新的跑。
+    //   ✅ `build_unknown`（TASK-0304）排：Server 活著、只是心跳還沒寫出來 ⇒ 這一筆確定還沒送出，
+    //   ⚠ 而接手它的是**那顆活著的 Server** —— 跟 `not_running` 排進去之後由誰接手是同一種暴露，
+    //     ⛔ 不是 build_mismatch 那種「已經確定是舊 exe」。
     // ===========================================================
 
     /// <summary>這一種委派失敗，是不是「確定還沒送進 Server」—— 是 ⇒ 可以排進 queue 等它起來。</summary>
     public static bool ShouldQueueForLater(string? iDelegateFailure)
-        => iDelegateFailure is "autostart_timeout" or "autostart_failed" or "not_running" or "queue_busy";
+        => iDelegateFailure is "autostart_timeout" or "autostart_failed" or "not_running" or "queue_busy"
+                            or "build_unknown";
+
+    /// <summary>等「心跳是活著那顆寫的」最多多久。心跳每 500ms 寫一次，冷啟動前段要掃 Cmd 目錄。</summary>
+    public const int BuildKnownWaitMs = 5000;
+
+    /// <summary>輪詢 Probe 直到 <see cref="ServerStatus.BuildKnown"/> 或逾時；回最後一份讀數（⛔ 不回舊的那份）。</summary>
+    static ServerStatus WaitForBuildKnown(string iRepoRoot, string iServerId, ServerStatus iFirst, int iTimeoutMs)
+    {
+        ServerStatus aStatus = iFirst;
+        var aSw = System.Diagnostics.Stopwatch.StartNew();
+        while (!aStatus.BuildKnown && aStatus.Alive != null && aSw.ElapsedMilliseconds < iTimeoutMs)
+        {
+            System.Threading.Thread.Sleep(200);
+            aStatus = ServerHost.Probe(iRepoRoot, iServerId);
+        }
+        return aStatus;
+    }
 
     /// <summary>
     /// 把 <paramref name="iCmdName"/> 照正常協議排進它那顆 Server 的 queue，**不等結果**。

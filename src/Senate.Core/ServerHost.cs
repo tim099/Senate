@@ -95,6 +95,20 @@ public sealed class ServerStatus
     /// <summary>Server 跑的是不是跟我同一顆 exe。⚠ 只有兩邊都有 build id 才有意義；任一邊是 unversioned 也算不符（那正是 Debug vs exe 那兩本帳）。</summary>
     public bool BuildMatches => Heartbeat != null && Heartbeat.BuildId.Length > 0
                                 && string.Equals(Heartbeat.BuildId, MyBuildId, StringComparison.Ordinal);
+
+    // ===========================================================
+    // 區塊職責：心跳裡的 build **是不是活著那顆自己寫的** —— 不是的話，它比不出「符不符」。
+    // 物理意義：Server 啟動時**先登記進 registry、後寫心跳檔**（`RunForeground`），
+    //          而 autostart 判「上線了」看的是 registry ⇒ 中間有一段「活著但心跳檔不在／
+    //          還是上一顆的」的窗。
+    // 🩸 TASK-0304（2026-09-25 seq 21827）：那個窗裡讀到 `build=?`，被 `BuildMatches=false`
+    //    判成 build_mismatch ⇒ 發薪「沒有送出」而且不排 queue（0297 刻意不收 mismatch）。
+    //    ⇒ 「還不知道」與「確定不符」處置相反（再等一下 ／ 拒絕），⛔ 不准共用一個出口。
+    // 數值影響：只讀。
+    // ===========================================================
+    /// <summary>心跳是活著那顆 pid 寫的、而且有 build id ⇒ 才比得出符不符。</summary>
+    public bool BuildKnown => Alive != null && Heartbeat != null && Heartbeat.BuildId.Length > 0
+                              && Heartbeat.Pid == Alive.Pid;
 }
 
 public static class ServerHost

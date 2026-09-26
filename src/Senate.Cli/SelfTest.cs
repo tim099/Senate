@@ -81,6 +81,7 @@ public static class SelfTest
         One(nameof(VanishedCmdIsUnknownNotSuccess), "core", VanishedCmdIsUnknownNotSuccess),
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
         One(nameof(QueueForLaterWhenServerUnavailable), "core", QueueForLaterWhenServerUnavailable),
+        One(nameof(ServerBuildKnownClassification), "core", ServerBuildKnownClassification),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
         One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
@@ -208,7 +209,7 @@ public static class SelfTest
         const string aName = "Server 等不到時排進 queue 不等（TASK-0297）";
         var aFails = new List<string>();
         // ① 分類：只排「確定還沒送進去」的；已送出（timeout／unknown）與刻意拒絕（build_mismatch）不排
-        foreach (string s in new[] { "autostart_timeout", "autostart_failed", "not_running", "queue_busy" })
+        foreach (string s in new[] { "autostart_timeout", "autostart_failed", "not_running", "queue_busy", "build_unknown" })
             if (!ServerDelegateCmd.ShouldQueueForLater(s)) aFails.Add(s + " 應排");
         foreach (string s in new[] { "timeout", "unknown", "build_mismatch", "submit_failed", "cmd_failed", "" })
             if (ServerDelegateCmd.ShouldQueueForLater(s)) aFails.Add("'" + s + "' 不該排");
@@ -242,7 +243,7 @@ public static class SelfTest
             if (ServerDelegateCmd.TryQueueWithoutWaiting("help", aArgs, out _, out _)) aFails.Add("非委派 Cmd 也排進去了");
 
             return new CheckRow(aName,
-                aFails.Count == 0 ? "分類 10 格＋真寫 queue／trigger＋原封參數＋不帶 timeout＋反向對照 全過" : string.Join("；", aFails),
+                aFails.Count == 0 ? "分類 11 格＋真寫 queue／trigger＋原封參數＋不帶 timeout＋反向對照 全過" : string.Join("；", aFails),
                 aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
@@ -251,6 +252,41 @@ public static class SelfTest
             ServerDelegateCmd.RepoRootProvider = aSaved;
             try { Directory.Delete(aRoot, true); } catch { }
         }
+    }
+
+    // 區塊職責：TASK-0304 —— 心跳不是活著那顆寫的時候，「版本」要判成「還不知道」，⛔ 不是「不符」。
+    // 物理意義：Server 先登記、後寫心跳 ⇒ autostart 剛判上線的那一刻心跳檔常常不在（或是上一顆的遺物）。
+    //          09-25 seq 21827 就是在這個窗裡被判 build_mismatch 而丟掉發薪。
+    // 數值影響：純記憶體，只建 ServerStatus 讀數，⛔ 不碰任何 Server。
+    static CheckRow ServerBuildKnownClassification()
+    {
+        const string aName = "心跳不是活著那顆寫的 ⇒ build 判「未知」不判「不符」（TASK-0304）";
+        var aFails = new List<string>();
+        ServerStatus Make(ServerHeartbeat? iHb) => new ServerStatus
+        {
+            Alive = new SCP.Core.Proc.SCP_ProcessRecord { Pid = 100 },
+            Heartbeat = iHb,
+            MyBuildId = "NEW",
+        };
+        // ① 還不知道的三種：心跳檔不在／是上一顆（pid 不同）的遺物／沒有 build id
+        var aNoFile = Make(null);
+        var aStale = Make(new ServerHeartbeat { Pid = 99, BuildId = "OLD" });
+        var aEmpty = Make(new ServerHeartbeat { Pid = 100, BuildId = "" });
+        foreach (var (aLabel, aS) in new[] { ("心跳檔不在", aNoFile), ("上一顆的心跳", aStale), ("build 空白", aEmpty) })
+            if (aS.BuildKnown) aFails.Add(aLabel + " 被當成已知");
+        // ② 已知且相符
+        var aMatch = Make(new ServerHeartbeat { Pid = 100, BuildId = "NEW" });
+        if (!aMatch.BuildKnown || !aMatch.BuildMatches) aFails.Add("同 pid 同 build 沒判相符");
+        // 🔴 ③ 反向對照：心跳確實是這顆寫的、build 真的不同 ⇒ 已知且不符（0297 刻意擋的那格不能被打開）
+        var aOld = Make(new ServerHeartbeat { Pid = 100, BuildId = "OLD" });
+        if (!aOld.BuildKnown || aOld.BuildMatches) aFails.Add("真的舊 exe 沒判成「已知且不符」");
+        if (ServerDelegateCmd.ShouldQueueForLater("build_mismatch")) aFails.Add("build_mismatch 被排進 queue");
+        if (!ServerDelegateCmd.ShouldQueueForLater("build_unknown")) aFails.Add("build_unknown 沒排進 queue");
+        return new CheckRow(aName,
+            aFails.Count == 0
+                ? "未知 3 種（無心跳／上一顆／空 build）不判符合與否；同 pid 同 build ⇒ 相符；🔴 反向：同 pid 舊 build ⇒ 已知且不符、不排"
+                : string.Join("；", aFails),
+            aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 
     // 區塊職責：queue 子分道（`<persona>/<lane>`）的路徑與**身分不被污染**。
