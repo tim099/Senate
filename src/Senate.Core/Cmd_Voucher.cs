@@ -140,7 +140,9 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             bool aAlive = SCP_VoucherBook.IsAlive(aBatch, aNow);
             aResult.Lines.Add($"    {(aAlive ? "·" : "⛔")} {aBatch.Amount,6} 張"
                               + $"　到期 {(aBatch.ExpiresAtUtc.Length > 0 ? aBatch.ExpiresAtUtc : "（永久）")}"
-                              + (aAlive ? "" : "　已過期（下次寫入時清掉）")
+                              + (aAlive ? "" : aBatch.Amount <= 0
+                                  ? "　已用完（保留期內留給結算讀取）"
+                                  : "　已過期（保留期過後的下一次寫入清掉）")
                               + (aBatch.Source.Length > 0 ? $"　{aBatch.Source}" : ""));
         }
         if (aBook.UpdatedAtUtc.Length > 0)
@@ -222,9 +224,10 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
     //   TASK-0195 那隻病（**查無被算成用完**）就是這樣長出來的，
     //   而兩者在畫面上一模一樣。⇒ 讓那個減法在物理上拿不到數字。
     //
-    // ⚠ **射程**：券不記歷史 ⇒ 批次在過期後的下一次寫入就被清掉
-    //   ⇒ 那之後本 op 只能回 `found=0`（＝「我不知道」，⛔ 不是「沒用」）。
-    //   這是「不留歷史」這個拍板的**已知代價**，不是漏掉的一格。
+    // ⚠ **射程**：券不記歷史 ⇒ 批次死掉（花完／過期）滿 `DeadBatchRetention`（24h）後的
+    //   下一次寫入就被清掉 ⇒ 那之後本 op 只能回 `found=0`（＝「我不知道」，⛔ 不是「沒用」）。
+    //   🩸 TASK-0302 之前沒有保留期：「花完」那一次寫入就把批次清掉，
+    //   ⇒ 全部用完的那一場收工永遠答查無。保留期內三種情況（全用／部分／沒用）都答得出來。
     // ===========================================================
     static SCP_CmdResult OpUsage(SCP_LettersRoot iLetters, string iPersona, string iVoucher, SCP_CmdArgs iArgs)
     {
@@ -237,27 +240,17 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         if (aProblem != null) return SCP_CmdResult.Fail(1, "✗ " + aProblem);
 
         DateTime aNow = DateTime.UtcNow;
-        int aGranted = 0, aRemain = 0, aAlive = 0;
-        bool aFound = false;
-        foreach (SCP_VoucherBatch aBatch in aBook.Expiring)
-        {
-            if (!string.Equals(aBatch.Ref, aRef, StringComparison.Ordinal)) continue;
-            aFound = true;
-            aGranted += aBatch.Granted > 0 ? aBatch.Granted : aBatch.Amount;
-            aRemain += aBatch.Amount;
-            if (SCP_VoucherBook.IsAlive(aBatch, aNow)) aAlive += aBatch.Amount;
-        }
-        if (!aFound) { aGranted = 0; aRemain = 0; aAlive = 0; }
+        bool aFound = aBook.TryUsageByRef(aRef, aNow, out int aGranted, out int aRemain, out int aAlive);
         int aUsed = aGranted - aRemain;
         if (aUsed < 0) aUsed = 0;
 
         var aResult = SCP_CmdResult.Success(aFound
             ? $"# `{iVoucher}`　`{iPersona}`　`{aRef}`：發 **{aGranted}**　剩 **{aRemain}**　用 **{aUsed}**"
             : $"# `{iVoucher}`　`{iPersona}`　`{aRef}`：**查無這一批** ——"
-              + " ⛔ 那是「我不知道」不是「一張都沒用」（批次可能已過期被清掉）");
+              + " ⛔ 那是「我不知道」不是「一張都沒用」（批次可能已死掉超過保留期而被清掉）");
         if (aFound)
             aResult.Lines.Add($"  · 其中**還花得掉的** {aAlive}"
-                              + (aAlive < aRemain ? "　⚠ 其餘已過期（下次寫入時清掉）" : ""));
+                              + (aAlive < aRemain ? "　⚠ 其餘已過期（保留期過後的下一次寫入清掉）" : ""));
         aResult.AddValue("found", aFound ? "1" : "0");
         aResult.AddValue("granted", aGranted.ToString());
         aResult.AddValue("remain", aRemain.ToString());
