@@ -25,6 +25,7 @@ using SCP.Core.Bank;
 using SCP.Core.Io;
 using SCP.Core.Proc;
 using SCP.Core.Tavern;
+using SCP.Core.Voucher;
 using System.Globalization;
 
 using Senate.Cli.Pages;
@@ -124,6 +125,7 @@ public static class SelfTest
         One(nameof(BankAccountCleanRoom), "bank", BankAccountCleanRoom),
         One(nameof(BankLedgerConcurrentDebit), "bank", BankLedgerConcurrentDebit),
         One(nameof(JsonExtensionDataRoundTrip), "bank", JsonExtensionDataRoundTrip),
+        One(nameof(VoucherDeadBatchRetention), "bank", VoucherDeadBatchRetention),
 
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
         Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
@@ -4383,6 +4385,70 @@ public static class SelfTest
     sealed class NoExtBagType
     {
         public string Name = "";
+    }
+
+    // 區塊職責：TASK-0302 —— 死掉的限時券批次在保留期內仍讀得到用量，過了保留期才清。
+    // 物理意義：自由時間收工結算走 `op=usage`（→ `TryUsageByRef`）。以前「花完」那一次寫入
+    //          就把批次清掉 ⇒ 全用完的那一場永遠答查無。這一格跑三種場（全用／部分／沒用）
+    //          ＋反向對照（保留期過後必須真的清掉、而且死批次一張都花不出去）。
+    // 數值影響：只在暫存目錄建檔，跑完刪掉；⛔ 不碰任何真的資料樹。
+    static CheckRow VoucherDeadBatchRetention()
+    {
+        const string aName = "券批次死掉後保留 24h：全用／部分／沒用三種場收工都讀得到用量（TASK-0302）";
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_voucher_" + Guid.NewGuid().ToString("N")[..8]);
+        var aLetters = new SCP_LettersRoot(Path.Combine(aRoot, "letters"));
+        try
+        {
+            DateTime aT0 = new DateTime(2026, 9, 26, 10, 0, 0, DateTimeKind.Utc);
+            DateTime aExpire = aT0.AddHours(1);
+            DateTime aSettle = aT0.AddHours(2);                                  // 收工：過期之後、保留期之內
+            DateTime aLate = aExpire + SCP_VoucherBook.DeadBatchRetention + TimeSpan.FromMinutes(1);
+
+            // 每一種場各一個 persona，免得「先花最早到期的」讓三批互相吃
+            (int granted, int remain, int alive, bool found, int spendable) Run(string iPersona, int iSpend, DateTime iReadAt)
+            {
+                var aBook = new SCP_VoucherBook { Persona = iPersona, Voucher = "canvas" };
+                aBook.Expiring.Add(new SCP_VoucherBatch
+                {
+                    Amount = 10, Granted = 10, Ref = "ft-probe",
+                    ExpiresAtUtc = aExpire.ToString("o", CultureInfo.InvariantCulture),
+                });
+                if (iSpend > 0 && !SCP_VoucherStore.TryConsume(aBook, iSpend, aT0, out string? aWhy))
+                    throw new Exception("TryConsume 失敗：" + aWhy);
+                if (!SCP_VoucherStore.Save(aLetters, aBook, aT0, "TEST", out _, out string? aErr1))
+                    throw new Exception(aErr1);
+                // 模擬「過期之後又有一次寫入」—— 舊碼在這一刻（或花完那一刻）就把批次清掉
+                SCP_VoucherBook aMid = SCP_VoucherStore.Load(aLetters, iPersona, "canvas", out _);
+                if (!SCP_VoucherStore.Save(aLetters, aMid, iReadAt, "TEST", out _, out string? aErr2))
+                    throw new Exception(aErr2);
+                SCP_VoucherBook aBack = SCP_VoucherStore.Load(aLetters, iPersona, "canvas", out _);
+                bool aFound = aBack.TryUsageByRef("ft-probe", iReadAt, out int g, out int r, out int a);
+                return (g, r, a, aFound, aBack.Spendable(iReadAt));
+            }
+
+            var aAll = Run("all", 10, aSettle);
+            var aPart = Run("part", 3, aSettle);
+            var aNone = Run("none", 0, aSettle);
+            var aGone = Run("gone", 10, aLate);
+            var aGoneNone = Run("gonenone", 0, aLate);
+
+            bool aOkAll = aAll.found && aAll.granted == 10 && aAll.remain == 0;
+            bool aOkPart = aPart.found && aPart.granted == 10 && aPart.remain == 7 && aPart.alive == 0;
+            bool aOkNone = aNone.found && aNone.granted == 10 && aNone.remain == 10 && aNone.alive == 0;
+            bool aNoSpend = aAll.spendable == 0 && aPart.spendable == 0 && aNone.spendable == 0;
+            bool aPruned = !aGone.found && aGone.granted == 0 && !aGoneNone.found && aGoneNone.granted == 0;
+
+            bool aOk = aOkAll && aOkPart && aOkNone && aNoSpend && aPruned;
+            string aReading =
+                $"全用：found={aAll.found} 發 {aAll.granted} 剩 {aAll.remain}{(aOkAll ? "" : " **錯**")}"
+                + $"；部分：發 {aPart.granted} 剩 {aPart.remain} 可花 {aPart.alive}{(aOkPart ? "" : " **錯**")}"
+                + $"；沒用：發 {aNone.granted} 剩 {aNone.remain}{(aOkNone ? "" : " **錯**")}"
+                + $"；死批次可花總額 {aAll.spendable}/{aPart.spendable}/{aNone.spendable}{(aNoSpend ? "" : " **死批次被當成還能花**")}"
+                + $"；🔴 反向對照（保留期過後）：{(aPruned ? "兩批都清掉、回查無" : "**沒清掉 —— 保留期沒有上限**")}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aRoot, true); } catch { } }
     }
 
     static CheckRow JsonExtensionDataRoundTrip()
