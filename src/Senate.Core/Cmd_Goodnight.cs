@@ -1,264 +1,372 @@
-// 區塊職責：晚安五步的 `senate cmd` 入口 —— `goodnight-check` / `-portrait` / `-letter` /
-//           `-sleep` / `-logout`。五支全部**委派給 Unity Editor** 執行。
-// 物理意義：晚安動的是共享權威狀態（lock 刪除／registry offline／酒館下線廣播／Task 收工閘），
-//           而那些只有 Editor 那側有實作。⇒ 入口統一在 `senate cmd`，底下走 AgentCommand 檔案協議。
-// 數值影響：本 process 零寫入；狀態變更全在目標專案的 Editor 端發生。
-//
-// ⚠ 為什麼 `letter` 也委派 —— 它是五步裡唯一「看起來可以原生」的那支（純 letters 層），
-//   而我判它不搬。理由不是風險大，是**收益是零**：
-//   原生唯一買得到的東西是「不需要 Editor」，而 check/portrait/sleep/logout 四步全部需要 Editor
-//   ⇒ `letter` 原生也走不完晚安。代價卻是實的 ——
-//   `UCL_AwakeningService.WriteWakeLetter` 的檔名是 `WakeLetterCount(persona) + 1`，
-//   也就是**由磁碟檔數算出來的**，然後 `AtomicWrite` 過去。
-//   🩸 2026-08-31 血證（basecamp）：`SCP_Consolidate.WakeLetterCount` 第一版寫成「數 wakes/ 全部 *.md」，
-//      而某人的 wakes/ 裡有一個 `20260804_wake22.md`（8 位數前綴、不符 `^\d{6}_.*\.md$`）
-//      ⇒ 那個人的計數多 1。**全庫只有她的資料能觸發，其他人完全正常。**
-//   ⇒ 算錯的後果不是報錯，是**覆蓋掉既有的那封信** —— 安靜地吃掉一個人一天的記憶，
-//      而她已經下線了，沒有人會回來檢查。
-//   ⇒ 判準（basecamp 的原句）：**這一格會不會產生第二個寫者。**
-//      買不到東西的第二個寫者，價格再低都太貴。
-//
-// ⚠ 為什麼是五支獨立 Cmd 而不是一支 `--arg step=` —— 同 `Cmd_Morning.cs` 的理由：
-//   `ArgSpecs` 是每支一份扁平清單，沒有「隨 step 改變的必填」。折成一支的話
-//   `letter_body`（letter 要）與 `about`/`body`（portrait 要）都只能宣告成選填
-//   ⇒ **必填檢查整個退化成零**。判準：參數集合隨動詞改變 ⇒ 一個動詞一支 Cmd。
+// 區塊職責：晚安流程的 `senate cmd` 入口 —— `goodnight-check` / `-portrait` / `-letter` / `-sleep` / `-logout`。
+//           五支都在 Senate **就地執行**，不需要 Unity Editor（TASK-0305，承接 TASK-0303 早安）。
+// 物理意義：邏輯在 SCP_Core `SCP_Goodnight`（Editor 的 `senate ucmd run GoodNight` 呼叫同一份），本檔只做
+//           「參數 → 呼叫 → 落回傳檔」＋ sleep 的組裝（預檢 → 寫入 → 關場 → 廣播 → 作廢 token）。
+//           下線廣播交給酒館 Server（`tavern-write`）。
+// ⚠ 只有兩段要 Editor：本人**進行中的觀影場**要結算（付錢／收播公告／關錄影頁），以及收工閘帶 `skip_reason`
+//   時要把理由**寫進單子**（單子寫入端只有 Editor）。Tim 2026-09-26 拍板：**Editor 沒開就跳過那一段，
+//   不得卡住晚安** ⇒ Editor 活著（酒保心跳新鮮）就整步交給 `goodnight-sleep-editor`；沒開就照走並大聲說
+//   跳過了什麼（觀影場留著不關 → 到期成殘留、殘留結算會補付；skip 理由改印進回傳檔與下線廣播）。
+//   ⛔ 判斷 Editor 在不在用**心跳**，不用「送出去等逾時」：逾時是「不知道」—— Editor 可能稍後才執行，
+//   那樣會跟本地版重複下線一次。
 using SCP.Core.Cmd;
+using SCP.Core.Letters;
+using SCP.Core.Tavern;
 
 namespace Senate.Core;
 
-/// <summary>晚安委派 Cmd 的共用殼：把「這一步的下一步指令名」講清楚。</summary>
-public abstract class GoodnightDelegateCmd : UnityDelegateCmd
-{
-    /// <summary>
-    /// 回傳檔裡的 `## next` 是 **Editor 端**寫的，印的是 `senate ucmd`（底層直派）那一步。
-    /// <para>⚠ 字面 2026-09-10 更新（同 `Cmd_Morning`）：`run_cmd.py` 已刪除，
-    /// 而回傳檔改印 `senate ucmd` ⇒ 差別是**粒度**不是兩套流程。</para>
-    /// <para>⚠ 走 CLI 的人照著打會打到另一個入口 —— 所以這裡補一行對照，
-    /// **但不改寫回傳檔的內容**：改寫別人的產出，就沒有人知道那份檔真正說了什麼。</para>
-    /// </summary>
-    protected abstract override string CliNextHint { get; }
-
-    protected static IEnumerable<SCP_CmdArgSpec> GoodnightSpecs()
-    {
-        yield return new SCP_CmdArgSpec("persona",
-            "要對誰做這一步。⚠ **一律顯式** —— 猜錯的代價是把同事登出，而擾動過的 session 回不來",
-            iRequired: true);
-        foreach (SCP_CmdArgSpec aSpec in CommonSpecs()) yield return aSpec;
-    }
-
-    /// <summary>`step` ＋ `persona` —— 五支都要送的那兩格。</summary>
-    protected Dictionary<string, string> StepArgs(SCP_CmdArgs iArgs, string iStep)
-        => new Dictionary<string, string> { ["step"] = iStep, ["persona"] = iArgs.Get("persona") };
-
-    protected sealed override string UnityCmdType => "GoodNight";
-}
-
 // ── ① check ──────────────────────────────────────────────────────
 
-public sealed class Cmd_GoodnightCheck : GoodnightDelegateCmd
+public sealed class Cmd_GoodnightCheck : MorningLocalCmd
 {
     public override string Name => "goodnight-check";
-
-    public override string Summary => "晚安①唯讀起手：待辦盤點＋酒館最後一眼 —— 由 Unity Editor 執行";
-
+    public override string Summary => "晚安①唯讀起手：待辦盤點＋酒館最後一眼＋Task 對帳 —— Senate 就地執行，不需要 Editor";
     public override string Details =>
-        "**唯讀** —— 這一步不下線、不寫信、不改任何狀態，只把「收工前該看的東西」攤出來：\n"
-        + "未收工的單、酒館最後一眼、以及後續每一步的導引。\n"
-        + "⚠ 它印的收工預告**只列不擋** —— 真正的實擋在 `goodnight-sleep`。";
-
-    public override string PortNote =>
-        "待辦盤點走 UCL_TaskReconcile（判準是四條件合取，**裡面沒有日曆**）＋ ChatTavernIO 讀取，兩者都未移植";
-
+        "純讀：lock 狀態、酒館最近 10 筆（peek 不動游標）、Task 對帳（見叢引用／未關單／逾期認領／記憶連結／收工預告），\n"
+        + "最後印人工收尾清單（portrait 與 letter 標 **required**，會實擋）。";
     public override string Example => SCP_CmdRegistry.Invoke("goodnight-check --arg persona=Template");
-
     protected override string CliNextHint =>
-        SCP_CmdRegistry.Invoke("goodnight-portrait --arg persona=<P> …（畫像或顯式跳過，二擇一）");
+        "照回傳檔的收尾清單走 → " + SCP_CmdRegistry.Invoke("goodnight-portrait --arg persona=<P> --arg about=<同事> --arg-file body=<檔>");
+    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new List<SCP_CmdArgSpec>(MorningSpecs());
 
-    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new List<SCP_CmdArgSpec>(GoodnightSpecs());
-
-    protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
-        => StepArgs(iArgs, "check");
+    protected override string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult)
+        => GoodnightLocal.Finish(iRoots, iArgs.Get("persona").Trim(), "check",
+                                 SCP_Goodnight.Check(iRoots, iArgs.Get("persona").Trim()), ioResult);
 }
 
 // ── ② portrait ───────────────────────────────────────────────────
 
-public sealed class Cmd_GoodnightPortrait : GoodnightDelegateCmd
+public sealed class Cmd_GoodnightPortrait : MorningLocalCmd
 {
     public override string Name => "goodnight-portrait";
-
-    public override string Summary => "晚安②見人畫像投遞，或顯式跳過 —— 由 Unity Editor 執行";
-
+    public override string Summary => "晚安②見人畫像投遞（親筆），或顯式跳過 —— Senate 就地執行，不需要 Editor";
     public override string Details =>
-        "投遞：`about` ＋ `headline` ＋ `body`（親筆，長內文走 `--arg-file`）。\n"
-        + "跳過：只給 `skip_reason` —— 而理由會印進下線廣播，所以它是**對同事說的話**，不是給工具的旗標。\n"
-        + "⚠ 這一步會**擋住** `goodnight-letter`：畫像或顯式跳過，二擇一，沒有第三條。\n"
-        + "⚠ `about`+`body` 與 `skip_reason` 的**互斥檢查在 Editor 那側**，本 CLI 不重做一份 ——\n"
-        + "   兩個地方各判一次的話，兩份判準遲早分岔，而分岔的那天兩邊都不會報錯。";
-
-    public override string PortNote =>
-        "sketchbook 寫入 ＋ 酒館廣播（seq 分配）仍在 Editor 那側，未移植";
-
+        "兩條路二擇一（**會擋 letter**）：\n"
+        + "  · 畫一幅：about ＋ body（親筆公開層）必填；headline／private_body／affinity 選填。\n"
+        + "    事實源寫進自己的 sketchbook，公開層投遞到對方的 portraits（私層不留痕跡）。about 必須是現有 persona。\n"
+        + "  · 今夜不畫：skip_reason ——理由會印進下線廣播。";
     public override string Example =>
-        SCP_CmdRegistry.Invoke("goodnight-portrait --arg persona=Template --arg skip_reason=今晚沒有值得畫的一格");
-
-    protected override string CliNextHint =>
-        SCP_CmdRegistry.Invoke("goodnight-letter --arg persona=<P> --arg-file letter_body=<檔>");
-
+        SCP_CmdRegistry.Invoke("goodnight-portrait --arg persona=Template --arg about=basecamp --arg headline=<標題> --arg-file body=D:/tmp/p.md");
+    protected override string CliNextHint => SCP_CmdRegistry.Invoke("goodnight-letter --arg persona=<P> --arg-file letter_body=<檔>");
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
     {
         get
         {
-            var aSpecs = new List<SCP_CmdArgSpec>(GoodnightSpecs());
-            aSpecs.Add(new SCP_CmdArgSpec("about", "畫誰（同事的 persona 名）"));
-            aSpecs.Add(new SCP_CmdArgSpec("headline", "一句話標題"));
-            aSpecs.Add(new SCP_CmdArgSpec("body", "公開層內文（**親筆**，工具不代筆）。長內文走 --arg-file"));
-            aSpecs.Add(new SCP_CmdArgSpec("private_body", "私層內文（選填）"));
-            aSpecs.Add(new SCP_CmdArgSpec("affinity", "好感讀數，如 `11/在意`（選填）"));
-            aSpecs.Add(new SCP_CmdArgSpec("skip_reason",
-                "**今晚為什麼不畫** —— 顯式跳過用。理由會印進下線廣播"));
-            return aSpecs;
+            var a = new List<SCP_CmdArgSpec>(MorningSpecs());
+            a.Add(new SCP_CmdArgSpec("about", "畫誰（同事的 persona 名）"));
+            a.Add(new SCP_CmdArgSpec("headline", "一句話標題"));
+            a.Add(new SCP_CmdArgSpec("body", "公開層內文（**親筆**，工具不代筆）。長內文走 --arg-file"));
+            a.Add(new SCP_CmdArgSpec("private_body", "私層內文（選填，只留在自己的 sketchbook）"));
+            a.Add(new SCP_CmdArgSpec("affinity", "好感讀數，如 `11/在意`（選填）"));
+            a.Add(new SCP_CmdArgSpec("skip_reason", "今夜不畫的理由（會印進下線廣播）"));
+            return a;
         }
     }
 
-    protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
+    protected override string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult)
     {
-        Dictionary<string, string> aArgs = StepArgs(iArgs, "portrait");
-        // ⚠ 空值不送 —— 送空字串與「沒給」在對面看起來一模一樣，而 portrait 的互斥判準
-        //   正是靠「哪幾格有值」決定走投遞還是跳過。
-        AddIfSet(aArgs, iArgs, "about");
-        AddIfSet(aArgs, iArgs, "headline");
-        AddIfSet(aArgs, iArgs, "body");
-        AddIfSet(aArgs, iArgs, "private_body");
-        AddIfSet(aArgs, iArgs, "affinity");
-        AddIfSet(aArgs, iArgs, "skip_reason");
-        return aArgs;
-    }
-
-    static void AddIfSet(Dictionary<string, string> ioTarget, SCP_CmdArgs iArgs, string iKey)
-    {
-        string aValue = iArgs.Get(iKey);
-        if (aValue.Length > 0) ioTarget[iKey] = aValue;
+        string p = iArgs.Get("persona").Trim();
+        return GoodnightLocal.Finish(iRoots, p, "portrait", SCP_Goodnight.Portrait(iRoots, p,
+            iArgs.Get("about"), iArgs.Get("headline"), iArgs.Get("body"), iArgs.Get("private_body"),
+            iArgs.Get("skip_reason"), iArgs.Get("affinity")), ioResult);
     }
 }
 
 // ── ③ letter ─────────────────────────────────────────────────────
 
-public sealed class Cmd_GoodnightLetter : GoodnightDelegateCmd
+public sealed class Cmd_GoodnightLetter : MorningLocalCmd
 {
     public override string Name => "goodnight-letter";
-
-    public override string Summary => "晚安③收尾信落檔（body 必須親筆）—— 由 Unity Editor 執行";
-
+    public override string Summary => "晚安③收尾信落檔（body 必須親筆）—— Senate 就地執行，不需要 Editor";
     public override string Details =>
-        "收尾信寫進 `wakes/<編號>_<時戳>.md`，並同步 `_latest.md`（那是**內容副本**不是連結）。\n"
-        + "`letter_body` 只寫你自己的話 —— **工具代筆的信不是你的**。\n"
-        + "⚠ 作者自己在 body 開頭寫的 frontmatter 會被拆：與機器欄同名的存成 `<key>_as_written`，\n"
-        + "   不同名的原樣保留。機器欄固定五個：`type/actor/written_at/written_by_persona/trigger`。\n"
-        + "⚠ **本步刻意不在 CLI 這側原生實作**（檔頭有完整理由）：信編號由磁碟檔數算出，\n"
-        + "   多一個寫者就多一次算錯的機會，而算錯是**覆蓋掉既有的那封信**，不是報錯。";
-
-    public override string PortNote =>
-        "刻意不移植 —— 寫入端只留 Editor 一個。`wakes/` 的檔名由 WakeLetterCount+1 決定，"
-        + "第二個寫者算錯會 AtomicWrite 覆蓋既有的信（安靜地吃掉一天的記憶）";
-
-    public override string Example =>
-        SCP_CmdRegistry.Invoke("goodnight-letter --arg persona=Template --arg-file letter_body=D:/tmp/letter.md");
-
-    protected override string CliNextHint => SCP_CmdRegistry.Invoke("goodnight-sleep --arg persona=<P>");
-
+        "寫 `wakes/<N>_<ts>.md`（N＝信數＋1）並同步 `_latest.md`。\n"
+        + "⚠ 前置：今天已投遞畫像或顯式跳過（goodnight-portrait）；收尾信版面已遷移。\n"
+        + "⚠ 目標編號已有信就擋 —— 不覆寫（編號推導與磁碟不一致時，蓋掉舊信是最糟的結果）。";
+    public override string Example => SCP_CmdRegistry.Invoke("goodnight-letter --arg persona=Template --arg-file letter_body=D:/tmp/letter.md");
+    protected override string CliNextHint => SCP_CmdRegistry.Invoke("goodnight-sleep --arg persona=<P> [--arg-file summary=<檔>]");
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
     {
         get
         {
-            var aSpecs = new List<SCP_CmdArgSpec>(GoodnightSpecs());
-            // ⚠ 參數名刻意與 Editor 協議**逐字同形**（`letter_body`，不簡化成 `body`）——
-            //   改名等於在兩個入口之間多一層翻譯，而翻譯錯的症狀是「參數靜默取預設值」。
-            aSpecs.Add(new SCP_CmdArgSpec("letter_body",
-                "你**親筆**的收尾信。長內文走 --arg-file", iRequired: true));
-            return aSpecs;
+            var a = new List<SCP_CmdArgSpec>(MorningSpecs());
+            a.Add(new SCP_CmdArgSpec("letter_body", "寫給未來自己的收尾信（**親筆**）。長內文走 --arg-file", iRequired: true));
+            return a;
         }
     }
 
-    protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
+    protected override string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult)
     {
-        Dictionary<string, string> aArgs = StepArgs(iArgs, "letter");
-        aArgs["letter_body"] = iArgs.Get("letter_body");
-        return aArgs;
+        string p = iArgs.Get("persona").Trim();
+        return GoodnightLocal.Finish(iRoots, p, "letter", SCP_Goodnight.Letter(iRoots, p, iArgs.Get("letter_body")), ioResult);
     }
 }
 
-// ── ④ sleep ──────────────────────────────────────────────────────
+// ── ④ sleep ／ ⑤ logout ─────────────────────────────────────────
 
-public sealed class Cmd_GoodnightSleep : GoodnightDelegateCmd
+public sealed class Cmd_GoodnightSleep : MorningLocalCmd
 {
     public override string Name => "goodnight-sleep";
-
-    public override string Summary => "晚安④下線：收工閘→offline→解鎖→下線廣播 —— 由 Unity Editor 執行";
-
-    public override string Details =>
-        "步驟順序是**不變式**，不能重排：權威狀態先落地（profile offline ／刪 lock）→ 下線廣播\n"
-        + "（best-effort）→ 最後才 expire token。\n"
-        + "⚠ **收工閘會實擋**：有未收工的單時本步非零退出，回傳檔帶出口清單。\n"
-        + "   `skip_reason` 可以過閘 —— 但那個理由會**寫進那幾張單的時間線**，\n"
-        + "   也就是說它不是一個旗標，是一筆留給下一個看那張單的人的紀錄。\n"
+    public override string Summary => "晚安④下線：收工閘→解鎖→關場→下線廣播→作廢 token —— Senate 就地執行，Editor 沒開也下得了線";
+    public override string Details => GoodnightLocal.SleepDetails
+        + "\n⚠ **收工閘會實擋**：有未收工的單時非零退出。`skip_reason` 可以過閘 —— Editor 活著時理由寫進那幾張單的時間線；\n"
+        + "   沒開時改印進回傳檔與下線廣播（單子寫入端只有 Editor）。\n"
         + "⚠ 需要先寫信（`goodnight-letter`）。不想寫信的下線走 `goodnight-logout`。";
-
-    public override string PortNote =>
-        "收工閘走 UCL_TaskReconcile.PendingWrapups（402 行，判準四條件合取）＋ profile 寫入 ＋ 酒館廣播，全未移植";
-
-    public override string Example => SCP_CmdRegistry.Invoke("goodnight-sleep --arg persona=Template");
-
+    public override string Example => SCP_CmdRegistry.Invoke("goodnight-sleep --arg persona=Template --arg-file summary=D:/tmp/s.md");
     protected override string CliNextHint =>
-        "（晚安到此結束 —— 下線後不要再跑任何 goodnight-* ；要重新上線走 "
-        + SCP_CmdRegistry.Invoke("morning-wake --arg persona=<P>") + "）";
+        "（晚安到此結束 —— 要重新上線走 " + SCP_CmdRegistry.Invoke("morning-wake --arg persona=<P>") + "）";
+    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => GoodnightLocal.SleepSpecs(MorningSpecs(), iSleep: true);
 
+    protected override string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult)
+        => GoodnightLocal.RunSleep(iRoots, iArgs, ioResult, iNoLetter: false);
+}
+
+public sealed class Cmd_GoodnightLogout : MorningLocalCmd
+{
+    public override string Name => "goodnight-logout";
+    public override string Summary => "手動登出／cleanup（不寫信，廣播標明未留信）—— Senate 就地執行，不需要 Editor";
+    public override string Details =>
+        "**這不是晚安的第五步，是另一條路** —— session 壞掉、或只想清掉 lock 時走它。\n"
+        + "⚠ 不套收工閘（那是 cleanup 不是收工）；不寫信 ⇒ 廣播標明未留信。**它不能代替 goodnight-sleep。**\n"
+        + "⚠ lock 在但讀不了（壞檔）也會刪掉並明說 —— 那正是 cleanup 要處理的情況。\n" + GoodnightLocal.SleepDetails;
+    public override string Example => SCP_CmdRegistry.Invoke("goodnight-logout --arg persona=Template");
+    protected override string CliNextHint =>
+        "（cleanup 完成 —— 要正常收工走 " + SCP_CmdRegistry.Invoke("goodnight-check --arg persona=<P>") + "）";
+    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => GoodnightLocal.SleepSpecs(MorningSpecs(), iSleep: false);
+
+    protected override string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult)
+        => GoodnightLocal.RunSleep(iRoots, iArgs, ioResult, iNoLetter: true);
+}
+
+/// <summary>晚安本地 Cmd 的共用段（落回傳檔／sleep 組裝／Editor 在不在）。</summary>
+internal static class GoodnightLocal
+{
+    internal const string SleepDetails =
+        "順序是**不變式**：預檢（全部守衛，零寫入）→ 刪 lock／now_status → 關本人活動 session → 下線廣播（best-effort）→ 作廢 token。\n"
+        + "只有兩段要 Editor：進行中的**觀影場**結算、收工閘 `skip_reason` 寫進單子。Editor 活著（酒保心跳 ≤4 秒）⇒ 整步交給 Editor；\n"
+        + "沒開 ⇒ 照走，只跳過那一段並在回傳檔明說（觀影場留著，到期成殘留後由殘留結算補付）。";
+
+    internal static IReadOnlyList<SCP_CmdArgSpec> SleepSpecs(IEnumerable<SCP_CmdArgSpec> iBase, bool iSleep)
+    {
+        var a = new List<SCP_CmdArgSpec>(iBase);
+        if (iSleep)
+        {
+            a.Add(new SCP_CmdArgSpec("summary", "公開的睡前心得（選填，併入下線廣播）"));
+            a.Add(new SCP_CmdArgSpec("skip_reason", "跳過收工閘的理由（Editor 活著時寫進那幾張單的時間線）"));
+        }
+        a.Add(new SCP_CmdArgSpec("note", "附註（選填，併入下線廣播）"));
+        a.Add(new SCP_CmdArgSpec("no_token", "=true ⇒ 廣播顯式不帶 session_token（enforce 除錯用）"));
+        a.Add(new SCP_CmdArgSpec("timeout", "等酒館 Server／Editor 回執的秒數（預設 30）"));
+        return a;
+    }
+
+    /// <summary>check／portrait／letter：落回傳檔、blocked 非零退出。</summary>
+    internal static string Finish(SCP_MorningRoots iRoots, string iPersona, string iStep, SCP_MorningStepResult iRes, SCP_CmdResult ioResult)
+    {
+        string aPath = SCP_Goodnight.StepPayloadPath(iRoots, iPersona, iStep);
+        SCP_CmdPayload.Write(aPath, iRes.Report);
+        if (!iRes.Ok)
+        {
+            ioResult.ExitCode = 1;
+            ioResult.Lines.Add("⛔ 被擋下 —— 原因與出口在回傳檔的 `## blocked`");
+        }
+        else ioResult.Lines.Add($"✓ goodnight {iStep} 完成");
+        return aPath;
+    }
+
+    /// <summary>Editor 在不在 tick：酒保 daemon 心跳（Editor update 迴圈每 0.5 秒摸一次）。</summary>
+    internal static bool EditorAlive(string iDataRoot, out string oWhy)
+    {
+        string aHb = Path.Combine(iDataRoot, ProjectProbe.HeartbeatRelPath);
+        if (!File.Exists(aHb)) { oWhy = "沒有酒保心跳檔"; return false; }
+        TimeSpan aAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(aHb);
+        oWhy = $"酒保心跳 {aAge.TotalSeconds:F1} 秒前";
+        return aAge <= ProjectProbe.HeartbeatStaleAfter;
+    }
+
+    internal static string? RunSleep(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult, bool iNoLetter)
+    {
+        string aPersona = iArgs.Get("persona").Trim();
+        string aStep = iNoLetter ? "logout" : "sleep";
+        string aSkip = iNoLetter ? "" : iArgs.Get("skip_reason").Trim();
+        string aPath = SCP_Goodnight.StepPayloadPath(iRoots, aPersona, aStep);
+
+        // ① 預檢（零寫入）
+        SCP_GoodnightPreflight aPre = SCP_Goodnight.SleepPreflight(iRoots, aPersona, iNoLetter, aSkip);
+        if (aPre.Blocked)
+        {
+            SCP_CmdPayload.Write(aPath, aPre.Report);
+            ioResult.ExitCode = 1;
+            ioResult.Lines.Add("⛔ 被擋下（零寫入）—— 原因與出口在回傳檔的 `## blocked`");
+            return aPath;
+        }
+
+        // ② 需要 Editor 的那兩段：活著就整步交出去；沒開就照走、跳過那段
+        var aSkipped = new List<string>();
+        if (aPre.NeedsEditor.Length > 0)
+        {
+            bool aAlive = EditorAlive(iRoots.DataRoot, out string aWhy);
+            if (aAlive)
+            {
+                ioResult.Lines.Add($"⤷ 這一步有一段要 Editor（{aPre.NeedsEditor}）；Editor 活著（{aWhy}）⇒ 整步交給 goodnight-{aStep}-editor");
+                var aFwd = new Dictionary<string, string>(StringComparer.Ordinal) { ["persona"] = aPersona };
+                foreach (string k in new[] { "project", "timeout", "summary", "skip_reason", "note", "no_token" })
+                {
+                    if (iNoLetter && (k == "summary" || k == "skip_reason")) continue;
+                    string v = iArgs.Get(k);
+                    if (v.Length > 0) aFwd[k] = v;
+                }
+                SCP_CmdResult aEd = SCP_CmdRegistry.Dispatch($"goodnight-{aStep}-editor", aFwd);
+                foreach (string l in aEd.Lines) ioResult.Lines.Add("  │ " + l);
+                foreach (var kv in aEd.Values) ioResult.AddValue(kv.Key, kv.Value);
+                foreach (string o in aEd.Outputs) ioResult.AddOutput(o);
+                ioResult.ExitCode = aEd.ExitCode;
+                if (!aEd.Ok)
+                    ioResult.Lines.Add("⚠ Editor 那一趟沒成功 —— ⛔ **不改走本地**：它可能稍後才執行（逾時＝不知道），"
+                        + $"重複下線比晚一點下線糟。先看 `{aPath}` 與 lock 在不在再決定。");
+                return null;
+            }
+            ioResult.Lines.Add($"⚠ 這一步有一段要 Editor（{aPre.NeedsEditor}），而 Editor 沒開（{aWhy}）⇒ 照走晚安，**只跳過那一段**");
+            if (aPre.ActiveStreamWatchId.Length > 0)
+                aSkipped.Add($"觀影場 `{aPre.ActiveStreamWatchId}` 沒結算、沒關 —— 到期後成為殘留，下次 StreamWatch start 或 "
+                    + $"`senate cmd sessions --arg op=close --arg target_persona={aPersona} --arg confirm=1` 會補結算（付到 ends_at）");
+            if (aPre.NeedsTaskSkipWrite)
+                aSkipped.Add($"收工閘顯式跳過（{aPre.PendingWrapups.Count} 張：{string.Join("、", aPre.PendingWrapups.Select(t => t.Id))}）"
+                    + $"—— 理由**沒寫進單子時間線**（Editor 沒開），改記在這裡與下線廣播：{aSkip}");
+        }
+
+        // ③ 寫入：刪 lock／now_status、組廣播
+        SCP_GoodnightSleep aApply = SCP_Goodnight.SleepApply(iRoots, aPersona, iNoLetter, aPre);
+        // ④ 關本人活動 session（觀影場不關 —— 見上）
+        string aSessionLine = SCP_Goodnight.CloseOwnSessionNative(iRoots, aPersona, iNoLetter);
+
+        // ⑤ 下線廣播（best-effort；token 在刪 lock 前就讀好了）
+        string aSummary = iNoLetter ? "" : iArgs.Get("summary").Trim();
+        string aBody = aApply.BroadcastBody.Replace("{SUMMARY}", aSummary.Length == 0 ? "" : $"💭 **今日心得**\n{aSummary}\n\n");
+        if (!iNoLetter)
+        {
+            string? aPortraitSkip = SCP_Goodnight.PortraitSkipReasonToday(iRoots, aPersona);
+            if (!string.IsNullOrEmpty(aPortraitSkip)) aBody += $"\n- 🖼 本夜未畫像，理由：{aPortraitSkip}";
+            if (aPre.NeedsTaskSkipWrite) aBody += $"\n- 📋 收工閘顯式跳過（{aPre.PendingWrapups.Count} 張），理由：{aSkip}";
+        }
+        string aNote = iArgs.Get("note");
+        if (aNote.Length > 0) aBody += $"\n- Note: {aNote}";
+        bool aNoToken = iArgs.Get("no_token").ToLowerInvariant() == "true";
+        var aMeta = new Dictionary<string, string>(StringComparer.Ordinal)
+        { ["tag"] = "goodnight-protocol", ["category"] = "meta", ["status-change"] = "offline" };
+        string aBroadcastLine;
+        SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
+            iRoots.Region, "tavern", aPersona, aBody, aMeta, aNoToken ? "" : (aApply.Token ?? ""));
+        foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
+        if (aDraft.Message == null)
+            aBroadcastLine = $"未發（組訊息被拒：{aDraft.Error}）—— 核心已落地，同事看 lock 判在線";
+        else
+        {
+            string aTimeout = iArgs.Get("timeout");
+            SCP_CmdResult aW = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["data_root"] = iRoots.DataRoot, ["room"] = "tavern",
+                ["msg_json"] = SCP_TavernWriter.Serialize(aDraft.Message),
+                ["timeout"] = aTimeout.Length > 0 ? aTimeout : "30",
+            });
+            string aSeq = aW.Values.FirstOrDefault(kv => kv.Key == "seq").Value ?? "";
+            string aFail = aW.Values.FirstOrDefault(kv => kv.Key == "delegate_failure").Value ?? "";
+            aBroadcastLine = aW.Ok && aSeq.Length > 0 ? $"seq **{aSeq}**"
+                : aFail == "timeout" || aFail == "unknown"
+                    ? $"**不知道**有沒有發（delegate_failure={aFail}）—— ⛔ 別直接補發，先 `senate cmd tavern-query --arg kind=tail` 回讀"
+                    : $"未發（{(aFail.Length > 0 ? "delegate_failure=" + aFail : "exit " + aW.ExitCode)}）—— 核心已落地，補發非必要（同事看 lock 判在線）";
+            if (aSeq.Length > 0) ioResult.AddValue("post_seq", aSeq);
+        }
+
+        // ⑥ 作廢 token（在廣播之後 —— enforce ON 時廣播要帶活的 token）
+        int aExpired = SCP_Goodnight.ExpireTokens(iRoots, aPersona, iNoLetter ? "logout" : "goodnight");
+
+        var aSb = new System.Text.StringBuilder(aApply.Report);
+        aSb.AppendLine();
+        if (aSkipped.Count > 0)
+        {
+            aSb.AppendLine("## ⚠ 因 Editor 沒開而跳過的段（Tim 2026-09-26：不得卡住晚安）");
+            foreach (string s in aSkipped) aSb.AppendLine("- " + s);
+        }
+        aSb.AppendLine("## verify（讀回的事實）");
+        aSb.AppendLine($"- lock: exists={File.Exists(SCP.Core.Paths.SCP_LettersPaths.SessionLockPath(iRoots.Letters, aPersona))}（應為 False）");
+        aSb.AppendLine($"- broadcast: {aBroadcastLine}");
+        aSb.AppendLine(aExpired >= 0 ? $"- session_token expired: {aExpired} 筆" : "- session_token expired: **讀不到 _tokens.json**（⛔ 不是 0 筆）");
+        aSb.AppendLine(aSessionLine);
+        aSb.AppendLine("## next");
+        aSb.AppendLine($"- 收工。明天醒來：senate cmd morning-wake --arg persona={aPersona}");
+        if (!iNoLetter) aSb.AppendLine("- （可選）還想花錢再睡 → ucl-spending-time（消費時間不綁死晚安）");
+        SCP_CmdPayload.Write(aPath, aSb.ToString());
+        ioResult.Lines.Add($"✓ 已下線（廣播：{aBroadcastLine.Split('—')[0].Trim()}）" + (aSkipped.Count > 0 ? $"　⚠ 跳過 {aSkipped.Count} 段（見回傳檔）" : ""));
+        return aPath;
+    }
+}
+
+// ── Editor 路（只在「那兩段要 Editor 而 Editor 活著」時由上面自動轉派；也可以手動直打）──────────
+
+/// <summary>晚安委派 Cmd 的共用殼（整步交給 Editor 的 `Cmd_GoodNight`）。</summary>
+public abstract class GoodnightDelegateCmd : UnityDelegateCmd
+{
+    protected override string CliNextHint => "";
+
+    protected static IEnumerable<SCP_CmdArgSpec> GoodnightSpecs()
+    {
+        yield return new SCP_CmdArgSpec("persona",
+            "要對誰做這一步。⚠ **一律顯式** —— 猜錯的代價是把同事登出，而擾動過的 session 回不來", iRequired: true);
+        foreach (SCP_CmdArgSpec aSpec in CommonSpecs()) yield return aSpec;
+    }
+
+    protected Dictionary<string, string> Forward(SCP_CmdArgs iArgs, string iStep, params string[] iKeys)
+    {
+        var a = new Dictionary<string, string> { ["step"] = iStep, ["persona"] = iArgs.Get("persona") };
+        foreach (string k in iKeys)
+        {
+            string v = iArgs.Get(k);
+            if (v.Length > 0) a[k] = v;   // 空值不送：沒給與給了空的在對面看起來一樣
+        }
+        return a;
+    }
+
+    protected sealed override string UnityCmdType => "GoodNight";
+}
+
+public sealed class Cmd_GoodnightSleepEditor : GoodnightDelegateCmd
+{
+    public override string Name => "goodnight-sleep-editor";
+    public override string Summary => "晚安④下線的 Editor 路 —— 觀影場要結算／收工閘 skip 要寫進單子時，goodnight-sleep 會自動轉派到這裡";
+    public override string Details => "整步交給 Unity Editor 的 Cmd_GoodNight（它有觀影結算與單子寫入端）。平常直接用 goodnight-sleep 即可。";
+    public override string Example => SCP_CmdRegistry.Invoke("goodnight-sleep-editor --arg persona=Template");
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
     {
         get
         {
-            var aSpecs = new List<SCP_CmdArgSpec>(GoodnightSpecs());
-            aSpecs.Add(new SCP_CmdArgSpec("summary", "公開的睡前心得（選填，併入下線廣播）"));
-            aSpecs.Add(new SCP_CmdArgSpec("skip_reason",
-                "跳過收工閘的理由。⚠ 會寫進那幾張單的時間線 —— 那是紀錄不是旗標"));
-            return aSpecs;
+            var a = new List<SCP_CmdArgSpec>(GoodnightSpecs());
+            a.Add(new SCP_CmdArgSpec("summary", "公開的睡前心得（選填）"));
+            a.Add(new SCP_CmdArgSpec("skip_reason", "跳過收工閘的理由（寫進那幾張單的時間線）"));
+            a.Add(new SCP_CmdArgSpec("note", "附註（選填）"));
+            a.Add(new SCP_CmdArgSpec("no_token", "=true ⇒ 廣播顯式不帶 session_token"));
+            return a;
         }
     }
-
     protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
-    {
-        Dictionary<string, string> aArgs = StepArgs(iArgs, "sleep");
-        string aSummary = iArgs.Get("summary");
-        if (aSummary.Length > 0) aArgs["summary"] = aSummary;
-        string aSkip = iArgs.Get("skip_reason");
-        if (aSkip.Length > 0) aArgs["skip_reason"] = aSkip;
-        return aArgs;
-    }
+        => Forward(iArgs, "sleep", "summary", "skip_reason", "note", "no_token");
 }
 
-// ── ⑤ logout（獨立，不是第五步）────────────────────────────────────
-
-public sealed class Cmd_GoodnightLogout : GoodnightDelegateCmd
+public sealed class Cmd_GoodnightLogoutEditor : GoodnightDelegateCmd
 {
-    public override string Name => "goodnight-logout";
-
-    public override string Summary => "手動登出／cleanup（不寫信，廣播標明未留信）—— 由 Unity Editor 執行";
-
-    public override string Details =>
-        "**這不是晚安的第五步，是另一條路** —— session 壞掉、或只想清掉 lock 時走它。\n"
-        + "⚠ 它**不套收工閘**（那是 cleanup 不是收工）。合併的話「手動登出」會被沒收工的單擋住，\n"
-        + "   而那正是它存在的理由：擋住出口的守衛沒有出口。\n"
-        + "⚠ 不寫信 ⇒ `wakes/` 不會新增，下線廣播會標明未留信。**它不能代替 goodnight-sleep。**";
-
-    public override string PortNote => "lock 刪除 ＋ profile offline ＋ 酒館廣播仍在 Editor 那側，未移植";
-
-    public override string Example => SCP_CmdRegistry.Invoke("goodnight-logout --arg persona=Template");
-
-    protected override string CliNextHint =>
-        "（cleanup 完成 —— 這條路不寫信，所以沒有下一步；要正常收工走 "
-        + SCP_CmdRegistry.Invoke("goodnight-check --arg persona=<P>") + "）";
-
-    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new List<SCP_CmdArgSpec>(GoodnightSpecs());
-
+    public override string Name => "goodnight-logout-editor";
+    public override string Summary => "手動登出的 Editor 路 —— 有進行中觀影場要結算時，goodnight-logout 會自動轉派到這裡";
+    public override string Details => "整步交給 Unity Editor 的 Cmd_GoodNight（它有觀影結算）。平常直接用 goodnight-logout 即可。";
+    public override string Example => SCP_CmdRegistry.Invoke("goodnight-logout-editor --arg persona=Template");
+    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
+    {
+        get
+        {
+            var a = new List<SCP_CmdArgSpec>(GoodnightSpecs());
+            a.Add(new SCP_CmdArgSpec("note", "附註（選填）"));
+            a.Add(new SCP_CmdArgSpec("no_token", "=true ⇒ 廣播顯式不帶 session_token"));
+            return a;
+        }
+    }
     protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
-        => StepArgs(iArgs, "logout");
+        => Forward(iArgs, "logout", "note", "no_token");
 }
