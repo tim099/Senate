@@ -391,6 +391,13 @@ public static class ServerHost
             else iErr("⚠ " + aCardMsg);
         }
 
+        // 延後發文匣（TASK-0312）只歸酒館那顆 —— alter 配對的訊息到點由它投回自己的 tavern lane。
+        bool aFlushDeferred = string.Equals(aServerId, SCP_ServerIds.Tavern, StringComparison.Ordinal);
+        if (aFlushDeferred)
+            foreach (string aOrphan in SenateTavernDeferred.Orphans(aServerRoot))
+                iErr("⚠ 延後發文匣有上次認領了、不知道送出去沒的一則：" + aOrphan
+                     + " —— ⛔ 不自動重送（可能已經發了）；對照酒館後手動處理");
+
         string aExitWhy;
         try
         {
@@ -411,6 +418,12 @@ public static class ServerHost
                     // (乙)：排不乾 ⇒ **拒絕退出**，回到服務迴圈繼續跑。
                     // ⛔ 不硬切：被切的那條會在下一顆 Server 啟動時續跑 ＝ 那筆 cmd 做第二次。
                     continue;
+                }
+                if (aFlushDeferred)
+                {
+                    // 先投再 Tick：投進去的那一則這一圈就會被執行器看到。單筆失敗在 FlushDue 裡回報，⛔ 不讓它打掛服務迴圈。
+                    try { SenateTavernDeferred.FlushDue(aServerRoot, DateTime.UtcNow, iOut); }
+                    catch (Exception e) { iErr("⚠ 延後發文匣這一圈沒掃成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
                 aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);

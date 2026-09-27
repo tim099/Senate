@@ -149,7 +149,34 @@ public class Cmd_TavernWrite : ServerDelegateCmd
         aResult.AddValue("heal_attempts", aW.HealAttempts.ToString());
         AppendMentions(aDataRoot, aRoom, aW.Seq, aW.FullPath, aMsg, aResult);
         AppendPayroll(aDataRoot, aRoom, aW.Seq, aMsg, aResult);
+        AppendCreativeArchive(aDataRoot, aRoom, aW.Seq, aMsg, aResult);
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：**寫完就寄 creative 留念信**（TASK-0312）—— 判準與信文在 SCP_TavernCreativeArchive（與 Editor 本地寫那條同一支）。
+    // 物理意義：掛在寫入端（同 @mention／發薪）而不是發文前處理：留念信要 seq，而 alter 延後發文排程時還沒有 seq；
+    //          放這裡 ⇒ Senate 路、Editor 路（writer=server 時也委派這裡）、延後發文都恰好寄一封。
+    // 數值影響：寫兩份信件檔。失敗只寫進回傳值 —— 訊息已經落檔、seq 已經給出去了，⛔ 不讓寫入回報失敗。
+    // ===========================================================
+    static void AppendCreativeArchive(string iDataRoot, string iRoom, int iSeq, SCP_TavernMessage iMsg, SCP_CmdResult ioResult)
+    {
+        try
+        {
+            string aLetters = SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(iDataRoot)).Value;
+            bool? aSent = SCP_TavernCreativeArchive.TrySend(aLetters, iMsg.SenderPersona, iRoom, iSeq, iMsg.Body, iMsg.Meta,
+                                                            out string aInbox, out string aError);
+            if (aSent == null) return;   // 不是 creative／匿名／空內文 ⇒ 不需要寄（跟「寄失敗」不同形）
+            ioResult.AddValue("creative_mail", aSent.Value ? "sent" : "failed");
+            ioResult.Lines.Add(aSent.Value
+                ? "📜 創作留念信 → @" + iMsg.SenderPersona + "（" + aInbox + "）"
+                : "⚠ 創作已貼出（seq " + iSeq + "）但留念掛號信沒寄成：" + aError);
+        }
+        catch (Exception e)
+        {
+            ioResult.AddValue("creative_mail", "failed");
+            ioResult.Lines.Add("⚠ 創作留念信丟例外（貼文本身不受影響）：" + e.Message);
+        }
     }
 
     // ===========================================================

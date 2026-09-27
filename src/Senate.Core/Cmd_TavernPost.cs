@@ -2,16 +2,15 @@
 // 物理意義：Tim 2026-09-27：「發文要走 ucmd run Tavern 是否可以改成 Senate CLI 的 cmd」。
 //          路是 `morning-intro` 已經走通的那一條：`SCP_TavernPostCompose.Build` 在 Senate 組訊息
 //          （sender_id／顯示名／頭像／詞典附註），再交給 `tavern-write`（酒館 Server：配號建檔＋發薪＋@mention）。
-//          本檔只多做三件 intro 用不到的事：meta／refs／reply_to 的解析、`status` → now_status、以及下面那張擋下清單。
+//          本檔只多做 intro 用不到的事：meta／refs／reply_to 的解析、`status` → now_status、以及寫入前後的四段前處理。
 // 數值影響：寫一則酒館訊息（經 Server）＋ 回傳檔 `letters/<P>/cmd/tavern_post.md`；帶 `status` 時寫 `cmd/now_status.json`。
 //
-// ⛔ **Editor `Cmd_Tavern.Op_Post` 還有三段前處理沒搬** —— 遇到就 exit 2 擋下並指回 `ucmd run Tavern`，
-//   ⛔ 不靜默略過（略過的樣子是「訊息發出去了、只是少做一件事」，而那件事沒有任何一層會叫）：
-//   ①（已搬，TASK-0311）meta schema：tag=commit／task-assign／task-ack ⇒ `SCP_TavernMetaSchema.Validate`（與 Editor 同一支）
-//   ② tag=creative 的歸檔信（`TryArchiveCreativePost`）
-//   ③ CLI 指令（body 第一個字是酒保 CLI 前綴）—— Editor 會打 `cli-cmd` tag 並跳過詞典附註
-//   ④ alter 配對延遲（上一則是自己的 alter 搭檔，或帶 `alter-*` meta）
-//   要搬的那天，把判準搬進 `SCP_TavernPostCompose`（兩個宿主共用），再從這張清單刪掉一格。
+// Editor `Cmd_Tavern.Op_Post` 的前處理**全部**搬完了（TASK-0311／0312），每一段的判準都住 SCP_Core、兩個宿主共用：
+//   ① meta schema（commit／task-assign／task-ack）⇒ `SCP_TavernMetaSchema`：不合 ⇒ exit 2 確定沒發
+//   ② 酒保 CLI 指令 ⇒ `SCP_TavernCli`（在 compose 裡）：打 `cli-cmd` 標記、不附詞典
+//   ③ creative 留念信 ⇒ `SCP_TavernCreativeArchive`，**由寫入端寄**（`Cmd_TavernWrite`，同 @mention／發薪）
+//   ④ alter 配對延遲 ⇒ `SCP_TavernAlterPacing` 判要不要等；要等 ⇒ 放進酒館 Server 的延後發文匣（`SenateTavernDeferred`），
+//      CLI 當下回「已排程」（exit 0、`scheduled=1`、**沒有 post_seq** —— 還沒配號），到點由 Server 發出。
 //
 // ⚠ 身分：persona 必填，但**不檢查在線**（Tim 2026-09-27：在線機制是擋同一 persona 重複登入，不是發言許可；
 //   例：下線之後 commit 信件 repo，公告照樣要發）。⛔ 也不驗 session token（同日 Tim 拍板；參數已移除）。
@@ -39,8 +38,9 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         + "寫入、發薪、@mention 通知由酒館 Server（`tavern-write`，沒開會自動起）做。\n"
         + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query kind=seq` 回讀，⛔ 別補發）。\n"
         + "⚠ tag=commit／task-assign／task-ack 的 meta 必填欄位照 T06.3 驗（與 Editor 同一支），不合 ⇒ exit 2 確定沒發。\n"
-        + "⛔ 還沒搬的前處理會 **exit 2 擋下**並指回 `ucmd run Tavern`：tag=creative、\n"
-        + "   CLI 指令（body 以酒保 CLI 前綴開頭）、alter 配對（上一則是自己的 alter 搭檔）、`alter-*` meta。\n"
+        + "⚠ alter 配對（上一則是自己的 alter 搭檔、間隔不足）⇒ **不當下寫**：排進酒館 Server 的延後發文匣，\n"
+        + "   exit 0 ＋ `scheduled=1`／`deferred_until`，⛔ 沒有 post_seq（到點才配號）。`alter-pacing-bypass=true` 可跳過。\n"
+        + "   酒保 CLI 指令自動打 cli-cmd 標記、不附詞典；tag=creative 由寫入端寄留念信。\n"
         + "⚠ persona 必填但**不必在線**（下線後照樣能發）；匿名發言不走本入口。`status` 只在有 lock 時更新。";
 
     public override string Example =>
@@ -91,10 +91,6 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         string aTag = iArgs.Get("tag").Trim();
         if (aTag.Length > 0) aMeta["tag"] = aTag;
 
-        string aHint = "\n  ⇒ 這一則請改走 `senate ucmd run Tavern --persona " + aPersona
-            + " --arg op=post …`（要 Editor 開著）—— 本入口**確定沒發**";
-        string? aNotPorted = NotPortedReason(iRoots.DataRoot, aBody, aMeta);
-        if (aNotPorted != null) return Block(aPath, aSb, ioResult, 2, aNotPorted + aHint);
         // T06.3 schema（TASK-0311）：不合就是**確定沒發**（Editor 版同樣在寫入前 reject），⛔ 不是「交回 Editor」——
         //   Editor 會用同一支判出同一個結果。
         string? aSchema = SCP_TavernMetaSchema.Validate(aMeta);
@@ -113,15 +109,29 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             iRoots.Region, aRoom, aPersona, aBody, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
-        string? aAlter = AlterPairReason(iRoots.DataRoot, aRoom, aDraft.Message.SenderId);
-        if (aAlter != null) return Block(aPath, aSb, ioResult, 2, aAlter + aHint);
         aDraft.Message.ReplyTo = aReplyTo;
         foreach (string aRef in ParseRefs(iArgs.Get("refs"), iRoots.ProjectRoot, ioResult))
             aDraft.Message.Refs.Add(new SCP_TavernRef { Path = aRef });
 
         string aJson = SCP_TavernWriter.Serialize(aDraft.Message);
+
+        // ④ alter 配對延遲（TASK-0312，判準 SCP_TavernAlterPacing —— 與 Editor 同一支）。讀不到上一則 ⇒ 不延遲（Editor 版同一側）。
+        TimeSpan? aWait = null;
+        try
+        {
+            List<SCP_TavernMessage> aLast = SCP_TavernRead.Tail(iRoots.DataRoot, aRoom, 1);
+            if (aLast.Count > 0)
+                aWait = SCP_TavernAlterPacing.Remaining(aMeta, aDraft.Message.SenderId, aLast[0].SenderId, aLast[0].Ts, DateTime.UtcNow);
+        }
+        catch (Exception e) { ioResult.Lines.Add("⚠ 讀不到本房最後一則（" + e.Message + "）—— 不做 alter 延遲"); }
+
         if (iArgs.Get("dry_run").Trim() == "1")
         {
+            if (aWait.HasValue)
+            {
+                ioResult.AddValue("would_defer_sec", ((int)Math.Ceiling(aWait.Value.TotalSeconds)).ToString(CultureInfo.InvariantCulture));
+                ioResult.Lines.Add($"· dry_run：上一則是 alter 搭檔 ⇒ 實發時會**延後 {aWait.Value.TotalSeconds:F0} 秒**（排進延後發文匣）");
+            }
             // seq／ts／uuid 由寫入端配 ⇒ 這裡印的 ts 是空的，那是「還沒配」不是「沒有」。
             aSb.AppendLine("## dry_run（⛔ 沒有送出）");
             aSb.AppendLine("```json");
@@ -133,6 +143,8 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             ioResult.AddValue("dry_run", "1");
             return aPath;
         }
+
+        if (aWait.HasValue) return Defer(iRoots, aRoom, aPersona, aJson, aWait.Value, aPath, aSb, ioResult);
 
         string aTimeout = iArgs.Get("timeout");
         SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
@@ -189,66 +201,47 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         return aPath;
     }
 
-    // ── 擋下清單（見檔頭 ①-④）──────────────────────────────────────
+    // ── ④ alter 延後發文（TASK-0312）──────────────────────────────────
 
     /// <summary>
-    /// 還沒搬進 Senate 的前處理（見檔頭 ②-④）。回 null ＝ Senate 做得完這一則；回字串 ＝ 要交回 Editor。
-    /// <para>⚠ <see cref="SenateTavernPostGateway"/> 也呼叫這一支（TASK-0311）—— ⛔ 不在那邊另列一張清單。</para>
+    /// 放進酒館 Server 的延後發文匣，當下回「已排程」。⛔ 沒有 post_seq —— 到點才配號，那是「還沒發」不是「發了」。
+    /// <para>酒館 Server 沒在跑 ⇒ 順手拉一顆（同 `tavern-write` 的 autostart）；拉不起來也照樣排進去，
+    /// 並明說「要等它下次起來才會送」（晚到，不會丟）。</para>
     /// </summary>
-    public static string? NotPortedReason(string iDataRoot, string iBody, IReadOnlyDictionary<string, string> iMeta)
+    string? Defer(SCP_MorningRoots iRoots, string iRoom, string iPersona, string iJson, TimeSpan iWait,
+                 string iPath, StringBuilder ioSb, SCP_CmdResult ioResult)
     {
-        if (iMeta.TryGetValue("tag", out string? aTag) && string.Equals(aTag, "creative", StringComparison.Ordinal))
-            return "tag=creative 的前處理（歸檔信）還沒搬進 Senate";
-        foreach (string k in iMeta.Keys)
-            if (k.StartsWith("alter-", StringComparison.Ordinal))
-                return $"meta `{k}` 是 alter 配對延遲的旗標，而延遲還沒搬進 Senate";
+        if (ServerDelegateCmd.RepoRootProvider == null)
+            return Block(iPath, ioSb, ioResult, 70, "宿主沒有裝上 repo 根來源 —— 找不到酒館 Server 的延後發文匣（程式錯誤，不是用法錯）；**確定沒發**");
+        string aRepoRoot = ServerDelegateCmd.RepoRootProvider();
+        string aServerRoot = SenatePaths.ServerRoot(aRepoRoot, SCP.Core.Proc.SCP_ServerIds.Tavern);
+        DateTime aDue = DateTime.UtcNow + iWait;
+        string aFile;
+        try { aFile = SenateTavernDeferred.Schedule(aServerRoot, iRoots.DataRoot, iRoom, iJson, iPersona, aDue); }
+        catch (Exception e) { return Block(iPath, ioSb, ioResult, 6, "延後發文排不進匣子（" + e.Message + "）—— **確定沒發**，修好後重跑是安全的"); }
 
-        string? aPrefix = CliPrefix(iDataRoot);
-        if (aPrefix != null)
-        {
-            string aTrim = iBody.TrimStart();
-            int aEnd = 0;
-            while (aEnd < aTrim.Length && !char.IsWhiteSpace(aTrim[aEnd])) aEnd++;
-            if (string.Equals(aTrim.Substring(0, aEnd), aPrefix, StringComparison.OrdinalIgnoreCase))
-                return $"body 以酒保 CLI 前綴 `{aPrefix}` 開頭 —— 那是指令不是對話，而 CLI 判定（打 cli-cmd tag、跳過詞典附註）還沒搬進 Senate";
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// alter 配對：上一則是自己的 alter 搭檔 ⇒ Editor 會延遲後才寫。讀不到就不擋（Editor 版同一側：沒有前一則＝不延遲）。
-    /// ⚠ 用組好的訊息的 sender_id —— 那是 Editor 配對時用的同一個鍵（顯示身分，不是 persona）。
-    /// </summary>
-    public static string? AlterPairReason(string iDataRoot, string iRoom, string iSender)
-    {
-        string aSender = iSender;
-        const string AlterSuffix = "-alter";
-        string aPartner = aSender.EndsWith(AlterSuffix, StringComparison.Ordinal)
-            ? aSender.Substring(0, aSender.Length - AlterSuffix.Length) : aSender + AlterSuffix;
+        string aServerNote = "";
         try
         {
-            List<SCP_TavernMessage> aLast = SCP_TavernRead.Tail(iDataRoot, iRoom, 1);
-            if (aLast.Count > 0 && aLast[0].SenderId == aPartner)
-                return $"上一則是 alter 搭檔 `{aPartner}` 發的 —— 配對發言要延遲，而延遲還沒搬進 Senate";
+            if (!ServerHost.Probe(aRepoRoot, SCP.Core.Proc.SCP_ServerIds.Tavern).IsRunning
+                && !ServerSpawn.TrySpawn(aRepoRoot, SCP.Core.Proc.SCP_ServerIds.Tavern, out _, out string aSpawnErr))
+                aServerNote = "⚠ 酒館 Server 沒在跑、也拉不起來（" + aSpawnErr + "）—— 到點後要等它下次起來才會送（晚到，不會丟）";
         }
-        catch (Exception) { }
-        return null;
-    }
+        catch (Exception e) { aServerNote = "⚠ 量不到酒館 Server 在不在（" + e.Message + "）—— 到點後由它送；它沒在跑就等它下次起來"; }
 
-    /// <summary>酒保 CLI 前綴（`ChatTavern/bartender/cli_settings.json`）；CLI 關著或讀不到回 null。</summary>
-    static string? CliPrefix(string iDataRoot)
-    {
-        try
-        {
-            string aPath = Path.Combine(iDataRoot, "ChatTavern", "bartender", "cli_settings.json");
-            if (!File.Exists(aPath)) return null;
-            SCP_JsonData aSettings = SCP_JsonData.Parse(File.ReadAllText(aPath, Encoding.UTF8));
-            if (!aSettings.GetBool("enabled", false)) return null;
-            string aPrefix = aSettings.GetString("prefix", "cmd").Trim();
-            return aPrefix.Length > 0 ? aPrefix : "cmd";
-        }
-        // ⚠ 讀壞時往「擋」那側倒：Editor 預設前綴是 cmd，放行一則指令的代價（群發打進別人輸入框）比擋一則對話大。
-        catch (Exception) { return "cmd"; }
+        string aLocal = aDue.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        ioResult.Lines.Add($"⏳ 已排程：上一則是自己的 alter 搭檔 ⇒ 延後 {iWait.TotalSeconds:F0} 秒，約 {aLocal} 由酒館 Server 發出（**還沒配號**）");
+        if (aServerNote.Length > 0) ioResult.Lines.Add(aServerNote);
+        ioResult.AddValue("scheduled", "1");
+        ioResult.AddValue("deferred_until", aDue.ToString("o", CultureInfo.InvariantCulture));
+        ioResult.AddValue("deferred_path", aFile);
+        ioSb.AppendLine("## scheduled（⛔ 還沒發）");
+        ioSb.AppendLine($"- 延後 {iWait.TotalSeconds:F0} 秒（alter 配對間隔，判準 `SCP_TavernAlterPacing`）；約 {aLocal} 由酒館 Server 送出");
+        ioSb.AppendLine($"- 匣子裡那一份：`{aFile}`（到點後刪除；留成 `.claimed` ＝ 認領了但不知道送出去沒）");
+        if (aServerNote.Length > 0) ioSb.AppendLine("- " + aServerNote);
+        ioSb.AppendLine("- 到點之後要確認：`senate cmd tavern-query --arg kind=tail`（⛔ 別在那之前補發 —— 那會發兩則）");
+        TryWritePayload(iPath, ioSb, ioResult);
+        return iPath;
     }
 
     // ── 解析（與 Editor `Cmd_Tavern.ParseMeta`／`ParseRefs` 同一套規則）────────

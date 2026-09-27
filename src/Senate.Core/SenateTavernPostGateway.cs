@@ -1,9 +1,9 @@
 // 區塊職責：Senate 側的**酒館發文閘**（`senate cmd commit` 的公告、小歇廣播走這裡）。
 // 物理意義（TASK-0311，epic 0295 ③ 第二刀）：**先走 Senate 那條管線**——
 //           `SCP_TavernPostCompose` 組訊息 → 酒館 Server `tavern-write`（配號建檔＋發薪＋@mention）——
-//           跟 `senate cmd tavern-post`（TASK-0308）同一條路、同一張「還沒搬」清單（`Cmd_TavernPost.NotPortedReason`）。
-//           只有**還沒搬的前處理**（creative 歸檔信／alter 配對延遲／酒保 CLI 前綴）與「找不到專案根」才整步委派回
-//           Unity Editor 的 `Tavern op=post`（下面 `PostViaEditor`，原樣保留）。
+//           跟 `senate cmd tavern-post`（TASK-0308）同一條路；前處理全部在 SCP_Core（TASK-0311／0312）。
+//           只有「找不到資料根對應的專案根」才整步委派回 Unity Editor 的 `Tavern op=post`（下面 `PostViaEditor`，原樣保留）。
+//           ⚠ 本閘不做 alter 配對延遲（呼叫端是公告不是對話，見 `PostViaSenate`）。
 //           ⚠ 寫入端一直只有一個：兩條路最後都落到酒館 Server 的 `tavern-write`（Editor 在 `tavern.writer=server`
 //           時也是委派它）⇒ 這裡換的是「誰組訊息」，⛔ 不是多開一個寫入端。
 // 數值影響：Senate 路 ＝ 一次 Server round-trip；Editor 路 ＝ 一次 Cmd round-trip（檔案協議＋Watcher 輪詢，1〜3 秒）。
@@ -40,7 +40,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
     }
 
     /// <summary>整體定語（兩條路各自在 <c>oLines</c> 再印一行實際走了哪一條）。</summary>
-    public string HostQualifier => "⤷ 酒館發文：Senate 組訊息＋酒館 Server 寫入；還沒搬的前處理才交回 Unity Editor（資料根 " + m_DataRoot + "）";
+    public string HostQualifier => "⤷ 酒館發文：Senate 組訊息＋酒館 Server 寫入；找不到專案根才交回 Unity Editor（資料根 " + m_DataRoot + "）";
 
     string SenateQualifier => "⤷ 酒館發文由 Senate 組訊息、酒館 Server 寫入（不經 Unity Editor，資料根 " + m_DataRoot + "）";
     string EditorQualifier => "⤷ 酒館發文由 Unity Editor 執行（Cmd `Tavern op=post`，資料根 " + m_DataRoot + "）";
@@ -57,29 +57,22 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         string? aSchema = SCP_TavernMetaSchema.Validate(iMeta);
         if (aSchema != null) return SCP_TavernPostVerdict.Bad("meta 不合 T06.3 schema：" + aSchema);
 
-        string? aEditorWhy = Cmd_TavernPost.NotPortedReason(m_DataRoot, iBody, iMeta);
-        if (aEditorWhy == null)
-        {
-            if (!TryResolveProjectRoot(out string aProjectRoot, out string aWhy))
-                // 專案根是詞典附註（`Docs/Glossary`）的根 ⇒ 拿不到就組不出跟 Editor 同形的訊息。⛔ 不猜一個。
-                aEditorWhy = "找不到這個資料根對應的專案根（" + aWhy + "）";
-            else
-            {
-                SCP_TavernPostVerdict? aDone = PostViaSenate(iSenderPersona, iBody, iMeta, aProjectRoot, oLines, out aEditorWhy);
-                if (aDone.HasValue) return aDone.Value;
-            }
-        }
-        oLines.Add("· 交回 Editor：" + aEditorWhy);
+        // 前處理全部在 Senate 做得完（TASK-0312）⇒ 唯一交回 Editor 的理由是「找不到專案根」：
+        //   專案根是詞典附註（`Docs/Glossary`）的根，拿不到就組不出跟 Editor 同形的訊息。⛔ 不猜一個。
+        if (TryResolveProjectRoot(out string aProjectRoot, out string aWhy))
+            return PostViaSenate(iSenderPersona, iBody, iMeta, aProjectRoot, oLines);
+        oLines.Add("· 交回 Editor：找不到這個資料根對應的專案根（" + aWhy + "）");
         return PostViaEditor(iSenderPersona, iBody, iMeta, oLines);
     }
 
     // ===========================================================
-    // 區塊職責：Senate 管線 —— 組訊息 → `tavern-write`。回 null ＝ 半路發現要交回 Editor（原因在 oEditorWhy）。
+    // 區塊職責：Senate 管線 —— 組訊息 → `tavern-write`。
+    // ⚠ 刻意**不做 alter 配對延遲**：本閘的呼叫端是 commit 公告與小歇廣播 —— 那是公告不是對話，
+    //   延後它只會讓「commit 已提交」與「公告」脫鉤（呼叫端要的是 seq）。Editor 的 `op=share` 同一個判斷（帶 alter-pacing-bypass）。
     // ===========================================================
-    SCP_TavernPostVerdict? PostViaSenate(string iPersona, string iBody, IReadOnlyDictionary<string, string> iMeta,
-                                         string iProjectRoot, List<string> oLines, out string oEditorWhy)
+    SCP_TavernPostVerdict PostViaSenate(string iPersona, string iBody, IReadOnlyDictionary<string, string> iMeta,
+                                        string iProjectRoot, List<string> oLines)
     {
-        oEditorWhy = "";
         var aRoots = new SCP_MorningRoots
         {
             DataRoot = m_DataRoot.Replace('\\', '/'),
@@ -90,10 +83,6 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             aRoots.Region, Room, iPersona, iBody, iMeta);
         foreach (string n in aDraft.Notes) oLines.Add("⚠ " + n);
         if (aDraft.Message == null) return SCP_TavernPostVerdict.Bad("發文被拒：" + aDraft.Error);
-
-        // alter 配對要看組好的 sender_id（顯示身分）⇒ 只能在 compose 之後判。
-        string? aAlter = Cmd_TavernPost.AlterPairReason(aRoots.DataRoot, Room, aDraft.Message.SenderId);
-        if (aAlter != null) { oEditorWhy = aAlter; return null; }
 
         oLines.Add(SenateQualifier);
         SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)

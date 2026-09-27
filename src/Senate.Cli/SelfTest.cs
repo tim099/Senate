@@ -84,6 +84,7 @@ public static class SelfTest
         One(nameof(ServerBuildKnownClassification), "core", ServerBuildKnownClassification),
         One(nameof(ServerConsolePrefLayers), "core", ServerConsolePrefLayers),
         One(nameof(TavernMetaSchemaAndRouting), "core", TavernMetaSchemaAndRouting),
+        One(nameof(TavernPreprocessPorts), "core", TavernPreprocessPorts),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
         One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
@@ -331,19 +332,103 @@ public static class SelfTest
         Pass("沒有 tag", M("category", "meta"));
         Pass("其他 tag（creative 不歸 schema 管）", M("tag", "creative"));
 
-        // 分流：commit 不再是「還沒搬」；creative 仍然是（交回 Editor）。
-        string aNoRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_noroot_" + Guid.NewGuid().ToString("N")[..8]);
-        string? aCommitRoute = Cmd_TavernPost.NotPortedReason(aNoRoot, "📦 x", M("tag", "commit", "sha", "910a2493"));
-        if (aCommitRoute != null) aFails.Add("🔴 tag=commit 仍被當成「還沒搬」交回 Editor：" + aCommitRoute);
-        string? aCreativeRoute = Cmd_TavernPost.NotPortedReason(aNoRoot, "詩", M("tag", "creative"));
-        if (aCreativeRoute == null) aFails.Add("🔴 反向：tag=creative 沒有被交回 Editor（歸檔信會被靜默略過）");
-        string? aAlterRoute = Cmd_TavernPost.NotPortedReason(aNoRoot, "x", M("alter-delay-sec", "5"));
-        if (aAlterRoute == null) aFails.Add("🔴 反向：alter-* meta 沒有被交回 Editor（配對延遲會被靜默略過）");
+        return new CheckRow(aName,
+            aFails.Count == 0
+                ? "commit 合法 SHA 放行／缺・空・多個・非 hex・太短 全擋；task-assign／task-ack 必填欄位擋得住"
+                : string.Join("；", aFails),
+            aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：TASK-0312 搬進 SCP_Core 的三段前處理 —— CLI 前綴／creative 留念信／alter 配對延遲＋延後發文匣。
+    // 物理意義：每一段都有「該做」與「🔴 反向：不該做」兩格；延後發文匣另驗「未到點不送、到點送進 tavern lane、送完不留檔」。
+    // 數值影響：只寫暫存目錄（跑完刪），⛔ 不碰真的資料根／Server 根。
+    static CheckRow TavernPreprocessPorts()
+    {
+        const string aName = "酒館前處理搬進 SCP_Core：CLI 前綴／creative 留念信／alter 延遲＋延後發文匣（TASK-0312）";
+        var aFails = new List<string>();
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_selftest_pre_" + Guid.NewGuid().ToString("N")[..8]);
+        Dictionary<string, string> M(params string[] iKv)
+        {
+            var d = new Dictionary<string, string>(StringComparer.Ordinal);
+            for (int i = 0; i + 1 < iKv.Length; i += 2) d[iKv[i]] = iKv[i + 1];
+            return d;
+        }
+        try
+        {
+            // ── ① CLI 前綴（設定檔三態 ＋ 第一個 token）──
+            string aData = Path.Combine(aTmp, "data");
+            Directory.CreateDirectory(aData);
+            if (SCP.Core.Tavern.SCP_TavernCli.ActivePrefix(aData) != "cmd") aFails.Add("CLI：設定檔不存在應視為 enabled／cmd（照 Editor 預設）");
+            if (!SCP.Core.Tavern.SCP_TavernCli.LooksLikeCliCommand(aData, "  CMD msg kiara hi")) aFails.Add("CLI：`CMD msg …` 應判為指令（不分大小寫）");
+            if (!SCP.Core.Tavern.SCP_TavernCli.LooksLikeCliCommand(aData, "cmd　全形空白")) aFails.Add("CLI：全形空白也是分隔字元");
+            if (SCP.Core.Tavern.SCP_TavernCli.LooksLikeCliCommand(aData, "cmdx 不是前綴")) aFails.Add("🔴 CLI 反向：`cmdx` 不是指令");
+            if (SCP.Core.Tavern.SCP_TavernCli.LooksLikeCliCommand(aData, "今天想聊 cmd 的事")) aFails.Add("🔴 CLI 反向：前綴不在第一個 token ⇒ 不是指令");
+            string aCliPath = SCP.Core.Tavern.SCP_TavernCli.SettingsPath(aData);
+            Directory.CreateDirectory(Path.GetDirectoryName(aCliPath)!);
+            File.WriteAllText(aCliPath, "{\"enabled\": false, \"prefix\": \"cmd\"}");
+            if (SCP.Core.Tavern.SCP_TavernCli.LooksLikeCliCommand(aData, "cmd msg x")) aFails.Add("🔴 CLI 反向：總開關關著 ⇒ 不是指令");
+            File.WriteAllText(aCliPath, "{壞掉的 json");
+            if (SCP.Core.Tavern.SCP_TavernCli.ActivePrefix(aData) != "cmd") aFails.Add("CLI：設定讀壞應 fail-closed 成 cmd");
+
+            // ── ② creative 留念信 ──
+            string aLetters = Path.Combine(aTmp, "letters");
+            bool? aNot = SCP.Core.Tavern.SCP_TavernCreativeArchive.TrySend(aLetters, "kiara", "tavern", 7, "詩", M("tag", "chat"), out _, out _);
+            if (aNot != null) aFails.Add("🔴 creative 反向：非 creative 不該寄（回了 " + aNot + "）");
+            bool? aAnon = SCP.Core.Tavern.SCP_TavernCreativeArchive.TrySend(aLetters, "", "tavern", 7, "詩", M("tag", "creative"), out _, out _);
+            if (aAnon != null) aFails.Add("🔴 creative 反向：匿名發文沒有收件人，不該寄");
+            bool? aSent = SCP.Core.Tavern.SCP_TavernCreativeArchive.TrySend(aLetters, "kiara", "tavern", 7, "月光下的詩", M("tag", "creative"),
+                                                                            out string aInbox, out string aErr);
+            if (aSent != true) aFails.Add("creative：應寄出而沒有（" + aErr + "）");
+            else
+            {
+                string aMail = File.ReadAllText(aInbox);
+                if (!aMail.Contains("type: registered_mail") || !aMail.Contains("from: tavern-keeper") || !aMail.Contains("fee: 0"))
+                    aFails.Add("creative：信件 frontmatter 不是系統掛號信的形狀");
+                if (!aMail.Contains("📜 創作留念 — tavern seq 7") || !aMail.Contains("月光下的詩"))
+                    aFails.Add("creative：主旨或原文沒進信裡");
+                if (Directory.GetFiles(Path.Combine(aLetters, "tavern-keeper", "outbox")).Length != 1)
+                    aFails.Add("creative：寄件備份（outbox）不是恰好一份");
+            }
+
+            // ── ③ alter 配對延遲 ──
+            DateTime aNow = new DateTime(2026, 9, 27, 4, 0, 0, DateTimeKind.Utc);
+            string aTs10 = aNow.AddSeconds(-10).ToString("o");
+            TimeSpan? aDef = SCP.Core.Tavern.SCP_TavernAlterPacing.Remaining(M(), "kiara", "kiara-alter", aTs10, aNow);
+            if (aDef == null || Math.Abs(aDef.Value.TotalSeconds - 290) > 0.5) aFails.Add($"alter：搭檔 10 秒前發過、預設 300s ⇒ 應再等 290s（得 {aDef?.TotalSeconds}）");
+            TimeSpan? aBs = SCP.Core.Tavern.SCP_TavernAlterPacing.Remaining(M("tag", "solo-brainstorm"), "kiara-alter", "kiara", aTs10, aNow);
+            if (aBs == null || Math.Abs(aBs.Value.TotalSeconds - 20) > 0.5) aFails.Add($"alter：brainstorm 30s ⇒ 應再等 20s（得 {aBs?.TotalSeconds}）");
+            TimeSpan? aCap = SCP.Core.Tavern.SCP_TavernAlterPacing.Remaining(M("alter-delay-sec", "5000"), "kiara", "kiara-alter", aTs10, aNow);
+            if (aCap == null || aCap.Value.TotalSeconds > 900) aFails.Add("alter：顯式秒數要被 900s 上限夾住");
+            if (SCP.Core.Tavern.SCP_TavernAlterPacing.Remaining(M("alter-pacing-bypass", "true"), "kiara", "kiara-alter", aTs10, aNow) != null)
+                aFails.Add("🔴 alter 反向：bypass ⇒ 不延遲");
+            if (SCP.Core.Tavern.SCP_TavernAlterPacing.Remaining(M(), "kiara", "gura", aTs10, aNow) != null)
+                aFails.Add("🔴 alter 反向：上一則是第三方 ⇒ 不延遲");
+            if (SCP.Core.Tavern.SCP_TavernAlterPacing.Remaining(M(), "kiara", "kiara-alter", aNow.AddSeconds(-400).ToString("o"), aNow) != null)
+                aFails.Add("🔴 alter 反向：間隔已經夠 ⇒ 不延遲");
+
+            // ── ③' 延後發文匣：未到點不送；到點送進 tavern lane；送完不留檔 ──
+            string aServer = Path.Combine(aTmp, "server-tavern");
+            SenateTavernDeferred.Schedule(aServer, aData, "tavern", "{\"body\":\"later\"}", "kiara", DateTime.UtcNow.AddHours(1));
+            string aDuePath = SenateTavernDeferred.Schedule(aServer, aData, "tavern", "{\"body\":\"now\"}", "kiara", DateTime.UtcNow.AddSeconds(-1));
+            var aLog = new List<string>();
+            int aSentN = SenateTavernDeferred.FlushDue(aServer, DateTime.UtcNow, aLog.Add);
+            if (aSentN != 1) aFails.Add($"匣子：應只送出到點那一則（送了 {aSentN}）");
+            if (File.Exists(aDuePath) || File.Exists(aDuePath + ".claimed")) aFails.Add("匣子：送出之後不該留下原檔或 .claimed");
+            if (Directory.GetFiles(SenateTavernDeferred.Dir(aServer), "*.json").Length != 1) aFails.Add("🔴 匣子反向：未到點那一則不該被送走");
+            string aQueue = SCP.Core.Proc.SCP_ServerCmdClient.QueuePath(aServer, SCP.Core.Tavern.SCP_TavernWriter.LaneName);
+            string aQ = File.Exists(aQueue) ? File.ReadAllText(aQueue) : "";
+            if (!aQ.Contains("tavern-write") || !aQ.Contains("now")) aFails.Add("匣子：到點那一則沒有以 tavern-write 進 tavern lane 的 queue");
+            if (aQ.Contains("later")) aFails.Add("🔴 匣子反向：未到點那一則出現在 queue 裡");
+            if (SenateTavernDeferred.FlushDue(aServer, DateTime.UtcNow, aLog.Add) != 0) aFails.Add("🔴 匣子反向：同一則不該被送兩次");
+        }
+        catch (Exception e) { aFails.Add("例外：" + e.GetType().Name + ": " + e.Message); }
+        finally { try { Directory.Delete(aTmp, true); } catch { } }
 
         return new CheckRow(aName,
             aFails.Count == 0
-                ? "commit 合法 SHA 放行／缺・空・多個・非 hex・太短 全擋；task-assign／task-ack 必填欄位擋得住；"
-                  + "🔴 分流：commit 不再交回 Editor，creative／alter-* 仍交回（不靜默略過）"
+                ? "CLI：設定三態＋第一個 token；🔴 反向 cmdx／句中 cmd／總開關關 不算。creative：寄出系統掛號信（收件＋寄件各一份）；"
+                  + "🔴 反向 非 creative／匿名 不寄。alter：290s／20s／900 上限；🔴 反向 bypass／第三方／間隔夠 不延遲。"
+                  + "匣子：只送到點那一則、進 tavern lane、送完不留檔；🔴 反向 未到點不送、不送兩次"
                 : string.Join("；", aFails),
             aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
