@@ -223,6 +223,12 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             {
                 string aAcc = SCP_PersonaProfile.GetBankAccount(m_Letters.Value, aName, aRegion,
                                                                 out string aSrc, out string _);
+                if (aSrc == SCP_PersonaProfile.BankSourceUnreadable)
+                {
+                    // TASK-0265 QA：讀不了 ⛔ 不可默默從列表消失（那跟「這一區沒綁」同形）⇒ 記一筆，重新整理即可。
+                    m_Problems.Add("⚠ " + aName + " 的綁定檔這一瞬間讀不了（換檔中／被鎖）—— 本頁暫不列他，重新整理即可；⛔ 不是沒有綁定");
+                    continue;
+                }
                 if (aAcc.Length == 0) continue;   // 這一區沒綁 ⇒ 不是「他沒有帳號」，只是不在這一區
                 m_Rows.Add(new Row
                 {

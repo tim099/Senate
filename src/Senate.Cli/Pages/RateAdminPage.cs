@@ -91,7 +91,14 @@ public sealed class RateAdminPage : SCP_GuiToolPage
         }
 
         m_Config = SCP_MarketRateCache.Load(m_DataRoot, out string? aErr);
-        if (aErr != null) m_LoadError = aErr;
+        if (aErr != null)
+        {
+            m_LoadError = aErr;
+            // 🔴 TASK-0265：Load 失敗時回的是一份**空設定**（不是 null）——
+            //   留著它，工具列的存檔鈕就照樣按得下去（它只擋 m_Config == null），一按就把空設定寫回 ⇒ 所有報價洗掉。
+            //   ⇒ 載入失敗就不持有設定；出口是工具列的「重新讀取」。
+            m_Config = null;
+        }
     }
 
     // ===========================================================

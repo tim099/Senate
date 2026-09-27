@@ -221,7 +221,9 @@ public static class Program
             // TASK-0265：queue 在但讀不了／壞了 ⇒ 寫入路徑拒寫。⛔ 別落進上面那格「設定檔有問題」——
             //   壞的是 queue，而那句話會把人送去翻一個沒有壞的設定檔。
             Console.Error.WriteLine($"✗ {e.Message}");
-            Console.Error.WriteLine("  ⇒ **沒有送出任何東西**，那顆 queue 原封不動。修好（或確認內容後刪掉）再重跑。");
+            Console.Error.WriteLine(e.IsBusy
+                ? "  ⇒ **沒有送出任何東西**，那顆 queue 原封不動。它只是這一瞬間開不了 ⇒ 稍後重跑即可，⛔ 不要動那顆檔。"
+                : "  ⇒ **沒有送出任何東西**，那顆 queue 原封不動。先備份、看內容再修；⛔ 別直接刪（裡面可能還有待跑的指令）。");
             return 3;
         }
         catch (SCP.Core.Io.SCP_FileLockTimeoutException e)

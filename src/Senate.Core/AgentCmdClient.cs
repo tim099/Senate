@@ -283,6 +283,7 @@ public static class AgentCmdClient
         iOut($"  Timeout: {iTimeoutSec:0.###}s   Poll: every {iPollSec:0.0}s");
         var aDeadline = DateTime.UtcNow.AddSeconds(iTimeoutSec);
         bool aSawRunning = false;
+        bool aQueueWarned = false;
 
         while (DateTime.UtcNow < aDeadline)
         {
@@ -294,7 +295,15 @@ public static class AgentCmdClient
             }
             if (aState == "idle")
             {
-                JsonObject aQueue = LoadQueue(iDataRoot, iPersona, iOut);
+                JsonObject? aQueue = LoadQueue(iDataRoot, iPersona, aQueueWarned ? (_ => { }) : iOut);
+                if (aQueue == null)
+                {
+                    aQueueWarned = true;   // 只印第一次 —— 壞檔會一路讀不了到逾時，每輪一行只是洗版
+                    // TASK-0265：這一瞬間讀不了（換檔窗口／被鎖／寫到一半）⇒ **下一輪再看**。
+                    //   ⛔ 舊版回空骨架 ⇒ FindCmd 找不到 ⇒ 立刻判「消失了、不知道」—— 把一個還在跑的 cmd 判成 Unknown。
+                    Thread.Sleep(TimeSpan.FromSeconds(iPollSec));
+                    continue;
+                }
                 JsonObject? aCmd = FindCmd(aQueue, iCmdId);
                 if (aCmd == null)
                 {
@@ -403,7 +412,7 @@ public static class AgentCmdClient
         {
             if (aState == SCP.Core.Io.SCP_FileReadState.Missing) return new JsonObject { ["Commands"] = new JsonArray() };
             throw new SCP.Core.Proc.SCP_QueueUnreadableException(aPath,
-                "讀不了（" + SCP.Core.Io.SCP_AtomicFileRead.DescribeBusy(aPath) + "）");
+                "讀不了（" + SCP.Core.Io.SCP_AtomicFileRead.DescribeBusy(aPath) + "）", iBusy: true);
         }
         JsonObject? aNode;
         try { aNode = JsonNode.Parse(aText) as JsonObject; }
@@ -417,21 +426,31 @@ public static class AgentCmdClient
     }
 
     /// <summary>**只讀**的路徑（狀態輪詢）用的寬鬆讀法 —— 壞檔當空、不擋判定。⛔ 要寫回的路徑改走 <see cref="LoadQueueForWrite"/>。</summary>
-    static JsonObject LoadQueue(string iDataRoot, string? iPersona, Action<string> iLog)
+    /// <remarks>回 <c>null</c> ＝ 這一次讀不了（Busy／壞檔／寫到一半）⇒ 呼叫端**下一輪再看**；
+    /// ⛔ 不回空骨架 —— 空骨架在輪詢端的意思是「那筆消失了」（TASK-0265 QA 碼審）。真的不存在才回空骨架。</remarks>
+    static JsonObject? LoadQueue(string iDataRoot, string? iPersona, Action<string> iLog)
     {
         string aPath = QueuePath(iDataRoot, iPersona);
-        if (!File.Exists(aPath)) return new JsonObject { ["Commands"] = new JsonArray() };
+        if (!SCP.Core.Io.SCP_AtomicFileRead.TryReadAllText(aPath, out string aText, out var aState))
+        {
+            if (aState == SCP.Core.Io.SCP_FileReadState.Missing) return new JsonObject { ["Commands"] = new JsonArray() };
+            iLog("  ⚠ " + SCP.Core.Io.SCP_AtomicFileRead.DescribeBusy(aPath) + "（唯讀輪詢 ⇒ 下一輪再看）");
+            return null;
+        }
         try
         {
-            var aNode = JsonNode.Parse(File.ReadAllText(aPath, System.Text.Encoding.UTF8)) as JsonObject;
+            var aNode = JsonNode.Parse(aText) as JsonObject;
             if (aNode == null || aNode["Commands"] is not JsonArray)
-                return new JsonObject { ["Commands"] = new JsonArray() };
+            {
+                iLog("  ⚠ queue.json 沒有 `Commands` 陣列（唯讀輪詢 ⇒ 下一輪再看；寫入路徑會拒寫）");
+                return null;
+            }
             return aNode;
         }
         catch (Exception e)
         {
-            iLog($"  ⚠ queue.json parse error: {e.Message}（這條是唯讀輪詢 ⇒ 以空骨架續判；寫入路徑會拒寫）");
-            return new JsonObject { ["Commands"] = new JsonArray() };
+            iLog($"  ⚠ queue.json parse error: {e.Message}（唯讀輪詢 ⇒ 下一輪再看；寫入路徑會拒寫）");
+            return null;
         }
     }
 
