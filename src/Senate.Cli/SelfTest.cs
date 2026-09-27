@@ -83,6 +83,7 @@ public static class SelfTest
         One(nameof(QueueForLaterWhenServerUnavailable), "core", QueueForLaterWhenServerUnavailable),
         One(nameof(ServerBuildKnownClassification), "core", ServerBuildKnownClassification),
         One(nameof(ServerConsolePrefLayers), "core", ServerConsolePrefLayers),
+        One(nameof(TavernMetaSchemaAndRouting), "core", TavernMetaSchemaAndRouting),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
         One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
@@ -286,6 +287,63 @@ public static class SelfTest
         return new CheckRow(aName,
             aFails.Count == 0
                 ? "未知 3 種（無心跳／上一顆／空 build）不判符合與否；同 pid 同 build ⇒ 相符；🔴 反向：同 pid 舊 build ⇒ 已知且不符、不排"
+                : string.Join("；", aFails),
+            aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：T06.3 meta schema（SCP_TavernMetaSchema）＋ 發文閘的分流判準（TASK-0311）。
+    // 物理意義：commit／task-assign／task-ack 不合 ⇒ 擋（兩個入口共用這一支）；合 ⇒ 放行，而且**不再被當成
+    //          「還沒搬」交回 Editor**；creative 仍然交回 Editor（④ 反向對照：沒搬的不准靜默略過）。
+    // 數值影響：純函式，零 IO（NotPortedReason 的 CLI 前綴那格讀不到設定就不擋 ⇒ 給一個不存在的資料根）。
+    static CheckRow TavernMetaSchemaAndRouting()
+    {
+        const string aName = "酒館 meta schema：commit／task-assign／task-ack 驗證＋發文閘分流（TASK-0311）";
+        var aFails = new List<string>();
+        Dictionary<string, string> M(params string[] iKv)
+        {
+            var d = new Dictionary<string, string>(StringComparer.Ordinal);
+            for (int i = 0; i + 1 < iKv.Length; i += 2) d[iKv[i]] = iKv[i + 1];
+            return d;
+        }
+        void Pass(string iCase, Dictionary<string, string> iMeta)
+        {
+            string? r = SCP.Core.Tavern.SCP_TavernMetaSchema.Validate(iMeta);
+            if (r != null) aFails.Add($"{iCase} 應放行，卻擋了：{r}");
+        }
+        void Reject(string iCase, Dictionary<string, string> iMeta, string iMustMention)
+        {
+            string? r = SCP.Core.Tavern.SCP_TavernMetaSchema.Validate(iMeta);
+            if (r == null) aFails.Add($"🔴 {iCase} 應擋下，卻放行了");
+            else if (!r.Contains(iMustMention)) aFails.Add($"{iCase} 擋下的理由沒提到 `{iMustMention}`：{r}");
+        }
+        Pass("commit 短 SHA", M("tag", "commit", "sha", "910a2493"));
+        Pass("commit 完整 40 位", M("tag", "commit", "sha", new string('a', 40)));
+        Reject("commit 缺 sha", M("tag", "commit"), "缺 meta.sha");
+        Reject("commit 空 sha", M("tag", "commit", "sha", ""), "缺 meta.sha");
+        Reject("commit 兩個 SHA", M("tag", "commit", "sha", "910a2493,750015d"), "只能帶一個");
+        Reject("commit 非十六進位", M("tag", "commit", "sha", "zz0a2493"), "不像 git SHA");
+        Reject("commit 太短（6）", M("tag", "commit", "sha", "910a24"), "不像 git SHA");
+        Pass("task-assign 四欄齊", M("tag", "task-assign", "task_id", "1", "task_body", "x", "assigned_by", "Tim", "requires_ack", "true"));
+        Reject("task-assign 缺 requires_ack", M("tag", "task-assign", "task_id", "1", "task_body", "x", "assigned_by", "Tim"), "requires_ack");
+        Pass("task-ack accept", M("tag", "task-ack", "task_id", "1", "action", "accept"));
+        Reject("task-ack action 不合法", M("tag", "task-ack", "task_id", "1", "action", "maybe"), "action");
+        Reject("task-ack 缺 task_id", M("tag", "task-ack", "action", "accept"), "task_id");
+        Pass("沒有 tag", M("category", "meta"));
+        Pass("其他 tag（creative 不歸 schema 管）", M("tag", "creative"));
+
+        // 分流：commit 不再是「還沒搬」；creative 仍然是（交回 Editor）。
+        string aNoRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_noroot_" + Guid.NewGuid().ToString("N")[..8]);
+        string? aCommitRoute = Cmd_TavernPost.NotPortedReason(aNoRoot, "📦 x", M("tag", "commit", "sha", "910a2493"));
+        if (aCommitRoute != null) aFails.Add("🔴 tag=commit 仍被當成「還沒搬」交回 Editor：" + aCommitRoute);
+        string? aCreativeRoute = Cmd_TavernPost.NotPortedReason(aNoRoot, "詩", M("tag", "creative"));
+        if (aCreativeRoute == null) aFails.Add("🔴 反向：tag=creative 沒有被交回 Editor（歸檔信會被靜默略過）");
+        string? aAlterRoute = Cmd_TavernPost.NotPortedReason(aNoRoot, "x", M("alter-delay-sec", "5"));
+        if (aAlterRoute == null) aFails.Add("🔴 反向：alter-* meta 沒有被交回 Editor（配對延遲會被靜默略過）");
+
+        return new CheckRow(aName,
+            aFails.Count == 0
+                ? "commit 合法 SHA 放行／缺・空・多個・非 hex・太短 全擋；task-assign／task-ack 必填欄位擋得住；"
+                  + "🔴 分流：commit 不再交回 Editor，creative／alter-* 仍交回（不靜默略過）"
                 : string.Join("；", aFails),
             aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }

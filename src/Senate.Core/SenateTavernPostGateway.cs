@@ -1,26 +1,31 @@
-// 區塊職責：Senate 側的**酒館發文閘** —— 整步委派回 Unity Editor 的 `Tavern op=post`。
-// 物理意義：seq 是全域遞增的，而**同時只能有一個寫入端** ⇒ 這一格沒有「本地版」，
-//           也不會有（同 `SenateSessionCloseGateway` 對金流的處置：不搬，委派）。
-//           ⚠ python 那支 `awakening.py tavern_post` 本來也是 spawn `run_cmd.py Tavern op=post`
-//           —— 它從頭到尾就是委派。所以「搬到 CLI 就不用 Editor」對廣播那半**不成立**，
-//           別把那句話寫進任何說明裡。
-// 數值影響：一次 Cmd round-trip（檔案協議＋Watcher 輪詢，1〜3 秒）。
-//           🩸 逾時 ⇒ **`Unresolved`（不知道），不是「沒發」**。TASK-0134 QA（summit 2026-09-05）
-//           用一次真的小歇量到：CLI 逾時回報「沒發」，而 Editor 開著、廣播**其實成功了**
-//           （`post_seq 19082`）。⇒ 這一層拿得到的只有「我有沒有等到回執」，
-//           而「有沒有發出去」的真相在 result 檔與酒館裡 —— 那是**另一本帳**。
+// 區塊職責：Senate 側的**酒館發文閘**（`senate cmd commit` 的公告、小歇廣播走這裡）。
+// 物理意義（TASK-0311，epic 0295 ③ 第二刀）：**先走 Senate 那條管線**——
+//           `SCP_TavernPostCompose` 組訊息 → 酒館 Server `tavern-write`（配號建檔＋發薪＋@mention）——
+//           跟 `senate cmd tavern-post`（TASK-0308）同一條路、同一張「還沒搬」清單（`Cmd_TavernPost.NotPortedReason`）。
+//           只有**還沒搬的前處理**（creative 歸檔信／alter 配對延遲／酒保 CLI 前綴）與「找不到專案根」才整步委派回
+//           Unity Editor 的 `Tavern op=post`（下面 `PostViaEditor`，原樣保留）。
+//           ⚠ 寫入端一直只有一個：兩條路最後都落到酒館 Server 的 `tavern-write`（Editor 在 `tavern.writer=server`
+//           時也是委派它）⇒ 這裡換的是「誰組訊息」，⛔ 不是多開一個寫入端。
+// 數值影響：Senate 路 ＝ 一次 Server round-trip；Editor 路 ＝ 一次 Cmd round-trip（檔案協議＋Watcher 輪詢，1〜3 秒）。
+//           🩸 兩條路的逾時都是 **`Unresolved`（不知道），不是「沒發」**。TASK-0134 QA（summit 2026-09-05）
+//           用一次真的小歇量到：CLI 逾時回報「沒發」，而廣播**其實成功了**（`post_seq 19082`）。
 //           ⛔ 兩者處置相反（真沒發要補發／沒等到去補發＝多出第二則，seq 全域遞增），
 //           所以它們在回傳型別上就必須不同形，不能靠讀的人自己分辨。
 //
-// ⚠ 樣板照抄 `SenateSessionCloseGateway`（Tim 2026-09-03 在 TASK-0114 拍過的形狀：內部串 ucmd）。
+// ⚠ Editor 路的樣板照抄 `SenateSessionCloseGateway`（Tim 2026-09-03 在 TASK-0114 拍過的形狀：內部串 ucmd）。
 #nullable enable
 using System.Globalization;
+using SCP.Core.Cmd;
 using SCP.Core.Letters;
+using SCP.Core.Paths;
+using SCP.Core.Tavern;
 
 namespace Senate.Core;
 
 public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
 {
+    const string Room = "tavern";
+
     readonly string m_DataRoot;
     readonly Action<string> m_Log;
     readonly double m_TimeoutSec;
@@ -34,7 +39,11 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         m_TimeoutSec = iTimeoutSec;
     }
 
-    public string HostQualifier => "⤷ 酒館發文由 Unity Editor 執行（Cmd `Tavern op=post`，資料根 " + m_DataRoot + "）";
+    /// <summary>整體定語（兩條路各自在 <c>oLines</c> 再印一行實際走了哪一條）。</summary>
+    public string HostQualifier => "⤷ 酒館發文：Senate 組訊息＋酒館 Server 寫入；還沒搬的前處理才交回 Unity Editor（資料根 " + m_DataRoot + "）";
+
+    string SenateQualifier => "⤷ 酒館發文由 Senate 組訊息、酒館 Server 寫入（不經 Unity Editor，資料根 " + m_DataRoot + "）";
+    string EditorQualifier => "⤷ 酒館發文由 Unity Editor 執行（Cmd `Tavern op=post`，資料根 " + m_DataRoot + "）";
 
     public SCP_TavernPostVerdict Post(string iSenderPersona, string iBody,
                                       IReadOnlyDictionary<string, string> iMeta, List<string> oLines)
@@ -44,6 +53,120 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         if (string.IsNullOrWhiteSpace(iBody))
             return SCP_TavernPostVerdict.Bad("內文是空的 —— 空訊息會佔一則卻不說話");
 
+        // T06.3 schema：不合就是**確定沒發**，兩條路都一樣（Editor 用同一支判出同一個結果）⇒ ⛔ 不交回 Editor 再被擋一次。
+        string? aSchema = SCP_TavernMetaSchema.Validate(iMeta);
+        if (aSchema != null) return SCP_TavernPostVerdict.Bad("meta 不合 T06.3 schema：" + aSchema);
+
+        string? aEditorWhy = Cmd_TavernPost.NotPortedReason(m_DataRoot, iBody, iMeta);
+        if (aEditorWhy == null)
+        {
+            if (!TryResolveProjectRoot(out string aProjectRoot, out string aWhy))
+                // 專案根是詞典附註（`Docs/Glossary`）的根 ⇒ 拿不到就組不出跟 Editor 同形的訊息。⛔ 不猜一個。
+                aEditorWhy = "找不到這個資料根對應的專案根（" + aWhy + "）";
+            else
+            {
+                SCP_TavernPostVerdict? aDone = PostViaSenate(iSenderPersona, iBody, iMeta, aProjectRoot, oLines, out aEditorWhy);
+                if (aDone.HasValue) return aDone.Value;
+            }
+        }
+        oLines.Add("· 交回 Editor：" + aEditorWhy);
+        return PostViaEditor(iSenderPersona, iBody, iMeta, oLines);
+    }
+
+    // ===========================================================
+    // 區塊職責：Senate 管線 —— 組訊息 → `tavern-write`。回 null ＝ 半路發現要交回 Editor（原因在 oEditorWhy）。
+    // ===========================================================
+    SCP_TavernPostVerdict? PostViaSenate(string iPersona, string iBody, IReadOnlyDictionary<string, string> iMeta,
+                                         string iProjectRoot, List<string> oLines, out string oEditorWhy)
+    {
+        oEditorWhy = "";
+        var aRoots = new SCP_MorningRoots
+        {
+            DataRoot = m_DataRoot.Replace('\\', '/'),
+            LettersRoot = SCP_DataPaths.Letters(new SCP_DataRoot(m_DataRoot)).Value,
+            ProjectRoot = iProjectRoot.Replace('\\', '/'),
+        };
+        SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(aRoots.DataRoot, aRoots.LettersRoot, aRoots.ProjectRoot,
+            aRoots.Region, Room, iPersona, iBody, iMeta);
+        foreach (string n in aDraft.Notes) oLines.Add("⚠ " + n);
+        if (aDraft.Message == null) return SCP_TavernPostVerdict.Bad("發文被拒：" + aDraft.Error);
+
+        // alter 配對要看組好的 sender_id（顯示身分）⇒ 只能在 compose 之後判。
+        string? aAlter = Cmd_TavernPost.AlterPairReason(aRoots.DataRoot, Room, aDraft.Message.SenderId);
+        if (aAlter != null) { oEditorWhy = aAlter; return null; }
+
+        oLines.Add(SenateQualifier);
+        SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["data_root"] = aRoots.DataRoot,
+            ["room"] = Room,
+            ["msg_json"] = SCP_TavernWriter.Serialize(aDraft.Message),
+            ["timeout"] = m_TimeoutSec.ToString("0.###", CultureInfo.InvariantCulture),
+        });
+        string aSeq = Value(aWrite, "seq");
+        if (aWrite.Ok && aSeq.Length > 0)
+        {
+            // 發薪／@mention 是寫入端做的 ⇒ 讀數原樣帶回（commit +5 的憑據就在這幾格）。
+            foreach (var kv in aWrite.Values)
+                if (kv.Key.StartsWith("pay_", StringComparison.Ordinal) || kv.Key.StartsWith("mention_", StringComparison.Ordinal))
+                    oLines.Add($"  · {kv.Key} = {kv.Value}");
+            return SCP_TavernPostVerdict.Good("seq=" + aSeq, aSeq);
+        }
+
+        // 三態：逾時／未知 ＝ 不知道（先回讀，別補發）；其餘 ＝ 確定沒發（`senate cmd tavern-post` 同一判準）。
+        string aFailure = Value(aWrite, "delegate_failure");
+        foreach (string l in aWrite.Lines) oLines.Add("  │ " + l);
+        if (aFailure == "timeout" || aFailure == "unknown")
+            return SCP_TavernPostVerdict.Unknown(
+                $"酒館寫入**結果不明**（delegate_failure={aFailure}）—— 它可能已經發出去了",
+                $"senate cmd tavern-query --arg data_root={aRoots.DataRoot} --arg kind=tail --arg room={Room}"
+                + "   # 看得到這一則 ⇒ **發了，別補發**；看不到 ⇒ 才補發");
+        return SCP_TavernPostVerdict.Bad(
+            $"酒館寫入確定沒發（delegate_failure={(aFailure.Length > 0 ? aFailure : "exit " + aWrite.ExitCode)}）");
+    }
+
+    /// <summary>
+    /// 這個資料根是哪個專案的：在 Senate 設定檔的啟用專案裡找「解析出來的 AgentCommands 根 ＝ 本閘的資料根」那一個。
+    /// <para>⛔ 找不到、或有兩個都對得上 ⇒ 回 false（不猜）—— 呼叫端交回 Editor。</para>
+    /// </summary>
+    bool TryResolveProjectRoot(out string oProjectRoot, out string oWhy)
+    {
+        oProjectRoot = ""; oWhy = "";
+        if (UnityDelegateCmd.ConfigProvider == null) { oWhy = "宿主沒有裝上設定來源"; return false; }
+        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
+        if (aConfig == null) { oWhy = "還沒有設定檔（" + aConfigPath + "）"; return false; }
+        string aWant = Norm(m_DataRoot);
+        var aHits = new List<string>();
+        foreach (SenateProject p in aConfig.Projects)
+        {
+            if (!p.Enabled || string.IsNullOrWhiteSpace(p.Root)) continue;
+            string? aDr = ProjectProbe.ResolveAgentCommandsRoot(p.Root, p.AgentCommandsRoot);
+            if (aDr != null && Norm(aDr) == aWant) aHits.Add(p.Root);
+        }
+        if (aHits.Count == 1) { oProjectRoot = aHits[0]; return true; }
+        oWhy = aHits.Count == 0 ? "設定檔的啟用專案裡沒有一個的資料根是它" : "有 " + aHits.Count + " 個專案都對得上，不猜";
+        return false;
+    }
+
+    static string Norm(string iPath)
+    {
+        string aFull;
+        try { aFull = Path.GetFullPath(iPath); } catch (Exception) { aFull = iPath; }
+        return aFull.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
+    }
+
+    static string Value(SCP_CmdResult iR, string iKey)
+    {
+        foreach (var kv in iR.Values) if (kv.Key == iKey) return kv.Value;
+        return "";
+    }
+
+    // ===========================================================
+    // 區塊職責：Editor 路 —— 整步委派 Unity Editor 的 `Tavern op=post`（TASK-0311 之前的唯一路，原樣保留）。
+    // ===========================================================
+    SCP_TavernPostVerdict PostViaEditor(string iSenderPersona, string iBody,
+                                        IReadOnlyDictionary<string, string> iMeta, List<string> oLines)
+    {
         // ⚠ 參數名逐格照 `_lib/tavern_client.post_message`（同一支 Cmd 的另一個 client）：
         //   `meta` 是**一整串** `k:v;k:v`（不是每欄一個參數）、`wait-reply` 是**連字號**。
         //   🩸 senate 的 `ucmd` 對未知參數**沒有預檢**（TASK-0125）⇒ 名字打錯會靜默取預設值，
@@ -51,7 +174,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         var aArgs = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["op"] = "post",
-            ["room"] = "tavern",
+            ["room"] = Room,
             ["persona"] = iSenderPersona,
             ["body"] = iBody,
             // ⛔ 不傳顯示身分（`sender`）—— 由 Cmd_Tavern 從 persona 推導。
@@ -67,7 +190,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         }
         if (aMetaStr.Length > 0) aArgs["meta"] = aMetaStr.ToString();
 
-        oLines.Add(HostQualifier);
+        oLines.Add(EditorQualifier);
         try
         {
             if (!AgentCmdClient.EnsureIdle(m_DataRoot, iSenderPersona, 10, m_Log, out string aIdleWhy))

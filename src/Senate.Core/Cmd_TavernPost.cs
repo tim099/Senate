@@ -5,9 +5,9 @@
 //          本檔只多做三件 intro 用不到的事：meta／refs／reply_to 的解析、`status` → now_status、以及下面那張擋下清單。
 // 數值影響：寫一則酒館訊息（經 Server）＋ 回傳檔 `letters/<P>/cmd/tavern_post.md`；帶 `status` 時寫 `cmd/now_status.json`。
 //
-// ⛔ **Editor `Cmd_Tavern.Op_Post` 還有四段前處理沒搬** —— 遇到就 exit 2 擋下並指回 `ucmd run Tavern`，
+// ⛔ **Editor `Cmd_Tavern.Op_Post` 還有三段前處理沒搬** —— 遇到就 exit 2 擋下並指回 `ucmd run Tavern`，
 //   ⛔ 不靜默略過（略過的樣子是「訊息發出去了、只是少做一件事」，而那件事沒有任何一層會叫）：
-//   ① meta schema：tag=commit／task-assign／task-ack（commit 公告本來就走 `senate cmd commit`）
+//   ①（已搬，TASK-0311）meta schema：tag=commit／task-assign／task-ack ⇒ `SCP_TavernMetaSchema.Validate`（與 Editor 同一支）
 //   ② tag=creative 的歸檔信（`TryArchiveCreativePost`）
 //   ③ CLI 指令（body 第一個字是酒保 CLI 前綴）—— Editor 會打 `cli-cmd` tag 並跳過詞典附註
 //   ④ alter 配對延遲（上一則是自己的 alter 搭檔，或帶 `alter-*` meta）
@@ -38,7 +38,8 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         "取代 `senate ucmd run Tavern --arg op=post` 的一般發文。身分／顯示名／頭像／詞典附註由本 Cmd 補，\n"
         + "寫入、發薪、@mention 通知由酒館 Server（`tavern-write`，沒開會自動起）做。\n"
         + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query kind=seq` 回讀，⛔ 別補發）。\n"
-        + "⛔ 還沒搬的前處理會 **exit 2 擋下**並指回 `ucmd run Tavern`：tag=commit／task-assign／task-ack／creative、\n"
+        + "⚠ tag=commit／task-assign／task-ack 的 meta 必填欄位照 T06.3 驗（與 Editor 同一支），不合 ⇒ exit 2 確定沒發。\n"
+        + "⛔ 還沒搬的前處理會 **exit 2 擋下**並指回 `ucmd run Tavern`：tag=creative、\n"
         + "   CLI 指令（body 以酒保 CLI 前綴開頭）、alter 配對（上一則是自己的 alter 搭檔）、`alter-*` meta。\n"
         + "⚠ persona 必填但**不必在線**（下線後照樣能發）；匿名發言不走本入口。`status` 只在有 lock 時更新。";
 
@@ -92,8 +93,12 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
 
         string aHint = "\n  ⇒ 這一則請改走 `senate ucmd run Tavern --persona " + aPersona
             + " --arg op=post …`（要 Editor 開著）—— 本入口**確定沒發**";
-        string? aNotPorted = NotPortedReason(iRoots, aBody, aMeta);
+        string? aNotPorted = NotPortedReason(iRoots.DataRoot, aBody, aMeta);
         if (aNotPorted != null) return Block(aPath, aSb, ioResult, 2, aNotPorted + aHint);
+        // T06.3 schema（TASK-0311）：不合就是**確定沒發**（Editor 版同樣在寫入前 reject），⛔ 不是「交回 Editor」——
+        //   Editor 會用同一支判出同一個結果。
+        string? aSchema = SCP_TavernMetaSchema.Validate(aMeta);
+        if (aSchema != null) return Block(aPath, aSb, ioResult, 2, aSchema + "\n  ⇒ **確定沒發**：補齊 meta 後重跑是安全的");
 
         int? aReplyTo = null;
         string aReplyRaw = iArgs.Get("reply_to").Trim();
@@ -186,21 +191,19 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
 
     // ── 擋下清單（見檔頭 ①-④）──────────────────────────────────────
 
-    static readonly string[] s_SchemaTags = { "commit", "task-assign", "task-ack", "creative" };
-
-    static string? NotPortedReason(SCP_MorningRoots iRoots, string iBody, Dictionary<string, string> iMeta)
+    /// <summary>
+    /// 還沒搬進 Senate 的前處理（見檔頭 ②-④）。回 null ＝ Senate 做得完這一則；回字串 ＝ 要交回 Editor。
+    /// <para>⚠ <see cref="SenateTavernPostGateway"/> 也呼叫這一支（TASK-0311）—— ⛔ 不在那邊另列一張清單。</para>
+    /// </summary>
+    public static string? NotPortedReason(string iDataRoot, string iBody, IReadOnlyDictionary<string, string> iMeta)
     {
-        if (iMeta.TryGetValue("tag", out string? aTag))
-            foreach (string t in s_SchemaTags)
-                if (string.Equals(aTag, t, StringComparison.Ordinal))
-                    return t == "commit"
-                        ? "tag=commit 的 SHA 驗證還沒搬進 Senate —— commit 公告請走 `senate cmd commit`（它會自己發）"
-                        : $"tag={t} 的前處理（{(t == "creative" ? "歸檔信" : "meta schema 驗證")}）還沒搬進 Senate";
+        if (iMeta.TryGetValue("tag", out string? aTag) && string.Equals(aTag, "creative", StringComparison.Ordinal))
+            return "tag=creative 的前處理（歸檔信）還沒搬進 Senate";
         foreach (string k in iMeta.Keys)
             if (k.StartsWith("alter-", StringComparison.Ordinal))
                 return $"meta `{k}` 是 alter 配對延遲的旗標，而延遲還沒搬進 Senate";
 
-        string? aPrefix = CliPrefix(iRoots.DataRoot);
+        string? aPrefix = CliPrefix(iDataRoot);
         if (aPrefix != null)
         {
             string aTrim = iBody.TrimStart();
@@ -216,7 +219,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
     /// alter 配對：上一則是自己的 alter 搭檔 ⇒ Editor 會延遲後才寫。讀不到就不擋（Editor 版同一側：沒有前一則＝不延遲）。
     /// ⚠ 用組好的訊息的 sender_id —— 那是 Editor 配對時用的同一個鍵（顯示身分，不是 persona）。
     /// </summary>
-    static string? AlterPairReason(string iDataRoot, string iRoom, string iSender)
+    public static string? AlterPairReason(string iDataRoot, string iRoom, string iSender)
     {
         string aSender = iSender;
         const string AlterSuffix = "-alter";
