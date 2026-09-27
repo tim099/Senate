@@ -294,7 +294,9 @@ public sealed class ServerExecutor
     {
         if (!File.Exists(iPath)) return new JsonObject { ["Commands"] = new JsonArray() };
         var aNode = JsonNode.Parse(File.ReadAllText(iPath, System.Text.Encoding.UTF8)) as JsonObject;
-        if (aNode == null || aNode["Commands"] is not JsonArray) return new JsonObject { ["Commands"] = new JsonArray() };
+        // TASK-0265：結構不對跟解析失敗同一個處置（丟例外）—— 舊版回空骨架，而 CommitLaneQueue 會把它寫回 ⇒ 整條 queue 洗掉。
+        if (aNode == null || aNode["Commands"] is not JsonArray)
+            throw new SCP.Core.Proc.SCP_QueueUnreadableException(iPath, "沒有 `Commands` 陣列");
         return aNode;
     }
 

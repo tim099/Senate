@@ -229,7 +229,7 @@ public static class AgentCmdClient
         //   不是「讀到一半的世界」—— 兩者中間隔著一整個決策。
         using (SCP.Core.Io.SCP_FileLock.Acquire(QueuePath(iDataRoot, iPersona)))
         {
-            JsonObject aRoot = LoadQueue(iDataRoot, iPersona, iLog);   // ⚠ 載入**在鎖裡面**
+            JsonObject aRoot = LoadQueueForWrite(iDataRoot, iPersona);   // ⚠ 載入**在鎖裡面**；壞檔 ⇒ 拒寫（TASK-0265）
             var aCommands = aRoot["Commands"] as JsonArray ?? new JsonArray();
             aRoot["Commands"] = aCommands;
 
@@ -388,6 +388,35 @@ public static class AgentCmdClient
     static string MakeId(string iCmdType)
         => $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}-{iCmdType.ToLowerInvariant()}";
 
+    /// <summary>
+    /// **要寫回**的那兩條路（Submit／RemoveCmd）專用的讀法 —— 壞檔、讀不了一律**丟例外、一個位元組都不寫**（TASK-0265）。
+    /// <para>🩸 舊版兩條路都走寬鬆的 <see cref="LoadQueue"/>：解析失敗 ⇒ 空骨架 ⇒ append 一筆寫回
+    /// ⇒ **整條 queue 被蓋成只剩這一筆**，而那顆壞檔（證據）也一起沒了。註解卻寫「舊內容不動」。
+    /// Unity 那側早就是「讀不到就不寫回」（TASK-0264）—— 這裡對齊同一個立場。</para>
+    /// <para>⚠ 呼叫時必須已經握著 queue 的 <c>SCP_FileLock</c>：所有寫入端都在同一顆鎖下換檔，
+    /// 所以鎖裡看到的「不存在」就是真的不存在（⛔ 不是換檔窗口）。</para>
+    /// </summary>
+    static JsonObject LoadQueueForWrite(string iDataRoot, string? iPersona)
+    {
+        string aPath = QueuePath(iDataRoot, iPersona);
+        if (!SCP.Core.Io.SCP_AtomicFileRead.TryReadAllText(aPath, out string aText, out var aState))
+        {
+            if (aState == SCP.Core.Io.SCP_FileReadState.Missing) return new JsonObject { ["Commands"] = new JsonArray() };
+            throw new SCP.Core.Proc.SCP_QueueUnreadableException(aPath,
+                "讀不了（" + SCP.Core.Io.SCP_AtomicFileRead.DescribeBusy(aPath) + "）");
+        }
+        JsonObject? aNode;
+        try { aNode = JsonNode.Parse(aText) as JsonObject; }
+        catch (Exception e)
+        {
+            throw new SCP.Core.Proc.SCP_QueueUnreadableException(aPath, "壞了：" + e.Message, e);
+        }
+        if (aNode == null || aNode["Commands"] is not JsonArray)
+            throw new SCP.Core.Proc.SCP_QueueUnreadableException(aPath, "沒有 `Commands` 陣列");
+        return aNode;
+    }
+
+    /// <summary>**只讀**的路徑（狀態輪詢）用的寬鬆讀法 —— 壞檔當空、不擋判定。⛔ 要寫回的路徑改走 <see cref="LoadQueueForWrite"/>。</summary>
     static JsonObject LoadQueue(string iDataRoot, string? iPersona, Action<string> iLog)
     {
         string aPath = QueuePath(iDataRoot, iPersona);
@@ -401,7 +430,7 @@ public static class AgentCmdClient
         }
         catch (Exception e)
         {
-            iLog($"  ⚠ queue.json parse error: {e.Message}（以空骨架續行 —— 舊內容不動，寫入走 atomic replace）");
+            iLog($"  ⚠ queue.json parse error: {e.Message}（這條是唯讀輪詢 ⇒ 以空骨架續判；寫入路徑會拒寫）");
             return new JsonObject { ["Commands"] = new JsonArray() };
         }
     }
@@ -445,7 +474,14 @@ public static class AgentCmdClient
     {
         using (SCP.Core.Io.SCP_FileLock.Acquire(QueuePath(iDataRoot, iPersona)))
         {
-            JsonObject aQueue = LoadQueue(iDataRoot, iPersona, iErr);   // ⚠ 載入在鎖裡面
+            JsonObject aQueue;
+            try { aQueue = LoadQueueForWrite(iDataRoot, iPersona); }   // ⚠ 載入在鎖裡面；壞檔 ⇒ 拒寫（TASK-0265）
+            catch (IOException e)   // 含 SCP_QueueUnreadableException
+            {
+                // 這一步只是判定之後的清理 ⇒ ⛔ 不讓它把已經得出的 Failed 判定炸掉；出聲說「沒清」就好。
+                iErr($"  ⚠ 沒有把失敗的 cmd 從 queue 清掉：{e.Message}");
+                return;
+            }
             var aCommands = aQueue["Commands"] as JsonArray;
             if (aCommands == null) return;
             for (int i = aCommands.Count - 1; i >= 0; --i)

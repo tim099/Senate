@@ -216,6 +216,14 @@ public static class Program
         //   未處理例外不跑 finally ⇒ 崩潰對話框開著的那段時間，`using` 裡的檔案鎖一直握在手上，
         //   下一個呼叫者等 20 秒、又崩一次（2026-09-27 Sirius 沙箱那串，summit 同日重現）。
         //   接住了，`using` 才會放鎖，行程也才會以 exit code 結束而不是彈 Windows 對話框。
+        catch (SCP.Core.Proc.SCP_QueueUnreadableException e)
+        {
+            // TASK-0265：queue 在但讀不了／壞了 ⇒ 寫入路徑拒寫。⛔ 別落進上面那格「設定檔有問題」——
+            //   壞的是 queue，而那句話會把人送去翻一個沒有壞的設定檔。
+            Console.Error.WriteLine($"✗ {e.Message}");
+            Console.Error.WriteLine("  ⇒ **沒有送出任何東西**，那顆 queue 原封不動。修好（或確認內容後刪掉）再重跑。");
+            return 3;
+        }
         catch (SCP.Core.Io.SCP_FileLockTimeoutException e)
         {
             // 等不到鎖 ＝ 有人握著它 ⇒ 處置是「稍後重試／找出握著的人」，⛔ 不是「你打錯了」。
