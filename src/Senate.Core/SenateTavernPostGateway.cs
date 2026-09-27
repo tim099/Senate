@@ -37,8 +37,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
     public string HostQualifier => "⤷ 酒館發文由 Unity Editor 執行（Cmd `Tavern op=post`，資料根 " + m_DataRoot + "）";
 
     public SCP_TavernPostVerdict Post(string iSenderPersona, string iBody,
-                                      IReadOnlyDictionary<string, string> iMeta,
-                                      string iSessionToken, List<string> oLines)
+                                      IReadOnlyDictionary<string, string> iMeta, List<string> oLines)
     {
         if (string.IsNullOrWhiteSpace(iSenderPersona))
             return SCP_TavernPostVerdict.Bad("沒有 persona ⇒ 不知道要署誰的名（⛔ 不猜）");
@@ -67,7 +66,6 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             aMetaStr.Append(kv.Key).Append(':').Append(kv.Value);
         }
         if (aMetaStr.Length > 0) aArgs["meta"] = aMetaStr.ToString();
-        if (!string.IsNullOrWhiteSpace(iSessionToken)) aArgs["session_token"] = iSessionToken;
 
         oLines.Add(HostQualifier);
         try

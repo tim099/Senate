@@ -154,7 +154,6 @@ internal static class GoodnightLocal
             a.Add(new SCP_CmdArgSpec("skip_reason", "跳過收工閘的理由（Editor 活著時寫進那幾張單的時間線）"));
         }
         a.Add(new SCP_CmdArgSpec("note", "附註（選填，併入下線廣播）"));
-        a.Add(new SCP_CmdArgSpec("no_token", "=true ⇒ 廣播顯式不帶 session_token（enforce 除錯用）"));
         a.Add(new SCP_CmdArgSpec("timeout", "等酒館 Server／Editor 回執的秒數（預設 30）"));
         return a;
     }
@@ -209,7 +208,7 @@ internal static class GoodnightLocal
             {
                 ioResult.Lines.Add($"⤷ 這一步有一段要 Editor（{aPre.NeedsEditor}）；Editor 活著（{aWhy}）⇒ 整步交給 goodnight-{aStep}-editor");
                 var aFwd = new Dictionary<string, string>(StringComparer.Ordinal) { ["persona"] = aPersona };
-                foreach (string k in new[] { "project", "timeout", "summary", "skip_reason", "note", "no_token" })
+                foreach (string k in new[] { "project", "timeout", "summary", "skip_reason", "note" })
                 {
                     if (iNoLetter && (k == "summary" || k == "skip_reason")) continue;
                     string v = iArgs.Get(k);
@@ -250,12 +249,11 @@ internal static class GoodnightLocal
         }
         string aNote = iArgs.Get("note");
         if (aNote.Length > 0) aBody += $"\n- Note: {aNote}";
-        bool aNoToken = iArgs.Get("no_token").ToLowerInvariant() == "true";
         var aMeta = new Dictionary<string, string>(StringComparer.Ordinal)
         { ["tag"] = "goodnight-protocol", ["category"] = "meta", ["status-change"] = "offline" };
         string aBroadcastLine;
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
-            iRoots.Region, "tavern", aPersona, aBody, aMeta, aNoToken ? "" : (aApply.Token ?? ""));
+            iRoots.Region, "tavern", aPersona, aBody, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null)
             aBroadcastLine = $"未發（組訊息被拒：{aDraft.Error}）—— 核心已落地，同事看 lock 判在線";
@@ -277,7 +275,7 @@ internal static class GoodnightLocal
             if (aSeq.Length > 0) ioResult.AddValue("post_seq", aSeq);
         }
 
-        // ⑥ 作廢 token（在廣播之後 —— enforce ON 時廣播要帶活的 token）
+        // ⑥ 作廢 token
         int aExpired = SCP_Goodnight.ExpireTokens(iRoots, aPersona, iNoLetter ? "logout" : "goodnight");
 
         var aSb = new System.Text.StringBuilder(aApply.Report);
@@ -343,12 +341,11 @@ public sealed class Cmd_GoodnightSleepEditor : GoodnightDelegateCmd
             a.Add(new SCP_CmdArgSpec("summary", "公開的睡前心得（選填）"));
             a.Add(new SCP_CmdArgSpec("skip_reason", "跳過收工閘的理由（寫進那幾張單的時間線）"));
             a.Add(new SCP_CmdArgSpec("note", "附註（選填）"));
-            a.Add(new SCP_CmdArgSpec("no_token", "=true ⇒ 廣播顯式不帶 session_token"));
             return a;
         }
     }
     protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
-        => Forward(iArgs, "sleep", "summary", "skip_reason", "note", "no_token");
+        => Forward(iArgs, "sleep", "summary", "skip_reason", "note");
 }
 
 public sealed class Cmd_GoodnightLogoutEditor : GoodnightDelegateCmd
@@ -363,10 +360,9 @@ public sealed class Cmd_GoodnightLogoutEditor : GoodnightDelegateCmd
         {
             var a = new List<SCP_CmdArgSpec>(GoodnightSpecs());
             a.Add(new SCP_CmdArgSpec("note", "附註（選填）"));
-            a.Add(new SCP_CmdArgSpec("no_token", "=true ⇒ 廣播顯式不帶 session_token"));
             return a;
         }
     }
     protected override Dictionary<string, string> BuildUnityArgs(SCP_CmdArgs iArgs)
-        => Forward(iArgs, "logout", "note", "no_token");
+        => Forward(iArgs, "logout", "note");
 }

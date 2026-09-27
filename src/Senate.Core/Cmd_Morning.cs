@@ -249,7 +249,7 @@ public sealed class Cmd_MorningIntro : MorningLocalCmd
             ["decision"] = "preferred",
         };
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
-            aRegion, "tavern", aPersona, aMerged, aMeta, aLock.SessionToken);
+            aRegion, "tavern", aPersona, aMerged, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
 
