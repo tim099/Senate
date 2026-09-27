@@ -32,8 +32,17 @@ public static class ServerSpawn
     /// 起錯一顆的症狀是 build id 不符，而那個錯訊息會把人帶去查一個不存在的版本問題。</para>
     /// </summary>
     public static bool TrySpawn(string iRepoRoot, string iServerId, out int oChildPid, out string oErr)
+        => TrySpawn(iRepoRoot, iServerId, null, out oChildPid, out oErr, out _, out _);
+
+    /// <summary>
+    /// 同上，但可以單次覆寫「要不要顯示 Console」（<paramref name="iShowConsole"/> null ＝ 照設定），
+    /// 並回報這一次**實際採用**的值與它是哪一層給的（<see cref="ServerConsolePref.Resolve"/>）。
+    /// </summary>
+    public static bool TrySpawn(string iRepoRoot, string iServerId, bool? iShowConsole,
+                                out int oChildPid, out string oErr, out bool oShown, out string oShownSource)
     {
         oErr = ""; oChildPid = 0;
+        oShown = ServerConsolePref.Resolve(iRepoRoot, iShowConsole, out oShownSource);
 
         // 區塊職責：**測試縫** —— 讓 autostart 的兩個失敗臂在**真實委派路徑**上走得到（TASK-0283，承接 0267 ⑦）。
         // 物理意義：`fail` ⇒ 連子行程都沒起來（`SpawnFailed`）／`noop` ⇒ 回報起來了而其實沒有（`TimedOut`）。
@@ -93,11 +102,16 @@ public static class ServerSpawn
         bool aUseSibling = File.Exists(aSibling);
         if (aUseSibling) aExe = aSibling;
 
+        // Console 顯示與否（Tim 2026-09-26，預設不顯示）：
+        //   · 脫樹那條（WMI）靠 `Win32_ProcessStartup.ShowWindow` 決定 —— 見 TrySpawnDetached。
+        //   · 退路（直接 spawn）：要顯示就得走 ShellExecute 才會拿到**自己的** console；
+        //     `UseShellExecute=false` ＋ `CreateNoWindow=false` 會跟本 process 共用 console，
+        //     ⇒ 本 CLI 退出時那個「視窗」是呼叫端的終端機，不是 Server 的。
         var aInfo = new ProcessStartInfo
         {
             FileName = aExe,
-            UseShellExecute = false,
-            CreateNoWindow = true,
+            UseShellExecute = oShown,
+            CreateNoWindow = !oShown,
             // ⛔ 刻意**不** redirect：接到這裡的管線會在本 process 退出時一起死
             //   （實測②）。child 自己寫檔才留得住。
             WorkingDirectory = iRepoRoot,
@@ -136,7 +150,7 @@ public static class ServerSpawn
         //   所以沒有人會想到去關它。（2026-09-16 Tim 第 3+ 次撞到；事件日誌逐格對得上。）
         //   ⇒ 脫樹之後這一整族都不成立，而且**脫樹本身量得到**（回讀 ParentProcessId）——
         //     ⛔ 不像「套件身分」只能推。
-        if (TrySpawnDetached(aInfo, out oChildPid, out string aDetachWhy)) return true;
+        if (TrySpawnDetached(aInfo, oShown, out oChildPid, out string aDetachWhy)) return true;
 
         try
         {
@@ -163,7 +177,7 @@ public static class ServerSpawn
     /// ⛔ 不要讓一個「看起來成功」的脫樹把真正的失敗蓋掉。</para>
     /// <para>⛔ 非 Windows 一律回 false（不是失敗，是這條路不適用）—— 那邊沒有套件身分這回事。</para>
     /// </summary>
-    static bool TrySpawnDetached(ProcessStartInfo iInfo, out int oPid, out string oWhy)
+    static bool TrySpawnDetached(ProcessStartInfo iInfo, bool iShowConsole, out int oPid, out string oWhy)
     {
         oPid = 0; oWhy = "";
         if (!OperatingSystem.IsWindows()) { oWhy = "非 Windows，這條路不適用"; return false; }
@@ -175,10 +189,15 @@ public static class ServerSpawn
 
         // PowerShell 那一層只是**傳令兵**：真正生出 Server 的是 WMI provider，
         // 所以 powershell 自己是不是我們的子孫並不影響結果。
+        // ShowWindow：0 ＝ SW_HIDE、1 ＝ SW_SHOWNORMAL。⚠ 兩種都**顯式**給：不給的話由 WMI provider
+        //   自己決定，那等於把「顯不顯示」交給一個本層量不到的預設值。
         string aPs =
-            "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{"
+            "$s = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]"
+            + (iShowConsole ? "1" : "0") + "};"
+            + "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{"
             + "CommandLine='" + aCmd.ToString().Replace("'", "''") + "';"
-            + "CurrentDirectory='" + (iInfo.WorkingDirectory ?? "").Replace("'", "''") + "'};"
+            + "CurrentDirectory='" + (iInfo.WorkingDirectory ?? "").Replace("'", "''") + "';"
+            + "ProcessStartupInformation=[CimInstance]$s};"
             + "if ($r.ReturnValue -ne 0) { 'ERR ' + $r.ReturnValue } else { 'PID ' + $r.ProcessId }";
 
         try

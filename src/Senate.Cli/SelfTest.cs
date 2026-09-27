@@ -82,6 +82,7 @@ public static class SelfTest
         One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
         One(nameof(QueueForLaterWhenServerUnavailable), "core", QueueForLaterWhenServerUnavailable),
         One(nameof(ServerBuildKnownClassification), "core", ServerBuildKnownClassification),
+        One(nameof(ServerConsolePrefLayers), "core", ServerConsolePrefLayers),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
         One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
@@ -287,6 +288,45 @@ public static class SelfTest
                 ? "未知 3 種（無心跳／上一顆／空 build）不判符合與否；同 pid 同 build ⇒ 相符；🔴 反向：同 pid 舊 build ⇒ 已知且不符、不排"
                 : string.Join("；", aFails),
             aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：「Server 啟動時顯示 Console」的三層決議（單次覆寫 ＞ 設定 ＞ 預設 false）。
+    // 數值影響：只在暫存目錄的 prefs 檔寫，跑完刪掉；⛔ 不碰真的 senate.pages.local.json。
+    static CheckRow ServerConsolePrefLayers()
+    {
+        const string aName = "Server Console 顯示：覆寫 ＞ 設定 ＞ 預設不顯示（2026-09-26）";
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_con_" + Guid.NewGuid().ToString("N")[..8]);
+        var aFails = new List<string>();
+        try
+        {
+            Directory.CreateDirectory(aRoot);
+            bool a0 = ServerConsolePref.Resolve(aRoot, null, out string s0);
+            if (a0 || !s0.Contains("沒設過")) aFails.Add($"沒設過應是不顯示＋說沒設過（{a0}／{s0}）");
+            bool aOv = ServerConsolePref.Resolve(aRoot, true, out string sOv);
+            if (!aOv || !sOv.Contains("覆寫")) aFails.Add("覆寫 true 沒生效");
+            var (aOk, aMsg) = ServerConsolePref.Save(aRoot, true);
+            if (!aOk) aFails.Add("寫不進去：" + aMsg);
+            bool a1 = ServerConsolePref.Resolve(aRoot, null, out string s1);
+            if (!a1 || !s1.Contains("設定")) aFails.Add($"存 true 後讀回應是顯示（{a1}／{s1}）");
+            // 🔴 反向對照：設定是 true 時，單次覆寫 false 仍要贏；存回 false 後讀到的是「設定」不是「沒設過」
+            if (ServerConsolePref.Resolve(aRoot, false, out _)) aFails.Add("覆寫 false 沒贏過設定 true");
+            ServerConsolePref.Save(aRoot, false);
+            bool a2 = ServerConsolePref.Resolve(aRoot, null, out string s2);
+            if (a2 || s2.Contains("沒設過")) aFails.Add($"存 false 後應是「設定 false」（{a2}／{s2}）");
+            // senate.showConsole 是**另一格**：沒設過 ⇒ 不顯示；存 true 之後 server 那格不能跟著變
+            var aKey = ServerConsolePref.SenateShowConsole;
+            if (ServerConsolePref.Resolve(aRoot, aKey, null, out string s3) || !s3.Contains("沒設過"))
+                aFails.Add("senate.showConsole 沒設過應是不顯示");
+            ServerConsolePref.Save(aRoot, aKey, true);
+            if (!ServerConsolePref.Resolve(aRoot, aKey, null, out _)) aFails.Add("senate.showConsole 存 true 讀不回來");
+            if (ServerConsolePref.Resolve(aRoot, null, out _)) aFails.Add("🔴 存 senate 那格時 server 那格跟著變了（兩格串線）");
+            return new CheckRow(aName,
+                aFails.Count == 0 ? "沒設過⇒不顯示；覆寫 true 生效；存 true 讀回顯示；🔴 反向：覆寫 false 贏設定、存 false 讀回「設定」而非「沒設過」"
+                                  : string.Join("；", aFails),
+                aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aRoot, true); } catch { } }
     }
 
     // 區塊職責：queue 子分道（`<persona>/<lane>`）的路徑與**身分不被污染**。

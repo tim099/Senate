@@ -46,6 +46,47 @@ public static class ConsoleHost
         }
     }
 
+    // ===========================================================
+    // 區塊職責：雙擊開介面時**不帶 console** —— 用 CREATE_NO_WINDOW 把自己重生一份，本體立刻退出。
+    // 物理意義：Tim 2026-09-26「Senate.exe 預設不開 Console」。
+    // 🩸 為什麼 HideConsoleWindow 不夠（2026-09-26 實測）：預設終端機是 Windows Terminal 時，
+    //   console 會被轉交給 WT ⇒ `GetConsoleWindow()` 拿到的是看不見的 PseudoConsoleWindow，
+    //   藏它等於沒藏 —— `cmd /c start senate.exe` 之後 WT 仍開著一個標題 `senate.exe` 的視窗。
+    //   ⇒ 唯一不靠「哪一個終端機在接手」的做法，是**一開始就不要有那個 console**。
+    // 數值影響：多生一個行程（GUI 本體），本行程回 0 退出。子行程帶 <see cref="ChildEnv"/>，
+    //   ⛔ 它不會再重生一次（它自己的隱藏 console 也只有它一個行程附著 ⇒ 不擋就是無限重生）。
+    // ===========================================================
+    public const string ChildEnv = "SENATE_NO_CONSOLE_CHILD";
+
+    /// <summary>
+    /// 重生一份沒有 console 的自己來跑 <paramref name="iArgs"/>。
+    /// 回 true ＝ 子行程起來了、呼叫端應該直接退出；回 false ＝ 沒重生（原因在 <paramref name="oWhy"/>），照舊往下跑。
+    /// </summary>
+    public static bool TryRelaunchWithoutConsole(string[] iArgs, out string oWhy)
+    {
+        oWhy = "";
+        if (!OperatingSystem.IsWindows()) { oWhy = "非 Windows"; return false; }
+        if (Environment.GetEnvironmentVariable(ChildEnv) == "1") { oWhy = "本行程就是重生出來的那一份"; return false; }
+        string? aExe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(aExe)) { oWhy = "拿不到自己的執行檔路徑"; return false; }
+        try
+        {
+            var aPsi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = aExe,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Environment.CurrentDirectory,
+            };
+            foreach (string a in iArgs) aPsi.ArgumentList.Add(a);
+            aPsi.Environment[ChildEnv] = "1";
+            using var aChild = System.Diagnostics.Process.Start(aPsi);
+            if (aChild == null) { oWhy = "Process.Start 回 null"; return false; }
+            return true;
+        }
+        catch (Exception e) { oWhy = e.GetType().Name + ": " + e.Message; return false; }
+    }
+
     /// <summary>把 console 視窗藏起來（雙擊開 GUI 時用，免得黑窗卡在後面）。</summary>
     public static void HideConsoleWindow()
     {

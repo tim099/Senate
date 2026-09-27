@@ -72,6 +72,14 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     string? m_ListError;
     string? m_Message;
 
+    /// <summary>
+    /// 兩格 Console 設定的讀數快取（key＝<c>SCP_PrefKey.Path</c>）。
+    /// <para>⚠ 本頁每一幀都重畫，而 <c>ServerConsolePref.Resolve</c>
+    /// 每次都是 ReadAllText＋parse ⇒ 不快取就是每幀 4 次讀檔，而剛好撞上寫入的那一幀會閃「設定讀不了」。
+    /// 跟 <see cref="m_Statuses"/> 同一個刷新點（<see cref="Reload"/>）；存檔那一格當場重讀。</para>
+    /// </summary>
+    readonly Dictionary<string, (bool Show, string Source)> m_ConsolePrefs = new Dictionary<string, (bool, string)>(StringComparer.Ordinal);
+
     public ServerAdminPage(SenateModel iModel) : base() { m_Model = iModel; }
 
     public override string Key { get { return PageKey; } }
@@ -107,6 +115,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     {
         m_Statuses.Clear();
         m_ProbeErrors.Clear();
+        m_ConsolePrefs.Clear();
         foreach (string aId in ListIds()) ReloadOne(aId);
     }
 
@@ -282,6 +291,8 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
                + "「停止」只停得了現在這一顆，⛔ 不是關掉那條路 —— 下一筆需要它的寫入會把它再拉起來。"
                + " 而 autostart **拉不起來就整筆失敗**（不降級）。");
 
+        DrawConsoleToggle(g);
+
         if (m_Message != null) g.Note(m_Message);
         if (m_ListError != null) g.Note(m_ListError);
 
@@ -305,6 +316,43 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
                 g.TableRow((aKv.Key == aSel ? "▶ " : "") + aKv.Key, StateLabel(s), aPid, aHb);
             }
         }
+    }
+
+    /// <summary>兩格「顯示 Console」勾選 —— 讀寫的是 <see cref="ServerConsolePref"/>（Server 那格跟 CLI `server console` 同一格）。</summary>
+    void DrawConsoleToggle(SCP_Ui g)
+    {
+        DrawOneConsoleToggle(g, ServerConsolePref.ShowConsole, "Server 啟動時顯示 Console 視窗", "server/showConsole",
+                             "下一顆 Server 啟動時 Console",
+                             "只影響之後生出來的 Server（autostart／本頁啟動／--detach），在跑的那顆不會變。");
+        DrawOneConsoleToggle(g, ServerConsolePref.SenateShowConsole, "雙擊 Senate.exe 開介面時顯示 Console 視窗", "senate/showConsole",
+                             "下次雙擊 Senate.exe 時 Console",
+                             "只影響之後雙擊開的那一次；現在這個視窗不會變。從終端機打 `senate …` 不受影響（那個 console 是 shell 的）。");
+    }
+
+    void DrawOneConsoleToggle(SCP_Ui g, SCP.Core.Prefs.SCP_PrefKey<bool> iKey, string iLabel, string iId, string iNoteHead, string iScope)
+    {
+        var (aNow, _) = ConsolePref(iKey);
+        bool aPick = g.Toggle(iLabel, aNow, iId);
+        if (aPick != aNow)
+        {
+            var (aOk, aMsg) = ServerConsolePref.Save(m_Model.RepoRoot, iKey, aPick);
+            m_Message = (aOk ? "" : "🔴 ") + aMsg + (aOk ? "　⚠ " + iScope : "");
+            m_ConsolePrefs.Remove(iKey.Path);   // 存檔（成功或失敗）後這一格當場重讀：畫出來的是磁碟上的值，⛔ 不是我按下去的值
+        }
+        // ⚠ 現況在存檔**之後**取 —— 寫在勾選標籤裡的話，切換那一輪會畫出「[x] …現在：不顯示」。
+        var (aAfter, aSource) = ConsolePref(iKey);
+        g.Note("・" + iNoteHead + "：**" + (aAfter ? "顯示" : "不顯示") + "**（" + aSource + "）");
+    }
+
+    (bool Show, string Source) ConsolePref(SCP.Core.Prefs.SCP_PrefKey<bool> iKey)
+    {
+        if (!m_ConsolePrefs.TryGetValue(iKey.Path, out var aHit))
+        {
+            bool aShow = ServerConsolePref.Resolve(m_Model.RepoRoot, iKey, null, out string aSource);
+            aHit = (aShow, aSource);
+            m_ConsolePrefs[iKey.Path] = aHit;
+        }
+        return aHit;
     }
 
     void DrawServer(SCP_Ui g, string iServerId, ServerStatus? iStatus)
@@ -378,7 +426,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         if (iAction == Allowed.Start)
         {
             g.SetField(aPending, "");
-            if (g.Button("啟動 `" + iServerId + "`（另開視窗）", "server/start/" + iServerId))
+            if (g.Button("啟動 `" + iServerId + "`", "server/start/" + iServerId))
                 m_Message = StartDetached(iServerId);
             return;
         }
@@ -426,31 +474,16 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         if (AllowedAction(aNow) != Allowed.Start)
             return "・[" + iServerId + "] 身分驗不出來的記錄還在 ⇒ **沒有啟動**（可能其實在跑）。";
 
-        string? aExe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(aExe))
-            return "🔴 拿不到自己這顆 exe 的路徑 ⇒ **沒有啟動**（⛔ 不退而去 PATH 撈一顆，"
-                   + "那可能是別的 build）。請用終端機跑 `senate server start`。";
-
+        // ⭐ 2026-09-26（Tim：Console 預設不顯示、本頁可設定）：改走跟委派 autostart **同一條**
+        //   `ServerSpawn.TrySpawn` —— 同一顆 exe（publish/server/senate-server.exe 優先）、脫離本頁的行程樹、
+        //   Console 顯示與否照 `ServerConsolePref`。
+        //   ⛔ 以前這裡自己 `Process.Start(UseShellExecute=true)`：永遠開視窗、而且是 GUI 的子孫
+        //     ⇒ 兩條生成路徑的行為不一樣，而那不會報錯。
+        string aErr; bool aShown; string aSource; int aPid;
         try
         {
-            var aPsi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = aExe,
-                // ⚠ `UseShellExecute = true` ＋ 不隱藏視窗：Server 是前景常駐，
-                //   它需要一個自己的終端機掛著（也讓人看得見它、Ctrl+C 停得掉）。
-                UseShellExecute = true,
-                CreateNoWindow = false,
-                WorkingDirectory = m_Model.RepoRoot,
-            };
-            aPsi.ArgumentList.Add("server");
-            aPsi.ArgumentList.Add("start");
-            // ⚠ 指名才不會起錯一顆 —— 不帶的話不管本頁現在看哪一顆，起來的都是 `main`。
-            if (!string.Equals(iServerId, SCP_ServerIds.Default, StringComparison.Ordinal))
-            {
-                aPsi.ArgumentList.Add("--id");
-                aPsi.ArgumentList.Add(iServerId);
-            }
-            System.Diagnostics.Process.Start(aPsi);
+            if (!ServerSpawn.TrySpawn(m_Model.RepoRoot, iServerId, null, out aPid, out aErr, out aShown, out aSource))
+                return "🔴 `" + iServerId + "` 啟動失敗（" + aErr + "）⇒ **沒有起來**。";
         }
         catch (Exception e)
         {
@@ -459,7 +492,8 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
 
         // ⛔ 這裡刻意**不回報「已啟動」** —— 我只知道「我送出了」。
         //   那兩件事在 2026-08 咬過我一次：回報字串會替自己說謊。
-        return "・已送出啟動 `" + iServerId + "`（另一個視窗）。⚠ 這句話的意思是**我按下去了**，"
+        return "・已送出啟動 `" + iServerId + "`（pid=" + aPid + "，Console " + (aShown ? "顯示" : "不顯示")
+               + "：" + aSource + "）。⚠ 這句話的意思是**我按下去了**，"
                + "⛔ 不是「它起來了」—— 按「重新探測」看心跳才算數。";
     }
 

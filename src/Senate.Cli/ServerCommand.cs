@@ -21,8 +21,18 @@ static class ServerCommand
         {
             // start 不指名 ⇒ `main`：起一顆是明確的動作，有預設不會讓人損失什麼。
             case "start":
+            {
+                bool aCon = HasFlag(iArgs, "--console"), aNoCon = HasFlag(iArgs, "--no-console");
+                if (aCon && aNoCon) return Usage(2, "--console 與 --no-console 不能同時給。");
+                // 顯示與否只對「另生一顆」有意義 ⇒ 給了其中一個就當成 --detach（並說出來）。
+                if (HasFlag(iArgs, "--detach") || aCon || aNoCon)
+                    return StartDetached(iRepoRoot, aId ?? SCP_ServerIds.Default,
+                                         aCon ? true : aNoCon ? false : (bool?)null,
+                                         iImplied: !HasFlag(iArgs, "--detach"));
                 return ServerHost.RunForeground(iRepoRoot, aId ?? SCP_ServerIds.Default,
                                                 Console.WriteLine, Console.Error.WriteLine);
+            }
+            case "console": return ConsolePref(iRepoRoot, iArgs.Length > 2 ? iArgs[2].ToLowerInvariant() : "");
             // 🔴 stop 不指名則**不猜**：只有一顆在跑就停它，兩顆以上擋下並要求指名。
             //   ⛔ 預設停 `main` 是一把裝填好的槍：人想停酒館那顆而停掉銀行那顆，而兩者的輸出同形。
             case "stop": return Stop(iRepoRoot, aId, HasFlag(iArgs, "--all"));
@@ -52,6 +62,65 @@ static class ServerCommand
     {
         foreach (string a in iArgs) if (string.Equals(a, iFlag, StringComparison.Ordinal)) return true;
         return false;
+    }
+
+    // ===========================================================
+    // 區塊職責：`server start --detach [--console|--no-console]` —— 另生一顆常駐、不佔這個終端機。
+    // 物理意義：走的是跟委派 autostart **同一條** `ServerSpawn.TrySpawn`（脫樹＋同一顆 exe），
+    //           ⛔ 不另寫一條生成路徑 —— 兩條路的 console 行為會漂開，而那不會報錯。
+    // 數值影響：exit 0 上線／1 已有一顆在跑／3 生了但等不到上線或生不出來。
+    // ===========================================================
+    static int StartDetached(string iRepoRoot, string iId, bool? iShow, bool iImplied)
+    {
+        if (iImplied) Console.WriteLine("· 給了 --console／--no-console ⇒ 當成 --detach（前景那顆本來就掛在這個終端機裡）");
+        ServerStatus aNow = ServerHost.Probe(iRepoRoot, iId);
+        if (aNow.IsRunning)
+        {
+            Console.WriteLine($"・[{iId}] 已經有一顆在跑（pid={aNow.Alive!.Pid}）⇒ 沒有啟動第二顆。");
+            Console.WriteLine("  ⚠ 顯示與否只在啟動那一刻決定 —— 要換，先 `senate server stop"
+                              + (iId == SCP_ServerIds.Default ? "" : " --id " + iId) + "` 再啟動。");
+            return 1;
+        }
+        bool aShown = false; string aSource = "";
+        bool aSpawn(out int oPid, out string oErr)
+            => ServerSpawn.TrySpawn(iRepoRoot, iId, iShow, out oPid, out oErr, out aShown, out aSource);
+        SCP_ServerAutoStartReport aRep = SCP_ServerAutoStart.Ensure(
+            () => ServerHost.Probe(iRepoRoot, iId).IsRunning, aSpawn,
+            iPid => ServerHost.StartLogPath(iRepoRoot, iId, iPid), Console.WriteLine);
+        Console.WriteLine($"· Console：{(aShown ? "顯示" : "不顯示")}（{aSource}）");
+        if (!aRep.Ok)
+        {
+            var aLines = new List<string>();
+            SCP_ServerAutoStart.Explain(aRep, aLines);
+            foreach (string l in aLines) Console.Error.WriteLine(l);
+            return 3;
+        }
+        ServerStatus aUp = ServerHost.Probe(iRepoRoot, iId);
+        Console.WriteLine($"✓ [{iId}] 上線 pid={aUp.Alive?.Pid.ToString() ?? "?"}（{aRep.Detail}）");
+        Console.WriteLine($"🔢 console_shown = {(aShown ? 1 : 0)}");
+        return 0;
+    }
+
+    // ===========================================================
+    // 區塊職責：`server console [on|off]` —— 讀／寫「Server 啟動時顯示 Console」的持久設定。
+    // 數值影響：on/off 寫 `server.showConsole`；不給值只印現況。⛔ 不影響已經在跑的那顆。
+    // ===========================================================
+    static int ConsolePref(string iRepoRoot, string iValue)
+    {
+        if (iValue.Length > 0)
+        {
+            bool? aSet = iValue is "on" or "1" or "true" ? true : iValue is "off" or "0" or "false" ? false : null;
+            if (aSet == null) return Usage(2, $"server console 只收 on／off（收到 '{iValue}'）");
+            var (aOk, aMsg) = ServerConsolePref.Save(iRepoRoot, aSet.Value);
+            // ⚠ prefs 層的訊息自己帶 ✓／✗ 開頭 ⇒ 這裡只補失敗那半，不重複加。
+            Console.WriteLine(aOk ? aMsg : "✗ " + aMsg);
+            if (!aOk) return 1;
+            Console.WriteLine("  ⚠ 只影響**之後**生出來的 Server（autostart／管理頁／--detach）；在跑的那顆不會變。");
+        }
+        bool aShow = ServerConsolePref.Resolve(iRepoRoot, null, out string aSource);
+        Console.WriteLine($"· Server 啟動時 Console：{(aShow ? "顯示" : "不顯示")}（{aSource}）");
+        Console.WriteLine($"🔢 show_console = {(aShow ? 1 : 0)}");
+        return 0;
     }
 
     static int Stop(string iRepoRoot, string? iId, bool iAll)
@@ -218,6 +287,8 @@ static class ServerCommand
         Console.Error.WriteLine("  senate server status  身分／心跳／build id 三格分開印；沒在跑 exit 3");
         Console.Error.WriteLine("  senate server stop --all  把所有在跑的都停掉（build 腳本用；交互使用請指名）");
         Console.Error.WriteLine("  senate server list    列出看得到的每一顆（registry ∪ 心跳檔）");
+        Console.Error.WriteLine("  senate server start --detach [--console|--no-console]  另生一顆（不佔這個終端機）；不給就照設定");
+        Console.Error.WriteLine("  senate server console [on|off]  Server 啟動時顯示 Console 的設定（預設 off）；不給值＝看現況");
         Console.Error.WriteLine("  共用旗標：--id <serverId>（預設 `main`；stop 不指名而有兩顆以上在跑 ⇒ 擋下要求指名）");
         return iCode;
     }

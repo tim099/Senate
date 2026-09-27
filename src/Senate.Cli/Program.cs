@@ -163,7 +163,17 @@ public static class Program
         //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
         if (iArgs.Length == 0 && ConsoleHost.LaunchedFromExplorer())
         {
-            ConsoleHost.HideConsoleWindow();
+            // Tim 2026-09-26：預設不開 Console，設定在 ServerAdminPage（`senate.showConsole`）。
+            //   不顯示 ⇒ 重生一份沒有 console 的自己開介面，本體退出（原因見 ConsoleHost）。
+            //   ⚠ 重生失敗就退回舊做法（藏視窗），並把原因印在那個還看得到的 console 上 —— ⛔ 不靜默。
+            bool aShow = ServerConsolePref.Resolve(aRepoRoot, ServerConsolePref.SenateShowConsole, null, out _);
+            if (!aShow)
+            {
+                if (ConsoleHost.TryRelaunchWithoutConsole(new[] { "ui", "--window" }, out string aWhy)) return 0;
+                if (Environment.GetEnvironmentVariable(ConsoleHost.ChildEnv) != "1")
+                    Console.Error.WriteLine("⚠ 沒能以無 Console 的方式重開（" + aWhy + "）⇒ 照舊開介面，這個視窗可能會留著。");
+                ConsoleHost.HideConsoleWindow();
+            }
             return CmdUi(aRepoRoot, new[] { "ui", "--window" });
         }
 
@@ -1438,7 +1448,8 @@ public static class Program
         // ⚠ 不加進這張表的話，旗標閘會在 `ServerCommand` 看到它之前就 exit 2 ——
         //   而那個錯誤訊息逐字是「這支子命令**不吃任何旗標**」，
         //   讀起來像是設計上沒有這個能力，而不像漏登記。
-        ["server"] = new[] { "--id", "--all" },
+        // 2026-09-26：`start --detach [--console|--no-console]`（另生一顆、Console 顯示與否）。
+        ["server"] = new[] { "--id", "--all", "--detach", "--console", "--no-console" },
     };
 
     // 值型旗標：它後面那一個 token 是**值**，不是旗標 ⇒ 不能拿去比對名單
