@@ -202,6 +202,25 @@ public static class Program
             Console.Error.WriteLine($"✗ 設定檔有問題：{e.Message}");
             return 3;
         }
+        // ⚠ 下面兩格的重點不在「印得好看」，在**接住**這件事本身：
+        //   未處理例外不跑 finally ⇒ 崩潰對話框開著的那段時間，`using` 裡的檔案鎖一直握在手上，
+        //   下一個呼叫者等 20 秒、又崩一次（2026-09-27 Sirius 沙箱那串，summit 同日重現）。
+        //   接住了，`using` 才會放鎖，行程也才會以 exit code 結束而不是彈 Windows 對話框。
+        catch (SCP.Core.Io.SCP_FileLockTimeoutException e)
+        {
+            // 等不到鎖 ＝ 有人握著它 ⇒ 處置是「稍後重試／找出握著的人」，⛔ 不是「你打錯了」。
+            Console.Error.WriteLine($"✗ {e.Message}");
+            Console.Error.WriteLine("  ⇒ **沒有送出任何東西**，稍後重跑是安全的。常見的握鎖者：另一顆正在寫同一條 lane 的 senate、"
+                                    + "或一顆崩潰後對話框還沒按掉的 senate.exe（它會一直握著）。");
+            return 3;
+        }
+        catch (Exception e)
+        {
+            string? aReport = CrashLog.Write(e, "Program.Main catch", false, $"已接住，exit 70 —— 子命令 `{aCmd}`");
+            Console.Error.WriteLine($"✗ 未預期的例外（{e.GetType().Name}）：{e.Message}");
+            if (aReport == null) Console.Error.WriteLine(e.ToString());   // 報告寫不出來 ⇒ 至少讓全文留在 stderr
+            return 70;
+        }
     }
 
     // ── senate init ───────────────────────────────────────────

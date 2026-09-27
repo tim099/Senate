@@ -46,7 +46,8 @@ public static class CrashLog
     /// <para>🩸 主目錄寫不進去時退到**本行程使用者的 TEMP**：2026-09-27 那一族崩潰的成因就是
     /// 沙箱身分（<c>CodexSandboxOffline</c>）碰不到共用目錄 —— 只寫主目錄的話，最需要報告的那一次正好寫不出來。</para>
     /// </summary>
-    public static string? Write(Exception? iEx, string iSource, bool iTerminating)
+    /// <param name="iHeadline">標題括號裡那句；不給就依 <paramref name="iTerminating"/> 選「行程結束／背景例外」。</param>
+    public static string? Write(Exception? iEx, string iSource, bool iTerminating, string? iHeadline = null)
     {
         DateTime aNow = DateTime.Now;
         int aPid = Environment.ProcessId;
@@ -58,7 +59,7 @@ public static class CrashLog
             {
                 Directory.CreateDirectory(aDir);
                 string aPath = Path.Combine(aDir, aName);
-                File.WriteAllText(aPath, Render(iEx, iSource, iTerminating, aNow, aPid, aPrimaryError), new UTF8Encoding(false));
+                File.WriteAllText(aPath, Render(iEx, iSource, iTerminating, aNow, aPid, aPrimaryError, iHeadline), new UTF8Encoding(false));
                 try { Console.Error.WriteLine($"💥 崩潰報告{(aPrimaryError != null ? "（⚠ 主目錄寫不進去，落在 TEMP）" : "")}：{aPath}"); }
                 catch (Exception) { }   // 沒有 Console 時這行本身也可能丟
                 return aPath;
@@ -68,10 +69,11 @@ public static class CrashLog
         return null;
     }
 
-    static string Render(Exception? iEx, string iSource, bool iTerminating, DateTime iNow, int iPid, string? iPrimaryError)
+    static string Render(Exception? iEx, string iSource, bool iTerminating, DateTime iNow, int iPid, string? iPrimaryError,
+                         string? iHeadline)
     {
         var aSb = new StringBuilder();
-        aSb.AppendLine($"# 💥 {s_Host} 崩潰（{(iTerminating ? "行程結束" : "未結束 —— 背景例外")}）");
+        aSb.AppendLine($"# 💥 {s_Host} 崩潰（{iHeadline ?? (iTerminating ? "行程結束" : "未結束 —— 背景例外")}）");
         aSb.AppendLine();
         if (iPrimaryError != null)
             aSb.AppendLine($"> ⚠ 本報告落在 TEMP 退路 —— 主目錄寫不進去（{iPrimaryError}）。那一行本身可能就是線索。\n");
