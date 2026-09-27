@@ -275,8 +275,8 @@ internal static class GoodnightLocal
             if (aSeq.Length > 0) ioResult.AddValue("post_seq", aSeq);
         }
 
-        // ⑥ 作廢 token
-        int aExpired = SCP_Goodnight.ExpireTokens(iRoots, aPersona, iNoLetter ? "logout" : "goodnight");
+        // ⑥ 作廢 token —— TASK-0307 起 token 只住 lock，上面刪 lock 那一下就是作廢；不再有 `_tokens.json` 要標。
+        bool aLockStill = File.Exists(SCP.Core.Paths.SCP_LettersPaths.SessionLockPath(iRoots.Letters, aPersona));
 
         var aSb = new System.Text.StringBuilder(aApply.Report);
         aSb.AppendLine();
@@ -288,7 +288,9 @@ internal static class GoodnightLocal
         aSb.AppendLine("## verify（讀回的事實）");
         aSb.AppendLine($"- lock: exists={File.Exists(SCP.Core.Paths.SCP_LettersPaths.SessionLockPath(iRoots.Letters, aPersona))}（應為 False）");
         aSb.AppendLine($"- broadcast: {aBroadcastLine}");
-        aSb.AppendLine(aExpired >= 0 ? $"- session_token expired: {aExpired} 筆" : "- session_token expired: **讀不到 _tokens.json**（⛔ 不是 0 筆）");
+        aSb.AppendLine(aLockStill
+            ? "- session_token: ⚠ **仍有效** —— lock 還在（見上一行），token 跟著它"
+            : "- session_token: 隨 lock 一起失效（TASK-0307：token 只住 lock，lock 不在 ⇒ 沒有任何地方還認得它）");
         aSb.AppendLine(aSessionLine);
         aSb.AppendLine("## next");
         aSb.AppendLine($"- 收工。明天醒來：senate cmd morning-wake --arg persona={aPersona}");

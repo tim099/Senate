@@ -5,7 +5,7 @@
 //           酒館寫入端（Server）與銀行都已經在 Senate，剩下的依賴只在這四步自己身上 ⇒ 邏輯搬進 SCP_Core
 //           （`SCP_Morning`／`SCP_TavernCatchup`／`SCP_TavernPostCompose`），本檔只做「參數 → 呼叫 → 落檔」。
 //           唯一還要另一個 process 的是 intro 的發文：交給 `tavern-write`（酒館 Server，沒開會自動起）。
-// 數值影響：寫的檔與 Editor 版相同（lock／_tokens.json／memo／profile 兩欄／回傳檔／游標）。
+// 數值影響：寫的檔與 Editor 版相同（lock〔含 session_token〕／memo／profile 兩欄／回傳檔／游標；`_tokens.json` 已退場 TASK-0307）。
 //           回傳檔路徑不變：`letters/<P>/cmd/goodmorning_<step>.md`、`wake_brief.md`、`ding_brief.md`。
 //
 // ⚠ 為什麼是四支獨立 Cmd 而不是一支 `--arg step=`：
@@ -90,7 +90,7 @@ public sealed class Cmd_MorningWake : MorningLocalCmd
     public override string Summary => "早安①登入：守衛＋狀態寫入（不廣播）—— Senate 就地執行，不需要 Editor";
 
     public override string Details =>
-        "寫 lock／_tokens.json／memo／profile（model・actual_agent），推導 wake_count，\n"
+        "寫 lock（含 session_token）／memo／profile（model・actual_agent），推導 wake_count，\n"
         + "並回報身分卡（帳號／餘額／信箱／見林 gap／在線名單）。\n"
         + "⛔ **同一個 persona 不得同時登入兩次** —— 已在線會被守衛擋下（exit 1），\n"
         + "   回傳檔裡有完整的出口清單。**別換個名字繞過去**，那是製造分身。\n"
