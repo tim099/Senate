@@ -32,6 +32,12 @@ public sealed class SenateProject
     /// </summary>
     public string AgentCommandsRoot { get; set; } = "auto";
 
+    /// <summary>
+    /// 詞典根（`SCP_PathId.GlossaryRoot`）。<c>"auto"</c> ＝ <c>&lt;Root&gt;/Docs/Glossary</c>。
+    /// <para>⚠ 只管 Senate 這側（Tim 2026-09-27）；Unity Editor 的 `Cmd_Glossary` 不讀本檔。</para>
+    /// </summary>
+    public string GlossaryRoot { get; set; } = "auto";
+
     /// <summary>停用的專案仍留在清單裡（不是刪掉）—— 「我關掉它」與「我沒設定過它」是兩件事。</summary>
     public bool Enabled { get; set; } = true;
 

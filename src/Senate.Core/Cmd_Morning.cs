@@ -58,6 +58,10 @@ public abstract class MorningLocalCmd : SCP_Cmd
         aResult.AddValue("delegate_host", "senate");
         aResult.AddValue("project", aWhere.ProjectName);
         aResult.AddValue("data_root", aRoots.DataRoot);
+        // 詞典根走 PathsPage 那一格（SCP_PathId.GlossaryRoot）；解不出來 ⇒ 說出來、退回預設推導（⛔ 不靜默）。
+        string? aGlossary = SenatePathBinding.ResolveGlossaryRoot(aConfig, out string? aGlossaryErr);
+        if (aGlossary != null) aRoots.GlossaryRoot = aGlossary;
+        else aResult.Lines.Add($"⚠ 詞典根解不出來（{aGlossaryErr}）—— 本次用預設 `{aRoots.GlossaryRoot}`");
 
         string? aPayload;
         try { aPayload = Run(aRoots, iArgs, aResult); }
@@ -249,7 +253,7 @@ public sealed class Cmd_MorningIntro : MorningLocalCmd
             ["decision"] = "preferred",
         };
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
-            aRegion, "tavern", aPersona, aMerged, aMeta);
+            iRoots.GlossaryRoot, aRegion, "tavern", aPersona, aMerged, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
 

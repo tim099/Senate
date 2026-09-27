@@ -85,6 +85,7 @@ public static class SelfTest
         One(nameof(ServerConsolePrefLayers), "core", ServerConsolePrefLayers),
         One(nameof(TavernMetaSchemaAndRouting), "core", TavernMetaSchemaAndRouting),
         One(nameof(TavernPreprocessPorts), "core", TavernPreprocessPorts),
+        One(nameof(GlossaryRootResolution), "core", GlossaryRootResolution),
 
         One(nameof(LoginPageResolvesLettersRoot), "gui", LoginPageResolvesLettersRoot),
         One(nameof(StyleRoundTrip), "gui", StyleRoundTrip),
@@ -335,6 +336,38 @@ public static class SelfTest
         return new CheckRow(aName,
             aFails.Count == 0
                 ? "commit 合法 SHA 放行／缺・空・多個・非 hex・太短 全擋；task-assign／task-ack 必填欄位擋得住"
+                : string.Join("；", aFails),
+            aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    // 區塊職責：詞典根可設定（Tim 2026-09-27，PathsPage 那一格）—— 解析與附註路徑前綴。
+    // 物理意義：預設值必須逐字印 `docs/Glossary`（Editor `Cmd_Glossary` 同形）；自訂在專案內印相對、專案外印絕對
+    //          ⇒ 讀的人拿那個路徑 Read 得到檔（🔴 反向：不准印一個指不到檔的相對路徑）。
+    // 數值影響：純字串／記憶體，零 IO。
+    static CheckRow GlossaryRootResolution()
+    {
+        const string aName = "詞典根可設定：預設推導／手填／附註路徑前綴（2026-09-27）";
+        var aFails = new List<string>();
+        const string P = "D:/proj";
+        var aRoots = new SCP_MorningRoots { ProjectRoot = P };
+        if (!string.Equals(aRoots.GlossaryRoot, P + "/Docs/Glossary", StringComparison.OrdinalIgnoreCase))
+            aFails.Add("沒設時應推導成 <專案根>/Docs/Glossary（得 " + aRoots.GlossaryRoot + "）");
+        aRoots.GlossaryRoot = "E:/elsewhere/glo";
+        if (aRoots.GlossaryRoot != "E:/elsewhere/glo") aFails.Add("設了之後應回傳設定值");
+
+        string Pre(string g) => SCP.Core.Tavern.SCP_TavernPostCompose.GlossaryDisplayPrefix(P, g);
+        if (Pre(P + "/Docs/Glossary") != "docs/Glossary") aFails.Add("預設根（大小寫不同）應逐字印 docs/Glossary（得 " + Pre(P + "/Docs/Glossary") + "）");
+        if (Pre(P + "/wiki/terms") != "wiki/terms") aFails.Add("專案內自訂根應印相對路徑（得 " + Pre(P + "/wiki/terms") + "）");
+        if (Pre("E:/elsewhere/glo") != "E:/elsewhere/glo") aFails.Add("🔴 反向：專案外的根不准印成相對路徑（得 " + Pre("E:/elsewhere/glo") + "）");
+
+        // 描述表：Stored＋auto，上游是 ProjectRoot（⛔ 不准哪天被改成 Derived 而 PathsPage 上就編不了）。
+        var aD = SCP_PathRegistry.Get(SCP_PathId.GlossaryRoot);
+        if (aD.Kind != SCP_PathKind.Stored || aD.AutoFrom != SCP_PathId.ProjectRoot || aD.AutoSuffix != "Docs/Glossary")
+            aFails.Add("描述表的 GlossaryRoot 應是 Stored＋auto(ProjectRoot, Docs/Glossary)");
+
+        return new CheckRow(aName,
+            aFails.Count == 0
+                ? "沒設 ⇒ <專案根>/Docs/Glossary；設了 ⇒ 設定值；附註前綴：預設逐字 docs/Glossary、專案內相對；🔴 反向：專案外印絕對"
                 : string.Join("；", aFails),
             aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }

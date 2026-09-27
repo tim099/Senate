@@ -58,6 +58,14 @@ public static class SenatePathBinding
             }
             case SCP_PathId.LettersRoot:
                 return SCP_PathStoredValue.Of(iConfig.Awakening.LettersRoot ?? "");
+            // 詞典根（Tim 2026-09-27）：Project 那一格 —— 詞典是跟著專案 repo 走的內容。
+            case SCP_PathId.GlossaryRoot:
+            {
+                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
+                return aProj == null
+                    ? SCP_PathStoredValue.Unavailable(aErr!)
+                    : SCP_PathStoredValue.Of(aProj.GlossaryRoot);
+            }
             // ⛔ `BankRoot` 2026-09-17 起是 **Derived**（`<資料根>/Bank`）⇒ 本檔**不再接它那一格**。
             //   哪天有人把它改回 Stored 而忘了這裡，下面的 default 會當場出聲，
             //   ⛔ 不會靜默回一個空字串（而空字串在頁面上長成「未設定」，那是另一個意思）。
@@ -70,6 +78,19 @@ public static class SenatePathBinding
         }
     }
 
+    /// <summary>
+    /// 解出詞典根（走描述表：手填 ＞ auto ⇒ `<專案根>/Docs/Glossary`）。
+    /// 回 null ＝ 解不出來（原因在 <paramref name="oError"/>）—— 呼叫端**要說出來**，並退回 `SCP_MorningRoots` 的預設推導。
+    /// </summary>
+    public static string? ResolveGlossaryRoot(SenateConfig? iConfig, out string? oError)
+    {
+        oError = null;
+        if (iConfig == null) { oError = "還沒有設定檔"; return null; }
+        SCP_PathResolution aR = SCP_PathRegistry.Resolve(SCP_PathId.GlossaryRoot, id => StoredOf(iConfig, id));
+        if (aR.Error != null) { oError = aR.Error; return null; }
+        return aR.Value;
+    }
+
     /// <summary>寫回記憶體中的 config。回 false ＝ 這格寫不了（呼叫端要說出來）。</summary>
     public static bool SetStored(SenateConfig iConfig, SCP_PathId iId, string iValue, out string? oError)
     {
@@ -78,11 +99,13 @@ public static class SenatePathBinding
         {
             case SCP_PathId.ProjectRoot:
             case SCP_PathId.AgentCommandsRoot:
+            case SCP_PathId.GlossaryRoot:
             {
                 SenateProject? aProj = SingleProject(iConfig, out string? aErr);
                 if (aProj == null) { oError = aErr; return false; }
                 if (iId == SCP_PathId.ProjectRoot) aProj.Root = iValue;
-                else aProj.AgentCommandsRoot = iValue;
+                else if (iId == SCP_PathId.AgentCommandsRoot) aProj.AgentCommandsRoot = iValue;
+                else aProj.GlossaryRoot = iValue;
                 return true;
             }
             case SCP_PathId.LettersRoot:

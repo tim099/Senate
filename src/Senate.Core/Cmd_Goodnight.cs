@@ -253,7 +253,7 @@ internal static class GoodnightLocal
         { ["tag"] = "goodnight-protocol", ["category"] = "meta", ["status-change"] = "offline" };
         string aBroadcastLine;
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
-            iRoots.Region, "tavern", aPersona, aBody, aMeta);
+            iRoots.GlossaryRoot, iRoots.Region, "tavern", aPersona, aBody, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null)
             aBroadcastLine = $"未發（組訊息被拒：{aDraft.Error}）—— 核心已落地，同事看 lock 判在線";

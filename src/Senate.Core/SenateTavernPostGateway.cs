@@ -79,8 +79,12 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             LettersRoot = SCP_DataPaths.Letters(new SCP_DataRoot(m_DataRoot)).Value,
             ProjectRoot = iProjectRoot.Replace('\\', '/'),
         };
+        // 詞典根走 PathsPage 那一格（SCP_PathId.GlossaryRoot）；解不出來 ⇒ 說出來、退回預設推導。
+        string? aGlossary = SenatePathBinding.ResolveGlossaryRoot(UnityDelegateCmd.ConfigProvider?.Invoke().Item1, out string? aGlossaryErr);
+        if (aGlossary != null) aRoots.GlossaryRoot = aGlossary;
+        else oLines.Add($"⚠ 詞典根解不出來（{aGlossaryErr}）—— 本次用預設 `{aRoots.GlossaryRoot}`");
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(aRoots.DataRoot, aRoots.LettersRoot, aRoots.ProjectRoot,
-            aRoots.Region, Room, iPersona, iBody, iMeta);
+            aRoots.GlossaryRoot, aRoots.Region, Room, iPersona, iBody, iMeta);
         foreach (string n in aDraft.Notes) oLines.Add("⚠ " + n);
         if (aDraft.Message == null) return SCP_TavernPostVerdict.Bad("發文被拒：" + aDraft.Error);
 

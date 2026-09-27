@@ -106,7 +106,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         }
 
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
-            iRoots.Region, aRoom, aPersona, aBody, aMeta);
+            iRoots.GlossaryRoot, iRoots.Region, aRoom, aPersona, aBody, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
         aDraft.Message.ReplyTo = aReplyTo;
