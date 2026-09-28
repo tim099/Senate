@@ -45,9 +45,10 @@ public static class SenateDiscordInboundJob
         s_WasEnabled = true;
 
         if (!SCP_DiscordBot.Status(iDataRoot).Ready) { WarnOnce(iErr, "Discord Inbound 開著，但讀不到 Bot token ⇒ 沒有輪詢（到後台「Discord Bot」頁設定）"); return; }
-        List<SCP_DiscordRoute> aRoutes = SCP_DiscordInboundConfig.LoadRoutes(iDataRoot, out string? aRouteErr).Where(r => r.Enabled).ToList();
+        // 啟用中、而且所在的 Server 沒被關掉 Inbound（Server 以 Bot 快取的實際位置為準）
+        List<SCP_DiscordRoute> aRoutes = SCP_DiscordInboundConfig.ActiveRoutes(iDataRoot, out string? aRouteErr);
         if (aRouteErr != null) { WarnOnce(iErr, "Discord Inbound：對應表讀不了 —— " + aRouteErr); return; }
-        if (aRoutes.Count == 0) { WarnOnce(iErr, "Discord Inbound 開著，但沒有任何啟用的頻道對應"); return; }
+        if (aRoutes.Count == 0) { WarnOnce(iErr, "Discord Inbound 開著，但沒有任何啟用的頻道對應（或它們所在的 Server 都被關掉了）"); return; }
 
         // Gateway 說哪個頻道有動靜 ⇒ 先輪它（⇒ 近乎即時）；沒有 ⇒ 照順序輪
         SCP_DiscordRoute? aNudged = null;

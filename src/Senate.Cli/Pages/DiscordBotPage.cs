@@ -28,6 +28,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
     List<SCP_DiscordRoute> m_Routes = new();
     string? m_RouteError;
     SCP_DiscordWhitelist m_Whitelist = new();
+    List<string> m_OffGuilds = new();
     List<string> m_Rooms = new();
     string? m_Message;
     /// <summary>密碼／token 欄的世代號：清空輸入時換一代（同 SCP_GuiSecretPage）。</summary>
@@ -64,6 +65,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
         m_Cache = SCP_DiscordBot.LoadCache(m_DataRoot);
         m_Routes = SCP_DiscordInboundConfig.LoadRoutes(m_DataRoot, out m_RouteError);
         m_Whitelist = SCP_DiscordInboundConfig.LoadWhitelist(m_DataRoot);
+        m_OffGuilds = SCP_DiscordConfigStore.Load(m_DataRoot).InboundDisabledGuilds;
         m_Rooms = SCP_TavernChannels.ListChannels(m_DataRoot, false).Select(c => c.Room).ToList();
     }
 
@@ -178,8 +180,20 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
         foreach (SCP_DiscordGuild gd in m_Cache.Guilds)
         {
             int aWired = gd.Channels.Count(c => aMap.ContainsKey(c.Id));
-            using var aFold = g.Fold($"{gd.Name}　（{gd.Channels.Count} 個文字頻道，已接 {aWired}）", "dbot/fold/guild/" + gd.Id, aWired > 0);
+            bool aGuildOn = !m_OffGuilds.Contains(gd.Id);
+            using var aFold = g.Fold($"{gd.Name}　（{gd.Channels.Count} 個文字頻道，已接 {aWired}）{(aGuildOn ? "" : "　[Inbound 關]")}", "dbot/fold/guild/" + gd.Id, aWired > 0);
             if (!aFold.Open) continue;
+            // 逐個 Server 開關 Inbound 來源（Tim 2026-09-28：預設開，可以關閉某個 Server）
+            using (g.Row())
+            {
+                g.Label(aGuildOn ? "這個 Server 的訊息：收" : "這個 Server 的訊息：不收（底下接了的頻道一律不輪）");
+                if (g.Button(aGuildOn ? "關掉這個 Server 的 Inbound" : "打開這個 Server 的 Inbound", "dbot/btn/guild_in/" + gd.Id))
+                {
+                    m_Message = SCP_DiscordConfigStore.TrySetGuildInbound(m_DataRoot, gd.Id, !aGuildOn, out string? aErr)
+                        ? $"{gd.Name} 的 Inbound 已{(!aGuildOn ? "打開" : "關掉")}" : "[未寫入] " + aErr;
+                    Reload();
+                }
+            }
             if (gd.Error.Length > 0) g.Note("[注意] 列不出頻道：" + gd.Error);
             foreach (SCP_DiscordChannel ch in gd.Channels)
             {
