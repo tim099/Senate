@@ -109,7 +109,7 @@ public sealed class TavernPage : SCP_GuiToolPage
         using (g.IdScope("msg" + m.Seq))
         using (g.Row())
         {
-            g.Image(r.AvatarPath, AvatarSide, r.Name);
+            g.Image(r.AvatarPath, AvatarSide, r.Persona.Length > 0 ? r.Persona : r.Name);
             using (g.Column())
             {
                 string aWho = r.SenderKind switch
