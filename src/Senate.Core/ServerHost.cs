@@ -408,6 +408,15 @@ public static class ServerHost
 
         // 延後發文匣（TASK-0312）只歸酒館那顆 —— alter 配對的訊息到點由它投回自己的 tavern lane。
         bool aFlushDeferred = string.Equals(aServerId, SCP_ServerIds.Tavern, StringComparison.Ordinal);
+
+        // 每日結算（結帳／保管費／轉券／匯率，TASK-0315）只歸 main 那一顆 —— 扣繳是 main 的 Cmd（銀行的單一寫入端），
+        //   兩顆都掛的話同一天會跑兩趟（冪等擋得住錢，擋不住多貼一則公告）。
+        // ⚠ 解析不出資料根 ⇒ 不掛並**說出來**：靜默的話症狀是「今天沒有結算公告」，而 Server 明明開著。
+        bool aRunOvernight = string.Equals(aServerId, SCP_ServerIds.Default, StringComparison.Ordinal) && aEndpointDataRoot != null;
+        if (string.Equals(aServerId, SCP_ServerIds.Default, StringComparison.Ordinal) && aEndpointDataRoot == null)
+            iErr("⚠ 解析不出資料根 ⇒ **每日結算沒有掛上**（今天不會有人跑保管費）");
+        else if (aRunOvernight)
+            iOut("· 每日結算：由本顆負責（UTC 跨日後跑一次；狀態檔在銀行根的 " + SenateOvernightJob.StateFileName + "）");
         if (aFlushDeferred)
             foreach (string aOrphan in SenateTavernDeferred.Orphans(aServerRoot))
                 iErr("⚠ 延後發文匣有上次認領了、不知道送出去沒的一則：" + aOrphan
@@ -434,6 +443,12 @@ public static class ServerHost
                     // ⛔ 不硬切：被切的那條會在下一顆 Server 啟動時續跑 ＝ 那筆 cmd 做第二次。
                     continue;
                 }
+                if (aRunOvernight)
+                {
+                    // 每日結算（TASK-0315）：這一格只看時間，到期才起背景工作 ⇒ ⛔ 不擋服務迴圈與心跳。
+                    try { SenateOvernightJob.Tick(aEndpointDataRoot!, iOut, iErr); }
+                    catch (Exception e) { iErr("⚠ 每日結算這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
+                }
                 if (aFlushDeferred)
                 {
                     // 先投再 Tick：投進去的那一則這一圈就會被執行器看到。單筆失敗在 FlushDue 裡回報，⛔ 不讓它打掛服務迴圈。
@@ -447,6 +462,9 @@ public static class ServerHost
         finally
         {
             Console.CancelKeyPress -= aOnCancel;
+            if (SenateOvernightJob.IsRunning)
+                iErr("⚠ 每日結算正跑到一半就收工 —— 扣繳還沒成功的話狀態沒推進，下一顆 Server 起來會重跑那一天（冪等）；"
+                     + "已經扣完的話狀態已落盤（推進在貼公告**之前**），⚠ 那一則公告可能沒貼出去 —— 看 `overnight_job_last.md`");
             // Ctrl+C 那條走到這裡時還沒排乾過（使用者要求立刻停，不能拒絕他）——
             // 仍然給它同一個上限，**但排不乾就照實說**，不假裝收尾乾淨。
             int aLeft = aExecutor.RunningLaneCount == 0

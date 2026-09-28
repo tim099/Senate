@@ -4,13 +4,12 @@
 //           **只有一顆 process 在寫**。⛔ 在 CLI process 裡直接算完扣掉＝安靜地多一個寫入端。
 // 數值影響：`op=preview`（預設）與 `op=parity` **零寫入**；`op=run` 要 `confirm=1` 才動錢。
 //
-// ⚠ **本支不判「今天是不是跨日」，也不推進任何 state** —— 那是觸發端（Unity daemon tick）的事。
+// ⚠ **本支不判「今天是不是跨日」，也不推進任何 state** —— 那是觸發端（`SenateOvernightJob`，main Server 的常駐迴圈）的事。
 //   本支拿到一個日期就照那個日期算，重跑由 `idem_key` 擋（同一天跑兩次 ⇒ 一毛錢都不會再動）。
-//   📌 TASK-0278 ⑧：搬的是扣繳，⛔ 不含「誰來觸發」——那是下一張單。
+//   📌 TASK-0278 ⑧ 搬的是扣繳；觸發在 TASK-0315 也搬進 Senate（`SenateOvernightJob`）。
 //
-// ⚠ **廣播由觸發端貼，不在這裡貼**：酒館寫入端目前是 Editor（`tavern.writer=editor`）
-//   ⇒ Server 這一側沒有資格寫酒館。本支把本文寫進 `body_out` 指定的檔，由呼叫端讀去貼。
-//   ⛔ 不在這裡偷開第二個酒館寫入端 —— 那是 TASK-0106 正在收斂的那條線。
+// ⚠ **廣播由觸發端貼，不在這裡貼**：本支把本文寫進 `body_out` 指定的檔，由觸發端讀去交給 `tavern-write`
+//   （寄件人＝酒保）。⛔ 本支自己不寫酒館 —— 「組本文」與「發出去」分開，發不出去時錢的結果才不會被一起帶走。
 using SCP.Core.Bank;
 using SCP.Core.Cmd;
 
@@ -24,7 +23,7 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
         "跨日存款保管費：算帳單／真的扣／跟舊實作對拍 —— 由 Senate Server 執行（**單一寫入端**）";
 
     public override string PortNote =>
-        "⚠ 觸發仍在 Unity（daemon 跨日 tick）—— 本支只負責**扣繳與組廣播**，"
+        "⚠ 觸發在 Senate Server（`SenateOvernightJob`，UTC 跨日後一次，TASK-0315）—— 本支只負責**扣繳與組廣播**，"
         + "⛔ 不判跨日、不推進 state、不貼酒館（TASK-0278 ⑧）。"
         + "⭐ `op=run` 發完券之後接著刷新匯率（每個 UTC 日一版，TASK-0272 ②）—— 平常不必手動 `rate op=sync`";
 
