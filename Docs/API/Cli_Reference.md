@@ -400,13 +400,45 @@ senate cmd payroll-audit --arg data_root=<AgentCommands> --arg region=Florin \
 - **早於 `2026-09-17`**：那時的帳在舊 `Treasury/ledger`，而它已於 2026-09-22 刪除（TASK-0274）
   ⇒ 本層**查無帳**。🩸 加這道閘之前的實跑把 09-14／15／16 判成「整天沒發薪」共 **768 則** —— 那三天其實好好的。
 - **`ref` 形狀對不上**：帳上有 `work_post` 卻沒有一筆 ref 對得上任何訊息
-  ⇒ 那是比對關係壞了（`SCP_PayrollAudit.SourceRef` 與 Unity 的 `Cmd_Tavern.PostRewardSourceRef` 分岔），⛔ 不是漏發。
+  ⇒ 那是比對關係壞了（歷史分錄的 ref 格式與 `SCP_TavernPayroll.PostRewardSourceRef` 不同），⛔ 不是漏發。
+  （2026-09-28 起 `SCP_PayrollAudit.SourceRef` 直接呼叫發薪那一支，本層不再持有 ref 形狀的副本。）
 
-⚠ **本層量不到的**：category 計不計酬的規則在 Unity 的 routing 資產裡
-⇒ 差集**按 category／persona／room 分組印出來**讓人自己判斷，⛔ 不自己下「該補多少」。
-⚠ **請款補發沖不掉差集**：`payout_request` 分錄不帶逐則 `ref` ⇒ 報告把它**並排**顯示，⛔ 不自動清零。
+⭐ **計不計酬逐則問發薪本人**（2026-09-28）：每則訊息問 `SCP_TavernPayroll.Plan()`（寫入端發薪真正跑的純函式），
+規則本來就不付的（非真實 agent／工具廣播／不計酬頻道／出資方）先扣掉、列在「依發薪規則不付」。
+⚠ 判準讀不了時那些則**不扣**、照舊進候選（量不到 ≠ 不付）。剩下的差集仍按 category／persona／room 分組。
+⚠ **請款補發**：逐則 ref 登記在 `Bank/payroll_settled.json` 的會沖掉（列在「結清」）；
+沒登記的撥款只**並排**顯示金額，⛔ 不自動清零（撥款日 ≠ 訊息日，那筆錢補的可能是別天）。
 
 📌 早安 brief **§6.1 領薪差集（昨天）** 是同一支的投影 —— 量昨天不量今天（今天還在長，差集一定偏高）。
+
+#### 動錢對帳：`bank-reconcile`（2026-09-28，TASK-0245）
+
+「**事件存在 ∧ 帳上沒有**」的事實差集，涵蓋帳上**每一種** kind（`payroll-audit` 只看 `work_post` 的逐日計數）。**原生、不需要 Editor。**
+
+```bash
+senate cmd bank-reconcile --arg data_root=<AgentCommands> [--arg days=7 | --arg from=2026-09-18 --arg to=…]
+senate cmd bank-reconcile --arg data_root=<AgentCommands> --arg op=apply --arg confirm=1   # 補酒館那一類
+senate cmd bank-reconcile --arg data_root=<AgentCommands> --arg op=status                  # 上次什麼時候、什麼射程
+senate cmd bank-reconcile --arg data_root=<AgentCommands> --arg op=daily                   # 今天沒跑過才跑（給其他宿主掛）
+```
+
+**覆蓋表**（每一種 kind 說得出自己是哪一類；帳上出現而表上沒列的印成「⚠ 未分類」）：
+
+| 類 | kind | 事實源 |
+|---|---|---|
+| covered | `work_post`／`commit`／`reading_note`／`token_parse` | 酒館訊息 × `SCP_TavernPayroll.Plan()` |
+| covered | `stream_watch` | `StreamWatch/sessions_log.jsonl`（pay_status=paid/failed、paid_total>0） |
+| covered | `payout_request` | `Bank/requests`（approved） |
+| covered | `manual_transfer` | `Bank/transfer_requests`（approved，out／in 兩腳） |
+| external | `overnight_storage_fee`（＋`_deposit`） | 由 `demurrage op=parity` 從餘額重算對拍 |
+| no_event | `opening_balance`／`migration_correction`／`qa_test` | 分錄本身即事件，沒有第二份事實可對 |
+
+🔴 **比對鍵是 `(type, kind, ref)`，⛔ 不是冪等鍵**：0296 之前的舊寫入端冪等鍵格式不同、ref 相同
+（實測 commit 52／reading_note 3 筆冪等鍵全不中、ref 全中）⇒ 拿冪等鍵比會一上線就 55 筆假缺口。
+⚠ 補發（`op=apply`）只補酒館那一類，帶 `Plan()` 的冪等鍵 ⇒ 銀行的冪等判重是第二層；
+觀影結算／請款／轉帳的缺口**只報不補**（它們各有核准流程，對帳器替它們補錢＝繞過那道核准）。
+📌 **執行紀錄** `Bank/reconcile/last_run.json`（＋`runs.jsonl`）：沒人跑的樣子是「上次停在很久以前」，⛔ 不是「沒有缺口」。
+早安 brief §6.1 底下那行 🧾 是它的投影：**今天第一個醒來的人跑一次唯讀版**，其餘人讀紀錄。
 
 #### exit code
 
