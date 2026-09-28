@@ -127,6 +127,7 @@ public static class SelfTest
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
+        One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iProjects)),
 
@@ -5950,6 +5951,42 @@ public static class SelfTest
             if (iUrl.Contains("fail")) { oData = Array.Empty<byte>(); oStatus = 500; oError = "HTTP 500"; return false; }
             oData = new byte[] { 0x89, 0x50, 0x4E, 0x47, 1, 2, 3 }; oStatus = 200; oError = null; return true;
         }
+    }
+
+    // 區塊職責：**開單 → 審批端讀得到 → 撤單**的淨室往返（TASK-0325：開單從 Unity 搬到 SCP_Core）。
+    // 物理意義：開單端（CreatePayout／CreateTransfer）與審批端（LoadPending*）是兩支程式碼 ⇒ 要量「寫出來的單審批端認得」，
+    //          ⛔ 不是只量「寫得出檔」。並驗三道擋（缺理由／自轉／已撤回再撤）都是零寫入或零動作。
+    static CheckRow BankRequestRoundTrip()
+    {
+        const string aName = "請款／轉帳單：開單 ⇒ 審批端讀得到 ⇒ 撤單（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bankreq_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            bool aPay = SCP_TreasuryRequests.CreatePayout(aTmp, "Myth", 5, "淨室", "", "abc", "Myth", "gura", "", "", out SCP_PayoutRequest p, out _);
+            bool aBackfillMint = SCP_TreasuryRequests.CreatePayout(aTmp, "Zeta", 1, "補薪", SCP_TreasuryRequests.SourceKindWorkPostBackfill, "tavern#seq=1", "", "gura", "", "", out SCP_PayoutRequest pb, out _)
+                                 && pb.Funding == SCP_PayoutFunding.Mint;
+            bool aXfer = SCP_TreasuryRequests.CreateTransfer(aTmp, "sirius", "Spectre", 3, "歸戶", "", "Myth", "gura", "", out SCP_TransferRequest t, out _);
+            var aPend = SCP_TreasuryRequests.LoadPendingPayouts(aTmp);
+            var aPendT = SCP_TreasuryRequests.LoadPendingTransfers(aTmp);
+            bool aSeen = aPend.Exists(r => r.RequestId == p.RequestId && r.TargetBank == "Myth" && r.Amount == 5)
+                         && aPendT.Exists(r => r.RequestId == t.RequestId && r.FromBank == "sirius" && r.ToBank == "Spectre");
+            // 🔴 擋下的三格：缺理由／自轉（大小寫不同也算）／已撤回再撤
+            int aFilesBefore = Directory.GetFiles(aTmp, "*.json", SearchOption.AllDirectories).Length;
+            bool aNoReason = !SCP_TreasuryRequests.CreatePayout(aTmp, "Myth", 5, "  ", "", "", "", "gura", "", "", out _, out _);
+            bool aSelf = !SCP_TreasuryRequests.CreateTransfer(aTmp, "Myth", "myth", 1, "x", "", "", "gura", "", out _, out _);
+            bool aZeroWrite = Directory.GetFiles(aTmp, "*.json", SearchOption.AllDirectories).Length == aFilesBefore;
+            bool aCancel = SCP_TreasuryRequests.Cancel(aTmp, t.RequestId, "Myth@gura", "", out string aKind, out _) && aKind == "transfer";
+            bool aGone = !SCP_TreasuryRequests.LoadPendingTransfers(aTmp).Exists(r => r.RequestId == t.RequestId);
+            bool aTwice = !SCP_TreasuryRequests.Cancel(aTmp, t.RequestId, "Myth@gura", "", out _, out _);
+            bool aOk = aPay && aBackfillMint && aXfer && aSeen && aNoReason && aSelf && aZeroWrite && aCancel && aGone && aTwice;
+            return new CheckRow(aName,
+                $"開單={aPay && aXfer}／補薪預設 mint={aBackfillMint}／審批端讀得到={aSeen}"
+                + $"／🔴 缺理由擋={aNoReason}、自轉擋={aSelf}、零寫入={aZeroWrite}／撤單={aCancel}、撤後不在待審={aGone}、再撤擋={aTwice}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
     }
 
     static CheckRow DiscordMediaCleanRoom()
