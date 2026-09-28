@@ -18,7 +18,7 @@ using SCP.Core.Market;
 namespace Senate.Core;
 
 /// <summary>以 <see cref="HttpClient"/> 實作的抓取器。單例共用一個 client（避免 socket 耗盡）。</summary>
-public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher
+public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster
 {
     // ⚠ HttpClient 要**共用**不要每次 new：每次 new 會讓 TIME_WAIT 的 socket 堆起來，
     //   而它的失效樣子是「跑久了之後突然連不出去」，看起來像網路壞了。
@@ -90,6 +90,34 @@ public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher
             oError = $"{e.GetType().Name}: {e.Message}";
             return false;
         }
+    }
+
+    /// <summary>POST JSON（Discord webhook）。⛔ URL 不進錯誤訊息（它帶 webhook token）。</summary>
+    public bool TryPostJson(string iUrl, string iJson, int iTimeoutSec,
+                            out string oBody, out int oStatus, out double oRetryAfterSec, out string? oError)
+    {
+        oBody = ""; oStatus = 0; oRetryAfterSec = 0; oError = null;
+        if (string.IsNullOrWhiteSpace(iUrl) || !iUrl.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase))
+        { oError = "端點必須是 https"; return false; }
+        if (iTimeoutSec <= 0) iTimeoutSec = 15;
+        try
+        {
+            using var aReq = new HttpRequestMessage(HttpMethod.Post, iUrl);
+            aReq.Headers.TryAddWithoutValidation("User-Agent", "DiscordBot (senate, 1.0)");
+            aReq.Content = new StringContent(iJson ?? "", System.Text.Encoding.UTF8, "application/json");
+            using var aCts = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(iTimeoutSec));
+            using HttpResponseMessage aRes = s_Client.Send(aReq, aCts.Token);
+            oStatus = (int)aRes.StatusCode;
+            oBody = aRes.Content.ReadAsStringAsync(aCts.Token).GetAwaiter().GetResult();
+            if (aRes.Headers.TryGetValues("Retry-After", out var aRa)
+                && double.TryParse(System.Linq.Enumerable.FirstOrDefault(aRa), System.Globalization.NumberStyles.Float,
+                                   System.Globalization.CultureInfo.InvariantCulture, out double aSec)) oRetryAfterSec = aSec;
+            if (aRes.IsSuccessStatusCode) return true;
+            oError = $"HTTP {oStatus} {aRes.StatusCode}　回應前綴：{Sample(oBody)}";
+            return false;
+        }
+        catch (System.OperationCanceledException) { oError = $"逾時（{iTimeoutSec}s）"; return false; }
+        catch (System.Exception e) { oError = $"{e.GetType().Name}: {e.Message}"; return false; }
     }
 
     static string Sample(string iText)
