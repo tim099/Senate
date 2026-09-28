@@ -126,6 +126,7 @@ public static class SelfTest
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
+        One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iProjects)),
 
@@ -5916,6 +5917,122 @@ public static class SelfTest
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    // ===========================================================
+    // 區塊職責：**Discord 圖片兩個方向的淨室驗收**（TASK-0323）—— 假的 HTTP 宿主，⛔ 不連網。
+    // 物理意義：Outbound 三種結局（圖收下／Discord 明確拒收 ⇒ 退回純文字／逾時 ⇒ 停在這則不重發），
+    //          Inbound 三種附件（下載成功／下載失敗／過大）＋偷看模式不落檔。
+    // ===========================================================
+    sealed class FakeDiscordHttp : SCP.Core.Market.ISCP_HttpHeaderFetcher, SCP.Core.Market.ISCP_HttpPoster,
+                                   SCP.Core.Market.ISCP_HttpMultipartPoster, SCP.Core.Market.ISCP_HttpBytesFetcher
+    {
+        public int MultipartStatus = 200;               // 0 ⇒ 模擬逾時
+        public readonly List<string> Calls = new();     // "json:<payload>" / "mp:<N 檔>:<payload>"
+        public string FetcherName => "fake_discord";
+        public bool TryGetText(string iUrl, int iTimeoutSec, out string oBody, out string? oError)
+            => TryGetText(iUrl, new Dictionary<string, string>(), iTimeoutSec, out oBody, out _, out oError);
+        public bool TryGetText(string iUrl, IReadOnlyDictionary<string, string> iHeaders, int iTimeoutSec,
+                               out string oBody, out int oStatus, out string? oError)
+        { oBody = "{\"id\":\"1\",\"name\":\"probe\",\"channel_id\":\"9\",\"guild_id\":\"8\"}"; oStatus = 200; oError = null; return true; }
+        public bool TryPostJson(string iUrl, string iJson, int iTimeoutSec, out string oBody, out int oStatus, out double oRetryAfterSec, out string? oError)
+        { Calls.Add("json:" + iJson); oBody = "{}"; oStatus = 200; oRetryAfterSec = 0; oError = null; return true; }
+        public bool TryPostMultipart(string iUrl, string iPayloadJson, IReadOnlyList<SCP.Core.Market.SCP_HttpFilePart> iFiles, int iTimeoutSec,
+                                     out string oBody, out int oStatus, out double oRetryAfterSec, out string? oError)
+        {
+            Calls.Add("mp:" + iFiles.Count + ":" + iPayloadJson);
+            oBody = "{}"; oStatus = MultipartStatus; oRetryAfterSec = 0;
+            oError = MultipartStatus == 0 ? "逾時" : (MultipartStatus >= 300 ? "HTTP " + MultipartStatus : null);
+            return MultipartStatus >= 200 && MultipartStatus < 300;
+        }
+        public bool TryGetBytes(string iUrl, long iMaxBytes, int iTimeoutSec, out byte[] oData, out int oStatus, out string? oError)
+        {
+            if (iUrl.Contains("fail")) { oData = Array.Empty<byte>(); oStatus = 500; oError = "HTTP 500"; return false; }
+            oData = new byte[] { 0x89, 0x50, 0x4E, 0x47, 1, 2, 3 }; oStatus = 200; oError = null; return true;
+        }
+    }
+
+    static CheckRow DiscordMediaCleanRoom()
+    {
+        const string aName = "Discord 圖片 In／Out（淨室、假 HTTP）";
+        SCP.Core.Market.ISCP_HttpFetcher? aSaved = SCP.Core.Market.SCP_HttpFetch.Current;
+        var aTmps = new List<string>();
+        try
+        {
+            // ── Outbound：同一則帶圖訊息，三種 multipart 結局 ──
+            (FakeDiscordHttp Fake, SCP.Core.Discord.SCP_DiscordBackfillReport R, string Data) Run(int iStatus)
+            {
+                string aRepo = Path.Combine(Path.GetTempPath(), "senate_dmedia_" + Guid.NewGuid().ToString("N")[..8]);
+                aTmps.Add(aRepo);
+                string aData = Path.Combine(aRepo, "AgentCommands");
+                Directory.CreateDirectory(Path.Combine(aRepo, "img"));
+                File.WriteAllBytes(Path.Combine(aRepo, "img", "a.png"), new byte[] { 1, 2, 3 });
+                var aFake = new FakeDiscordHttp { MultipartStatus = iStatus };
+                SCP.Core.Market.SCP_HttpFetch.Current = aFake;
+                SCP_TavernChannels.EnsureMainChannel(aData, out _);
+                if (!SCP.Core.Discord.SCP_DiscordConfigStore.TryAddWebhook(aData, "https://discord.com/api/webhooks/123456789/fake_token_for_selftest_only", "t", out string aId, out string? aErr))
+                    throw new Exception("加 webhook 失敗：" + aErr);
+                SCP.Core.Discord.SCP_DiscordConfigStore.TrySetCategoryWebhooks(aData, "Main", new List<string> { aId }, out _);
+                SCP_TavernWriter.InvalidateCount(aData, "tavern");
+                var aMsg = new SCP_TavernMessage { SenderId = "zeta", SenderName = "zeta", Kind = "chat", Body = "看圖" };
+                aMsg.Refs.Add(new SCP_TavernRef { Path = "img/a.png" });
+                aMsg.Refs.Add(new SCP_TavernRef { Path = "img/missing.png" });
+                aMsg.Refs.Add(new SCP_TavernRef { Path = "notes/readme.md" });   // 不是圖 ⇒ 不算跳過
+                SCP_TavernWriter.WriteMessage(aData, "tavern", aMsg);
+                var r = SCP.Core.Discord.SCP_DiscordOutbound.Backfill(aData, "", "tavern", 1, 0, false);
+                return (aFake, r, aData);
+            }
+
+            var ok = Run(200);
+            bool aOkShape = ok.Fake.Calls.Count == 1 && ok.Fake.Calls[0].StartsWith("mp:1:") && ok.R.Sent == 1 && ok.R.Images == 1
+                            && ok.Fake.Calls[0].Contains("未上傳：missing.png（找不到檔案）") && !ok.Fake.Calls[0].Contains("readme");
+
+            var rej = Run(413);
+            bool aRejShape = rej.Fake.Calls.Count == 2 && rej.Fake.Calls[0].StartsWith("mp:") && rej.Fake.Calls[1].StartsWith("json:")
+                             && rej.Fake.Calls[1].Contains("圖片上傳失敗（HTTP 413）") && rej.Fake.Calls[1].Contains("看圖")
+                             && rej.R.Sent == 1 && rej.R.Images == 0;
+
+            var tmo = Run(0);   // 🔴 逾時：對方可能其實收到了 ⇒ ⛔ 不退回純文字（那會重複發文），游標不前進
+            bool aTmoShape = tmo.Fake.Calls.Count == 1 && tmo.R.Sent == 0 && tmo.R.Problems.Count > 0;
+
+            // ── Inbound：三個附件（成功／失敗／過大）＋偷看不落檔 ──
+            string aRepo2 = Path.Combine(Path.GetTempPath(), "senate_dmedia_in_" + Guid.NewGuid().ToString("N")[..8]);
+            aTmps.Add(aRepo2);
+            string aData2 = Path.Combine(aRepo2, "AgentCommands");
+            Directory.CreateDirectory(aData2);
+            SCP.Core.Market.SCP_HttpFetch.Current = new FakeDiscordHttp();
+            string aMsgJson = "{\"id\":\"1554045138668486738\",\"content\":\"看這張\",\"author\":{\"id\":\"42\",\"username\":\"tim\"},"
+                + "\"attachments\":["
+                + "{\"id\":\"1\",\"filename\":\"ok.png\",\"size\":7,\"url\":\"https://cdn.example/ok.png\",\"content_type\":\"image/png\"},"
+                + "{\"id\":\"2\",\"filename\":\"bad.png\",\"size\":7,\"url\":\"https://cdn.example/fail.png\"},"
+                + "{\"id\":\"3\",\"filename\":\"huge.mp4\",\"size\":99999999,\"url\":\"https://cdn.example/huge.mp4\"}]}";
+            var aRoute = new SCP.Core.Discord.SCP_DiscordRoute { ChannelId = "9", TavernRoom = "tavern", Label = "probe" };
+            var aWl = new SCP.Core.Discord.SCP_DiscordWhitelist { Enabled = false };
+            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, aRepo2, aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aPeek, false);
+            bool aPeekNoFile = aPeek != null && !Directory.Exists(Path.Combine(aData2, "ChatTavern", "media"));
+            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, aRepo2, aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aItem);
+            string aBody = aItem?.MsgJson.GetString("body", "") ?? "";
+            SCP_JsonData aRefs = aItem?.MsgJson["refs"] ?? SCP_JsonData.NewArray();
+            string aRefPath = aRefs.IsArray && aRefs.Count == 1 ? aRefs[0].GetString("path", "") : "";
+            bool aInShape = aItem != null && aBody.StartsWith("看這張") && aBody.Contains("bad.png（下載失敗")
+                            && aBody.Contains("huge.mp4（過大未下載") && aRefPath.StartsWith("AgentCommands/ChatTavern/media/discord/2026-09-28/")
+                            && File.Exists(Path.Combine(aRepo2, aRefPath))
+                            && aItem!.MsgJson["meta"].GetString("attachments_saved", "") == "1";
+
+            bool aOk = aOkShape && aRejShape && aTmoShape && aPeekNoFile && aInShape;
+            return new CheckRow(aName,
+                $"Out 圖收下（1 次 multipart、缺檔標明、非圖不算）={aOkShape}／Out 413 ⇒ 退回純文字且標明={aRejShape}"
+                + $"／🔴 Out 逾時 ⇒ ⛔ 不退回、游標不動={aTmoShape}"
+                + $"／In 成功落地＋refs＋失敗與過大標明、文字照寫={aInShape}／In 偷看不落檔={aPeekNoFile}"
+                + (aOk ? "" : $"　calls(ok)=[{string.Join(" | ", ok.Fake.Calls)}] calls(413)={rej.Fake.Calls.Count} body='{aBody}' ref='{aRefPath}'"),
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally
+        {
+            SCP.Core.Market.SCP_HttpFetch.Current = aSaved;
+            foreach (string t in aTmps) { try { Directory.Delete(t, true); } catch (Exception) { } }
+        }
     }
 
 }

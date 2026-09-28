@@ -18,7 +18,7 @@ using SCP.Core.Market;
 namespace Senate.Core;
 
 /// <summary>以 <see cref="HttpClient"/> 實作的抓取器。單例共用一個 client（避免 socket 耗盡）。</summary>
-public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster
+public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster, ISCP_HttpBytesFetcher, ISCP_HttpMultipartPoster
 {
     // ⚠ HttpClient 要**共用**不要每次 new：每次 new 會讓 TIME_WAIT 的 socket 堆起來，
     //   而它的失效樣子是「跑久了之後突然連不出去」，看起來像網路壞了。
@@ -96,7 +96,68 @@ public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster
     public bool TryPostJson(string iUrl, string iJson, int iTimeoutSec,
                             out string oBody, out int oStatus, out double oRetryAfterSec, out string? oError)
     {
+        return Post(iUrl, new StringContent(iJson ?? "", System.Text.Encoding.UTF8, "application/json"), iTimeoutSec,
+                    out oBody, out oStatus, out oRetryAfterSec, out oError);
+    }
+
+    /// <summary>
+    /// multipart POST（TASK-0323：Discord webhook 帶圖）：`payload_json` ＋ 檔案段。⛔ URL 不進錯誤訊息。
+    /// </summary>
+    public bool TryPostMultipart(string iUrl, string iPayloadJson, IReadOnlyList<SCP_HttpFilePart> iFiles, int iTimeoutSec,
+                                 out string oBody, out int oStatus, out double oRetryAfterSec, out string? oError)
+    {
+        var aForm = new MultipartFormDataContent();
+        aForm.Add(new StringContent(iPayloadJson ?? "", System.Text.Encoding.UTF8, "application/json"), "payload_json");
+        foreach (SCP_HttpFilePart f in iFiles)
+        {
+            var aPart = new ByteArrayContent(f.Data);
+            aPart.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(f.ContentType);
+            aForm.Add(aPart, f.FieldName, f.FileName);
+        }
+        return Post(iUrl, aForm, iTimeoutSec, out oBody, out oStatus, out oRetryAfterSec, out oError);
+    }
+
+    /// <summary>
+    /// 抓位元組（TASK-0323：Discord 附件）。超過 <paramref name="iMaxBytes"/> ⇒ 中止回 false（邊讀邊數，⛔ 不先整包讀完）。
+    /// ⛔ URL 不進錯誤訊息（附件網址帶簽章）。
+    /// </summary>
+    public bool TryGetBytes(string iUrl, long iMaxBytes, int iTimeoutSec, out byte[] oData, out int oStatus, out string? oError)
+    {
+        oData = System.Array.Empty<byte>(); oStatus = 0; oError = null;
+        if (string.IsNullOrWhiteSpace(iUrl) || !iUrl.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase))
+        { oError = "端點必須是 https"; return false; }
+        if (iTimeoutSec <= 0) iTimeoutSec = 30;
+        try
+        {
+            using var aReq = new HttpRequestMessage(HttpMethod.Get, iUrl);
+            aReq.Headers.TryAddWithoutValidation("User-Agent", "DiscordBot (senate, 1.0)");
+            using var aCts = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(iTimeoutSec));
+            using HttpResponseMessage aRes = s_Client.Send(aReq, HttpCompletionOption.ResponseHeadersRead, aCts.Token);
+            oStatus = (int)aRes.StatusCode;
+            if (!aRes.IsSuccessStatusCode) { oError = $"HTTP {oStatus} {aRes.StatusCode}"; return false; }
+            long? aLen = aRes.Content.Headers.ContentLength;
+            if (aLen.HasValue && aLen.Value > iMaxBytes) { oError = $"太大（{aLen.Value} bytes）"; return false; }
+            using var aStream = aRes.Content.ReadAsStream(aCts.Token);
+            using var aMem = new System.IO.MemoryStream();
+            byte[] aBuf = new byte[81920];
+            int n;
+            while ((n = aStream.Read(aBuf, 0, aBuf.Length)) > 0)
+            {
+                aMem.Write(aBuf, 0, n);
+                if (aMem.Length > iMaxBytes) { oError = $"太大（超過 {iMaxBytes} bytes）"; return false; }
+            }
+            oData = aMem.ToArray();
+            return true;
+        }
+        catch (System.OperationCanceledException) { oError = $"逾時（{iTimeoutSec}s）"; return false; }
+        catch (System.Exception e) { oError = e.GetType().Name; return false; }   // ⛔ 不帶 e.Message：HttpRequestException 的訊息可能含網址
+    }
+
+    static bool Post(string iUrl, HttpContent iContent, int iTimeoutSec,
+                     out string oBody, out int oStatus, out double oRetryAfterSec, out string? oError)
+    {
         oBody = ""; oStatus = 0; oRetryAfterSec = 0; oError = null;
+        using HttpContent aContent = iContent;
         if (string.IsNullOrWhiteSpace(iUrl) || !iUrl.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase))
         { oError = "端點必須是 https"; return false; }
         if (iTimeoutSec <= 0) iTimeoutSec = 15;
@@ -104,7 +165,7 @@ public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster
         {
             using var aReq = new HttpRequestMessage(HttpMethod.Post, iUrl);
             aReq.Headers.TryAddWithoutValidation("User-Agent", "DiscordBot (senate, 1.0)");
-            aReq.Content = new StringContent(iJson ?? "", System.Text.Encoding.UTF8, "application/json");
+            aReq.Content = aContent;
             using var aCts = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(iTimeoutSec));
             using HttpResponseMessage aRes = s_Client.Send(aReq, aCts.Token);
             oStatus = (int)aRes.StatusCode;
