@@ -1,6 +1,6 @@
 // 區塊職責：**每日結算的觸發** —— 住在 Senate Server（main 那一顆）的常駐迴圈裡（TASK-0315）。
 // 物理意義：UTC 跨日之後跑一次：結帳（`SCP_BankClosing`）→ 保管費扣繳＋轉券＋匯率每日版本（`cmd demurrage op=run`）
-//           → 把 Cmd 組好的公告貼上酒館（`cmd tavern-write`，寄件人＝酒保）。
+//           → 把 Cmd 組好的公告貼上酒館（`cmd tavern-write`，寄件人＝persona `tavern-keeper`）。
 //           Tim 2026-09-28：「觸發直接綁定在 Senate 端（不要透過 Unity）」。在這之前觸發住在 Unity daemon，
 //           ⇒ Editor 沒開就沒有人結算（2026-09-28 的公告是 00:46 UTC 才發，因為那時 Editor 才開）。
 // 數值影響：一天一次。狀態檔 `<bank_root>/overnight_job_state.json`（`last_run_date`）；
@@ -195,7 +195,9 @@ public static class SenateOvernightJob
         aMeta.Set("triggered_by", SCP_JsonData.NewString("senate-server"));
         var aMsg = SCP_JsonData.NewObject();
         aMsg.Set("sender_id", SCP_JsonData.NewString("tavern-keeper"));
-        aMsg.Set("sender_name", SCP_JsonData.NewString("酒保"));
+        // 顯示名一律是 persona id；酒保就是 persona `tavern-keeper`（Tim 2026-09-28，TASK-0317）。
+        aMsg.Set("sender_name", SCP_JsonData.NewString(SCP.Core.Letters.SCP_PersonaDisplay.TavernKeeperPersona));
+        aMsg.Set("sender_persona", SCP_JsonData.NewString(SCP.Core.Letters.SCP_PersonaDisplay.TavernKeeperPersona));
         aMsg.Set("kind", SCP_JsonData.NewString("chat"));
         aMsg.Set("body", SCP_JsonData.NewString(aBody));
         aMsg.Set("meta", aMeta);

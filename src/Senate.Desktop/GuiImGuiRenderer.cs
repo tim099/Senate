@@ -26,6 +26,12 @@ public sealed class GuiImGuiRenderer
 
     public GuiImGuiRenderer(SCP_GuiStyle? iStyle = null) { m_Style = iStyle ?? new SCP_GuiStyle(); }
 
+    /// <summary>
+    /// 圖檔 → 貼圖（TASK-0317）。由 <see cref="SenateWindow"/> 在 GL 起來之後塞進來；
+    /// 沒設 ⇒ Image 節點一律畫佔位框（⛔ 不假裝有圖）。
+    /// </summary>
+    public SenateTextureCache? Textures { get; set; }
+
     /// <summary>這一幀被按下的按鈕 id（下一幀餵回頁面）。</summary>
     public string? ClickedId { get; private set; }
 
@@ -176,7 +182,9 @@ public sealed class GuiImGuiRenderer
                 break;
 
             case SCP_GuiNodeKind.Label:
+                if (iNode.Wrap) ImGui.PushTextWrapPos(0f);
                 ImGui.TextUnformatted(iNode.Text);
+                if (iNode.Wrap) ImGui.PopTextWrapPos();
                 break;
 
             case SCP_GuiNodeKind.Note:
@@ -194,6 +202,33 @@ public sealed class GuiImGuiRenderer
             case SCP_GuiNodeKind.Separator:
                 ImGui.Separator();
                 break;
+
+            case SCP_GuiNodeKind.Image:
+            {
+                // 正方形頭像。非方形的圖**裁中間**（UV 取中間那一塊），⛔ 不壓扁。
+                // 沒有圖／讀不了 ⇒ 灰色佔位框，滑鼠提示說為什麼 —— 「沒有圖」與「圖壞了」要分得開。
+                float aSide = m_Style.Scaled(iNode.ImageSize > 0f ? iNode.ImageSize : 48f);
+                SenateTextureCache.Entry? aTex = iNode.Value.Length > 0 ? Textures?.Get(iNode.Value) : null;
+                if (aTex != null && aTex.Handle != 0)
+                {
+                    float aU0 = 0f, aU1 = 1f, aV0 = 0f, aV1 = 1f;
+                    if (aTex.Width > aTex.Height) { float c = (1f - (float)aTex.Height / aTex.Width) / 2f; aU0 = c; aU1 = 1f - c; }
+                    else if (aTex.Height > aTex.Width) { float c = (1f - (float)aTex.Width / aTex.Height) / 2f; aV0 = c; aV1 = 1f - c; }
+                    ImGui.Image((IntPtr)aTex.Handle, new Vector2(aSide, aSide), new Vector2(aU0, aV0), new Vector2(aU1, aV1));
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(iNode.Text);
+                }
+                else
+                {
+                    Vector2 aP = ImGui.GetCursorScreenPos();
+                    ImGui.GetWindowDrawList().AddRectFilled(aP, aP + new Vector2(aSide, aSide),
+                        ImGui.GetColorU32(new Vector4(0.35f, 0.35f, 0.38f, 1f)), aSide * 0.12f);
+                    ImGui.Dummy(new Vector2(aSide, aSide));
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(iNode.Text + (iNode.Value.Length == 0 ? "（沒有頭像）"
+                            : aTex?.Error != null ? "（" + aTex.Error + "）" : Textures == null ? "（這個宿主不載圖）" : ""));
+                }
+                break;
+            }
 
             case SCP_GuiNodeKind.Plot:
             {

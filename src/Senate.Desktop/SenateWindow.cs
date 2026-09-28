@@ -35,6 +35,7 @@ public sealed class SenateWindow : IDisposable
 
     IWindow? m_Window;
     GL? m_Gl;
+    SenateTextureCache? m_Textures;
     IInputContext? m_Input;
     ImGuiController? m_Controller;
 
@@ -297,6 +298,10 @@ public sealed class SenateWindow : IDisposable
 
         // 標題字型交給 renderer（沒載到就不設 ⇒ 標題用本文字級，不假裝有大一號）
         if (aFonts != null) m_Renderer.TitleFont = aFonts.Title;
+
+        // 圖片（頭像）—— 貼圖要 GL，所以只能在這裡裝（TASK-0317）。
+        m_Textures = new SenateTextureCache(m_Gl);
+        m_Renderer.Textures = m_Textures;
 
         // 視窗 icon —— 必須在窗開好之後（那時才有 HWND）。
         // 🩸 GLFW 撈的是名為 GLFW_ICON 的資源，apphost 埋的是數字 ID 32512 ⇒ 名字對不上，
@@ -646,6 +651,9 @@ public sealed class SenateWindow : IDisposable
             catch (Exception e) { Console.Error.WriteLine($"⚠ ImGui 版面存檔失敗：{e.Message}"); }
         }
 
+        // 貼圖要在 GL context 還活著的時候刪。
+        m_Renderer.Textures = null;
+        m_Textures?.Dispose();
         m_Controller?.Dispose();
         m_Input?.Dispose();
         m_Gl?.Dispose();
