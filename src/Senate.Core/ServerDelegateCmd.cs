@@ -221,9 +221,7 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         }
 
         // ③ 送出：只帶這支宣告過的參數（timeout 是 CLI 端的，不送過去）。
-        var aSend = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (SCP_CmdArgSpec aSpec in ArgSpecs)
-            if (aSpec.Name != "timeout") aSend[aSpec.Name] = iArgs.Get(aSpec.Name);
+        var aSend = BuildPayload(this, iArgs);
         // 🩸 第一輪驗收（2026-09-02）：這裡原本傳 persona 而不是 lane ⇒ 沒 persona 的 Cmd 被 client 寫進
         //   `anonymous` 分道，而上面 EnsureIdle／下面 Wait 盯的是 `server` 分道 —— 兩邊各自誠實，合起來是
         //   「queue 空了 ⇒ 推論成功、無 result 檔」。Submit 的第二個參數是**分道**，一律傳 aLane；
@@ -360,10 +358,8 @@ public abstract class ServerDelegateCmd : SCP_Cmd
 
         string aServerRoot = SenatePaths.ServerRoot(RepoRootProvider(), SCP_ServerIds.Normalize(aCmd.ServerId));
         string aLane = aCmd.Lane(aArgs);
-        // 跟 Execute ③ 同一個形狀：只帶宣告過的參數，timeout 是 CLI 端的不送。
-        var aSend = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (SCP_CmdArgSpec aSpec in aCmd.ArgSpecs)
-            if (aSpec.Name != "timeout") aSend[aSpec.Name] = aArgs.Get(aSpec.Name);
+        // 跟 Execute ③ 同一支：只帶宣告過的參數，timeout 是 CLI 端的不送。
+        var aSend = BuildPayload(aCmd, aArgs);
         try
         {
             oCmdId = AgentCmdClient.Submit(aServerRoot, aLane, aCmd.Name, aSend, _ => { },
@@ -372,6 +368,26 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         catch (Exception e) { oDetail = "寫不進 queue：" + e.GetType().Name + ": " + e.Message; return false; }
         oDetail = $"已排進 `{SCP_ServerIds.Normalize(aCmd.ServerId)}` 的 queue（lane={aLane}）";
         return true;
+    }
+
+    /// <summary>
+    /// 組送給 Server 的 payload：宣告過的每一個參數（timeout 除外）＋ 呼叫端真的給了哪幾個。
+    /// <para>🩸 TASK-0310：只送值的話，執行端會把**每一個**都當成使用者給的 ⇒ 沒被讀的全部亮成
+    /// 「給了而從來沒被讀」（`voucher op=usage` 一趟 10 個，使用者一個都沒給）。
+    /// ⛔ 值不砍：有些值是這一側才解得出來的，砍掉就改了執行行為。⇒ 另附名單。</para>
+    /// </summary>
+    public static Dictionary<string, string> BuildPayload(SCP_Cmd iCmd, SCP_CmdArgs iArgs)
+    {
+        var aSend = new Dictionary<string, string>(StringComparer.Ordinal);
+        var aExplicit = new List<string>();
+        foreach (SCP_CmdArgSpec aSpec in iCmd.ArgSpecs)
+        {
+            if (aSpec.Name == "timeout") continue;
+            aSend[aSpec.Name] = iArgs.Get(aSpec.Name);
+            if (iArgs.IsExplicit(aSpec.Name)) aExplicit.Add(aSpec.Name);
+        }
+        aSend[SCP_CmdArgs.ForwardedExplicitKey] = string.Join(",", aExplicit);
+        return aSend;
     }
 
     static double ParseTimeout(SCP_CmdArgs iArgs, SCP_CmdResult oResult)

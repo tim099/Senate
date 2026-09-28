@@ -121,6 +121,7 @@ public static class SelfTest
 
         One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
         One(nameof(BuildGuardThreeStates), "server", BuildGuardThreeStates),
+        One(nameof(ForwardedExplicitArgs), "server", ForwardedExplicitArgs),
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
@@ -4956,6 +4957,78 @@ public static class SelfTest
     /// <para>🔴 為什麼「過期」要單獨一格：build.sh 半路被砍的話旗標會留下，
     /// 而一個不會結束的「進行中」會讓 autostart **永久拒拉** —— 那跟真的在 build 輸出同形。</para>
     /// </summary>
+    /// <summary>
+    /// 轉發過來的 payload，執行端的「顯式」只取呼叫端名單（TASK-0310）—— 純 Bind，⛔ 不經 Server。
+    /// <para>🔴 反向對照是本格的閘：沒有名單的一般呼叫**必須照舊**（不然 0289 那盞燈在本地 Cmd 上就熄了）。</para>
+    /// </summary>
+    static CheckRow ForwardedExplicitArgs()
+    {
+        const string aName = "轉發 payload 的顯式名單（ForwardedExplicitKey）＋ 本地呼叫不回退";
+        try
+        {
+            var aSpecs = new List<SCP_CmdArgSpec>
+            {
+                new SCP_CmdArgSpec("op", "操作"), new SCP_CmdArgSpec("amount", "數量"),
+                new SCP_CmdArgSpec("region", "區域"), new SCP_CmdArgSpec("ref", "批次"),
+            };
+
+            // ① 轉發形狀：payload 帶齊四個鍵，而呼叫端只給了 op／ref ⇒ 顯式只有 op／ref，讀了 op ⇒ 只報 ref
+            var aFwd = new Dictionary<string, string>
+            {
+                ["op"] = "usage", ["amount"] = "", ["region"] = "", ["ref"] = "x",
+                [SCP_CmdArgs.ForwardedExplicitKey] = "op,ref",
+            };
+            (SCP_CmdArgs? aA, List<string> aE) = SCP_CmdArgs.Bind(aSpecs, aFwd);
+            aA?.Get("op");
+            bool aOk1 = aA != null && aE.Count == 0
+                        && string.Join(",", aA.UnreadExplicitArgs()) == "ref"
+                        && aA.IsExplicit("op") && !aA.IsExplicit("amount");
+
+            // ② 反向對照：呼叫端真的給了 amount ⇒ 名單裡有它 ⇒ 照舊亮，而且只亮它
+            aFwd[SCP_CmdArgs.ForwardedExplicitKey] = "op,amount";
+            (SCP_CmdArgs? aB, _) = SCP_CmdArgs.Bind(aSpecs, aFwd);
+            aB?.Get("op");
+            bool aOk2 = aB != null && string.Join(",", aB.UnreadExplicitArgs()) == "amount";
+
+            // ③ 本地呼叫（沒有名單）：顯式＝原始鍵，行為不變
+            var aLocal = new Dictionary<string, string> { ["op"] = "view", ["amount"] = "3" };
+            (SCP_CmdArgs? aC, _) = SCP_CmdArgs.Bind(aSpecs, aLocal);
+            aC?.Get("op");
+            bool aOk3 = aC != null && string.Join(",", aC.UnreadExplicitArgs()) == "amount";
+
+            // ④ 保留鍵不算未知參數；⛔ 但別的未知鍵照樣擋（BUG-14 那族的根治不能被這個洞帶走）
+            var aUnknown = new Dictionary<string, string> { ["op"] = "x", ["amout"] = "3" };
+            (SCP_CmdArgs? aD, List<string> aDE) = SCP_CmdArgs.Bind(aSpecs, aUnknown);
+            bool aOk4 = aA != null && aD == null && aDE.Count == 1;
+
+            // 🔴 ⑤ 整條管線（真的 voucher 規格）：客戶端 Bind → BuildPayload → 加框架欄 → Server 的 CleanArgs → Bind。
+            //   🩸 第一版只有①～④，全綠，而活體照舊亮 10 個 —— 名單在 CleanArgs 被當框架欄剝掉，而 ①～④ 結構上碰不到那一層。
+            SCP_Cmd aVoucher = SCP_CmdRegistry.Find("voucher")
+                               ?? throw new InvalidOperationException("找不到 voucher Cmd");
+            (SCP_CmdArgs? aCli, List<string> aCliErr) = SCP_CmdArgs.Bind(aVoucher.ArgSpecs,
+                new Dictionary<string, string> { ["op"] = "usage", ["voucher"] = "canvas", ["persona"] = "basecamp",
+                                                 ["letters_root"] = "probe-root" });   // 必填；真的 CLI 由宿主補
+            if (aCli == null) throw new InvalidOperationException("客戶端 Bind 失敗：" + string.Join("；", aCliErr));
+            Dictionary<string, string> aPayload = ServerDelegateCmd.BuildPayload(aVoucher, aCli);
+            aPayload["_cmd_id"] = "probe";   // 框架欄：必須被剝掉
+            Dictionary<string, string> aClean = ServerExecutor.CleanArgs(aVoucher, aPayload);
+            (SCP_CmdArgs? aSrv, List<string> aSrvErr) = SCP_CmdArgs.Bind(aVoucher.ArgSpecs, aClean);
+            aSrv?.Get("op");
+            string aPipe = aSrv == null ? "Bind 失敗：" + string.Join("；", aSrvErr) : string.Join(",", aSrv.UnreadExplicitArgs());
+            bool aOk5 = aSrv != null && !aClean.ContainsKey("_cmd_id")
+                        && aClean.ContainsKey(SCP_CmdArgs.ForwardedExplicitKey)
+                        && aPipe == "letters_root,persona,voucher";   // 只剩呼叫端真的給、而這裡沒 Get 的那三個
+
+            bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5;
+            string aReading = $"轉發：顯式只取名單（只報 ref）：{aOk1}／🔴 反向：真的給了 amount ⇒ 照舊只報 amount：{aOk2}"
+                              + $"／本地呼叫不回退：{aOk3}／保留鍵放行、打錯的鍵照擋：{aOk4}"
+                              + $"／🔴 整條管線（voucher 規格＋CleanArgs）只剩呼叫端給的：{aOk5}（未讀＝{aPipe}）"
+                              + "　⛔ 本格不驗 queue 檔的序列化（那一格看活體）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
     static CheckRow BuildGuardThreeStates()
     {
         const string aName = "build 進行中旗標三態（None／Active／Stale）＋ build_in_progress 可排隊";

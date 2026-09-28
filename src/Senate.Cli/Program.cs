@@ -1700,6 +1700,12 @@ public static class Program
             return 2;
         }
 
+        // TASK-0310：宿主替使用者補的根（data_root／bank_root）**不是使用者給的** ——
+        //   它們在 Bind 之前就塞進原始參數，於是被算成「顯式」，沒被讀時亮成「給了而從來沒被讀」
+        //   （`voucher op=usage` 修完轉發端之後還剩一個 data_root，使用者沒打）。
+        //   ⇒ 填之前記下使用者給了哪些鍵；填完有多出來的，就附上同一把名單鍵。本地 Bind 與轉發 payload 都吃它。
+        var aUserKeys = new List<string>(aRawArgs.Keys);
+
         if (aCmd != null)
         {
             SenateConfig? aCfg = null;
@@ -1718,6 +1724,8 @@ public static class Program
                 if (aDead != null) Console.Error.WriteLine("· " + aDead);
             }
         }
+        if (aRawArgs.Count > aUserKeys.Count && !aRawArgs.ContainsKey(SCP.Core.Cmd.SCP_CmdArgs.ForwardedExplicitKey))
+            aRawArgs[SCP.Core.Cmd.SCP_CmdArgs.ForwardedExplicitKey] = string.Join(",", aUserKeys);
 
         SCP.Core.Cmd.SCP_CmdResult aResult = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
 

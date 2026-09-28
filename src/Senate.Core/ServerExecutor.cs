@@ -207,16 +207,28 @@ public sealed class ServerExecutor
         if (aCmd is not ServerDelegateCmd)
             return SCP_CmdResult.Fail(2, $"✗ '{iType}' 不走 Server（PortStatus={aCmd.PortStatus}）—— 直接 `senate cmd {iType}` 跑它");
 
+        return SCP_CmdRegistry.Dispatch(iType, CleanArgs(aCmd, iArgs));
+    }
+
+    /// <summary>
+    /// queue 裡那一筆的 args ⇒ 交給 Registry 的那一份：剝掉框架欄（底線前綴）與未宣告的 persona。
+    /// <para>公開是給 selftest 用的（TASK-0310）：只驗 <c>Bind</c> 的話，這一層剝掉什麼它**結構上看不到**。</para>
+    /// </summary>
+    public static Dictionary<string, string> CleanArgs(SCP_Cmd iCmd, IReadOnlyDictionary<string, string> iArgs)
+    {
         var aClean = new Dictionary<string, string>(StringComparer.Ordinal);
         bool aDeclaresPersona = false;
-        foreach (SCP_CmdArgSpec aSpec in aCmd.ArgSpecs) if (aSpec.Name == "persona") aDeclaresPersona = true;
+        foreach (SCP_CmdArgSpec aSpec in iCmd.ArgSpecs) if (aSpec.Name == "persona") aDeclaresPersona = true;
         foreach (var kv in iArgs)
         {
-            if (kv.Key.StartsWith("_", StringComparison.Ordinal)) continue;          // _caller_client / _caller_env_marker / _cmd_id
+            // TASK-0310：轉發端的顯式名單也是框架欄，但它**要交給 Bind**（執行端靠它分辨誰是使用者給的）。
+            //   🩸 第一版就是死在這一行：名字取了底線前綴、被這裡剝掉 ⇒ selftest 綠（它直接呼叫 Bind）而活體照舊亮 10 個。
+            if (kv.Key.StartsWith("_", StringComparison.Ordinal)
+                && kv.Key != SCP_CmdArgs.ForwardedExplicitKey) continue;             // _caller_client / _caller_env_marker / _cmd_id
             if (kv.Key == "persona" && !aDeclaresPersona) continue;                   // Submit 順手戳進來的分道宣告
             aClean[kv.Key] = kv.Value;
         }
-        return SCP_CmdRegistry.Dispatch(iType, aClean);
+        return aClean;
     }
 
     static string FirstLine(SCP_CmdResult iResult)
