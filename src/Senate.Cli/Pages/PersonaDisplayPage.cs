@@ -18,6 +18,7 @@ public sealed class PersonaDisplayPage : SCP_GuiToolPage
     const string ColorId = "pdisp/edit/color";
     const string AvatarSrcId = "pdisp/edit/avatar_src";
     const string PendingId = "pdisp/pending";
+    const string AvatarUrlId = "pdisp/edit/avatar_url";
 
     readonly SenateModel m_Model;
     string m_LettersRoot = "";
@@ -59,6 +60,7 @@ public sealed class PersonaDisplayPage : SCP_GuiToolPage
             iUi.SetField(PendingId, "");
             iUi.SetField(AvatarSrcId, "");
             iUi.SetField(ColorId, m_Sel.Length > 0 ? SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel).ColorHex : "");
+            iUi.SetField(AvatarUrlId, m_Sel.Length > 0 ? SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel).AvatarUrl : "");
         }
         if (iUi.Button("重新讀取", "pdisp/btn/reload")) { Reload(); m_Message = "已重新讀取"; }
         if (m_Personas.Count > 0)
@@ -71,6 +73,7 @@ public sealed class PersonaDisplayPage : SCP_GuiToolPage
                 iUi.SetField(PendingId, "");
                 // 顏色欄換成新那位的值 —— 欄位倉會留著上一個人打的字，不換的話按「儲存」會把它寫到這個人身上。
                 iUi.SetField(ColorId, SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel).ColorHex);
+                iUi.SetField(AvatarUrlId, SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel).AvatarUrl);
             }
         }
     }
@@ -127,6 +130,16 @@ public sealed class PersonaDisplayPage : SCP_GuiToolPage
             m_Message = SCP_PersonaDisplay.TrySetColor(m_LettersRoot, iInfo.Persona, aHex, out string? aErr)
                 ? (aHex.Length == 0 ? $"{iInfo.Persona} 的顏色已刪掉（回到沒設）" : $"{iInfo.Persona} 的顏色 ＝ {aHex.ToUpperInvariant()}")
                 : "[未寫入] " + aErr;
+        }
+
+        // Discord 用的公開頭像網址（TASK-0320）：Discord 只收公開網址 ⇒ 本機的 avatar.png 給不了它
+        g.TextField("Discord 頭像網址（https；留空＝用「Discord 轉發設定」頁的範本）", g.FieldValue(AvatarUrlId, iInfo.AvatarUrl), AvatarUrlId);
+        if (g.Button("儲存頭像網址", "pdisp/btn/save_avatar_url"))
+        {
+            string aUrl = g.FieldValue(AvatarUrlId, "").Trim();
+            m_Message = SCP_PersonaDisplay.TrySetAvatarUrl(m_LettersRoot, iInfo.Persona, aUrl, out string? aUErr)
+                ? (aUrl.Length == 0 ? $"{iInfo.Persona} 的頭像網址已刪掉（回到範本）" : $"{iInfo.Persona} 的頭像網址 ＝ {aUrl}")
+                : "[未寫入] " + aUErr;
         }
 
         g.TextField("換頭像：PNG／JPEG 圖檔的完整路徑", g.FieldValue(AvatarSrcId, ""), AvatarSrcId);
