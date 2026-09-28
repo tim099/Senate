@@ -131,7 +131,7 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
                 using (g.Row())
                 {
                     g.Label($"{c.Name}　（{aUsed} 個頻道）{(c.Description.Length > 0 ? "　" + c.Description : "")}");
-                    if (g.Button("刪除", "chan/btn/del_cat"))
+                    if (g.Button("刪除", "chan/btn/del_cat/" + c.Name))
                     {
                         m_Message = SCP_TavernChannels.TryRemoveCategory(m_DataRoot, c.Name, out string? aErr)
                             ? $"已刪除分類 {c.Name}" : "[未寫入] " + aErr;

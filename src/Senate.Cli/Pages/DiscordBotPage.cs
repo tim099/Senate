@@ -187,7 +187,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
                 using (g.IdScope("ch/" + ch.Id))
                 using (g.Row())
                 {
-                    if (g.Button(ch.Id == m_SelChannel ? "編輯中" : "設定", "dbot/btn/pick")) Select(g, ch.Id, gd.Id, ch.Name);
+                    if (g.Button(ch.Id == m_SelChannel ? "編輯中" : "設定", "dbot/btn/pick/" + ch.Id)) Select(g, ch.Id, gd.Id, ch.Name);
                     g.Label($"{(ch.ParentName.Length > 0 ? ch.ParentName + " / " : "")}#{ch.Name}　{aTo}");
                 }
             }
@@ -208,7 +208,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
             using (g.IdScope("orphan/" + r.ChannelId))
             using (g.Row())
             {
-                if (g.Button(r.ChannelId == m_SelChannel ? "編輯中" : "設定", "dbot/btn/pick")) Select(g, r.ChannelId, r.GuildId, r.Label);
+                if (g.Button(r.ChannelId == m_SelChannel ? "編輯中" : "設定", "dbot/btn/pick/" + r.ChannelId)) Select(g, r.ChannelId, r.GuildId, r.Label);
                 g.Label($"{r.Label}（{r.ChannelId}）→ {r.TavernRoom}{(r.Enabled ? "" : "（關）")}　[{r.SourceClass}]");
             }
         }
@@ -277,7 +277,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
             using (g.Row())
             {
                 g.Label($"{u.DisplayName}（{u.UserId}）{(u.Profile.Length > 0 ? "　" + u.Profile : "")}");
-                if (g.Button("移除", "dbot/btn/wl_remove"))
+                if (g.Button("移除", "dbot/btn/wl_remove/" + u.UserId))
                 {
                     m_Message = SCP_DiscordInboundConfig.TryRemoveWhitelistUser(m_DataRoot, u.UserId, out string? aErr)
                         ? $"已從白名單移除 {u.DisplayName}" : "[未寫入] " + aErr;
