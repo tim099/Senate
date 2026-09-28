@@ -139,6 +139,15 @@ public class Cmd_TavernWrite : ServerDelegateCmd
 
         string aGlossaryNote = AttachGlossary(aMsg, iArgs.Get("glossary_root").Trim(), iArgs.Get("project_root").Trim());
 
+        // ── 閘③：封存的頻道不寫（TASK-0318）─────────────────────────
+        // 🩸 不擋的話：寫入端會在 `rooms/` 自己建一個同名新房（CreateDirectory），而記憶體裡的訊息數還是舊房的
+        //   ⇒ 新房從舊號接著編，取消封存時兩份撞名。⛔ 不代為取消封存：那是頻道管理的決定，不是發文的副作用。
+        if (SCP.Core.Tavern.SCP_TavernChannels.IsArchived(aDataRoot, aRoom))
+            return SCP_CmdResult.Fail(2,
+                "✗ 房 `" + aRoom + "` 已封存（在 " + SCP.Core.Tavern.SCP_TavernChannels.ArchiveRoot(aDataRoot) + "）⇒ **沒有寫入**。",
+                "要在這裡發文：先取消封存（`senate cmd channel --arg op=unarchive --arg room=" + aRoom + "` 或後台「頻道管理」頁）。")
+                .AddValue("room", aRoom);
+
         SCP_TavernWriteResult aW = SCP_TavernWriter.WriteMessage(aDataRoot, aRoom, aMsg);
         if (!aW.Wrote)
             return SCP_CmdResult.Fail(1, "✗ " + aW.Detail).AddValue("room", aRoom);

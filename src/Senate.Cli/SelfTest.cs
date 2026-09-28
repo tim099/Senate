@@ -2201,8 +2201,12 @@ public static class SelfTest
             if (e.TypeName == nameof(ProbeSameNamePage)) aSame = e.Label;
             if (e.TypeName == nameof(ProbeDupA)) aDiff = e.Label;
         }
+        // ⑤b 有標題 ⇒ `Key(Title)`（Tim 2026-09-28）；標題等於 key ⇒ 退回 `Key(TypeName)`
+        string aTitled = new SCP_GuiPageEntry("bank", "銀行後台（新銀行）", "管理", "BankAdminPage", "X.BankAdminPage").Label;
+        string aTitleIsKey = new SCP_GuiPageEntry("bank", "bank", "管理", "BankAdminPage", "X.BankAdminPage").Label;
         bool aLabelOk = aSame == nameof(ProbeSameNamePage)
-                        && aDiff == ProbeDupA.PageKey + "(" + nameof(ProbeDupA) + ")";
+                        && aDiff == ProbeDupA.PageKey + "(" + nameof(ProbeDupA) + ")"
+                        && aTitled == "bank(銀行後台（新銀行）)" && aTitleIsKey == "bank(BankAdminPage)";
 
         bool aOk = aQuiet && aHasThem && aIgnoreWorks && aNamesBoth && aQuietOnOne
                    && aNamesBadCtor && aLabelOk;
@@ -2211,7 +2215,7 @@ public static class SelfTest
             + $"／[SCP_PageIgnore] 連收錄都擋={aIgnoreWorks}"
             + $"／🔴 撞 key 點名兩邊={aNamesBoth}（🔴 反向對照：只餵一個 ⇒ 零缺陷={aQuietOnOne}）"
             + $"／ctor 形狀不符會點名={aNamesBadCtor}"
-            + $"／標籤={aLabelOk}（相等⇒'{aSame}'／不等⇒'{aDiff}'）",
+            + $"／標籤={aLabelOk}（相等⇒'{aSame}'／不等⇒'{aDiff}'／有標題⇒'{aTitled}'／標題＝key⇒'{aTitleIsKey}'）",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 

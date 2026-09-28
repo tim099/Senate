@@ -3,7 +3,9 @@
 //           頻道分類給 TASK-0316 Discord Outbound 依頻道路由用（Tim 2026-09-28：依頻道分類，不是依訊息分類）。
 // 數值影響：
 //   · 新增／刪除分類：寫 `ChatTavern/channel_categories.json`（刪除時還有頻道在用 ⇒ 擋下）。
-//   · 設分類／封存：寫 `ChatTavern/rooms/<room>/channel.json`。封存只是旗標，⛔ 不刪、不搬訊息。
+// 版面：選頻道／分類下拉／儲存分類放在**頂列**（Tim 2026-09-28），內容區是分類清單、選中頻道的狀態與封存、全部頻道表。
+//   · 設分類：寫 `<房間資料夾>/channel.json`。
+//   · 封存：把整個房間資料夾搬到 `ChatTavern/rooms_archive/`（取消封存搬回來）；⛔ 不刪任何訊息。
 // ⚠ 視窗文字不放 emoji（字型沒有那些字 ⇒ 方框）。
 #nullable enable
 using System.Globalization;
@@ -67,12 +69,38 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
             iUi.SetField(EditCategoryId + "/value", Selected?.Settings.Category ?? "");
         }
         if (iUi.Button("重新讀取", "chan/btn/reload")) { Reload(); m_Message = "已重新讀取"; }
+        if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot)) return;
+
+        // 選頻道＋分類＋儲存放在頂列（Tim 2026-09-28）：往下捲到頻道表時還按得到。
+        bool aShowArchived = iUi.ToggleValue(ShowArchivedId, false);
+        List<string> aRooms = m_All.Where(c => aShowArchived || !c.Settings.Archived || c.Room == m_Sel).Select(c => c.Room).ToList();
+        if (aRooms.Count == 0) return;
+        string aPick = iUi.Dropdown("頻道", aRooms, m_Sel, SelId);
+        if (aPick.Length > 0 && aPick != m_Sel)
+        {
+            m_Sel = aPick;
+            // 換頻道 ⇒ 分類下拉換成新那個的值（欄位倉會留著上一個的選擇）
+            iUi.SetField(EditCategoryId + "/value", Selected?.Settings.Category ?? "");
+        }
+        SCP_ChannelInfo? aInfo = Selected;
+        if (aInfo == null || m_Cats.Count == 0) return;   // 沒有分類 ⇒ 內容區會說「先新增」
+
+        var aOptions = new List<SCP_GuiOption> { new SCP_GuiOption("", "(未分類)") };
+        aOptions.AddRange(m_Cats.Select(c => new SCP_GuiOption(c.Name)));
+        string aCat = iUi.Dropdown("分類", aOptions, aInfo.Settings.Category, EditCategoryId);
+        if (iUi.Button("儲存分類", "chan/btn/save_cat"))
+        {
+            m_Message = SCP_TavernChannels.TrySetCategory(m_DataRoot, aInfo.Room, aCat, out string? aErr)
+                ? (aCat.Length == 0 ? $"{aInfo.Room} 改成未分類" : $"{aInfo.Room} 的分類 ＝ {aCat}")
+                : "[未寫入] " + aErr;
+            Reload();
+        }
     }
 
     protected override void DrawContent(SCP_Ui g)
     {
         g.Title("【頻道管理】");
-        g.Note("頻道分類要先在下面的「分類清單」新增，才能給頻道選用。封存只是把頻道收起來：訊息不刪、不搬，隨時可以取消封存。");
+        g.Note("頻道分類要先在下面的「分類清單」新增，才能給頻道選用。封存會把整個頻道資料夾搬到 rooms_archive/（訊息不刪），封存後酒館訊息頁看不到、也不能在那裡發文；隨時可以取消封存搬回來。");
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot))
         {
             g.Note($"[錯誤] 找不到 AgentCommands 資料根（{m_DataRoot}）—— 到「路徑管理」頁設定");
@@ -89,8 +117,9 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
 
     void DrawCategories(SCP_Ui g)
     {
-        using (g.Fold($"分類清單（{m_Cats.Count}）", "chan/fold/cats"))
+        using (var aFold = g.Fold($"分類清單（{m_Cats.Count}）", "chan/fold/cats"))
         {
+            if (!aFold.Open) return;
             if (m_CatError != null) g.Note("[注意] " + m_CatError + " —— 修好之前不會覆寫它");
             if (m_Cats.Count == 0) g.Note("（還沒有任何分類）");
             foreach (SCP_ChannelCategory c in m_Cats)
@@ -127,44 +156,23 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
 
     void DrawEditor(SCP_Ui g)
     {
-        bool aShowArchived = g.ToggleValue(ShowArchivedId, false);
-        List<string> aRooms = m_All.Where(c => aShowArchived || !c.Settings.Archived || c.Room == m_Sel).Select(c => c.Room).ToList();
-        if (aRooms.Count == 0) { g.Note("（沒有頻道）"); return; }
-
-        string aPick = g.Dropdown("頻道", aRooms, m_Sel, SelId);
-        if (aPick.Length > 0 && aPick != m_Sel)
-        {
-            m_Sel = aPick;
-            // 換頻道 ⇒ 分類下拉換成新那個的值（欄位倉會留著上一個的選擇）
-            g.SetField(EditCategoryId + "/value", Selected?.Settings.Category ?? "");
-        }
         SCP_ChannelInfo? aInfo = Selected;
-        if (aInfo == null) return;
+        if (aInfo == null) { g.Note("（沒有頻道）"); return; }
 
         g.Label($"編輯：{aInfo.Room}{(aInfo.Name.Length > 0 && aInfo.Name != aInfo.Room ? "（" + aInfo.Name + "）" : "")}");
         g.Note($"最新 seq {aInfo.LastSeq}　｜　最後活動 {FormatTs(aInfo.LastTs)}　｜　{(aInfo.Settings.Archived ? "已封存（" + FormatTs(aInfo.Settings.ArchivedAt) + "）" : "未封存")}");
+        if (aInfo.ArchiveConflict) g.Note($"[注意] rooms/ 與 rooms_archive/ 都有「{aInfo.Room}」—— 封存後又有人在 rooms/ 長出同名房；取消封存會被擋下，要人工處理");
         if (aInfo.CategoryMissing) g.Note($"[注意] 現在的分類「{aInfo.Settings.Category}」不在分類清單裡 —— 請重新選一個");
 
-        if (m_Cats.Count == 0) g.Note("還沒有任何分類 ⇒ 先在上面的「分類清單」新增，才能給頻道選用。");
-        else
-        {
-            var aOptions = new List<SCP_GuiOption> { new SCP_GuiOption("", "(未分類)") };
-            aOptions.AddRange(m_Cats.Select(c => new SCP_GuiOption(c.Name)));
-            string aCat = g.Dropdown("分類", aOptions, aInfo.Settings.Category, EditCategoryId);
-            if (g.Button("儲存分類", "chan/btn/save_cat"))
-            {
-                m_Message = SCP_TavernChannels.TrySetCategory(m_DataRoot, aInfo.Room, aCat, out string? aErr)
-                    ? (aCat.Length == 0 ? $"{aInfo.Room} 改成未分類" : $"{aInfo.Room} 的分類 ＝ {aCat}")
-                    : "[未寫入] " + aErr;
-                Reload();
-            }
-        }
+        g.Note(m_Cats.Count == 0
+            ? "還沒有任何分類 ⇒ 先在上面的「分類清單」新增，才能給頻道選用。"
+            : $"分類：{(aInfo.Settings.Category.Length == 0 ? "(未分類)" : aInfo.Settings.Category)}　—— 在頂列選分類後按「儲存分類」");
 
         if (g.Button(aInfo.Settings.Archived ? "取消封存" : "封存這個頻道", "chan/btn/archive"))
         {
             bool aWant = !aInfo.Settings.Archived;
             m_Message = SCP_TavernChannels.TrySetArchived(m_DataRoot, aInfo.Room, aWant, out string? aErr)
-                ? (aWant ? $"{aInfo.Room} 已封存（訊息原封不動）" : $"{aInfo.Room} 已取消封存")
+                ? (aWant ? $"{aInfo.Room} 已封存（整個資料夾已搬到 rooms_archive/）" : $"{aInfo.Room} 已取消封存")
                 : "[未寫入] " + aErr;
             Reload();
         }
@@ -183,7 +191,7 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
             {
                 string aCat = c.Settings.Category.Length == 0 ? "-"
                     : c.CategoryMissing ? c.Settings.Category + "（不在清單）" : c.Settings.Category;
-                g.TableRow(c.Room, aCat, c.Settings.Archived ? "封存" : "", c.LastSeq.ToString(CultureInfo.InvariantCulture), FormatTs(c.LastTs));
+                g.TableRow(c.Room, aCat, c.ArchiveConflict ? "撞名" : c.Settings.Archived ? "封存" : "", c.LastSeq.ToString(CultureInfo.InvariantCulture), FormatTs(c.LastTs));
             }
         }
     }

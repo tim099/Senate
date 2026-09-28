@@ -29,8 +29,6 @@ public sealed class TavernPage : SCP_GuiToolPage
     int m_LastSeq;
     DateTime m_NextPollUtc = DateTime.MinValue;
     List<SCP_TavernDisplayRow> m_Rows = new();
-    List<string> m_AllRooms = new();
-    bool m_ShowArchived;
 
     public TavernPage(SenateModel iModel) : base() { m_Model = iModel; }
 
@@ -54,8 +52,8 @@ public sealed class TavernPage : SCP_GuiToolPage
         if (string.IsNullOrEmpty(m_LettersRoot) || !Directory.Exists(m_LettersRoot))
             m_Error = $"找不到信件夾根（{m_LettersRoot}）⇒ **頭像全部畫成預設圖**（不是它們沒有頭像）";
 
-        m_AllRooms = SCP_TavernRead.EnumerateRoomIds(m_DataRoot);
-        FilterRooms();
+        // 封存的頻道（TASK-0318）已經搬到 `rooms_archive/` ⇒ 這裡本來就列不到；要看就到「頻道管理」取消封存。
+        m_Rooms = SCP_TavernRead.EnumerateRoomIds(m_DataRoot);
         if (m_Rooms.Count > 0 && !m_Rooms.Contains(m_Room)) m_Room = m_Rooms.Contains("tavern") ? "tavern" : m_Rooms[0];
         LoadPage();
     }
@@ -70,24 +68,11 @@ public sealed class TavernPage : SCP_GuiToolPage
         m_Rows = SCP_TavernDisplay.ResolveAll(m_LettersRoot, aMsgs);
     }
 
-    /// <summary>
-    /// 房間選單：封存的頻道（TASK-0318，`SCP_TavernChannels`）預設不列 —— 勾「顯示封存」才列。
-    /// ⚠ 正在看的那一房即使封存了也留在選單裡（不然選單顯示的值會不在清單上）。
-    /// </summary>
-    void FilterRooms()
-    {
-        m_Rooms = m_ShowArchived
-            ? new List<string>(m_AllRooms)
-            : m_AllRooms.Where(r => r == m_Room || !SCP_TavernChannels.IsArchived(m_DataRoot, r)).ToList();
-    }
-
     int PageCount => Math.Max(1, (m_LastSeq + PageSize - 1) / PageSize);
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", "tavern/btn/reload")) Reload();
-        bool aShow = iUi.Toggle("顯示封存", m_ShowArchived, "tavern/show_archived");
-        if (aShow != m_ShowArchived) { m_ShowArchived = aShow; FilterRooms(); }
         if (m_Rooms.Count > 0)
         {
             string aPick = iUi.Dropdown("房間", m_Rooms, m_Room, "tavern/sel/room");
