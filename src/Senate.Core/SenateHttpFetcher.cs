@@ -11,13 +11,14 @@
 //   ③ **只允許 https**：明文抓來的價格會被中間人改掉，而改掉的價格長得跟真的一樣。
 //      （`op=source` 存設定時已擋一次，這裡是第二道 —— 設定檔是可以被手改的。）
 #nullable enable
+using System.Collections.Generic;
 using System.Net.Http;
 using SCP.Core.Market;
 
 namespace Senate.Core;
 
 /// <summary>以 <see cref="HttpClient"/> 實作的抓取器。單例共用一個 client（避免 socket 耗盡）。</summary>
-public sealed class SenateHttpFetcher : ISCP_HttpFetcher
+public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher
 {
     // ⚠ HttpClient 要**共用**不要每次 new：每次 new 會讓 TIME_WAIT 的 socket 堆起來，
     //   而它的失效樣子是「跑久了之後突然連不出去」，看起來像網路壞了。
@@ -26,7 +27,18 @@ public sealed class SenateHttpFetcher : ISCP_HttpFetcher
     public string FetcherName => "senate_http";
 
     public bool TryGetText(string iUrl, int iTimeoutSec, out string oBody, out string? oError)
+        => TryGetText(iUrl, s_NoHeaders, iTimeoutSec, out oBody, out _, out oError);
+
+    static readonly IReadOnlyDictionary<string, string> s_NoHeaders = new Dictionary<string, string>();
+
+    /// <summary>
+    /// 帶標頭的 GET（TASK-0319：Discord API）。⚠ 標頭值可能是憑證 ⇒ ⛔ 不寫進錯誤訊息
+    /// （回應前綴仍會帶回去 —— 那是對方說的話，不是我們送的）。
+    /// </summary>
+    public bool TryGetText(string iUrl, IReadOnlyDictionary<string, string> iHeaders, int iTimeoutSec,
+                           out string oBody, out int oStatus, out string? oError)
     {
+        oStatus = 0;
         oBody = "";
         oError = null;
 
@@ -42,12 +54,14 @@ public sealed class SenateHttpFetcher : ISCP_HttpFetcher
         {
             using var aReq = new HttpRequestMessage(HttpMethod.Get, iUrl);
             // 有些公開端點會擋沒有 UA 的請求，而擋下來的回應是 200 加一頁 HTML ⇒ 解析器會說「缺欄位」。
-            aReq.Headers.TryAddWithoutValidation("User-Agent", "senate-rate-sync/1.0");
+            foreach (var kv in iHeaders) aReq.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
+            if (!iHeaders.ContainsKey("User-Agent")) aReq.Headers.TryAddWithoutValidation("User-Agent", "senate-rate-sync/1.0");
 
             using var aCts = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(iTimeoutSec));
             using HttpResponseMessage aRes = s_Client.Send(aReq, aCts.Token);
 
             string aText = aRes.Content.ReadAsStringAsync(aCts.Token).GetAwaiter().GetResult();
+            oStatus = (int)aRes.StatusCode;
 
             if (!aRes.IsSuccessStatusCode)
             {

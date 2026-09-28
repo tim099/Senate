@@ -54,6 +54,8 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
         m_SyncFields = true;
         m_DataRoot = m_Model.AgentCommandsRoot.Value;
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot)) { m_All = new(); m_Cats = new(); return; }
+        if (SCP_TavernChannels.EnsureMainChannel(m_DataRoot, out bool aCreated) && aCreated)
+            m_Message = $"主頻道 {SCP_TavernChannels.MainChannelId} 不存在 ⇒ 已自動建立";
         m_Cats = SCP_TavernChannels.LoadCategories(m_DataRoot, out m_CatError);
         m_All = SCP_TavernChannels.ListChannels(m_DataRoot, true);
         if (m_All.Count > 0 && m_All.All(c => c.Room != m_Sel)) m_Sel = m_All.Any(c => c.Room == "tavern") ? "tavern" : m_All[0].Room;

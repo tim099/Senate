@@ -412,6 +412,10 @@ public static class ServerHost
         // 每日結算（結帳／保管費／轉券／匯率，TASK-0315）只歸 main 那一顆 —— 扣繳是 main 的 Cmd（銀行的單一寫入端），
         //   兩顆都掛的話同一天會跑兩趟（冪等擋得住錢，擋不住多貼一則公告）。
         // ⚠ 解析不出資料根 ⇒ 不掛並**說出來**：靜默的話症狀是「今天沒有結算公告」，而 Server 明明開著。
+        // 主頻道（Tim 2026-09-28，TASK-0319）：不存在就建 —— 放在 Server 啟動，⇒ 沒有人開後台時發文前它也一定在。
+        if (aEndpointDataRoot != null
+            && SCP.Core.Tavern.SCP_TavernChannels.EnsureMainChannel(aEndpointDataRoot, out bool aMainCreated) && aMainCreated)
+            iOut($"· 主頻道 `{SCP.Core.Tavern.SCP_TavernChannels.MainChannelId}` 不存在 ⇒ 已自動建立");
         bool aRunOvernight = string.Equals(aServerId, SCP_ServerIds.Default, StringComparison.Ordinal) && aEndpointDataRoot != null;
         if (string.Equals(aServerId, SCP_ServerIds.Default, StringComparison.Ordinal) && aEndpointDataRoot == null)
             iErr("⚠ 解析不出資料根 ⇒ **每日結算沒有掛上**（今天不會有人跑保管費）");
