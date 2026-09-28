@@ -409,6 +409,10 @@ public static class ServerHost
         // 延後發文匣（TASK-0312）只歸酒館那顆 —— alter 配對的訊息到點由它投回自己的 tavern lane。
         bool aFlushDeferred = string.Equals(aServerId, SCP_ServerIds.Tavern, StringComparison.Ordinal);
 
+        // Discord Inbound（TASK-0316 ④）只歸酒館那顆 —— 它是酒館的唯一寫入端（Tim 2026-09-28：收發綁在酒館 Server）。
+        //   開關在 discord_config.json，每一圈讀；這裡只決定「這顆有沒有資格跑」。
+        bool aRunDiscordIn = aFlushDeferred && aEndpointDataRoot != null;
+
         // 每日結算（結帳／保管費／轉券／匯率，TASK-0315）只歸 main 那一顆 —— 扣繳是 main 的 Cmd（銀行的單一寫入端），
         //   兩顆都掛的話同一天會跑兩趟（冪等擋得住錢，擋不住多貼一則公告）。
         // ⚠ 解析不出資料根 ⇒ 不掛並**說出來**：靜默的話症狀是「今天沒有結算公告」，而 Server 明明開著。
@@ -458,6 +462,12 @@ public static class ServerHost
                     // 先投再 Tick：投進去的那一則這一圈就會被執行器看到。單筆失敗在 FlushDue 裡回報，⛔ 不讓它打掛服務迴圈。
                     try { SenateTavernDeferred.FlushDue(aServerRoot, DateTime.UtcNow, iOut); }
                     catch (Exception e) { iErr("⚠ 延後發文匣這一圈沒掃成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
+                }
+                if (aRunDiscordIn)
+                {
+                    // 背景執行緒做網路與寫入 ⇒ ⛔ 不擋心跳；錯誤在 Job 裡節流回報。
+                    try { SenateDiscordInboundJob.Tick(aEndpointDataRoot!, iRepoRoot, iOut, iErr); }
+                    catch (Exception e) { iErr("⚠ Discord Inbound 這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
                 aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);
