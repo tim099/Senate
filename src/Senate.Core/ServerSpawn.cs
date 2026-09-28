@@ -44,6 +44,16 @@ public static class ServerSpawn
         oErr = ""; oChildPid = 0;
         oShown = ServerConsolePref.Resolve(iRepoRoot, iShowConsole, out oShownSource);
 
+        // TASK-0309：build.sh 正在換 exe ⇒ **不生**。這裡是所有 spawn 的咽喉
+        //   （委派 autostart／延後發文匣／ServerAdminPage／`server start --detach`）——
+        //   ⚠ 2026-09-28 的第一版只守了其中兩個呼叫端，而另一條路照樣拉起一顆舊 exe。
+        //   被拉起的那一顆在 `ServerHost.RunForeground` 還會再擋一次（擋得住沒帶這一格的舊 CLI）。
+        if (BuildGuard.Check(iRepoRoot, out string aBuildDetail) == BuildGuardState.Active)
+        {
+            oErr = aBuildDetail + " ⇒ 沒有拉起 Server（build 完成後由 build.sh 起回來）";
+            return false;
+        }
+
         // 區塊職責：**測試縫** —— 讓 autostart 的兩個失敗臂在**真實委派路徑**上走得到（TASK-0283，承接 0267 ⑦）。
         // 物理意義：`fail` ⇒ 連子行程都沒起來（`SpawnFailed`）／`noop` ⇒ 回報起來了而其實沒有（`TimedOut`）。
         // 數值影響：未設定時**零成本、零分支效果** —— 取值路徑直接回到生產常態（驗收 ⑥(b)）。

@@ -22,6 +22,18 @@ static class ServerCommand
             // start 不指名 ⇒ `main`：起一顆是明確的動作，有預設不會讓人損失什麼。
             case "start":
             {
+                // TASK-0309：build.sh 正在換 exe ⇒ 不起。真正的閘在 `ServerSpawn.TrySpawn`（detach）與
+                //   `ServerHost.RunForeground`（被拉起的那顆自己）；這一格只是讓**手動** start 在最前面
+                //   就給一個看得懂的答案，並印一個可以 grep 的讀數。
+                if (BuildGuard.Check(iRepoRoot, out string aBuildDetail) == BuildGuardState.Active)
+                {
+                    Console.Error.WriteLine($"✗ {aBuildDetail} ⇒ 沒有啟動 Server。");
+                    Console.Error.WriteLine("  ⚠ 此刻起來的會是還沒被覆寫的舊 exe，而它會讓 publish 撞 access denied。");
+                    Console.Error.WriteLine("  下一步：等 build 完成（build.sh 收尾會把原本在跑的那幾顆起回來）。");
+                    Console.WriteLine("🔢 server_start_blocked = build_in_progress");
+                    return 3;
+                }
+
                 bool aCon = HasFlag(iArgs, "--console"), aNoCon = HasFlag(iArgs, "--no-console");
                 if (aCon && aNoCon) return Usage(2, "--console 與 --no-console 不能同時給。");
                 // 顯示與否只對「另生一顆」有意義 ⇒ 給了其中一個就當成 --detach（並說出來）。

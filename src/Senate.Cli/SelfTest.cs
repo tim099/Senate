@@ -120,6 +120,7 @@ public static class SelfTest
         One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
 
         One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
+        One(nameof(BuildGuardThreeStates), "server", BuildGuardThreeStates),
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
@@ -4948,6 +4949,49 @@ public static class SelfTest
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    /// <summary>
+    /// build 進行中旗標的三態（TASK-0309）—— 暫存目錄裡造旗標，⛔ 不碰真的 runtime／不起 Server。
+    /// <para>🔴 為什麼「過期」要單獨一格：build.sh 半路被砍的話旗標會留下，
+    /// 而一個不會結束的「進行中」會讓 autostart **永久拒拉** —— 那跟真的在 build 輸出同形。</para>
+    /// </summary>
+    static CheckRow BuildGuardThreeStates()
+    {
+        const string aName = "build 進行中旗標三態（None／Active／Stale）＋ build_in_progress 可排隊";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_buildguard_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            string aFlag = Path.Combine(aTmp, "_build_in_progress.flag");
+            DateTime aNow = DateTime.UtcNow;
+
+            // ① 沒有旗標 ⇒ None
+            bool aOk1 = BuildGuard.Check(aFlag, aNow, out _) == BuildGuardState.None;
+
+            // ② 剛落的旗標 ⇒ Active，而且要說得出是哪個檔
+            File.WriteAllText(aFlag, "probe");
+            File.SetLastWriteTimeUtc(aFlag, aNow.AddSeconds(-30));
+            bool aOk2 = BuildGuard.Check(aFlag, aNow, out string aD2) == BuildGuardState.Active
+                        && aD2.Contains(aFlag, StringComparison.Ordinal);
+
+            // 🔴 ③ 超過 StaleAfter ⇒ Stale（⛔ 不是 Active），而且要說話（不是靜默放行）
+            File.SetLastWriteTimeUtc(aFlag, aNow - BuildGuard.StaleAfter - TimeSpan.FromMinutes(1));
+            bool aOk3 = BuildGuard.Check(aFlag, aNow, out string aD3) == BuildGuardState.Stale && aD3.Length > 0;
+
+            // ④ 被擋下的那一筆確定沒送出 ⇒ 可排隊；⛔ 而 build_mismatch 仍然不可以（對照組，證明這把尺會分）
+            bool aOk4 = ServerDelegateCmd.ShouldQueueForLater("build_in_progress")
+                        && !ServerDelegateCmd.ShouldQueueForLater("build_mismatch");
+
+            bool aOk = aOk1 && aOk2 && aOk3 && aOk4;
+            string aReading = $"無旗標 ⇒ None：{aOk1}／30 秒前 ⇒ Active（指得出檔）：{aOk2}"
+                              + $"／🔴 超過 {BuildGuard.StaleAfter.TotalMinutes:0} 分 ⇒ Stale 且有話說：{aOk3}"
+                              + $"／build_in_progress 可排隊、build_mismatch 不可：{aOk4}"
+                              + "　⛔ 本格不驗 build.sh 真的有落／收旗標（那要跑一次真的 build）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch { } }
     }
 
     static CheckRow TavernWriteModeFourStates()

@@ -84,6 +84,12 @@ public static class SenatePaths
     public static string ServerSingletonLock(string iRepoRoot, string iServerId)
         => Path.Combine(RuntimeDir(iRepoRoot), "_server_singleton" + SCP_ServerIds.Suffix(iServerId) + ".lock");
 
+    /// <summary>
+    /// `build.sh` 從「停 Server」到「publish 完成」之間落的旗標（TASK-0309）—— autostart 看到就不拉 Server。
+    /// <para>⚠ 檔名 build.sh 也寫了一份（shell 讀不到這裡）；改它要兩邊一起改。</para>
+    /// </summary>
+    public static string BuildInProgressFlag(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_build_in_progress.flag");
+
     /// <summary>常駐視窗的心跳（每 0.5 秒覆寫；pid／build id／時間戳）。掉了 ＝ 窗沒在跑。</summary>
     public static string GuiHeartbeat(string iRepoRoot) => Path.Combine(RuntimeDir(iRepoRoot), "_gui_heartbeat.json");
 

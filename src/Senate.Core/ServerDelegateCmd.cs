@@ -7,7 +7,7 @@
 //           資料根」、要解析 project；這邊的目標是 Senate 自己的 Server 根，沒有 project 這一格。
 //           兩者共用的是**協議**（AgentCmdClient）與**回報**（AppendReport／DescribeStamp），不是類別階層。
 // 數值影響：CLI 路徑寫 Server 根的 queue/trigger、等 result 檔；exit 0 成功／1 Server 端回報失敗／
-//           3 沒有結果（not_running／build_mismatch／queue_busy／timeout，細分走 🔢 delegate_failure）。
+//           3 沒有結果（not_running／build_mismatch／build_in_progress／queue_busy／timeout，細分走 🔢 delegate_failure）。
 //           ⛔ Server 沒在跑**不降級成本地跑**（Tim 2026-09-02 ⑦）—— 印怎麼啟動，exit 3，到此為止。
 using SCP.Core.Cmd;
 using SCP.Core.Proc;
@@ -122,6 +122,22 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         ServerStatus aStatus = ServerHost.Probe(aRepoRoot, aServerId);
         if (!aStatus.IsRunning)
         {
+            // TASK-0309：build.sh 正在換 exe ⇒ **不拉**。此刻拉起來的是還沒被覆寫的舊 exe，
+            //   它會握住 senate-server.exe 讓 publish 撞 access denied，留下 CLI 新／Server 舊的混版。
+            //   這一筆確定還沒送出 ⇒ 呼叫端可以排進 queue（ShouldQueueForLater），build 完起來的新 exe 接手。
+            BuildGuardState aBuild = BuildGuard.Check(aRepoRoot, out string aBuildDetail);
+            if (aBuild == BuildGuardState.Active)
+            {
+                aResult.ExitCode = 3;
+                aResult.AddValue("delegate_host", "server");
+                aResult.AddValue("delegate_failure", "build_in_progress");
+                aResult.Lines.Add($"✗ Server 沒在跑，而 {aBuildDetail} ⇒ **沒有自動拉起**，這一筆**沒有送出**。");
+                aResult.Lines.Add("  ⚠ 這是「確定沒送出」：build 完成後重跑是安全的（通常 1～2 分鐘）。");
+                aResult.Lines.Add("  ⛔ 不會改成本地跑：本地跑就是第二個寫入者。");
+                return aResult;
+            }
+            if (aBuild == BuildGuardState.Stale) aResult.Lines.Add("⚠ " + aBuildDetail);
+
             // TASK-0267：決策迴圈住共用層（`SCP_ServerAutoStart`），**怎麼生出行程**留在宿主（`ServerSpawn`）
             //   ⇒ 這裡是那條切線的接點：三格由本宿主注入，⛔ 共用層不自己判「在跑嗎」也不自己 spawn。
             bool aSpawn(out int oPid, out string oErr) => ServerSpawn.TrySpawn(aRepoRoot, aServerId, out oPid, out oErr);
@@ -302,12 +318,14 @@ public abstract class ServerDelegateCmd : SCP_Cmd
     //   ✅ `build_unknown`（TASK-0304）排：Server 活著、只是心跳還沒寫出來 ⇒ 這一筆確定還沒送出，
     //   ⚠ 而接手它的是**那顆活著的 Server** —— 跟 `not_running` 排進去之後由誰接手是同一種暴露，
     //     ⛔ 不是 build_mismatch 那種「已經確定是舊 exe」。
+    //   ✅ `build_in_progress`（TASK-0309）排：守衛擋在 autostart 之前 ⇒ 確定還沒送出；
+    //     接手它的是 build 完之後起來的**新** exe（build.sh 收尾會把原本在跑的那幾顆起回來）。
     // ===========================================================
 
     /// <summary>這一種委派失敗，是不是「確定還沒送進 Server」—— 是 ⇒ 可以排進 queue 等它起來。</summary>
     public static bool ShouldQueueForLater(string? iDelegateFailure)
         => iDelegateFailure is "autostart_timeout" or "autostart_failed" or "not_running" or "queue_busy"
-                            or "build_unknown";
+                            or "build_unknown" or "build_in_progress";
 
     /// <summary>等「心跳是活著那顆寫的」最多多久。心跳每 500ms 寫一次，冷啟動前段要掃 Cmd 目錄。</summary>
     public const int BuildKnownWaitMs = 5000;

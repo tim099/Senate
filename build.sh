@@ -35,6 +35,9 @@ cd "$root"
 # ⚠ 成功（exit 0）**不停** —— 停在成功路上會讓自動化每次都多等一個人。
 _build_on_exit() {
   _rc=$?
+  # TASK-0309：「build 進行中」旗標在**任何出口**都收掉（成功路上 publish 完就先收了，這裡是保險）。
+  #   ⚠ 漏收的後果：15 分鐘內 autostart 全部拒拉（BuildGuard.StaleAfter 之後才當殘檔）。
+  [ -n "${build_flag:-}" ] && rm -f "$build_flag"
   [ "$_rc" -eq 0 ] && return 0
   echo ''
   echo "✗ build 以 exit $_rc 結束 —— **上面最後幾行就是原因**。"
@@ -82,10 +85,22 @@ command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 
 #   兩次佔住它的都是一顆開著的視窗，而錯誤訊息不會告訴你是誰。
 #   ⚠ 用**舊的** exe 去停 Server（新的還沒 build 出來）；舊 exe 不存在就沒有東西可停。
 had_server=0
+running_ids=""
+# 🔴 TASK-0309：**先落旗標、再停 Server**。停掉之後、publish 覆寫 exe 之前是一段空窗，
+#   空窗裡一則發文會觸發 autostart，而它拉起的是**還沒被覆寫的舊 exe** ⇒ 握住 senate-server.exe
+#   ⇒ publish 撞 access denied ⇒ CLI 新／Server 舊的混版（2026-09-27 09:32 實地一次）。
+#   autostart 與 `server start` 看到旗標就不起（Senate.Core/BuildGuard.cs）。
+#   ⚠ 檔名與 SenatePaths.BuildInProgressFlag 同一個；改一邊要改兩邊。
+build_flag="$root/SenateData/runtime/_build_in_progress.flag"
+mkdir -p "$(dirname "$build_flag")"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$build_flag"
+echo "· 已落「build 進行中」旗標 ⇒ 這段期間 autostart 不會從舊 exe 拉起 Server"
 if [ -f "$root/publish/senate.exe" ]; then
   # ⚠ 用 `list` 不用 `status`：status 不指名時只有一顆的情況下才代表全部，
   #   而 `list` 的 exit 0 逐字就是「至少有一顆活著」（TASK-0244）。
   if "$root/publish/senate.exe" server list > /dev/null 2>&1; then had_server=1; fi
+  # 記下**哪幾顆**在跑，收尾照這份起回來（TASK-0309 ④）。第二欄是狀態，只收 running*。
+  running_ids="$("$root/publish/senate.exe" server list 2>/dev/null | awk '$2 ~ /^running/ {print $1}' | tr '\n' ' ')"
   # 🔴 TASK-0244：一律 `--all` —— 這裡要的不是「停某一顆」，是**把所有鎖著 exe 的都放掉**。
   #   ⛔ 不指名也不指定 `main`：漏停一顆的樣子是 publish 撞 `Access to the path ... is denied`，
   #     而那個錯誤訊息**不會說是誰**（這一段檔頭上面那兩筆血證就是它）。
@@ -95,7 +110,7 @@ if [ -f "$root/publish/senate.exe" ]; then
   # ⚠ 寫成 `[ ... ] && echo` 會在**沒有 Server 在跑**時讓整支腳本當場 abort：
   #   `set -e` 底下 `A && B` 的 A 失敗 ⇒ 整個 list 回非零、且它不在條件位置。用 if，不用短路。
   if [ "$had_server" -eq 1 ]; then
-    echo "· 你本來有一顆 Server 在跑 —— 已停；**build 完不會自動起回來**（收尾會再提醒一次）"
+    echo "· 本來在跑的 Server（${running_ids% }）—— 已停；publish 完成後會起回來"
   fi
   # ② 視窗：先請它自己關（CloseMainWindow），2 秒不走才 kill。只收**這顆 exe** 開的，
   #    比對的是 Path 不是 process 名 —— 別台／別份 clone 的 senate 不干我的事。
@@ -221,11 +236,27 @@ echo "✓ 產物：$exe（${mb} MB）＋ 同層的 cimgui.dll / glfw3.dll"
 #   **驗收不在必經路上就會沒有人跑。**
 #   ⇒ 所以這裡**明講「本次沒有驗收」並印出那一行指令** —— 分家的是流程，不是那個事實。
 #   ⛔ 靜默結束就是把「沒驗」與「驗過了」變成同一個畫面，而那正是這個專案一直在修的形狀。
+#
+# 🔴 TASK-0309 ④：exe 都換好了 ⇒ 先收旗標，再把 build 前在跑的那幾顆起回來。
+#   順序不能反：旗標還在時 `server start` 會被 BuildGuard 擋下（那正是它要擋的）。
+#   ⚠ 起回來的理由不只是方便：build 期間被擋下的發薪排進了 queue（build_in_progress 可排隊），
+#     ⛔ 沒有 Server 起來，它們就一直躺著，直到下一則發文碰巧觸發 autostart。
+rm -f "$build_flag"
 if [ "$had_server" -eq 1 ]; then
-  echo '⚠ 你 build 前掛著的那顆 Server 已被停掉，而 build **不會**幫你起回來 ——'
-  echo '   要用 ⤷Server 的 Cmd 就開一個終端機跑：senate server start'
+  for sid in $running_ids; do
+    # ⚠ `set +e`：起不回來是要講出來的事，⛔ 不該讓整支 build 在這裡 abort（exe 已經換好了）。
+    set +e
+    "$exe" server start --detach --id "$sid" > "$root/build/build_restart_$sid.log" 2>&1
+    _src=$?
+    set -e
+    if [ "$_src" -eq 0 ]; then
+      echo "✓ Server [$sid] 已用新 build 起回來"
+    else
+      echo "⚠ Server [$sid] 沒起回來（exit $_src）—— **現在是停的**；看 build/build_restart_$sid.log，或手動 senate server start --detach --id $sid"
+    fi
+  done
 else
-  echo '· Server：本來就沒在跑，現在也沒有（⤷Server 的 Cmd 需要 `senate server start`）'
+  echo '· Server：build 前沒有在跑，現在也是停的（下一個 ⤷Server 的 Cmd 會自動拉起新 build）'
 fi
 
 if [ "$do_check" -eq 1 ]; then

@@ -261,6 +261,21 @@ public static class ServerHost
         iOut = s => { aOut0(s); Tee(s); };
         iErr = s => { aErr0(s); Tee("⚠ " + s); };
 
+        // ── build 進行中閘（TASK-0309）────────────────────────────────────
+        // 🩸 放在**這一格**而不是只放在呼叫端：2026-09-28 09:04:47 的活體裡，
+        //   一顆**沒帶守衛的 CLI** 在 build 空窗裡 spawn 了 publish/server/senate-server.exe，
+        //   而它照樣起來、握住 exe ⇒ publish 撞 access denied。呼叫端的守衛只擋得住**新的**呼叫端；
+        //   ⇒ 讓被拉起的那顆自己拒絕，舊 CLI、GUI 頁、延後發文匣、手動 start 全部一次涵蓋。
+        // ⚠ 放在 log 落檔之後：「它為什麼沒起來」要留得住（A5）。
+        BuildGuardState aBuildGuard = BuildGuard.Check(iRepoRoot, out string aBuildGuardDetail);
+        if (aBuildGuard == BuildGuardState.Active)
+        {
+            iErr($"✗ {aBuildGuardDetail} ⇒ 拒絕啟動 Server。");
+            iErr("  ⚠ 此刻起來的會是還沒被覆寫的舊 exe，而它會讓 publish 撞 access denied。build 完成後 build.sh 會把原本在跑的起回來。");
+            return 3;
+        }
+        if (aBuildGuard == BuildGuardState.Stale) iErr(aBuildGuardDetail);
+
         if (!SCP_ProcessRegistry.Enabled)
         {
             iErr("✗ SCP_ProcessRegistry 沒有 Configure ⇒ Server 沒辦法登記自己，拒絕啟動（沒登記的常駐 ＝ 沒人管得到的孤兒）。");
