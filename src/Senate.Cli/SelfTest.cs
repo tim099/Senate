@@ -6008,9 +6008,10 @@ public static class SelfTest
                 + "{\"id\":\"3\",\"filename\":\"huge.mp4\",\"size\":99999999,\"url\":\"https://cdn.example/huge.mp4\"}]}";
             var aRoute = new SCP.Core.Discord.SCP_DiscordRoute { ChannelId = "9", TavernRoom = "tavern", Label = "probe" };
             var aWl = new SCP.Core.Discord.SCP_DiscordWhitelist { Enabled = false };
-            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, aRepo2, aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aPeek, false);
+            // 🔴 故意給錯的 repo 根（Server 給的是 Senate 自己的 repo）⇒ refs 仍要是資料所在專案的相對路徑（實測 22520 踩過）
+            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, "D:/wrong-host-repo", aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aPeek, false);
             bool aPeekNoFile = aPeek != null && !Directory.Exists(Path.Combine(aData2, "ChatTavern", "media"));
-            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, aRepo2, aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aItem);
+            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, "D:/wrong-host-repo", aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aItem);
             string aBody = aItem?.MsgJson.GetString("body", "") ?? "";
             SCP_JsonData aRefs = aItem?.MsgJson["refs"] ?? SCP_JsonData.NewArray();
             string aRefPath = aRefs.IsArray && aRefs.Count == 1 ? aRefs[0].GetString("path", "") : "";
