@@ -1718,6 +1718,10 @@ public static class Program
                 //   ⇒ 跟 data_root 走同一支、同一個上游。資料根解不出來時這裡什麼都不填，
                 //     讓 Cmd 用「缺必填參數」擋下 —— ⛔ 不要在資料根壞掉的時候還指得出一個銀行。
                 FillRootArg(aCmd, aRawArgs, aCfg, "bank_root", SCP.Core.Paths.SCP_PathId.BankRoot);
+                // TASK-0313：詞典附註由寫入端補 ⇒ `tavern-write` 宣告了這兩格，Editor 呼叫它時由這裡填
+                //   （詞典根的唯一真相源是 senate.local.json，Unity 端不碰它）。沒宣告的 Cmd 不受影響。
+                FillRootArg(aCmd, aRawArgs, aCfg, "glossary_root", SCP.Core.Paths.SCP_PathId.GlossaryRoot);
+                FillRootArg(aCmd, aRawArgs, aCfg, "project_root", SCP.Core.Paths.SCP_PathId.ProjectRoot);
                 // ⚠ 舊設定檔可能還留著一個**不生效**的 `bank.bankRoot` ⇒ 出聲。
                 //   不說的話，「我改了設定」與「我改的那一格已經死了」在畫面上完全同形。
                 string? aDead = aCfg.Bank.DeadBankRootWarning();

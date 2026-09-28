@@ -93,6 +93,10 @@ public class Cmd_TavernWrite : ServerDelegateCmd
                 new SCP_CmdArgSpec("room", "房間 id", iRequired: true),
                 new SCP_CmdArgSpec("msg_json",
                     "整則訊息的 JSON（落盤同形）。長內容走 `--arg-file`", iRequired: true),
+                // TASK-0313：詞典附註改由寫入端補（Unity 端不碰詞典）。兩格由 CLI 宿主照 senate.local.json 自動填，
+                //   ⛔ 呼叫端不必給 —— 沒有它們（例如 in-process 呼叫、沒帶）⇒ 不附，照寫。
+                new SCP_CmdArgSpec("glossary_root", "詞典根（宿主自動填；不帶 ⇒ 不補附註）"),
+                new SCP_CmdArgSpec("project_root", "專案根（附註路徑顯示用；宿主自動填）"),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -133,6 +137,8 @@ public class Cmd_TavernWrite : ServerDelegateCmd
             return SCP_CmdResult.Fail(2, "✗ msg_json 解出來是空的（body 與 kind 都沒有）——"
                                          + " ⛔ 寧可拒絕，也不要落一則沒有內容的訊息。");
 
+        string aGlossaryNote = AttachGlossary(aMsg, iArgs.Get("glossary_root").Trim(), iArgs.Get("project_root").Trim());
+
         SCP_TavernWriteResult aW = SCP_TavernWriter.WriteMessage(aDataRoot, aRoom, aMsg);
         if (!aW.Wrote)
             return SCP_CmdResult.Fail(1, "✗ " + aW.Detail).AddValue("room", aRoom);
@@ -147,10 +153,33 @@ public class Cmd_TavernWrite : ServerDelegateCmd
         aResult.AddValue("seq", aW.Seq.ToString());
         aResult.AddValue("path", aW.FullPath);
         aResult.AddValue("heal_attempts", aW.HealAttempts.ToString());
+        aResult.AddValue("glossary", aGlossaryNote);
         AppendMentions(aDataRoot, aRoom, aW.Seq, aW.FullPath, aMsg, aResult);
         AppendPayroll(aDataRoot, aRoom, aW.Seq, aMsg, aResult);
         AppendCreativeArchive(aDataRoot, aRoom, aW.Seq, aMsg, aResult);
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：**寫入前補詞典附註**（TASK-0313）—— Editor 發的文不再自己附（Tim 2026-09-28：Unity 端不碰詞典）。
+    // 物理意義：**只有帶了請求鍵的才附**（`SCP_Glossary.AttachRequestMetaKey`，Editor `Op_Post` 會帶）——
+    //          Editor 另有 20 處直接寫訊息，以前都不附；預設全附會讓它們突然長出附註（Discord 進站的人話也會被附）。
+    //          判準與 Senate 組訊息端同一支（`ShouldAutoAttach`：系統元件／CLI 指令／顯式 opt-out 不附）；
+    //          已含 marker 的原樣放行 ⇒ 每一則最多附一次。
+    // 數值影響：改 Body、拿掉請求鍵（⛔ 它不落進訊息檔）。回傳 `🔢 glossary`：
+    //          not_requested／already／skip／no_root／none（命中 0）／attached。⛔ 附註失敗不擋寫入。
+    // ===========================================================
+    public static string AttachGlossary(SCP_TavernMessage ioMsg, string iGlossaryRoot, string iProjectRoot)
+    {
+        if (!ioMsg.Meta.Remove(SCP.Core.Glossary.SCP_Glossary.AttachRequestMetaKey)) return "not_requested";
+        if (ioMsg.Body.Contains(SCP.Core.Glossary.SCP_Glossary.AutoAttachMarker)) return "already";
+        if (!SCP.Core.Glossary.SCP_Glossary.ShouldAutoAttach(ioMsg.SenderId, ioMsg.Meta)) return "skip";
+        if (iGlossaryRoot.Length == 0) return "no_root";
+        string aPrefix = SCP.Core.Glossary.SCP_Glossary.DisplayPrefix(iProjectRoot, iGlossaryRoot);
+        string aAttached = SCP.Core.Glossary.SCP_Glossary.AppendRefs(ioMsg.Body, iGlossaryRoot, aPrefix);
+        if (aAttached == ioMsg.Body) return "none";
+        ioMsg.Body = aAttached;
+        return "attached";
     }
 
     // ===========================================================

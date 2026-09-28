@@ -122,6 +122,7 @@ public static class SelfTest
         One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
         One(nameof(BuildGuardThreeStates), "server", BuildGuardThreeStates),
         One(nameof(ForwardedExplicitArgs), "server", ForwardedExplicitArgs),
+        One(nameof(WriterGlossaryAttach), "tavern", WriterGlossaryAttach),
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
@@ -5027,6 +5028,63 @@ public static class SelfTest
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+    }
+
+    /// <summary>
+    /// 寫入端的詞典附註（TASK-0313）—— 暫存詞典根，⛔ 不碰真的詞典、不寫任何訊息。
+    /// <para>🔴 本格的閘是「沒帶請求鍵 ⇒ 一個字都不動」：Editor 有 20 處直接寫訊息（酒保、Discord 進站…），
+    /// 以前都不附 ⇒ 這一格壞掉的樣子是它們某一天突然長出附註，而那不會報錯。</para>
+    /// </summary>
+    static CheckRow WriterGlossaryAttach()
+    {
+        const string aName = "寫入端詞典附註：只附有請求的、不重複附、請求鍵不落檔";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_glossary_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "personas"));
+            File.WriteAllText(Path.Combine(aTmp, "personas", "probe.md"),
+                "---\nterm: 探針詞\nslug: probe\naliases:\n  - probeword\ncategory: concept\none_line: 探針用的一句話\n---\n\n# 探針詞\n",
+                new UTF8Encoding(false));
+            string Key = SCP.Core.Glossary.SCP_Glossary.AttachRequestMetaKey;
+            SCP.Core.Tavern.SCP_TavernMessage Msg(string iBody, params (string k, string v)[] iMeta)
+            {
+                var m = new SCP.Core.Tavern.SCP_TavernMessage { SenderId = "claude-code", Body = iBody };
+                foreach (var (k, v) in iMeta) m.Meta[k] = v;
+                return m;
+            }
+
+            // ① 有請求 ⇒ attached，附註指向 personas/probe.md，請求鍵被拿掉
+            var m1 = Msg("今天用了 ProbeWord 一次", (Key, "1"));
+            string r1 = Cmd_TavernWrite.AttachGlossary(m1, aTmp, "");
+            bool aOk1 = r1 == "attached" && m1.Body.Contains("/personas/probe.md)") && !m1.Meta.ContainsKey(Key);
+
+            // 🔴 ② 沒請求（Editor 那 20 處直接寫）⇒ 一個字都不動
+            var m2 = Msg("今天用了 ProbeWord 一次");
+            string r2 = Cmd_TavernWrite.AttachGlossary(m2, aTmp, "");
+            bool aOk2 = r2 == "not_requested" && m2.Body == "今天用了 ProbeWord 一次";
+
+            // ③ CLI 指令（cli_cmd=true）⇒ skip，但請求鍵照樣拿掉（⛔ 不落檔）
+            var m3 = Msg("cmd msg kiara ProbeWord", (Key, "1"), ("cli_cmd", "true"));
+            string r3 = Cmd_TavernWrite.AttachGlossary(m3, aTmp, "");
+            bool aOk3 = r3 == "skip" && !m3.Body.Contains(SCP.Core.Glossary.SCP_Glossary.AutoAttachMarker) && !m3.Meta.ContainsKey(Key);
+
+            // ④ 已附過（Senate 路在 compose 附了）⇒ already，不重複附
+            var m4 = Msg(m1.Body, (Key, "1"));
+            string r4 = Cmd_TavernWrite.AttachGlossary(m4, aTmp, "");
+            bool aOk4 = r4 == "already" && m4.Body == m1.Body;
+
+            // ⑤ 顯式 opt-out ⇒ skip
+            var m5 = Msg("ProbeWord", (Key, "1"), ("glossary-auto-attach", "False"));
+            bool aOk5 = Cmd_TavernWrite.AttachGlossary(m5, aTmp, "") == "skip";
+
+            bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5;
+            string aReading = $"有請求 ⇒ attached 且拿掉鍵：{aOk1}（{r1}）／🔴 沒請求 ⇒ 一字不動：{aOk2}（{r2}）"
+                              + $"／CLI 指令 ⇒ skip 且拿掉鍵：{aOk3}（{r3}）／已附過 ⇒ already：{aOk4}（{r4}）／opt-out ⇒ skip：{aOk5}"
+                              + "　⛔ 本格不驗真的 Server 寫檔（見活體）";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch { } }
     }
 
     static CheckRow BuildGuardThreeStates()
