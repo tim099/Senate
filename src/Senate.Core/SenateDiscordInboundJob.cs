@@ -33,6 +33,8 @@ public static class SenateDiscordInboundJob
         s_NextUtc = aNow.AddSeconds(PollIntervalSec);
 
         SCP_DiscordConfig aCfg = SCP_DiscordConfigStore.Load(iDataRoot);
+        // Gateway（Bot 上線綠點＋狀態欄列在線 persona）跟 Inbound 開關連動（Tim 2026-09-28）
+        SenateDiscordGateway.Sync(aCfg.InboundEnabled && SCP_DiscordBot.Status(iDataRoot).Ready, iDataRoot, iOut, iErr);
         if (!aCfg.InboundEnabled)
         {
             if (s_WasEnabled) iOut("· Discord Inbound：已關（discord_config.json inbound.enabled=false）");
@@ -47,7 +49,11 @@ public static class SenateDiscordInboundJob
         if (aRouteErr != null) { WarnOnce(iErr, "Discord Inbound：對應表讀不了 —— " + aRouteErr); return; }
         if (aRoutes.Count == 0) { WarnOnce(iErr, "Discord Inbound 開著，但沒有任何啟用的頻道對應"); return; }
 
-        SCP_DiscordRoute aRoute = aRoutes[s_Index++ % aRoutes.Count];
+        // Gateway 說哪個頻道有動靜 ⇒ 先輪它（⇒ 近乎即時）；沒有 ⇒ 照順序輪
+        SCP_DiscordRoute? aNudged = null;
+        while (aNudged == null && SenateDiscordGateway.Nudges.TryDequeue(out string? aCh))
+            aNudged = aRoutes.FirstOrDefault(r => r.ChannelId == aCh);
+        SCP_DiscordRoute aRoute = aNudged ?? aRoutes[s_Index++ % aRoutes.Count];
         SCP_DiscordWhitelist aWl = SCP_DiscordInboundConfig.LoadWhitelist(iDataRoot);
         s_Running = Task.Run(() => RunOne(iDataRoot, iRepoRoot, aRoute, aWl, iOut, iErr));
     }

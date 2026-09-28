@@ -476,6 +476,8 @@ public static class ServerHost
         finally
         {
             Console.CancelKeyPress -= aOnCancel;
+            // Bot 轉離線要**主動**斷 Gateway —— 不斷的話 Discord 要等心跳逾時，綠點會殘留幾十秒
+            if (aRunDiscordIn) { try { SenateDiscordGateway.Stop("Server 收工"); } catch { } }
             if (SenateOvernightJob.IsRunning)
                 iErr("⚠ 每日結算正跑到一半就收工 —— 扣繳還沒成功的話狀態沒推進，下一顆 Server 起來會重跑那一天（冪等）；"
                      + "已經扣完的話狀態已落盤（推進在貼公告**之前**），⚠ 那一則公告可能沒貼出去 —— 看 `overnight_job_last.md`");
