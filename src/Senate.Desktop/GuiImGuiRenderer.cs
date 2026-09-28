@@ -195,6 +195,32 @@ public sealed class GuiImGuiRenderer
                 ImGui.Separator();
                 break;
 
+            case SCP_GuiNodeKind.Plot:
+            {
+                // ImGui 原生折線圖。⚠ 刻度（低／高／點數）另外印一行 —— PlotLines 自己只畫線不畫刻度，
+                //   而一條沒有刻度的線，「平」與「量尺太粗」同形（文字 renderer 印的是同一句 Describe）。
+                ImGui.TextUnformatted(iNode.Text);
+                if (iNode.Series.Count == 0)
+                {
+                    ImGui.TextColored(Vec4(m_Style.NoteColor), "· （無資料）");
+                    break;
+                }
+                var aVals = new float[iNode.Series.Count];
+                float aMin = float.MaxValue, aMax = float.MinValue;
+                for (int i = 0; i < aVals.Length; i++)
+                {
+                    aVals[i] = (float)iNode.Series[i];
+                    if (aVals[i] < aMin) aMin = aVals[i];
+                    if (aVals[i] > aMax) aMax = aVals[i];
+                }
+                // 全部相同 ⇒ 撐開一點範圍讓線畫在中間（範圍為 0 時線會貼在邊上，看起來像跌到谷底）。
+                if (aMax <= aMin) { float aPad = Math.Abs(aMin) * 0.01f + 1e-6f; aMin -= aPad; aMax += aPad; }
+                ImGui.PlotLines("##" + iNode.Text, ref aVals[0], aVals.Length, 0, null, aMin, aMax,
+                                new Vector2(ImGui.GetContentRegionAvail().X, m_Style.Scaled(160f)));
+                ImGui.TextColored(Vec4(m_Style.NoteColor), "· " + SCP_GuiSparkline.Describe(iNode.Series));
+                break;
+            }
+
             case SCP_GuiNodeKind.Space:
                 ImGui.Spacing();
                 break;

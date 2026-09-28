@@ -55,6 +55,12 @@ public sealed class RateAdminPage : SCP_GuiToolPage
     string? m_LoadError;
     string? m_Message;
 
+    /// <summary>
+    /// 歷史走勢快取（券 → 序列）。⚠ 頁面是 immediate mode、每一幀都重畫 ——
+    /// 不快取的話每一幀都把整個歷史資料夾讀一遍。清快取的時機跟報價同一個：`Load()`（開頁／重新讀取）。
+    /// </summary>
+    readonly Dictionary<string, SCP_RateHistorySeries> m_HistoryCache = new(StringComparer.OrdinalIgnoreCase);
+
     public RateAdminPage(SenateModel iModel) : base()
     {
         m_Model = iModel;
@@ -74,6 +80,7 @@ public sealed class RateAdminPage : SCP_GuiToolPage
     {
         m_LoadError = null;
         m_Message = null;
+        m_HistoryCache.Clear();
 
         // 推導資料根
         m_DataRoot = m_Model.AgentCommandsRoot.Value;
@@ -361,7 +368,96 @@ public sealed class RateAdminPage : SCP_GuiToolPage
         DrawRateMatrix(g);
         g.Separator();
 
+        DrawHistoryPanel(g);
+        g.Separator();
+
         DrawManualEditPanel(g);
+    }
+
+    /// <summary>歷史匯率面板最多畫幾版（最新的那幾版）。全部要看走 CLI `rate op=history`。</summary>
+    const int HistoryPanelMaxPoints = 60;
+
+    /// <summary>
+    /// 歷史匯率與波動圖（TASK-0272 ⑪；Tim 2026-09-28「交易所後台可以查看歷史匯率＆波動圖」）。
+    /// 券別跟工具列的基準券下拉**同一格** —— 換一個下拉就是換一條走勢，不另開一顆選單
+    /// （兩顆選單的失效樣子是「上面選 BTC、下面畫的是 GOLD」）。
+    /// ⚠ 讀數跟 CLI 走同一支 <see cref="SCP_RateHistory.BuildSeries"/>，沒有資料時的三種說法也是同一支。
+    /// </summary>
+    void DrawHistoryPanel(SCP_Ui g)
+    {
+        List<string> aAllSymbols = CollectSymbols();
+        string aSym = ResolveBaseVoucher(g, aAllSymbols);
+
+        g.Label($"歷史匯率與波動（券 ＝ **{aSym}**，USD 計價；換券請用上方工具列的下拉）");
+        g.Note("・讀的是開頁（或按「重新讀取」）那一刻的歷史 —— 別處剛刷新的新版本，按一次重新讀取才會出現。");
+        g.Note("・一個版本一個檔（`Market/history/rates_<抓取時間>.json`）。每次**成功刷新出新報價**才有新版本 —— 沒抓的日子沒有檔，跟「抓了但沒變」分得開。");
+
+        if (aSym == "USD")
+        {
+            g.Note("・USD 是基準幣本身（永遠 1:1），沒有走勢 —— 請在工具列選其他券。");
+            return;
+        }
+
+        if (!m_HistoryCache.TryGetValue(aSym, out SCP_RateHistorySeries? aAll))
+        {
+            aAll = SCP_RateHistory.BuildSeries(m_DataRoot, aSym, null, null);
+            m_HistoryCache[aSym] = aAll;
+        }
+        foreach (string u in aAll.Unreadable) g.Note("⚠ 讀不了的歷史檔（未列入走勢）：" + u);
+
+        string? aEmpty = SCP_RateHistory.DescribeEmpty(aAll);
+        if (aEmpty != null)
+        {
+            g.Note("・" + aEmpty);
+            return;
+        }
+
+        // 只畫最新的那幾版 —— 統計也只算畫出來的那一段，⛔ 不拿全段的數字配一條截過的線。
+        var aShown = new SCP_RateHistorySeries { Symbol = aSym };
+        int aStart = Math.Max(0, aAll.Points.Count - HistoryPanelMaxPoints);
+        for (int i = aStart; i < aAll.Points.Count; i++) aShown.Points.Add(aAll.Points[i]);
+        if (aStart > 0) g.Note($"・共 {aAll.Points.Count} 版，這裡只畫最新 {aShown.Points.Count} 版；全部請走 `senate cmd rate --arg op=history --arg symbol={aSym}`。");
+
+        var aMids = new List<double>(aShown.Points.Count);
+        foreach (var p in aShown.Points) aMids.Add((double)p.Mid);
+        g.Plot($"{aSym} 中間價走勢", aMids);
+
+        using (g.Row())
+        {
+            g.Label(aShown.ChangePct.HasValue ? $"區間變動 **{aShown.ChangePct.Value:+0.####;-0.####;0}%**" : "區間變動 —（只有 1 版）");
+            double? aVol = aShown.VolatilityPct;
+            g.Label(aVol.HasValue ? $"｜波動度 **{aVol.Value:0.####}%**／版" : "｜波動度 —（少於 3 版）");
+            g.Label($"｜低 {aShown.MinMid:0.########}／高 {aShown.MaxMid:0.########}");
+        }
+        g.Note("・波動度＝相鄰兩版中間價對數報酬的標準差（**每版**，未年化 —— 版本間隔不固定，年化會假裝間隔一致）。");
+        if (aShown.GapDays > 0) g.Note($"・⚠ 期間有 **{aShown.GapDays} 天沒有版本**（那幾天沒抓，不是「沒有變」）。");
+
+        using (g.Table("版本代號", "抓取時間（當地）", "Bid (USD)", "Ask (USD)", "中間價", "較上一版", "手續費", "來源", "來由"))
+        {
+            decimal? aPrev = null;
+            // 新的在上 —— 後台是拿來看「最近怎麼了」的。
+            var aRows = new List<string[]>();
+            foreach (var p in aShown.Points)
+            {
+                string aChg = aPrev.HasValue && aPrev.Value > 0m
+                    ? ((p.Mid - aPrev.Value) / aPrev.Value * 100m).ToString("+0.####;-0.####;0", CultureInfo.InvariantCulture) + "%"
+                    : "—";
+                aRows.Add(new[]
+                {
+                    p.VersionId,
+                    p.FetchedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                    p.Bid.ToString("0.########", CultureInfo.InvariantCulture),
+                    p.Ask.ToString("0.########", CultureInfo.InvariantCulture),
+                    p.Mid.ToString("0.########", CultureInfo.InvariantCulture),
+                    aChg,
+                    (p.FeePct * 100m).ToString("0.####", CultureInfo.InvariantCulture) + "%",
+                    p.Source,
+                    p.Origin,
+                });
+                aPrev = p.Mid;
+            }
+            for (int i = aRows.Count - 1; i >= 0; i--) g.TableRow(aRows[i]);
+        }
     }
 
     /// <summary>

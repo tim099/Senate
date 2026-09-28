@@ -54,6 +54,12 @@ public static class ServerBootstrap
         // 沒裝的症狀是 exit 70「宿主沒裝上」——⛔ 不會靜默猜一個根。
         ServerDelegateCmd.RepoRootProvider = () => iRepoRoot;
 
+        // 宿主的網路出口（TASK-0272 ②）：`demurrage op=run` 發完券之後會接著刷新匯率，
+        //   而 demurrage 是在**這顆 process** 裡跑的（ServerDelegateCmd）。
+        // 🩸 只在 CLI 的 Program.Main 註冊的話，Server 這邊的插座是空的 ⇒ 每天那一趟都回
+        //   「本宿主未註冊抓取器」——而它在酒館上只會是一行警告，看起來像「今天網路不好」。
+        SCP.Core.Market.SCP_HttpFetch.Current ??= new SenateHttpFetcher();
+
         return ServerHost.RunForeground(iRepoRoot, iServerId, iOut, iErr);
     }
 }

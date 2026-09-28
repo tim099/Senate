@@ -25,7 +25,8 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
 
     public override string PortNote =>
         "⚠ 觸發仍在 Unity（daemon 跨日 tick）—— 本支只負責**扣繳與組廣播**，"
-        + "⛔ 不判跨日、不推進 state、不貼酒館（TASK-0278 ⑧）";
+        + "⛔ 不判跨日、不推進 state、不貼酒館（TASK-0278 ⑧）。"
+        + "⭐ `op=run` 發完券之後接著刷新匯率（每個 UTC 日一版，TASK-0272 ②）—— 平常不必手動 `rate op=sync`";
 
     public override string Example =>
         SCP_CmdRegistry.Invoke("demurrage --arg op=preview --arg date=2026-09-20");
@@ -157,6 +158,28 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
             aOut.BroadcastBody = aB.ToString();
         }
 
+        // ── TASK-0272 ②：發完券**接著刷新匯率**（Tim 2026-09-28：定時同步綁在扣管理費、剛好發完券之後，
+        //    觸發直接綁在 Senate 端，不透過 Unity；平常不手動跑 sync）─────────────────────────
+        //   ⚠ 放在發券**之後**是刻意的：錢與券是這一趟的本體，匯率是順路 —— 它失敗**不改**前兩段的結果。
+        //   ⚠ 每個 UTC 日只刷一版：當天已經有 `origin=sync` 的版本就跳過並說出來。
+        //     ⛔ 不靠 TTL 判：TTL 是「距上次幾分鐘」，而每天扣繳的時刻會漂 —— 今天早 2 分鐘跑，
+        //     昨天那一版就還差 2 分鐘才過期，於是**整天沒有版本**，而那不會叫。
+        (string aFxState, string aFxVersion, List<string> aFxLines) = aRun
+            ? SyncRatesForDay(aData, aDate)
+            : ("preview", "", new List<string> { "- op=preview ⇒ **不刷新匯率**（零寫入）" });
+        aR.Lines.Add("");
+        aR.Lines.Add("## 📈 匯率每日版本");
+        foreach (string l in aFxLines) aR.Lines.Add(l);
+        if (aRun)
+        {
+            var aB = new System.Text.StringBuilder(aOut.BroadcastBody);
+            aB.Append("\n\n### 📈 匯率每日版本\n");
+            foreach (string l in aFxLines) aB.Append(l).Append('\n');
+            aOut.BroadcastBody = aB.ToString();
+        }
+        aR.AddValue("fx_sync", aFxState);
+        aR.AddValue("fx_version", aFxVersion);
+
         aR.AddValue("date", aDate);
         aR.AddValue("dry_run", aRun ? "0" : "1");
         aR.AddValue("voucher_type", aVPlan?.VoucherType ?? "");
@@ -200,6 +223,67 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
             aR.Lines.Add(aOut.BroadcastBody);
         }
         return aR;
+    }
+
+    /// <summary>一個端點的逾時秒數（扣繳這一趟的呼叫端預設等 120 秒 ⇒ 兩個端點各 8 秒綽綽有餘）。</summary>
+    const int FxSyncTimeoutSec = 8;
+
+    // ===========================================================
+    // 區塊職責：TASK-0272 ② —— 扣繳這一天的匯率版本（**每個 UTC 日一版**）。
+    // 物理意義：交給 `rate op=sync --arg day=<日>`（「那天有沒有版本」的判準住在那一支，CLI 也量得到）。
+    //           那天已有刷新版本 ⇒ 跳過；沒有 ⇒ 抓一次（歷史先寫、快取後寫）。
+    // 數值影響：只寫 `Market/`（快取＋歷史），⛔ 不碰帳本與券。回傳三件：狀態／版本代號／報告行。
+    // ⚠ 狀態是 synced／already／failed／error —— 「今天已經有了」與「今天抓失敗」
+    //   在「沒有新版本」這個結果上同形，所以狀態要分開寫，⛔ 不共用一個 0。
+    // ===========================================================
+    static (string state, string version, List<string> lines) SyncRatesForDay(string iData, string iDate)
+    {
+        var aLines = new List<string>();
+        SCP_CmdResult aSync;
+        try
+        {
+            aSync = SCP_CmdRegistry.Dispatch("rate", new Dictionary<string, string>
+            {
+                ["data_root"] = iData,
+                ["op"] = "sync",
+                ["day"] = iDate,
+                ["timeout_sec"] = FxSyncTimeoutSec.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+        }
+        catch (Exception e)
+        {
+            aLines.Add($"- 🔴 匯率刷新丟出例外（{e.GetType().Name}: {e.Message}）—— ⚠ 扣繳與發券**照上面已經發生**");
+            return ("error", "", aLines);
+        }
+
+        string Value(string iKey)
+        {
+            foreach (var kv in aSync.Values) if (kv.Key == iKey) return kv.Value;
+            return "";
+        }
+
+        string aState = Value("day_state");
+        string aVersion = Value("history_version");
+        if (aSync.Ok && aState == "already")
+        {
+            aLines.Add($"- `{iDate}` 已經有匯率版本 `{aVersion}` ⇒ **這一趟不再刷新**（一天一版）");
+            return ("already", aVersion, aLines);
+        }
+        if (aSync.Ok && aState == "synced")
+        {
+            string aFailed = Value("failed");
+            aLines.Add($"- ✅ 今天的匯率版本 `{aVersion}`（更新 {Value("updated")} 券"
+                       + (aFailed.Length > 0 && aFailed != "0" ? $"、**失敗 {aFailed} 券**（舊值保留）" : "") + "）");
+            foreach (string l in aSync.Lines)
+                if (l.StartsWith("- `", StringComparison.Ordinal)) aLines.Add("  " + l);
+            return ("synced", aVersion, aLines);
+        }
+
+        aLines.Add($"- 🔴 匯率沒有刷新出新版本（exit {aSync.ExitCode}）—— ⚠ 扣繳與發券**照上面已經發生**；"
+                   + "今天沒有版本 ⇒ 走勢上那一天會是空洞");
+        foreach (string l in aSync.Lines)
+            if (l.StartsWith("- `", StringComparison.Ordinal) || l.StartsWith("✗", StringComparison.Ordinal)) aLines.Add("  " + l);
+        return (aSync.Ok ? "failed" : "error", "", aLines);
     }
 
     // ===========================================================

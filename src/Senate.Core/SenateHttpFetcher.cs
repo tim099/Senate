@@ -14,7 +14,7 @@
 using System.Net.Http;
 using SCP.Core.Market;
 
-namespace Senate.Cli;
+namespace Senate.Core;
 
 /// <summary>以 <see cref="HttpClient"/> 實作的抓取器。單例共用一個 client（避免 socket 耗盡）。</summary>
 public sealed class SenateHttpFetcher : ISCP_HttpFetcher
