@@ -435,6 +435,12 @@ build id、client、例外型別與訊息、Cmd 說了什麼、Args 全列（單
 | 2 | 不寫 | 打錯字配一份 stack 只會訓練人忽略這個目錄 |
 | `⤷Unity` 的失敗 | 本層不寫 | Editor 端有自己那份（`<專案資料根>/_cmd_errors/`），CLI 節錄它 |
 
+`SCP_FileLockTimeoutException` 是入列前的失敗，沒有 cmd_id，因此另寫
+`SenateData/runtime/_queue_lock_errors/<時間>-<pid>-<唯一碼>.md`；主目錄無法寫入時退到使用者 TEMP 下的
+`senate_queue_lock_errors/`。CLI 印出實際報告路徑並回 exit 3。報告記錄命令類別、鎖路徑、等待上限、
+呼叫者 pid／build、鎖檔當時的 metadata、可見的 Senate 行程候選與原始 inner exception。
+候選行程與鎖檔存在都**不是持鎖者的證明**；請保留報告以比對下一次現場。
+
 ⚠ 落點刻意**不是**「某個專案的資料根」：原生 Cmd 不知道自己屬於哪個專案，拿「唯一啟用的專案」去猜會在多專案時
 靜默寫到別人那棵樹 —— 路徑不該被推導。
 

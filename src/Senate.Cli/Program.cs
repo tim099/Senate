@@ -229,9 +229,14 @@ public static class Program
         catch (SCP.Core.Io.SCP_FileLockTimeoutException e)
         {
             // 等不到鎖 ＝ 有人握著它 ⇒ 處置是「稍後重試／找出握著的人」，⛔ 不是「你打錯了」。
+            bool aQueueLock = string.Equals(Path.GetFileName(e.LockPath), "queue.json.lock", StringComparison.OrdinalIgnoreCase);
+            string? aReport = aQueueLock ? QueueLockErrorLog.Write(aRepoRoot, e, iArgs) : null;
             Console.Error.WriteLine($"✗ {e.Message}");
             Console.Error.WriteLine("  ⇒ **沒有送出任何東西**，稍後重跑是安全的。常見的握鎖者：另一顆正在寫同一條 lane 的 senate、"
                                     + "或一顆崩潰後對話框還沒按掉的 senate.exe（它會一直握著）。");
+            if (aQueueLock) Console.Error.WriteLine(aReport == null
+                ? "  ⚠ queue lock ErrorLog 寫不出來；保留上面的原始錯誤。"
+                : $"  📄 queue lock ErrorLog：{aReport}");
             return 3;
         }
         catch (Exception e)
