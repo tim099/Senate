@@ -468,6 +468,9 @@ public static class ServerHost
                     // 背景執行緒做網路與寫入 ⇒ ⛔ 不擋心跳；錯誤在 Job 裡節流回報。
                     try { SenateDiscordInboundJob.Tick(aEndpointDataRoot!, iRepoRoot, iOut, iErr); }
                     catch (Exception e) { iErr("⚠ Discord Inbound 這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
+                    // Outbound（TASK-0316 ③）同一顆：酒館寫入端就在這裡，送的是它剛寫下的東西
+                    try { SenateDiscordOutboundJob.Tick(aEndpointDataRoot!, iOut, iErr); }
+                    catch (Exception e) { iErr("⚠ Discord Outbound 這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
                 aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);
