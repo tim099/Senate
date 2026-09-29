@@ -174,6 +174,9 @@ public static class Program
                     Console.Error.WriteLine("⚠ 沒能以無 Console 的方式重開（" + aWhy + "）⇒ 照舊開介面，這個視窗可能會留著。");
                 ConsoleHost.HideConsoleWindow();
             }
+            // ⚠ 放在重開判斷**之後**：重開成功的那一趟本體直接 return，由子行程（`ui --window`，走下面那條）拉一次
+            //   （兩趟都拉的話，第二趟會在第一顆還沒登記前再 spawn 一顆，被單例鎖退回）。
+            LaunchAutoStart(aRepoRoot);
             return CmdUi(aRepoRoot, new[] { "ui", "--window" });
         }
 
@@ -182,6 +185,10 @@ public static class Program
         // 旗標閘（TASK-0125）：擋在 dispatch **前面**，不是每支子命令各補一次 ——
         // 補在各支裡的話，下一支新加的子命令天生沒有這道閘，而那個漏是安靜的。
         if (RejectUnknownFlags(aCmd, iArgs) is { } aFlagExit) return aFlagExit;
+
+        // TASK-0329：啟動 senate.exe 時把沒在跑的常駐 Server 拉起來（設定 `server.autostartOnLaunch`，預設開）。
+        // ⚠ 在旗標閘**之後**：打錯旗標的那一趟什麼都不該發生。射程排除見 ServerLaunchAutoStart.AppliesTo。
+        if (ServerLaunchAutoStart.AppliesTo(aCmd)) LaunchAutoStart(aRepoRoot);
 
         try
         {
@@ -246,6 +253,17 @@ public static class Program
             if (aReport == null) Console.Error.WriteLine(e.ToString());   // 報告寫不出來 ⇒ 至少讓全文留在 stderr
             return 70;
         }
+    }
+
+    /// <summary>
+    /// 啟動時拉起常駐 Server（TASK-0329）。只印到 stderr —— stdout 常被腳本解析（🔢 行），
+    /// 而全部都在跑時一個字都不印（每一次 CLI 呼叫都會經過這裡）。
+    /// ⚠ 整段包住：這是附帶動作，⛔ 不可以讓它的例外擋掉使用者真正要跑的那道指令。
+    /// </summary>
+    static void LaunchAutoStart(string iRepoRoot)
+    {
+        try { foreach (string aLine in ServerLaunchAutoStart.EnsureOnLaunch(iRepoRoot)) Console.Error.WriteLine(aLine); }
+        catch (Exception e) { Console.Error.WriteLine("⚠ 啟動時拉起 Server 丟例外（" + e.GetType().Name + "：" + e.Message + "）⇒ 沒有拉，本指令照常執行"); }
     }
 
     // ── senate init ───────────────────────────────────────────

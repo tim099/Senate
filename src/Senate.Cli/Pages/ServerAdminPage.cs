@@ -58,8 +58,23 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     /// <summary>
     /// 就算這棵樹上從沒跑過也要列出來的幾顆 —— 否則「從沒起來過」跟「不存在」在這頁上同形，
     /// 而那一顆恰好是你最需要按「啟動」的時候。
+    /// <para>⚠ 跟「啟動 senate.exe 時拉起」那份清單**是同一份**（TASK-0329）。</para>
     /// </summary>
-    static readonly string[] s_AlwaysListed = { SCP_ServerIds.Default, SCP_ServerIds.Tavern };
+    static readonly string[] s_AlwaysListed = ServerLaunchAutoStart.ResidentIds;
+
+    /// <summary>刷新間隔欄位的 key（草稿；按「套用」才寫進設定）。</summary>
+    const string RefreshFieldId = "server/refreshSeconds";
+
+    // ── 定時刷新（TASK-0329，Tim 2026-09-29：開著這頁時一定間隔刷新，預設 1 秒）──
+    // ⚠ 刷新點只有 Reload 一個：手動「重新探測」、開頁、定時都走它 ⇒ 畫面上那行「上次刷新」量的是同一件事。
+    // ⚠ Tick 只給最上方那頁 ⇒ 別頁蓋在上面時自然不刷；回到本頁（OnResume）當場刷一次。
+    readonly System.Diagnostics.Stopwatch m_SinceReload = new System.Diagnostics.Stopwatch();
+    double m_RefreshSeconds = 1d;
+    string m_RefreshSource = "";
+    bool m_AutoStartOn = true;
+    string m_AutoStartSource = "";
+    DateTime m_LastReloadLocal;
+    double m_LastReloadMs;
 
     readonly SenateModel m_Model;
 
@@ -92,6 +107,23 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         Reload();
     }
 
+    public override void OnResume()
+    {
+        base.OnResume();
+        Reload();   // 蓋在上面的頁關掉了 ⇒ 那段時間沒有刷，⛔ 別讓人看一份停住的讀數
+    }
+
+    /// <summary>
+    /// 定時刷新。⚠ 基底的註解說「不要在 Tick 取讀數」—— 那是指**每幀**；這裡有間隔下限
+    /// （<see cref="ServerLaunchAutoStart.MinRefreshSeconds"/>），而一次探測只讀 registry＋心跳檔（不起子行程），
+    /// 耗時印在畫面上（「上次刷新」那行），⛔ 不靠猜它便宜。
+    /// </summary>
+    public override void Tick()
+    {
+        base.Tick();
+        if (m_SinceReload.IsRunning && m_SinceReload.Elapsed.TotalSeconds >= m_RefreshSeconds) Reload();
+    }
+
     // ===========================================================
     // 區塊職責：探測
     // ===========================================================
@@ -113,10 +145,17 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
 
     void Reload()
     {
+        var aWatch = System.Diagnostics.Stopwatch.StartNew();
         m_Statuses.Clear();
         m_ProbeErrors.Clear();
         m_ConsolePrefs.Clear();
         foreach (string aId in ListIds()) ReloadOne(aId);
+        // 兩格 TASK-0329 設定跟著同一個刷新點重讀（別處改了設定檔，這頁下一次刷新就看得到）
+        m_RefreshSeconds = ServerLaunchAutoStart.ResolveRefreshSeconds(m_Model.RepoRoot, out m_RefreshSource);
+        m_AutoStartOn = ServerLaunchAutoStart.ResolveEnabled(m_Model.RepoRoot, out m_AutoStartSource);
+        m_LastReloadMs = aWatch.Elapsed.TotalMilliseconds;
+        m_LastReloadLocal = DateTime.Now;
+        m_SinceReload.Restart();
     }
 
     void ReloadOne(string iServerId)
@@ -288,10 +327,12 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         g.Note("常駐 Senate Server 的狀態與生命週期。讀數來自 `ServerHost.Probe`，"
                + "與 `senate server status --id <id>` **同一份事實**（⛔ 本頁不自己判活著）。");
         g.Note("⚠ 需要 Server 的 Cmd 在它沒在跑時會**自己拉一顆**（TASK-0267 autostart）⇒ "
-               + "「停止」只停得了現在這一顆，⛔ 不是關掉那條路 —— 下一筆需要它的寫入會把它再拉起來。"
+               + "「停止」只停得了現在這一顆，⛔ 不是關掉那條路 —— 下一筆需要它的寫入會把它再拉起來；"
+               + "「啟動時拉起」開著的話，**下一次任何人啟動 senate.exe** 也會（TASK-0329）。"
                + " 而 autostart **拉不起來就整筆失敗**（不降級）。");
 
         DrawConsoleToggle(g);
+        DrawLaunchSettings(g);
 
         if (m_Message != null) g.Note(m_Message);
         if (m_ListError != null) g.Note(m_ListError);
@@ -342,6 +383,48 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         // ⚠ 現況在存檔**之後**取 —— 寫在勾選標籤裡的話，切換那一輪會畫出「[x] …現在：不顯示」。
         var (aAfter, aSource) = ConsolePref(iKey);
         g.Note("・" + iNoteHead + "：**" + (aAfter ? "顯示" : "不顯示") + "**（" + aSource + "）");
+    }
+
+    /// <summary>
+    /// TASK-0329 兩格：啟動 senate.exe 時拉起常駐 Server（勾選）／本頁刷新間隔（草稿＋套用）。
+    /// ⚠ 畫出來的現值一律是**存檔後重讀**的值（同 Console 那兩格），⛔ 不是我按下去的值。
+    /// </summary>
+    void DrawLaunchSettings(SCP_Ui g)
+    {
+        bool aPick = g.Toggle("啟動 senate.exe 時，常駐 Server 沒在跑就拉起來", m_AutoStartOn, "server/autostartOnLaunch");
+        if (aPick != m_AutoStartOn)
+        {
+            var (aOk, aMsg) = ServerLaunchAutoStart.SaveEnabled(m_Model.RepoRoot, aPick);
+            m_Message = (aOk ? "" : "🔴 ") + aMsg
+                        + (aOk ? "　⚠ 只影響之後啟動的 senate.exe；已經在跑（或已經停掉）的 Server 不會因此變動。" : "");
+            m_AutoStartOn = ServerLaunchAutoStart.ResolveEnabled(m_Model.RepoRoot, out m_AutoStartSource);
+        }
+        g.Note("・啟動時拉起：**" + (m_AutoStartOn ? "開" : "關") + "**（" + m_AutoStartSource + "）　對象："
+               + string.Join("、", ServerLaunchAutoStart.ResidentIds)
+               + "。⚠ `senate server …`／`selftest`／`pages-check`／`--version`／`help` 不觸發；build 進行中也不拉。"
+               + " ⛔ 它只在**有人啟動 senate.exe 時**生效 —— 一整晚沒人啟動，Server 照樣不會自己起來。");
+
+        string aDraft = g.TextField("本頁刷新間隔（秒，下限 " + ServerLaunchAutoStart.MinRefreshSeconds + "）",
+                                    g.FieldValue(RefreshFieldId, m_RefreshSeconds.ToString("0.###")), RefreshFieldId);
+        if (g.Button("套用刷新間隔", "server/refreshSeconds/apply"))
+        {
+            if (!double.TryParse(aDraft.Trim(), System.Globalization.NumberStyles.Float,
+                                 System.Globalization.CultureInfo.InvariantCulture, out double aSec)
+                || double.IsNaN(aSec) || aSec < ServerLaunchAutoStart.MinRefreshSeconds)
+            {
+                m_Message = "🔴 刷新間隔要是 ≥ " + ServerLaunchAutoStart.MinRefreshSeconds + " 的秒數（收到 `" + aDraft + "`）⇒ **沒有存**。";
+            }
+            else
+            {
+                var (aOk, aMsg) = ServerLaunchAutoStart.SaveRefreshSeconds(m_Model.RepoRoot, aSec);
+                m_Message = (aOk ? "" : "🔴 ") + aMsg;
+                m_RefreshSeconds = ServerLaunchAutoStart.ResolveRefreshSeconds(m_Model.RepoRoot, out m_RefreshSource);
+                g.SetField(RefreshFieldId, m_RefreshSeconds.ToString("0.###"));
+            }
+        }
+        g.Note("・每 **" + m_RefreshSeconds.ToString("0.###") + "** 秒重新探測（" + m_RefreshSource + "）　上次刷新 "
+               + m_LastReloadLocal.ToString("HH:mm:ss") + "，耗時 " + m_LastReloadMs.ToString("0.0") + " ms"
+               + "。⚠ 只在視窗模式連續刷新；純文字 `senate ui` 是一次性讀數。");
     }
 
     (bool Show, string Source) ConsolePref(SCP.Core.Prefs.SCP_PrefKey<bool> iKey)

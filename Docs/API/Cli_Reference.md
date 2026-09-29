@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-16 (旗標紀律補「取值旗標的值被寫成另一個旗標／沒有值 ⇒ exit 2」；`ui` 逾時的兩種成因分開印；TASK-0229／TASK-0230) | 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
+last_updated: 2026-09-29 (server 節補「啟動 senate.exe 時拉起常駐 Server」設定與 ServerAdminPage 定時刷新；TASK-0329) | 2026-09-16 (旗標紀律補「取值旗標的值被寫成另一個旗標／沒有值 ⇒ exit 2」；`ui` 逾時的兩種成因分開印；TASK-0229／TASK-0230) | 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -545,6 +545,18 @@ Tim 2026-09-02 拍板三格：**前景**（掛在終端機，Ctrl+C 停，log �
 
 `status` 的 `🔢 server_state` 五態：`not_running` / `alive_no_heartbeat` / `stale_heartbeat` /
 `running_build_mismatch` / `running`。⚠ 前三個都回 exit 3，腳本要分要看那個字不要看 exit code。
+
+#### 啟動 senate.exe 時拉起常駐 Server（TASK-0329）
+
+設定 `server.autostartOnLaunch`（`senate.pages.local.json`，**預設開**；ServerAdminPage 可切換）：
+每次啟動 senate.exe，常駐那幾顆（`main`／`tavern`，與 ServerAdminPage 常駐清單同一份 `ServerLaunchAutoStart.ResidentIds`）
+**確定沒在跑**就送出一次 spawn（走 `ServerSpawn.TrySpawn`，build 進行中被 BuildGuard 擋下）。
+
+- 只印在 **stderr**、全部都在跑時**一個字都不印**；只送出、⛔ 不等它上線（真的要用 Server 的委派 Cmd 自己會等）。
+- **不觸發**：`server …`（`server stop` 之後自己又被拉起來＝停不掉）、`selftest`、`pages-check`、`--version`、`help`；打錯旗標被擋下的那一趟也不觸發。
+- 身分驗不出來的記錄還在、或探針失敗 ⇒ **不拉**（可能其實在跑）。
+- ⚠ 射程：它只在**有人啟動 senate.exe 時**生效 —— 一整晚沒人啟動，Server 照樣不會自己起來（TASK-0315 首跑晚 13 小時就是這個形狀）。
+- ServerAdminPage 開著時每 `server.adminRefreshSeconds` 秒（預設 1，下限 0.2）重新探測；畫面印上次刷新時間與耗時。
 
 **執行器（TASK-0103）**：Server 是 Senate **自己那棵資料根**（`SenateData/runtime/server/`）的 Watcher，
 版面跟 AgentCommands 一樣（`queues/<lane>/queue.json`＋`pending.trigger`、`_cmd_results/<id>.json`），
