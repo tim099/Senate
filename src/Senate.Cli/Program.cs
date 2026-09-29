@@ -112,6 +112,15 @@ public static class Program
         //   而那不會編譯失敗、不會有人回報，只會讓照著訊息打的人以為自己打錯。
         SCP.Core.Cmd.SCP_CmdRegistry.InvocationHint = "senate cmd";
 
+        // 宿主能力③：文件根（TASK-0337）。文件住在指令所在那一邊 —— Senate 的 Cmd ⇒ `Docs/`，SCP_Core 的 ⇒ `SCP_Core/Docs~/`。
+        // ⚠ 兩個根都錨在 **exe 所在的 repo**（RepoRoot 從 AppContext.BaseDirectory 往上找 .git），⛔ 不用 cwd ——
+        //   在別的資料夾跑 senate 時，cwd 推出來的是另一棵樹（或什麼都不是），而那不會報錯。
+        SCP.Core.Docs.SCP_DocStore.RootsProvider = () => new[]
+        {
+            new SCP.Core.Docs.SCP_DocRoot("senate", Path.Combine(aRepoRoot, "Docs")),
+            new SCP.Core.Docs.SCP_DocRoot("scp_core", Path.Combine(aRepoRoot, "SCP_Core", "Docs~")),
+        };
+
         // 宿主能力②：委派型 Cmd 要知道「派給哪個專案」，而共用層與 Cmd 本身都**不推導路徑**。
         // ⇒ 設定來源由這裡裝上（同上一條的形狀：能力由宿主宣告，不由下層去找）。
         // Server 委派也一樣：Cmd 不知道 Server 根在哪，由宿主給 repo 根（ServerDelegateCmd.RepoRootProvider）。
