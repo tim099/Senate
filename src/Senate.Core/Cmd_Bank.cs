@@ -34,7 +34,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     //   ⇒ 只講「權威這件事去哪裡讀」，真正的答案由每次執行的定語（`Stamp`）現場推導。
     //   🩸 舊版在這裡寫死「遷移前＝測試用」，於是 2026-09-18 切換那天它整句變成假的。
     public override string Summary =>
-        "新版銀行：開戶／查餘額／入帳／扣款 —— 由 Senate Server 執行（**單一寫入端**）";
+        "新版銀行：開戶／查餘額／入帳／扣款／列分錄／結帳 —— 由 Senate Server 執行（**單一寫入端**）";
 
     public override string PortNote =>
         "⚠ **本帳就是那本帳** —— 兩個區都已於 2026-09-18 切換完成（TASK-0216／0241），"
@@ -51,13 +51,18 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             {
                 new SCP_CmdArgSpec("op", "做什麼", iDefault: "accounts",
                     iChoices: new[] { "accounts", "open", "balance", "credit", "debit", "pay", "transfer", "close", "reopen",
-                                      "requests", "approve", "reject" }),
+                                      "requests", "approve", "reject",
+                                      "entries", "closing_list", "closing_generate" }),
                 new SCP_CmdArgSpec("bank_root",
                     "銀行帳本根（絕對路徑）。"
                     + "CLI 沒給時會用 `<AgentCommands 資料根>/Bank` 補上並印出來（推導值，不可設定）",
                     iRequired: true),
                 new SCP_CmdArgSpec("account", "帳號 id（大小寫不拘 —— 寫入端一律正規化成小寫）"
-                    + "；`transfer` 時它是**轉出方**", iDefault: ""),
+                    + "；`transfer` 時它是**轉出方**；`entries` 必填", iDefault: ""),
+                // TASK-0331：`entries` 的時間下限 —— 語意照 Unity `Treasury op=audit` 的 `since_ts`
+                //   （**嚴格大於**，UTC ISO8601 字串以 Ordinal 比），⛔ 不另立一種語意。
+                new SCP_CmdArgSpec("since_ts",
+                    "`entries` 用：只列這個時間**之後**的分錄（UTC ISO8601，嚴格大於；空 ＝ 全部）", iDefault: ""),
                 // ⚠ 轉帳的收款方**另開一格**而不是重用 `account` —— 一格裝兩個角色的話，
                 //   「我填的是誰」要靠 op 才讀得出來，而錯填的代價是錢進了別人的帳。
                 new SCP_CmdArgSpec("to_account", "轉帳的**收款方**帳號 id（`transfer` 必填）", iDefault: ""),
@@ -150,7 +155,11 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             case "requests": return Stamp(OpRequests(iArgs), aRoot);
             case "approve": return Stamp(OpDecide(aRoot, iArgs, iApprove: true), aRoot);
             case "reject": return Stamp(OpDecide(aRoot, iArgs, iApprove: false), aRoot);
-            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|pay|transfer|close|reopen|requests|approve|reject）");
+            // ── TASK-0331：`Cmd_Treasury` 退場的前提 —— 列分錄＋結帳兩支（`audit`／`closing_list`／`closing_generate` 的對應）
+            case "entries": return Stamp(OpEntries(aRoot, iArgs), aRoot);
+            case "closing_list": return Stamp(OpClosingList(aRoot), aRoot);
+            case "closing_generate": return Stamp(OpClosingGenerate(aRoot), aRoot);
+            default: return SCP_CmdResult.Fail(2, $"✗ 認不得的 op='{aOp}'（accounts|open|balance|credit|debit|pay|transfer|close|reopen|requests|approve|reject|entries|closing_list|closing_generate）");
         }
     }
 
@@ -423,6 +432,112 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             aResult.Lines.Add("⚠ 這個帳號**已銷戶**（餘額仍然算得出來，但收付會被擋）");
         aResult.AddValue("account", aId);
         aResult.AddValue("balance", aBal.ToString());
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：`op=entries` —— 列某帳戶的分錄（TASK-0331 ①，對應 Unity `Treasury op=audit`）。
+    // 物理意義：`Cmd_Treasury` 退場的前提之一。⛔ 不叫 `audit` —— `bank-audit` 已是綁定健檢，同名會誤導。
+    //           篩選語意照 Unity 那支：帳號正規化後逐字比、`since_ts` **嚴格大於**（Ordinal）；
+    //           順序＝`SCP_BankLedger.EnumerateEntries`（日期夾、檔名 Ordinal）⇒ 兩邊逐筆對得上。
+    // 數值影響：唯讀。
+    // ⚠ 跟 Unity 那支**刻意不同**的一格：帳號沒開過戶 ⇒ 失敗，⛔ 不回「0 筆」——
+    //   打錯帳號與「這個帳號沒有交易」在 0 筆上同形（同 `balance` 的判準）。
+    // ===========================================================
+    static SCP_CmdResult OpEntries(string iRoot, SCP_CmdArgs iArgs)
+    {
+        string aAcct = iArgs.Get("account");
+        if (string.IsNullOrWhiteSpace(aAcct)) return SCP_CmdResult.Fail(2, "✗ `entries` 需要 `account`");
+        SCP_BankAccountCheck aCheck = SCP_BankAccounts.CheckUsable(iRoot, aAcct);
+        if (aCheck.Result == SCP_BankAccountCheck.Kind.Invalid || aCheck.Result == SCP_BankAccountCheck.Kind.NotOpened)
+            return SCP_CmdResult.Fail(1, "✗ " + aCheck.Why);
+
+        string aId = SCP_BankId.Normalize(aAcct).Id;
+        string aSince = iArgs.Get("since_ts").Trim();
+        var aProblems = new List<string>();
+        var aRows = new List<string>();
+        int aCredit = 0, aDebit = 0;
+        foreach (SCP_BankEntry e in SCP_BankLedger.EnumerateEntries(iRoot, aProblems))
+        {
+            if (!string.Equals(e.AccountId, aId, StringComparison.Ordinal)) continue;
+            if (aSince.Length > 0 && string.CompareOrdinal(e.AtUtc, aSince) <= 0) continue;
+            bool aIsDebit = e.Type == SCP_BankEntryType.Debit;
+            if (aIsDebit) aDebit += e.Amount; else aCredit += e.Amount;
+            aRows.Add($"- [{e.AtUtc}] `{(aIsDebit ? "debit" : "credit")}` {e.Amount} {e.Currency} | {e.Kind}({e.Ref})"
+                      + (e.Caller.Length > 0 ? $" | by {e.Caller}" : ""));
+        }
+
+        var aResult = SCP_CmdResult.Success($"# 📒 `{aId}` 分錄 {aRows.Count} 筆"
+                                            + (aSince.Length > 0 ? $"（since `{aSince}`，嚴格大於）" : "（全部）")
+                                            + $"　入 {aCredit}／出 {aDebit}　根={iRoot}");
+        if (aCheck.Result == SCP_BankAccountCheck.Kind.Closed) aResult.Lines.Add("⚠ 這個帳號**已銷戶**（分錄照列）");
+        aResult.Lines.AddRange(aRows);
+        // ⚠ 讀不動的分錄要被看見 —— 少掉的那幾筆在明細上跟「沒有那幾筆」同形。
+        foreach (string p in aProblems) aResult.Lines.Add("⚠ 讀不動（明細少這一筆）：" + p);
+        aResult.AddValue("account", aId);
+        aResult.AddValue("entry_count", aRows.Count.ToString());
+        aResult.AddValue("credit_total", aCredit.ToString());
+        aResult.AddValue("debit_total", aDebit.ToString());
+        aResult.AddValue("unreadable", aProblems.Count.ToString());
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：`op=closing_list` —— 已結帳日期與**暖啟動基準**（TASK-0331 ②，對應 Unity `closing_list`）。
+    // ⚠ 「有結帳檔」與「暖啟動用得上」是兩件事 —— 鏈驗不過時後者是 null，⛔ 兩者不可同形。
+    // 數值影響：唯讀。
+    // ===========================================================
+    static SCP_CmdResult OpClosingList(string iRoot)
+    {
+        List<string> aKeys = SCP_BankClosing.ClosedDayKeys(iRoot);
+        List<string> aLedgerDays = SCP_BankClosing.LedgerDayKeys(iRoot);
+        var aResult = SCP_CmdResult.Success($"# 📘 已結帳日期 {aKeys.Count} 份（ledger 日期夾 {aLedgerDays.Count} 個）　根={iRoot}");
+        aResult.AddValue("closed_count", aKeys.Count.ToString());
+        aResult.AddValue("ledger_days", aLedgerDays.Count.ToString());
+        if (aKeys.Count == 0)
+        {
+            aResult.Lines.Add("_(尚無結帳 —— 餘額走全量重放；`op=closing_generate` 可補算)_");
+            aResult.AddValue("warm_start", "");
+            return aResult;
+        }
+        aResult.Lines.Add($"- 最早：`{aKeys[0]}`　最新：`{aKeys[aKeys.Count - 1]}`");
+        aResult.Lines.Add("- 日期：" + string.Join(" ", aKeys));
+        SCP_BankClosingSnapshot? aBasis = SCP_BankClosing.FindWarmStart(iRoot, out string aWhy);
+        if (aBasis != null)
+            aResult.Lines.Add($"- 讀取基準：`{aBasis.Date}`（{aBasis.Balances.Count} 種幣別，該日 entry {aBasis.EntryCount}）");
+        else
+        {
+            aResult.Lines.Add($"- ⚠ **暖啟動用不上**（改走全量重放）：{aWhy}");
+            aResult.ExitCode = 5;   // 鏈斷掉是狀態壞了，⛔ 不回 0 讓它跟健康的同形
+        }
+        aResult.AddValue("first", aKeys[0]);
+        aResult.AddValue("last", aKeys[aKeys.Count - 1]);
+        aResult.AddValue("warm_start", aBasis?.Date ?? "");
+        return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：`op=closing_generate` —— 手動補結（TASK-0331 ③，對應 Unity `closing_generate`）。
+    // 物理意義：救援路徑 —— 平時由 `SenateOvernightJob` 在跨日後自動跑；「一個不可手動觸發的機制既難驗證也難救援」。
+    //           ⭐ 與 `SenateOvernightJob` 呼叫**同一支** `SCP_BankClosing.GenerateMissing`，⛔ 不另寫一份。
+    //           ⭐ 本 Cmd 跑在 Server 裡 ⇒ 跟每日結算是同一個 process，寫結帳檔的仍只有一個寫入端。
+    // 數值影響：只寫 `<bank_root>/closing/*.json`，**不動任何餘額、不動 ledger**；今天不結、已結過的不重寫（冪等）。
+    // ===========================================================
+    static SCP_CmdResult OpClosingGenerate(string iRoot)
+    {
+        var aProblems = new List<string>();
+        int aWritten = SCP_BankClosing.GenerateMissing(iRoot, out string aSummary, aProblems);
+        var aResult = SCP_CmdResult.Success($"# 📘 每日結帳 —— 新產生 {aWritten} 份　根={iRoot}");
+        aResult.Lines.Add("- " + aSummary);
+        aResult.Lines.Add($"- 已結帳日期共 {SCP_BankClosing.ClosedDayKeys(iRoot).Count} 份　落檔：`{SCP_BankClosing.ClosingDir(iRoot)}`");
+        aResult.Lines.Add("- 只寫結帳檔，⛔ 不動餘額與 ledger；餘額讀取 = 最近一份結帳 + 該日之後的 entry");
+        if (aProblems.Count > 0)
+        {
+            aResult.Lines.Add($"⚠ **有 {aProblems.Count} 格讀不動**（⛔ 不當成「那裡沒有東西」）：");
+            foreach (string p in aProblems) aResult.Lines.Add("  · " + p);
+        }
+        aResult.AddValue("written", aWritten.ToString());
+        aResult.AddValue("unreadable", aProblems.Count.ToString());
         return aResult;
     }
 
