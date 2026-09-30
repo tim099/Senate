@@ -103,11 +103,67 @@ public sealed class GuiImGuiRenderer
     /// <summary>釘住的節點在內容段落裡要跳過 —— 這個旗標分辨「現在畫的是哪一遍」。</summary>
     bool m_InPinnedPass;
 
+    // ===========================================================
+    // 區塊職責：**缺字守衛**（TASK-0342）—— 這一幀要畫的每一個字，字型裡到底有沒有 glyph。
+    // 物理意義：ImGui 對缺字的處置是**安靜地畫成 `?`**，不報錯、不留 log。
+    //           🩸 SenateFonts 的檔頭記過一次（`✓ ≥ ⇒ ⚠` 全變 `?`），TASK-0340 截圖又撞一次（`📁 ⏳ ・`）——
+    //           兩次都是**人用眼睛**在截圖裡看到的，而沒有人截圖的那些頁一直是 `?`。
+    //           ⇒ 修法優先序的第二階：讓它**當場喊**。每個字元第一次出現時查一次 `FindGlyphNoFallback`，
+    //             找不到就記下「哪個字、哪一頁、出現在哪句話」，由宿主在關窗時印出來。
+    // 數值影響：純讀，不改樹、不改畫法。每個 codepoint 一生只查一次（查過的進快取）⇒ 每幀成本是走一遍樹。
+    //           ⚠ U+FFFF 以上的字**直接判缺**：本 build 的 ImWchar 是 16 位元，那些字進不了 atlas（見 SenateFonts）。
+    // ⚠ 射程：只量**這一趟真的畫過**的節點 —— 收合的區塊不看子節點 ⇒ 裡面的字沒查（⛔ 不是「沒有缺字」）。
+    // ===========================================================
+    readonly HashSet<int> m_GlyphOk = new();
+    readonly Dictionary<int, string> m_GlyphMissing = new();
+
+    /// <summary>缺字的地方要標哪一頁（宿主每幀塞進來；空字串 ＝ 不知道）。</summary>
+    public string GlyphContext { get; set; } = "";
+
+    /// <summary>缺字清單：codepoint → 第一次撞到它的「頁面：那句話」。</summary>
+    public IReadOnlyDictionary<int, string> MissingGlyphs => m_GlyphMissing;
+
+    /// <summary>查過幾個不同的字（讀數的分母 —— 0 ＝ 根本沒量，⛔ 不是「全部有」）。</summary>
+    public int GlyphsChecked => m_GlyphOk.Count + m_GlyphMissing.Count;
+
+    void AuditGlyphs(SCP_GuiNode iNode)
+    {
+        AuditText(iNode.Text);
+        // Value 是輸入框裡的字（密碼欄不看：不該讓它的內容出現在任何讀數裡）；Image 的 Value 是檔案路徑，不會被畫出來。
+        if (!iNode.Masked && iNode.Kind != SCP_GuiNodeKind.Image) AuditText(iNode.Value);
+        foreach (string aHeader in iNode.Headers) AuditText(aHeader);
+        if (iNode.Collapsible && !iNode.Open) return;       // 收合的區塊不畫子節點 ⇒ 也不查
+        foreach (var aChild in iNode.Children) AuditGlyphs(aChild);
+    }
+
+    unsafe void AuditText(string iText)
+    {
+        if (string.IsNullOrEmpty(iText)) return;
+        ImFontPtr aFont = ImGui.GetFont();
+        for (int i = 0; i < iText.Length; ++i)
+        {
+            int aCp = iText[i];
+            if (char.IsHighSurrogate(iText[i]) && i + 1 < iText.Length && char.IsLowSurrogate(iText[i + 1]))
+            {
+                aCp = char.ConvertToUtf32(iText[i], iText[i + 1]);
+                ++i;
+            }
+            if (aCp < 0x20) continue;                       // 換行／tab 不畫 glyph
+            if (m_GlyphOk.Contains(aCp) || m_GlyphMissing.ContainsKey(aCp)) continue;
+            bool aHas = aCp <= 0xFFFF && aFont.FindGlyphNoFallback((ushort)aCp).NativePtr != null;
+            if (aHas) { m_GlyphOk.Add(aCp); continue; }
+            string aSnippet = iText.Length > 40 ? iText.Substring(0, 40) + "…" : iText;
+            m_GlyphMissing[aCp] = (GlyphContext.Length > 0 ? GlyphContext + "：" : "") + aSnippet.Replace('\n', ' ');
+        }
+    }
+
     // ⭐ **釘住的那幾塊先畫，其餘的畫在一個會捲的子區域裡**（Tim 2026-09-17）。
     //   概念同 Unity 的 `UCL_EditorPage`：TopBar 在 ScrollView 外面、ContentOnGUI 在裡面
     //   ⇒ 捲到第 200 行時返回鈕還在原地。
     public void Render(SCP_GuiNode iRoot, SCP_GuiContentScroll iScroll = SCP_GuiContentScroll.None)
     {
+        AuditGlyphs(iRoot);   // 缺字守衛（TASK-0342）：先查字、再畫 —— 純讀，不影響畫法
+
         // ⭐ TASK-0236：釘住的節點要**整棵樹去找**，⛔ 不是只掃 `iRoot.Children`。
         // 🩸 舊版只掃直接子節點，而 `SCP_GuiPageController.Draw` 的 `IdScope(page.Key)`
         //   會 Push 一個 Column ⇒ TopBar 掉在 Root 的**孫層** ⇒ 一個都找不到

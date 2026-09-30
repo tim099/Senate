@@ -668,7 +668,10 @@ public static class Program
             //   而 Tim 三次回報的截圖都是 ~300px 高的小窗，我三次都在 1280×800 上驗。
             //   ⇒ 受測體涵蓋不到使用者的尺寸時，全綠只是在描述另一台機器。
             (int aWinW, int aWinH) = ParseWinSize(ArgValue(iArgs, "--win-size"));
+            // 缺字守衛（TASK-0342）要標「缺在哪一頁」—— 頁面 key 只有這裡拿得到（controller 在宿主手上）。
+            aWin.PageKeyProvider = () => aCtrl.TopPage?.Key ?? "";
             aWin.Run(iShot, 8, aWinW, aWinH);
+            Console.WriteLine(aWin.MissingGlyphReading);
             if (aWin.SoakReading is { } aReading) Console.WriteLine(aReading);
             if (aWin.ScrollReading is { } aScrollReading) Console.WriteLine(aScrollReading);
             Console.WriteLine($"字型：{aWin.LoadedFonts}");

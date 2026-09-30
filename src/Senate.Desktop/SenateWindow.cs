@@ -71,6 +71,34 @@ public sealed class SenateWindow : IDisposable
     // 外層視窗的捲動讀數（每幀更新，收工時併進 ScrollReading）。
     float m_OuterScrollY, m_OuterScrollMaxY, m_OuterContentH, m_OuterWindowH;
 
+    /// <summary>
+    /// 現在畫的是哪一頁（宿主給；缺字守衛拿它標「缺在哪一頁」）。null ＝ 不標。
+    /// </summary>
+    public Func<string>? PageKeyProvider { get; set; }
+
+    /// <summary>
+    /// 缺字守衛的讀數（TASK-0342）：這一趟畫過的字裡，哪些字型裡沒有 glyph（＝畫成 `?`）。
+    /// <para>⚠ 三態不同形：一個字都沒查（0 個）／查了而全部有／有缺 —— 前兩個壓成「✅」的話，
+    /// 「根本沒量」會長得像「全部畫得出來」。</para>
+    /// </summary>
+    public string MissingGlyphReading
+    {
+        get
+        {
+            var aMissing = m_Renderer.MissingGlyphs;
+            int aChecked = m_Renderer.GlyphsChecked;
+            if (aChecked == 0) return "缺字守衛：⚪ 一個字都沒查到（沒有畫任何文字 —— 這是「沒量」，不是「沒缺」）";
+            if (aMissing.Count == 0)
+                return $"缺字守衛：✅ 這一趟畫過的 {aChecked} 個不同字元都有 glyph（⚠ 射程：只含畫過的頁與展開的區塊）";
+            var aLines = new List<string> { $"⚠ 缺字守衛：{aMissing.Count} 個字畫不出來（視窗上會是 `?`；查了 {aChecked} 個不同字元）：" };
+            foreach (var kv in aMissing.OrderBy(k => k.Key))
+                aLines.Add($"　U+{kv.Key:X4}「{char.ConvertFromUtf32(kv.Key)}」"
+                           + (kv.Key > 0xFFFF ? "（U+FFFF 以上：16 位元 ImWchar 結構上畫不出來）" : "")
+                           + $" ← {kv.Value}");
+            return string.Join("\n", aLines);
+        }
+    }
+
     // ── 常駐窗的對外接點（TASK-0214）──────────────────────────────────
     // 區塊職責：讓宿主在**每一幀畫完之後**插手一次 —— 拿到這一幀真的畫出來的那棵樹。
     // 數值影響：⭐ 每幀的固定成本＝**一次 null 檢查**（OnFrameServed?.Invoke）＋ 幾個數的累加。
@@ -529,6 +557,7 @@ public sealed class SenateWindow : IDisposable
         if (KeyDebug) DrawKeyDebug();
 
         SCP_Ui aUi = m_Draw(m_Renderer.TakeInput());
+        m_Renderer.GlyphContext = PageKeyProvider?.Invoke() ?? "";
         m_Renderer.Render(aUi.Root, aUi.ContentScroll);
         // 頁面要求的欄位寫入在**畫完之後**才套 —— 這一幀顯示的是頁面自己算出來的結果，
         // 套進 renderer 是為了下一幀（跟按鈕事件同一個「慢一幀」的節奏）。

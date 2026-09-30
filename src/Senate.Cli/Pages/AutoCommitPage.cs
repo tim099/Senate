@@ -416,13 +416,14 @@ public sealed class AutoCommitPage : SCP_GuiToolPage
 
         if (aClean.Count > 0) g.Note($"✓ 乾淨的 {aClean.Count} 個：{string.Join("、", aClean)}");
         if (aEphemeral > 0)
-            g.Note($"🚫 ephemeral 已排除 {aEphemeral} 個（log / wait 旗標 / _last_op / DebugLogs…）—— 永遠不進 commit");
+            g.Note($"⛔ ephemeral 已排除 {aEphemeral} 個（log / wait 旗標 / _last_op / DebugLogs…）—— 永遠不進 commit");
     }
 
     void DrawRepo(SCP_Ui g, SCP_AutoCommitRepo iRepo, string iStamp)
     {
         string aBranch = iRepo.Branch.Length > 0 ? "／" + iRepo.Branch : "";
-        using (g.Box($"📁 {iRepo.Name}　（{iRepo.SourceLabel}{aBranch}）　候選 {iRepo.CandidateCount} 檔", "autocommit/repo/" + iRepo.Name))
+        // ⚠ 頁面文字不用 U+FFFF 以上的字（📁 之類）：16 位元 ImWchar 畫不出來，會變 `?`（TASK-0342 缺字守衛點名）。
+        using (g.Box($"▸ {iRepo.Name}　（{iRepo.SourceLabel}{aBranch}）　候選 {iRepo.CandidateCount} 檔", "autocommit/repo/" + iRepo.Name))
         {
             if (iRepo.Disabled)
             {
@@ -544,7 +545,7 @@ public sealed class AutoCommitPage : SCP_GuiToolPage
             using (g.Row())
             {
                 // 不合法就不畫存檔鈕（共用層沒有 disabled）—— 理由已經逐條列在上面。
-                if (aErrors.Count == 0 && g.Button("💾 存檔", "autocommit/cfg/save"))
+                if (aErrors.Count == 0 && g.Button("存檔", "autocommit/cfg/save"))
                 {
                     var (aOk, aMsg) = aConfig.Save(aSelected.Root);
                     m_ConfigMessage = aOk ? aMsg : "⛔ " + aMsg;
