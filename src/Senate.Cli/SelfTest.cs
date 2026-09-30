@@ -128,6 +128,7 @@ public static class SelfTest
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
+        One(nameof(RegisteredMailCleanRoom), "letters", RegisteredMailCleanRoom),
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iProjects)),
 
@@ -5956,6 +5957,48 @@ public static class SelfTest
     // 區塊職責：**開單 → 審批端讀得到 → 撤單**的淨室往返（TASK-0325：開單從 Unity 搬到 SCP_Core）。
     // 物理意義：開單端（CreatePayout／CreateTransfer）與審批端（LoadPending*）是兩支程式碼 ⇒ 要量「寫出來的單審批端認得」，
     //          ⛔ 不是只量「寫得出檔」。並驗三道擋（缺理由／自轉／已撤回再撤）都是零寫入或零動作。
+    // TASK-0347／0333：掛號信的讀取端（到期規則／送達章冪等／ack 回寫寄件者副本）＋ brief 端上桌後才蓋章。
+    // 🩸 為什麼要這一格：投遞那段 09-04 斷掉之後 26 天沒有任何一層會叫（90 封沒人看得到）——它從來沒有被測試守著。
+    static CheckRow RegisteredMailCleanRoom()
+    {
+        const string aName = "掛號信：到期／未到期／已讀除名、送達章冪等、ack 回寫寄件者副本、brief 列出後才蓋章（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_mail_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "rcv"));
+            bool aS1 = SCP.Core.Letters.SCP_RegisteredMail.Send(aTmp, "snd", "rcv", "下次醒來", "本文1", 1, "r1", null, out string aP1, out _);
+            System.Threading.Thread.Sleep(1100);   // 檔名 ts 到秒 ⇒ 同秒會撞名
+            bool aS2 = SCP.Core.Letters.SCP_RegisteredMail.Send(aTmp, "snd", "rcv", "未來 wake 10", "本文2", 1, "r2", 10, out string aP2, out _);
+            // 🔴 反向：指定 wake 10 而目前 wake 5 ⇒ 未到期；目前 12 ⇒ 到期（晚醒不吞信）
+            SCP.Core.Letters.SCP_RegisteredMail.ListUnread(aTmp, "rcv", 5, out var aDue5, out var aLater5);
+            SCP.Core.Letters.SCP_RegisteredMail.ListUnread(aTmp, "rcv", 12, out var aDue12, out var aLater12);
+            bool aRule = aS1 && aS2 && aDue5.Count == 1 && aLater5.Count == 1 && aDue12.Count == 2 && aLater12.Count == 0;
+            // 送達章：第一次蓋、第二次不動
+            bool aSt1 = SCP.Core.Letters.SCP_RegisteredMail.StampDelivered(aP1, 7);
+            bool aSt2 = SCP.Core.Letters.SCP_RegisteredMail.StampDelivered(aP1, 8);
+            bool aStamp = aSt1 && !aSt2 && SCP.Core.Letters.SCP_RegisteredMail.ReadItem(aP1).FirstSeenWake == "7";
+            // ack 單封 ⇒ read_at ＋ 寄件者 outbox 副本也寫；已讀的不再列；再 ack ⇒ already
+            var aAck = SCP.Core.Letters.SCP_RegisteredMail.Ack(aTmp, "rcv", Path.GetFileName(aP1));
+            string aTs = Path.GetFileName(aP1).Split(new[] { "__" }, 2, StringSplitOptions.None)[0];
+            string aMirror = Path.Combine(aTmp, "snd", "outbox", aTs + "__to_rcv.md");
+            bool aAcked = aAck.Count == 1 && aAck[0].State == "acked" && aAck[0].MirrorUpdated
+                          && SCP.Core.Letters.SCP_RegisteredMail.ReadItem(aMirror).ReadAt.Length > 0;
+            SCP.Core.Letters.SCP_RegisteredMail.ListUnread(aTmp, "rcv", 12, out var aDueAfter, out _);
+            bool aAgain = SCP.Core.Letters.SCP_RegisteredMail.Ack(aTmp, "rcv", Path.GetFileName(aP1))[0].State == "already";
+            bool aBodyKept = File.ReadAllText(aP1).Contains("本文1");   // ⛔ 只改 frontmatter
+            // 🔴 路徑穿越：persona 名帶 .. 或斜線 ⇒ 一封都不列、不碰檔
+            SCP.Core.Letters.SCP_RegisteredMail.ListUnread(aTmp, "../rcv", 12, out var aEvil, out _);
+            bool aSafe = aEvil.Count == 0 && !SCP.Core.Letters.SCP_RegisteredMail.IsValidPersonaName("a/b");
+            bool aOk = aRule && aStamp && aAcked && aDueAfter.Count == 1 && aAgain && aBodyKept && aSafe;
+            return new CheckRow(aName,
+                $"到期規則（wake5：1到期1未到／wake12：2到期）={aRule}／送達章冪等={aStamp}／ack＋寄件副本回寫={aAcked}"
+                + $"／已讀除名={aDueAfter.Count == 1}／再 ack⇒already={aAgain}／內文不動={aBodyKept}／🔴 路徑穿越擋下={aSafe}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
     static CheckRow BankRequestRoundTrip()
     {
         const string aName = "請款／轉帳單：開單 ⇒ 審批端讀得到 ⇒ 撤單（淨室）";
