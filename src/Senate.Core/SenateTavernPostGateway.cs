@@ -4,8 +4,8 @@
 //           跟 `senate cmd tavern-post`（TASK-0308）同一條路；前處理全部在 SCP_Core（TASK-0311／0312）。
 //           只有「找不到資料根對應的專案根」才整步委派回 Unity Editor 的 `Tavern op=post`（下面 `PostViaEditor`，原樣保留）。
 //           ⚠ 本閘不做 alter 配對延遲（呼叫端是公告不是對話，見 `PostViaSenate`）。
-//           ⚠ 寫入端一直只有一個：兩條路最後都落到酒館 Server 的 `tavern-write`（Editor 在 `tavern.writer=server`
-//           時也是委派它）⇒ 這裡換的是「誰組訊息」，⛔ 不是多開一個寫入端。
+//           ⚠ 寫入端一直只有一個：兩條路最後都落到酒館 Server 的 `tavern-write`（Editor 一律委派它，TASK-0341）
+//           ⇒ 這裡換的是「誰組訊息」，⛔ 不是多開一個寫入端。
 // 數值影響：Senate 路 ＝ 一次 Server round-trip；Editor 路 ＝ 一次 Cmd round-trip（檔案協議＋Watcher 輪詢，1〜3 秒）。
 //           🩸 兩條路的逾時都是 **`Unresolved`（不知道），不是「沒發」**。TASK-0134 QA（summit 2026-09-05）
 //           用一次真的小歇量到：CLI 逾時回報「沒發」，而廣播**其實成功了**（`post_seq 19082`）。

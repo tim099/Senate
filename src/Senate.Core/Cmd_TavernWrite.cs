@@ -1,13 +1,10 @@
 // 區塊職責：`tavern-write` —— 酒館訊息的**寫入臨界區**那一格，由 Senate Server 執行（TASK-0106）。
-// 物理意義：D20 那句「只有一顆 process 在寫」落到酒館身上就是這一支。它**不是發文流程**：
-//           mention 通知、Discord 鏡像、category 路由仍掛在 Editor 的 `AppendMessage` 上 ——
-//           搬過來的只有「配號 → 建檔 → 寫 `_seq.txt`」這段真的需要單一寫入端的臨界區。
+// 物理意義：D20 那句「只有一顆 process 在寫」落到酒館身上就是這一支 —— **酒館訊息唯一的寫入端**
+//           （TASK-0341，2026-09-30：Editor 本地寫入與 `tavern.writer` 開關都已刪除）。
+//           配號 → 建檔 → 寫 `_seq.txt` → 刷索引在臨界區裡；寫完再做 @ 通知、發薪、詞典附註、創作留念信。
 //
-// 🔴 三道閘，每一道都是**拒絕**而不是降級（D10 丙，Tim 2026-09-20）：
-//   ① `tavern.writer` 不是 `server` ⇒ 拒絕。⛔ 不「順便幫你寫」——
-//      那會讓開關沒切過去的人以為切過去了，而同一時間 Editor 那側也還在寫。
-//   ② 開關讀不了／認不得 ⇒ 拒絕（⛔ 不當成 editor 也不當成 server）。
-//   ③ Server 沒跑 ⇒ 基底類別回 exit 3 並印啟動指令，本檔不必處理。
+// 閘：Server 沒跑 ⇒ 基底類別回 exit 3 並印啟動指令（委派端會 autostart），本檔不必處理；
+//     msg_json 讀不出 ⇒ 拒絕。
 //
 // 數值影響：一次寫入 ＝ 一次目錄列舉（冷快取時）＋ 一次建檔 ＋ 一次 `_seq.txt` 覆寫。
 //
@@ -26,8 +23,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     public override string Name => "tavern-write";
 
     public override string Summary =>
-        "酒館訊息寫入臨界區（配號＋建檔＋_seq.txt）—— 由 Senate Server 執行；"
-        + "⛔ 只在 `tavern.writer=server` 時可用";
+        "酒館訊息寫入臨界區（配號＋建檔＋_seq.txt）—— 由 Senate Server 執行；酒館訊息唯一的寫入端";
 
     public override string PortNote =>
         "終局就是這裡：這一格**必須**在單一 process 內，所以它不會被原生化回 CLI";
@@ -109,19 +105,6 @@ public class Cmd_TavernWrite : ServerDelegateCmd
         string aRoom = iArgs.Get("room").Trim();
         string aJsonText = iArgs.Get("msg_json");
 
-        // ── 閘①②：開關 ───────────────────────────────────────────
-        SCP_TavernWriteModeRead aMode = SCP_TavernWriteMode.Read(aDataRoot);
-        if (!aMode.Ok)
-            return SCP_CmdResult.Fail(2,
-                "✗ " + aMode.Describe(),
-                "⛔ 開關讀不出來時**不寫** —— 猜哪一邊都會造出第二個寫入端。",
-                "設定檔：" + SCP_TavernWriteMode.SettingsPath(aDataRoot));
-
-        if (aMode.Host != SCP_TavernWriteHost.Server)
-            return SCP_CmdResult.Fail(2,
-                "✗ 這棵資料樹的 " + aMode.Describe() + " ⇒ **這支不該被呼叫**。",
-                "⛔ 不代寫：開關還指著 Editor，而 Editor 此刻也在寫同一個房。",
-                "要切過來：`senate cmd tavern-writer --arg data_root=" + aDataRoot + " --arg set=server`");
 
         SCP_JsonData aJson;
         try { aJson = SCP_JsonParser.Parse(aJsonText); }

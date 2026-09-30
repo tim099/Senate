@@ -125,7 +125,6 @@ public static class SelfTest
         One(nameof(WriterGlossaryAttach), "tavern", WriterGlossaryAttach),
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
         One(nameof(TavernMsgIndexWriterMaintained), "tavern", TavernMsgIndexWriterMaintained),
-        One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
@@ -4835,7 +4834,7 @@ public static class SelfTest
 
     /// <summary>
     /// 淨室：**索引由寫入端維護**（TASK-0335）—— 讀取端不寫，而寫完一則之後索引就是新的。
-    /// 🔴 反向對照：繞過寫入端直接丟一個訊息檔進去（＝ `tavern.writer=editor` 那條不經過 Server 的路），
+    /// 🔴 反向對照：繞過寫入端直接丟一個訊息檔進去（＝ 遷移工具／人工那種不經過 Server 的路），
     /// 索引必須**被量到落後**（現場列舉 1 天）而答案**照樣對**；再經寫入端寫一則，落後歸零。
     /// 另一格：把索引截斷在最後一行的 mtime 中間（＝讀到別人寫到一半的檔），答案仍須與全量列舉逐筆相同。
     /// </summary>
@@ -5190,70 +5189,16 @@ public static class SelfTest
         finally { try { Directory.Delete(aTmp, true); } catch { } }
     }
 
-    static CheckRow TavernWriteModeFourStates()
-    {
-        const string aName = "酒館寫入開關四態（agent_settings.json）";
-        string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernmode_" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            Directory.CreateDirectory(aTmp);
-
-            // ① 檔還不存在 ⇒ 沒設定過（不是錯誤），走預設 editor
-            SCP_TavernWriteModeRead aNone = SCP_TavernWriteMode.Read(aTmp);
-            bool aOkNone = aNone.Ok && aNone.Host == SCP_TavernWriteHost.Editor && !aNone.IsExplicit;
-
-            // ② 顯式 editor ⇒ 同樣走 editor，但 IsExplicit 要分得出來
-            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Editor);
-            SCP_TavernWriteModeRead aEd = SCP_TavernWriteMode.Read(aTmp);
-            bool aOkEd = aEd.Ok && aEd.Host == SCP_TavernWriteHost.Editor && aEd.IsExplicit;
-
-            // ③ 顯式 server
-            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Server);
-            SCP_TavernWriteModeRead aSv = SCP_TavernWriteMode.Read(aTmp);
-            bool aOkSv = aSv.Ok && aSv.Host == SCP_TavernWriteHost.Server && aSv.IsExplicit;
-
-            // 🔴 ④ 手寫一個認不得的值 ⇒ 必須是 Error，⛔ 不是「回 editor」
-            string aPath = SCP_TavernWriteMode.SettingsPath(aTmp);
-            File.WriteAllText(aPath, "{\"tavern\":{\"writer\":\"serverr\"}}", new UTF8Encoding(false));
-            SCP_TavernWriteModeRead aBad = SCP_TavernWriteMode.Read(aTmp);
-            bool aOkBad = !aBad.Ok && aBad.Raw == "serverr";
-
-            // ⑤ 值是空字串 ⇒ 也要出聲（「有人清空它」跟「沒設定過」不同形）
-            File.WriteAllText(aPath, "{\"tavern\":{\"writer\":\"\"}}", new UTF8Encoding(false));
-            SCP_TavernWriteModeRead aEmpty = SCP_TavernWriteMode.Read(aTmp);
-            bool aOkEmpty = !aEmpty.Ok;
-
-            // 反向對照：寫開關不可以吃掉別人的 section
-            File.WriteAllText(aPath, "{\"tavern\":{\"writer\":\"editor\"},\"skills\":{\"agent\":\"summit\"}}",
-                              new UTF8Encoding(false));
-            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Server);
-            string aAfter = File.ReadAllText(aPath);
-            bool aKept = aAfter.Contains("\"skills\"", StringComparison.Ordinal)
-                         && aAfter.Contains("summit", StringComparison.Ordinal);
-
-            bool aOk = aOkNone && aOkEd && aOkSv && aOkBad && aOkEmpty && aKept;
-            string aReading =
-                $"沒設定過 ⇒ editor 且 IsExplicit=false：{aOkNone}／顯式 editor：{aOkEd}／顯式 server：{aOkSv}"
-                + $"／🔴 認不得的值 `serverr` ⇒ **報錯不回預設**：{aOkBad}"
-                + $"／值空字串 ⇒ 出聲：{aOkEmpty}／寫入保留別人的 section：{aKept}"
-                + $"　⚠ 這一格只量開關本身，⛔ **不量「Server 在不在」**（那是另一個讀數）";
-            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
-        }
-        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
-        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
-    }
-
-
     /// <summary>
-    /// `tavern-write` 的三道閘（TASK-0106 / D10 丙）。
-    /// 🔴 最重要的是**拒絕那一格要零寫入** —— 「拒絕了」與「拒絕了但還是寫了半個目錄出去」
-    /// 在 exit code 上長得一樣，而後者正是「兩個寫入端」的第一步。
+    /// `tavern-write` 的閘與寫入（TASK-0106；開關於 TASK-0341 拔掉）。
+    /// 🔴 反向對照是前兩格：資料根**沒有** `agent_settings.json`、以及殘留舊的 `tavern.writer=editor`
+    /// ⇒ 兩種都必須照樣寫進去 —— 開關拔掉之後它**不該再被讀**，而還在讀的話前兩格會被拒絕。
     /// ⚠ 這格用 <c>ServerContext.InServer</c> 直接跑本體，⛔ **不經過檔案協議**
     ///   ⇒ 它量的是閘與寫入，**不量**委派那條路（那條由 `ServerResultRoundTrip` 管）。
     /// </summary>
     static CheckRow TavernWriteCmdGates()
     {
-        const string aName = "tavern-write 三道閘（開關未切 ⇒ 零寫入）";
+        const string aName = "tavern-write 寫入與閘（開關已拔：沒設定／殘留 editor 都照寫）";
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernwritecmd_" + Guid.NewGuid().ToString("N")[..8]);
         bool aWas = Senate.Core.ServerContext.InServer;
         string aWasId = Senate.Core.ServerContext.ServerId;
@@ -5281,40 +5226,37 @@ public static class SelfTest
                 ["data_root"] = aTmp, ["room"] = aRoom, ["msg_json"] = iJson,
             };
 
-            // ① 開關沒設過（＝ editor）⇒ 必須拒絕，而且**一個位元組都不寫**
-            SCP_CmdResult aR1 = aCmd.Execute(Args(Raw(aMsgJson)));
-            string aMsgDir = Path.Combine(aTmp, "ChatTavern", "rooms", aRoom);
-            bool aNoWrite = !Directory.Exists(aMsgDir);
-            bool aOk1 = aR1.ExitCode != 0 && aNoWrite;
-
-            // ② 認不得的值 ⇒ 也是拒絕（⛔ 不是「當成 editor」也不是「當成 server」）
-            File.WriteAllText(SCP_TavernWriteMode.SettingsPath(aTmp),
-                              "{\"tavern\":{\"writer\":\"serverr\"}}", new UTF8Encoding(false));
-            SCP_CmdResult aR2 = aCmd.Execute(Args(Raw(aMsgJson)));
-            bool aOk2 = aR2.ExitCode != 0 && !Directory.Exists(aMsgDir);
-
-            // ③ 切到 server ⇒ 寫得進去，且簽章是本寫入端的
-            SCP_TavernWriteMode.Write(aTmp, SCP_TavernWriteHost.Server);
-            SCP_CmdResult aR3 = aCmd.Execute(Args(Raw(aMsgJson)));
             string Val(SCP_CmdResult iR, string iKey)
             {
                 foreach (KeyValuePair<string, string> kv in iR.Values) if (kv.Key == iKey) return kv.Value;
                 return "";
             }
-            string aSeq = Val(aR3, "seq");
-            string aPath = Val(aR3, "path");
-            bool aLanded = aPath.Length > 0 && File.Exists(aPath);
-            string aOnDisk = aLanded ? File.ReadAllText(aPath, new UTF8Encoding(false)) : "";
-            bool aOk3 = aR3.ExitCode == 0 && aSeq == "1" && aLanded
-                        && aOnDisk.Contains("\"body\":\"閘測\"", StringComparison.Ordinal)
-                        && aOnDisk.Contains("\"_writer\":\"" + SCP_TavernWriter.WriterSignatureValue + "\"",
-                                            StringComparison.Ordinal);
+            bool Landed(SCP_CmdResult iR, string iSeq)
+            {
+                string aP = Val(iR, "path");
+                if (iR.ExitCode != 0 || Val(iR, "seq") != iSeq || aP.Length == 0 || !File.Exists(aP)) return false;
+                string aDisk = File.ReadAllText(aP, new UTF8Encoding(false));
+                return aDisk.Contains("\"body\":\"閘測\"", StringComparison.Ordinal)
+                       && aDisk.Contains("\"_writer\":\"" + SCP_TavernWriter.WriterSignatureValue + "\"", StringComparison.Ordinal);
+            }
+            string aMsgDir = Path.Combine(aTmp, "ChatTavern", "rooms", aRoom);
+
+            // 🔴 ① 資料根沒有 agent_settings.json（以前 ＝ editor ⇒ 拒絕）⇒ 照樣寫，且簽章是本寫入端的
+            SCP_CmdResult aR1 = aCmd.Execute(Args(Raw(aMsgJson)));
+            bool aOk1 = !File.Exists(Path.Combine(aTmp, "agent_settings.json")) && Landed(aR1, "1");
+
+            // 🔴 ② 殘留舊設定 `tavern.writer=editor` ⇒ 也照樣寫（開關不再被讀）
+            File.WriteAllText(Path.Combine(aTmp, "agent_settings.json"),
+                              "{\"tavern\":{\"writer\":\"editor\"}}", new UTF8Encoding(false));
+            SCP_CmdResult aR2 = aCmd.Execute(Args(Raw(aMsgJson)));
+            bool aOk2 = Landed(aR2, "2");
+            string aSeq = Val(aR2, "seq");
 
             // ④ msg_json 壞掉 ⇒ 拒絕，且不多出第二個檔
             SCP_CmdResult aR4 = aCmd.Execute(Args(Raw("{not json")));
             int aFiles = Directory.Exists(aMsgDir)
                 ? Directory.GetFiles(aMsgDir, "*.json", SearchOption.AllDirectories).Length : 0;
-            bool aOk4 = aR4.ExitCode != 0 && aFiles == 1;
+            bool aOk4 = aR4.ExitCode != 0 && aFiles == 2;
 
             // 🔴 ⑤ lane 是**固定一條 `tavern`**（PM 2026-09-21 拍板 A，驗收條文 ③），
             //   **而且必須是一層目錄名**（⛔ 不含 `/` 也不含 `:`）。兩個性質要同時在場：
@@ -5337,11 +5279,10 @@ public static class SelfTest
                         && !aLane.Contains("/", StringComparison.Ordinal)
                         && !aLane.Contains(":", StringComparison.Ordinal);
 
-            bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5;
+            bool aOk = aOk1 && aOk2 && aOk4 && aOk5;
             string aReading =
-                $"🔴 開關未切 ⇒ 拒絕（exit {aR1.ExitCode}）且 rooms/ 根本沒建出來：{aOk1}"
-                + $"／認不得的值 ⇒ 拒絕（exit {aR2.ExitCode}）：{aOk2}"
-                + $"／切到 server ⇒ seq={aSeq}、落盤且簽章 `{SCP_TavernWriter.WriterSignatureValue}`：{aOk3}"
+                $"🔴 沒有 agent_settings.json ⇒ 照寫（exit {aR1.ExitCode}、seq=1、簽章 `{SCP_TavernWriter.WriterSignatureValue}`）：{aOk1}"
+                + $"／🔴 殘留 `tavern.writer=editor` ⇒ 照寫（exit {aR2.ExitCode}、seq={aSeq}）：{aOk2}"
                 + $"／msg_json 壞 ⇒ 拒絕且檔數仍是 {aFiles}：{aOk4}"
                 + $"／🔴 lane=`{aLane}`（**固定一條**，PM 拍板 A）、"
                 + $"換一個房 `another-room` 仍是 `{aLaneOther}`（＝房名沒漏進 lane）、"

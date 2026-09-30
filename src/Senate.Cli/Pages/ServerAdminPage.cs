@@ -315,7 +315,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         if (string.Equals(iServerId, SCP_ServerIds.Default, StringComparison.Ordinal))
             return "銀行的寫入端（權威在新銀行，寫入端只有它，TASK-0216 ⑨）⇒ 停掉期間**全體的領薪／扣款會當場失敗**";
         if (string.Equals(iServerId, SCP_ServerIds.Tavern, StringComparison.Ordinal))
-            return "酒館的寫入端（`tavern.writer = server` 時所有酒館發文都經過它，TASK-0106）⇒ 停掉之後**下一則發文要先重新拉起它**，拉不起來那一則整筆失敗";
+            return "酒館的寫入端（所有酒館發文都經過它，TASK-0106／0341）⇒ 停掉之後**下一則發文要先重新拉起它**，拉不起來那一則整筆失敗";
         return "`" + iServerId + "` 這一顆的分工本頁不認得 ⇒ ⛔ 不替它猜停掉的代價";
     }
 
