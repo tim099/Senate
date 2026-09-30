@@ -2,6 +2,9 @@
 // 物理意義：讀取走 `SCP_TavernRead`（索引定址），「一則訊息怎麼顯示」全交給 `SCP_TavernDisplay`（唯一判準，之後 Discord 轉發共用）
 //           ⇒ 本頁只畫，⛔ 不自己判寄件人、不自己找頭像。不需要 Unity Editor。
 // 數值影響：純讀。每 2 秒看一次該房的 `_seq.txt`，有新訊息且停在最新一頁才重讀（同 Unity 版的節奏）。
+// 捲動（Tim 2026-09-30）：最新的在最下面 ⇒ 打開／重新讀取／「最新」／換房間時**捲到底**；停在最新一頁時**黏底**
+//   （本來在底 ⇒ 新訊息進來跟著捲；捲上去看舊的 ⇒ 不跳）。「在不在底」由 renderer 判（`SCP_Ui.FollowContentBottom`）。
+//   🩸 之前沒有這段：自動重讀其實一直在跑，但畫面停在最上面（最舊那則）⇒ 看起來像「不會顯示最新訊息」。
 // ⚠ 本頁**不發文**：發文走 `senate cmd tavern-post`（要不要在這裡加發文框，TASK-0317 註明動工時再問 Tim）。
 // ⚠ 視窗文字不放 emoji（字型沒有那些字 ⇒ 方框）；訊息本文裡的 emoji 是原文，畫成方框也照印。
 #nullable enable
@@ -28,6 +31,8 @@ public sealed class TavernPage : SCP_GuiToolPage
     int m_Page;
     int m_LastSeq;
     DateTime m_NextPollUtc = DateTime.MinValue;
+    /// <summary>下一次畫面要無條件捲到底（一次性）。</summary>
+    bool m_ScrollToBottom;
     List<SCP_TavernDisplayRow> m_Rows = new();
 
     public TavernPage(SenateModel iModel) : base() { m_Model = iModel; }
@@ -56,6 +61,7 @@ public sealed class TavernPage : SCP_GuiToolPage
         m_Rooms = SCP_TavernRead.EnumerateRoomIds(m_DataRoot);
         if (m_Rooms.Count > 0 && !m_Rooms.Contains(m_Room)) m_Room = m_Rooms.Contains("tavern") ? "tavern" : m_Rooms[0];
         LoadPage();
+        m_ScrollToBottom = true;
     }
 
     void LoadPage()
@@ -76,9 +82,9 @@ public sealed class TavernPage : SCP_GuiToolPage
         if (m_Rooms.Count > 0)
         {
             string aPick = iUi.Dropdown("房間", m_Rooms, m_Room, "tavern/sel/room");
-            if (aPick.Length > 0 && aPick != m_Room) { m_Room = aPick; m_Page = 0; LoadPage(); }
+            if (aPick.Length > 0 && aPick != m_Room) { m_Room = aPick; m_Page = 0; LoadPage(); m_ScrollToBottom = true; }
         }
-        if (iUi.Button("最新", "tavern/btn/newest") && m_Page != 0) { m_Page = 0; LoadPage(); }
+        if (iUi.Button("最新", "tavern/btn/newest")) { m_Page = 0; LoadPage(); m_ScrollToBottom = true; }
         if (iUi.Button("較新", "tavern/btn/newer") && m_Page > 0) { m_Page--; LoadPage(); }
         if (iUi.Button("較舊", "tavern/btn/older") && m_Page + 1 < PageCount) { m_Page++; LoadPage(); }
         iUi.Label($"｜第 {m_Page + 1} / {PageCount} 頁（每頁 {PageSize} 則，最新 seq {m_LastSeq}）");
@@ -93,6 +99,9 @@ public sealed class TavernPage : SCP_GuiToolPage
 
         // 由舊到新（跟聊天軟體一樣，最新的在最下面）。
         foreach (SCP_TavernDisplayRow r in m_Rows) DrawRow(g, r);
+
+        if (m_ScrollToBottom) { g.ScrollContentToBottom(); m_ScrollToBottom = false; }
+        else if (m_Page == 0) g.FollowContentBottom();
     }
 
     /// <summary>停在最新一頁時才自動接新訊息 —— 翻到舊頁還在看的時候，畫面不該自己跳走。</summary>

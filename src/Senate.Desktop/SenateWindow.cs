@@ -529,7 +529,7 @@ public sealed class SenateWindow : IDisposable
         if (KeyDebug) DrawKeyDebug();
 
         SCP_Ui aUi = m_Draw(m_Renderer.TakeInput());
-        m_Renderer.Render(aUi.Root);
+        m_Renderer.Render(aUi.Root, aUi.ContentScroll);
         // 頁面要求的欄位寫入在**畫完之後**才套 —— 這一幀顯示的是頁面自己算出來的結果，
         // 套進 renderer 是為了下一幀（跟按鈕事件同一個「慢一幀」的節奏）。
         m_Renderer.ApplyWrites(aUi);

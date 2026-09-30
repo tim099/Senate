@@ -246,7 +246,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
         SCP_DiscordRoute? r = m_Routes.FirstOrDefault(x => x.ChannelId == m_SelChannel);
         using (g.Box($"設定對應：{(m_SelLabel.Length > 0 ? "#" + m_SelLabel : m_SelChannel)}（{m_SelChannel}）"))
         {
-            g.Note(r == null ? "這個頻道還沒接 ⇒ 預設接到主頻道 tavern。" : $"現在：→ {r.TavernRoom}（{(r.Enabled ? "開" : "關")}，{r.SourceClass}，priority {r.Priority}）");
+            g.Note(r == null ? "這個頻道還沒接 ⇒ 預設接到主頻道 tavern。" : $"現在：→ {r.TavernRoom}（{(r.Enabled ? "開" : "關")}，{r.SourceClass}）");
             string aRoom = g.Dropdown("酒館頻道（只列沒封存的）", m_Rooms, r?.TavernRoom ?? SCP_TavernChannels.MainChannelId, RoomId);
             string aOn = g.Dropdown("開關", new List<SCP_GuiOption> { new("1", "開"), new("0", "關") }, r == null || r.Enabled ? "1" : "0", OnId);
             var aSrcs = SCP_DiscordInboundConfig.KnownSourceClasses.Concat(m_Routes.Select(x => x.SourceClass))
@@ -275,16 +275,10 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
     void DrawWhitelist(SCP_Ui g)
     {
         SCP_DiscordWhitelist w = m_Whitelist;
-        using var aFold = g.Fold($"Inbound 白名單（{(w.Enabled ? "啟用" : "停用")}，{w.Users.Count} 人）", "dbot/fold/wl", false);
+        using var aFold = g.Fold($"Inbound 白名單（{w.Users.Count} 人）", "dbot/fold/wl", false);
         if (!aFold.Open) return;
-        g.Note("啟用時只收下面這些 Discord 帳號的訊息。來源：" + SCP.Core.Cmd.SCP_Cmd_DiscordBot.WhitelistSource(w));
+        g.Note("不擋人：白名單外的訊息照收，顯示名後面標「" + SCP.Core.Discord.SCP_DiscordInbound.NotWhitelistedSuffix + "」。來源：" + SCP.Core.Cmd.SCP_Cmd_DiscordBot.WhitelistSource(w));
         if (w.Error.Length > 0) { g.Note("[注意] 讀不了：" + w.Error); return; }
-        if (g.Button(w.Enabled ? "停用白名單" : "啟用白名單", "dbot/btn/wl_toggle"))
-        {
-            m_Message = SCP_DiscordInboundConfig.TrySetWhitelistEnabled(m_DataRoot, !w.Enabled, out string? aErr)
-                ? $"白名單已{(!w.Enabled ? "啟用" : "停用")}" : "[未寫入] " + aErr;
-            Reload();
-        }
         foreach (SCP_DiscordWhitelistUser u in w.Users)
         {
             using (g.IdScope("wl/" + u.UserId))

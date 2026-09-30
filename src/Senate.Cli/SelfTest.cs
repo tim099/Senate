@@ -6044,7 +6044,7 @@ public static class SelfTest
                 + "{\"id\":\"2\",\"filename\":\"bad.png\",\"size\":7,\"url\":\"https://cdn.example/fail.png\"},"
                 + "{\"id\":\"3\",\"filename\":\"huge.mp4\",\"size\":99999999,\"url\":\"https://cdn.example/huge.mp4\"}]}";
             var aRoute = new SCP.Core.Discord.SCP_DiscordRoute { ChannelId = "9", TavernRoom = "tavern", Label = "probe" };
-            var aWl = new SCP.Core.Discord.SCP_DiscordWhitelist { Enabled = false };
+            var aWl = new SCP.Core.Discord.SCP_DiscordWhitelist();   // 空白名單 ⇒ 作者 42 是白名單外（白名單只標記不擋，Tim 2026-09-30）
             // 🔴 故意給錯的 repo 根（Server 給的是 Senate 自己的 repo）⇒ refs 仍要是資料所在專案的相對路徑（實測 22520 踩過）
             SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, "D:/wrong-host-repo", aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aPeek, false);
             bool aPeekNoFile = aPeek != null && !Directory.Exists(Path.Combine(aData2, "ChatTavern", "media"));
@@ -6056,12 +6056,20 @@ public static class SelfTest
                             && aBody.Contains("huge.mp4（過大未下載") && aRefPath.StartsWith("AgentCommands/ChatTavern/media/discord/2026-09-28/")
                             && File.Exists(Path.Combine(aRepo2, aRefPath))
                             && aItem!.MsgJson["meta"].GetString("attachments_saved", "") == "1";
+            // 白名單只標記：白名單外 ⇒ 照收＋顯示名後綴＋meta false；🔴 反向：同一人進白名單 ⇒ 無後綴＋meta true
+            bool aWlOut = aItem != null && aItem.MsgJson.GetString("sender_name", "").EndsWith(SCP.Core.Discord.SCP_DiscordInbound.NotWhitelistedSuffix)
+                          && aItem.MsgJson["meta"].GetString("discord_whitelisted", "") == "false" && aItem.MsgJson["meta"].GetString("priority", "") == "";
+            var aWlIn = new SCP.Core.Discord.SCP_DiscordWhitelist();
+            aWlIn.Users.Add(new SCP.Core.Discord.SCP_DiscordWhitelistUser { UserId = "42", DisplayName = "Tim" });
+            SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, "D:/wrong-host-repo", aRoute, aWlIn, SCP_JsonParser.Parse(aMsgJson), out var aListed, false);
+            bool aWlIn2 = aListed != null && aListed.MsgJson.GetString("sender_name", "") == "Tim" && aListed.MsgJson["meta"].GetString("discord_whitelisted", "") == "true";
 
-            bool aOk = aOkShape && aRejShape && aTmoShape && aPeekNoFile && aInShape;
+            bool aOk = aOkShape && aRejShape && aTmoShape && aPeekNoFile && aInShape && aWlOut && aWlIn2;
             return new CheckRow(aName,
                 $"Out 圖收下（1 次 multipart、缺檔標明、非圖不算）={aOkShape}／Out 413 ⇒ 退回純文字且標明={aRejShape}"
                 + $"／🔴 Out 逾時 ⇒ ⛔ 不退回、游標不動={aTmoShape}"
                 + $"／In 成功落地＋refs＋失敗與過大標明、文字照寫={aInShape}／In 偷看不落檔={aPeekNoFile}"
+                + $"／In 白名單外照收＋標記＋無 priority={aWlOut}／🔴 白名單內無標記={aWlIn2}"
                 + (aOk ? "" : $"　calls(ok)=[{string.Join(" | ", ok.Fake.Calls)}] calls(413)={rej.Fake.Calls.Count} body='{aBody}' ref='{aRefPath}'"),
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }

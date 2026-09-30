@@ -106,7 +106,7 @@ public sealed class GuiImGuiRenderer
     // ⭐ **釘住的那幾塊先畫，其餘的畫在一個會捲的子區域裡**（Tim 2026-09-17）。
     //   概念同 Unity 的 `UCL_EditorPage`：TopBar 在 ScrollView 外面、ContentOnGUI 在裡面
     //   ⇒ 捲到第 200 行時返回鈕還在原地。
-    public void Render(SCP_GuiNode iRoot)
+    public void Render(SCP_GuiNode iRoot, SCP_GuiContentScroll iScroll = SCP_GuiContentScroll.None)
     {
         // ⭐ TASK-0236：釘住的節點要**整棵樹去找**，⛔ 不是只掃 `iRoot.Children`。
         // 🩸 舊版只掃直接子節點，而 `SCP_GuiPageController.Draw` 的 `IdScope(page.Key)`
@@ -135,14 +135,25 @@ public sealed class GuiImGuiRenderer
             //   ⇒ 設完立刻讀會讀回「還沒動」的舊值，而那個值看起來完全合理。
             //   ⇒ 這一格印的是「這一幀開始時它在哪」，跨幀累積才是探針的證據。
             float aScrollY = ImGui.GetScrollY();
+            // 「上一幀在最底」：這裡讀到的 ScrollMaxY 是上一幀內容算出來的（本幀內容還沒送）⇒ 正好是黏底要的那個比較。
+            //   滾輪在 Begin 之前就套進 ScrollY ⇒ 使用者往上捲的那一幀這裡就已經不在底 ⇒ 不會被拉回去。
+            bool aWasAtBottom = aScrollY >= ImGui.GetScrollMaxY() - 1f;
             if (ContentScrollProbePx > 0f) ImGui.SetScrollY(aScrollY + ContentScrollProbePx);
 
             foreach (var aChild in iRoot.Children) RenderNode(aChild);
 
+            // ⭐ 捲到底（Tim 2026-09-30，酒館頁）：在**內容子區域裡**、內容全部送完之後呼叫 ⇒ 游標就在內容尾端。
+            //   ⚠ 受測容器必須是這個子區域 —— TASK-0236 三次誤判全是對外層視窗下指令（外層 ScrollMaxY 恆 0，被夾回、看起來像沒事）。
+            //   SetScrollHereY 寫的是 target，下一幀才生效（同上面探針的「慢一幀」）。
+            bool aToBottom = iScroll == SCP_GuiContentScroll.Bottom
+                             || (iScroll == SCP_GuiContentScroll.FollowBottom && aWasAtBottom);
+            if (aToBottom) ImGui.SetScrollHereY(1f);
+
             // ⚠ ScrollMaxY 要等內容送完才算得出來 ⇒ 讀數擺在這裡，不是上面。
             LastContentScrollReading =
                 $"{ContentChildId}: ScrollY={aScrollY:0.#} / ScrollMaxY={ImGui.GetScrollMaxY():0.#}" +
-                (ContentScrollProbePx > 0f ? $"（本幀 target={aScrollY + ContentScrollProbePx:0.#}）" : "");
+                (ContentScrollProbePx > 0f ? $"（本幀 target={aScrollY + ContentScrollProbePx:0.#}）" : "") +
+                (iScroll != SCP_GuiContentScroll.None ? $"（請求 {iScroll}，本幀{(aToBottom ? "捲到底" : "不動：使用者不在底")}）" : "");
         }
         ImGui.EndChild();
     }
