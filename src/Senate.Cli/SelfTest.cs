@@ -36,7 +36,7 @@ public enum CheckResult { Pass, Fail, Skipped }
 
 public sealed record CheckRow(string Name, string Reading, CheckResult Result);
 
-public static class SelfTest
+public static partial class SelfTest
 {
     // ===========================================================
     // 區塊職責：一筆對拍項目的**登記**（key／群／怎麼跑），供列出與挑選。
@@ -129,6 +129,10 @@ public static class SelfTest
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         One(nameof(RegisteredMailCleanRoom), "letters", RegisteredMailCleanRoom),
+        // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
+        Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
+        One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
+        One(nameof(TaskOpsGatesCleanRoom), "tasks", TaskOpsGatesCleanRoom),
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iProjects)),
 

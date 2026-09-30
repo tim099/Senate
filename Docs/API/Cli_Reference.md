@@ -317,7 +317,7 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 3. **`iRequired` 不變** —— 「必填」講的是那支 Cmd 這一層真的需要它（它不讀任何設定檔），
    「可以不打」講的是宿主的便利。**兩件事分開講**，所以 `cmd help <name>` 仍然標必填。
 
-⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支（現況 `data_root`：`sessions`／`tasks`／`canvas`／`msg`／`regions`）。
+⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支（現況 `data_root`：`sessions`／`tasks`／`task`／`task-write`／`canvas`／`msg`／`regions`）。
 > 🩸 為什麼要做成通則：那個值原本抄在每一個呼叫端、**含每一份文件範例裡**，
 > 而手抄的那份會過期 —— `sessions` 的用法範例到 2026-09-04 還印著 `D:/Unity/LY/AgentCommands`，
 > 而那是**另一台**的根。路徑的族與唯一決定點見
