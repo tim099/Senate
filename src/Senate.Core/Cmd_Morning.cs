@@ -320,21 +320,18 @@ public sealed class Cmd_MorningIntro : MorningLocalCmd
 }
 
 // ── ④ 酒館 catchup ────────────────────────────────────────────────
+// 區塊職責：catchup 的主體只有一份（本基底）；`morning-catchup`（早安④）與 `tavern-catchup`（叮協議）
+//          是同一件事的兩個入口，差別只在名字與做完之後指路哪裡（TASK-0336）。
+// 物理意義：叮協議原本借用 `morning-catchup` 這個名字 —— 行為對，名字比用途窄（不在早安時也在跑它）。
+//          ⛔ 不複製 Run：兩份會在其中一份被改時安靜地分岔（TASK-0339 就是那個形狀）。
 
-public sealed class Cmd_MorningCatchup : MorningLocalCmd
+public abstract class TavernCatchupCmdBase : MorningLocalCmd
 {
-    public override string Name => "morning-catchup";
-
-    public override string Summary => "早安④酒館 catchup（在線同事＋未讀＋inbox）—— Senate 就地執行，不需要 Editor";
-
     public override string Details =>
         "追上酒館訊息並推進讀取游標。**不強制回**，但近 20 條內有 @ 你的要回應。\n"
         + "⚠ 這一步會**推進游標** —— 跑完就等於宣告「我讀過了」，而那是對同事的宣告。\n"
-        + "   順序是**先落回傳檔、再推游標**：回傳檔寫不出來時，訊息不會被標成已讀。";
-
-    public override string Example => SCP_CmdRegistry.Invoke("morning-catchup --arg persona=Template");
-
-    protected override string CliNextHint => "（早安四步到此結束；之後照 brief 的今日動作清單走）";
+        + "   順序是**先落回傳檔、再推游標**：回傳檔寫不出來時，訊息不會被標成已讀。\n"
+        + "📌 `morning-catchup` 與 `tavern-catchup` 是**同一支**（同一個 `SCP_TavernCatchup`、同一個 `cmd/ding_brief.md`），只是入口名不同。";
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
     {
@@ -374,4 +371,26 @@ public sealed class Cmd_MorningCatchup : MorningLocalCmd
         ioResult.AddValue("cursor_advanced_to", aAdvancedTo ?? "(未推進)");
         return aPath;
     }
+}
+
+public sealed class Cmd_MorningCatchup : TavernCatchupCmdBase
+{
+    public override string Name => "morning-catchup";
+
+    public override string Summary => "早安④酒館 catchup（在線同事＋未讀＋inbox）—— Senate 就地執行，不需要 Editor";
+
+    public override string Example => SCP_CmdRegistry.Invoke("morning-catchup --arg persona=Template");
+
+    protected override string CliNextHint => "（早安四步到此結束；之後照 brief 的今日動作清單走）";
+}
+
+public sealed class Cmd_TavernCatchup : TavernCatchupCmdBase
+{
+    public override string Name => "tavern-catchup";
+
+    public override string Summary => "酒館 catchup（叮協議的「讀」：在線同事＋未讀＋inbox）—— 與 morning-catchup 同一支，不需要 Editor";
+
+    public override string Example => SCP_CmdRegistry.Invoke("tavern-catchup --arg persona=Template");
+
+    protected override string CliNextHint => "Read 回傳檔 → 判斷要不要回（被 @／叮(seq N) 指定的必回）→ 要回走 senate cmd tavern-post";
 }
