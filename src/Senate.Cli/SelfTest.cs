@@ -124,6 +124,7 @@ public static class SelfTest
         One(nameof(ForwardedExplicitArgs), "server", ForwardedExplicitArgs),
         One(nameof(WriterGlossaryAttach), "tavern", WriterGlossaryAttach),
         One(nameof(TavernWriteCleanRoom), "tavern", TavernWriteCleanRoom),
+        One(nameof(TavernMsgIndexWriterMaintained), "tavern", TavernMsgIndexWriterMaintained),
         One(nameof(TavernWriteModeFourStates), "tavern", TavernWriteModeFourStates),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
@@ -4826,6 +4827,64 @@ public static class SelfTest
                 + $"／🔴 佔位檔位元組{(aSquatIntact ? "一個都沒變 ⇒ **沒有覆蓋**" : "**被改掉了 —— 那就是舊行為**")}"
                 + $"／`_seq.txt`={aSeqCache}"
                 + $"／序列化逐字對齊 Editor={aSerOk}／選填欄位空值不 emit＋seq 不進內容={aOmit}";
+            return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
+        finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { } }
+    }
+
+    /// <summary>
+    /// 淨室：**索引由寫入端維護**（TASK-0335）—— 讀取端不寫，而寫完一則之後索引就是新的。
+    /// 🔴 反向對照：繞過寫入端直接丟一個訊息檔進去（＝ `tavern.writer=editor` 那條不經過 Server 的路），
+    /// 索引必須**被量到落後**（現場列舉 1 天）而答案**照樣對**；再經寫入端寫一則，落後歸零。
+    /// 另一格：把索引截斷在最後一行的 mtime 中間（＝讀到別人寫到一半的檔），答案仍須與全量列舉逐筆相同。
+    /// </summary>
+    static CheckRow TavernMsgIndexWriterMaintained()
+    {
+        const string aName = "酒館索引由寫入端維護（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_tavernidx_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            const string aRoom = "probe-room";
+            SCP_TavernWriter.InvalidateCount(aTmp, aRoom);
+            SCP_TavernWriteResult Write(string iTs, string iBody) => SCP_TavernWriter.WriteMessage(aTmp, aRoom,
+                new SCP_TavernMessage { Ts = iTs, SenderId = "cc", SenderName = "cc", SenderPersona = "basecamp", Kind = "chat", Body = iBody });
+
+            // 三天各寫一則 ⇒ 索引該有三天、全命中
+            Write("2026-09-28T01:00:00.000Z", "一");
+            Write("2026-09-29T01:00:00.000Z", "二");
+            SCP_TavernWriteResult aR3 = Write("2026-09-30T01:00:00.000Z", "三");
+            string[]? aP1 = SCP_TavernMsgIndex.TryGetOrderedPaths(aTmp, aRoom, out bool aUsed1, out int aStale1);
+            bool aStep1 = aR3.Seq == 3 && aP1 != null && aP1.Length == 3 && aUsed1 && aStale1 == 0;
+
+            // 🔴 反向對照：繞過寫入端丟一個檔（不經 Refresh）⇒ 落後看得見、答案照樣對
+            string aDay = Path.GetDirectoryName(aR3.FullPath)!;
+            File.WriteAllText(Path.Combine(aDay, "00000004.json"), "{\"body\":\"繞過寫入端\"}", new UTF8Encoding(false));
+            string[]? aP2 = SCP_TavernMsgIndex.TryGetOrderedPaths(aTmp, aRoom, out _, out int aStale2);
+            bool aStep2 = aP2 != null && aP2.Length == 4 && aStale2 == 1;
+
+            // 經寫入端再寫一則 ⇒ 落後歸零
+            Write("2026-09-30T02:00:00.000Z", "五");
+            string[]? aP3 = SCP_TavernMsgIndex.TryGetOrderedPaths(aTmp, aRoom, out _, out int aStale3);
+            bool aStep3 = aP3 != null && aP3.Length == 5 && aStale3 == 0;
+
+            // 截斷索引（最後一行的 mtime 砍掉一半）⇒ 逐筆對撞仍 0 差異
+            string aIdx = SCP_TavernMsgIndex.IndexPath(aTmp, aRoom);
+            string aFull = File.ReadAllText(aIdx);
+            File.WriteAllText(aIdx, aFull.Substring(0, aFull.TrimEnd('\n').Length - 6), new UTF8Encoding(false));
+            string aVerify = SCP_TavernMsgIndex.Verify(aTmp);
+            bool aStep4 = aVerify.Contains("逐筆相同", StringComparison.Ordinal);
+
+            // 換檔不留殘檔
+            int aTmpLeft = Directory.GetFiles(SCP_TavernMsgIndex.RoomDir(aTmp, aRoom), "*.tmp*").Length;
+
+            bool aOk = aStep1 && aStep2 && aStep3 && aStep4 && aTmpLeft == 0;
+            string aReading =
+                $"寫三天後：{aP1?.Length} 筆、命中索引={aUsed1}、現場列舉 {aStale1} 天"
+                + $"／🔴 繞過寫入端丟一檔：{aP2?.Length} 筆、現場列舉 {aStale2} 天（該是 1 ⇒ 落後看得見）"
+                + $"／經寫入端再寫一則：{aP3?.Length} 筆、現場列舉 {aStale3} 天"
+                + $"／截斷索引後逐筆對撞：{(aStep4 ? "0 差異" : "**有差異**")}"
+                + $"／殘留 tmp 檔 {aTmpLeft} 個";
             return new CheckRow(aName, aReading, aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }
