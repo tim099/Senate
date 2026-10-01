@@ -7,6 +7,7 @@
 using System.Reflection;
 using System.Text;
 using Senate.Core;
+using SCP.Core.FreeTime;
 using SCP.Core.Gui;
 using SCP.Core.Json;
 using SCP.Core.Paths;
@@ -129,6 +130,7 @@ public static partial class SelfTest
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
+        One(nameof(DocEditCleanRoom), "freetime", DocEditCleanRoom),
         One(nameof(PayoutApprovalGuardCleanRoom), "bank", PayoutApprovalGuardCleanRoom),
         One(nameof(RegisteredMailCleanRoom), "letters", RegisteredMailCleanRoom),
         // 課程筆記／好感度／persona 設定的寫入端（TASK-0354）：本體在 SelfTest.Migration0354.cs
@@ -6094,6 +6096,71 @@ public static partial class SelfTest
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
         finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    /// <summary>
+    /// doc-edit（TASK-0367，Unity Cmd_DocEdit 搬家）：「本場改過沒」三態 ＋ 最新信的挑法 ＋ 擋下的三種。
+    /// ⚠ 判定那半格（yes／no）真實資料上要有人正在自由時間才量得到 ⇒ 這裡用暫存樹造一場進行中的 FreeTime。
+    /// </summary>
+    static CheckRow DocEditCleanRoom()
+    {
+        const string aName = "doc-edit：本場改過沒（yes／no／unknown）＋ 最新信只認 letter_to_future_self ＋ 擋 repo 外／不存在（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_docedit_" + Guid.NewGuid().ToString("N")[..8]);
+        string aOutside = Path.Combine(Path.GetTempPath(), "senate_docedit_out_" + Guid.NewGuid().ToString("N")[..8] + ".md");
+        try
+        {
+            string aData = Path.Combine(aTmp, "AgentCommands");
+            string aLet = Path.Combine(aData, "letters");
+            string aMe = Path.Combine(aLet, "probe");
+            Directory.CreateDirectory(aMe);
+            Directory.CreateDirectory(Path.Combine(aTmp, "Docs"));
+            var aDataRoot = new SCP_DataRoot(aData);
+            var aLetRoot = new SCP_LettersRoot(aLet);
+            DateTime aNow = DateTime.Now;
+            DateTime aStart = aNow.AddMinutes(-10);
+            SCP.Core.Session.SCP_ActivitySessionStore.Save(aDataRoot, "probe", new SCP.Core.Session.SCP_ActivitySession
+            {
+                persona = "probe", kind = SCP.Core.Session.SCP_ActivitySessionKind.FreeTime, session_id = "ft-probe",
+                start_ts = aStart.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                end_ts = aNow.AddMinutes(10).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ"), active = true,
+            });
+            string aOld = Path.Combine(aTmp, "Docs", "old.md"); File.WriteAllText(aOld, "x");
+            File.SetLastWriteTime(aOld, aStart.AddHours(-1));
+            string aNew = Path.Combine(aTmp, "Docs", "new.md"); File.WriteAllText(aNew, "x");
+            // 信：真信（舊）／wake_brief 殘影（較新）／_latest.md（最新）—— 只該挑中真信
+            string aLetter = Path.Combine(aMe, "20261001T000000Z.md");
+            File.WriteAllText(aLetter, "---\ntype: letter_to_future_self\n---\nhi\n"); File.SetLastWriteTime(aLetter, aStart.AddMinutes(1));
+            string aGhost = Path.Combine(aMe, "_goodmorning_brief.md");
+            File.WriteAllText(aGhost, "---\ntype: wake_brief\n---\n"); File.SetLastWriteTime(aGhost, aStart.AddMinutes(5));
+            File.WriteAllText(Path.Combine(aMe, "_latest.md"), "---\ntype: letter_to_future_self\n---\n");
+            File.WriteAllText(aOutside, "x");
+
+            SCP_DocEditResult Run(string iKind, string iPersona, string iTarget)
+                => SCP_DocEdit.Run(aDataRoot, aLetRoot, aTmp, iKind, iPersona, iTarget, "", aNow);
+            var rNo = Run("doc", "probe", "Docs/old.md");
+            var rYes = Run("doc", "probe", "Docs/new.md");
+            var rUnk = Run("doc", "", "Docs/new.md");                 // 反向：沒帶 persona ⇒ 不下判斷
+            var rLet = Run("letter", "probe", "");
+            var rCon = Run("constitution", "probe", "Docs/new.md");  // target 被忽略 ⇒ 指向不存在的憲法 ⇒ 擋
+            var rOut = Run("doc", "probe", aOutside);
+            var rMiss = Run("doc", "probe", "Docs/nope.md");
+            bool aVerdicts = rNo.Verdict == "no" && rYes.Verdict == "yes" && rUnk.Verdict == "unknown" && rNo.Blocked.Length == 0;
+            bool aLetterPick = rLet.Blocked.Length == 0 && string.Equals(rLet.TargetFull, Path.GetFullPath(aLetter), StringComparison.OrdinalIgnoreCase);
+            bool aConFixed = rCon.Blocked == "目標檔不存在" && rCon.Report.Contains("_constitution.md");
+            bool aBlocks = rOut.Blocked == "目標在 repo 之外" && rMiss.Blocked == "目標檔不存在" && rMiss.Report.Contains("## blocked");
+            bool aOk = aVerdicts && aLetterPick && aConFixed && aBlocks;
+            return new CheckRow(aName,
+                $"本場判定 舊檔={rNo.Verdict}／新檔={rYes.Verdict}／沒帶 persona={rUnk.Verdict}"
+                + $"／最新信挑中真信（跳過較新的 wake_brief 殘影與 _latest.md）={aLetterPick}"
+                + $"／憲法忽略 target={aConFixed}／🔴 repo 外擋={rOut.Blocked.Length > 0}、不存在擋={rMiss.Blocked.Length > 0}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally
+        {
+            try { Directory.Delete(aTmp, true); } catch (Exception) { }
+            try { File.Delete(aOutside); } catch (Exception) { }
+        }
     }
 
     /// <summary>
