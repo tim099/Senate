@@ -115,6 +115,15 @@ public sealed class GuiImGuiRenderer
     // ⚠ 射程：只量**這一趟真的畫過**的節點 —— 收合的區塊不看子節點 ⇒ 裡面的字沒查（⛔ 不是「沒有缺字」）。
     // ===========================================================
     readonly HashSet<int> m_GlyphOk = new();
+
+    /// <summary>
+    /// 彩色 emoji（TASK-0356）。有的話，**每一段要交給 ImGui 的字**都先經過 <see cref="T"/>
+    /// 把 U+FFFF 以上的 emoji 換成 atlas 裡的私用碼位。null ＝ 沒載到 ⇒ 原字串照畫（缺字守衛照常點名）。
+    /// </summary>
+    public SenateEmoji? Emoji { get; set; }
+
+    /// <summary>畫字前的轉換（見 <see cref="Emoji"/>）。⛔ 不用在輸入框的內容上 —— 那會把私用碼位寫回使用者的資料。</summary>
+    string T(string iText) => Emoji?.Translate(iText) ?? iText;
     readonly Dictionary<int, string> m_GlyphMissing = new();
 
     /// <summary>缺字的地方要標哪一頁（宿主每幀塞進來；空字串 ＝ 不知道）。</summary>
@@ -128,15 +137,18 @@ public sealed class GuiImGuiRenderer
 
     void AuditGlyphs(SCP_GuiNode iNode)
     {
-        AuditText(iNode.Text);
+        // ⚠ 查的是**真的要畫的那一串**（換過 emoji 之後）：收進 atlas 的 emoji 算有、收不到的照常點名（TASK-0356）
+        AuditText(T(iNode.Text), iNode.Text);
         // Value 是輸入框裡的字（密碼欄不看：不該讓它的內容出現在任何讀數裡）；Image 的 Value 是檔案路徑，不會被畫出來。
-        if (!iNode.Masked && iNode.Kind != SCP_GuiNodeKind.Image) AuditText(iNode.Value);
-        foreach (string aHeader in iNode.Headers) AuditText(aHeader);
+        if (!iNode.Masked && iNode.Kind != SCP_GuiNodeKind.Image) AuditText(iNode.Value, iNode.Value);   // 輸入框畫原字串
+        foreach (string aHeader in iNode.Headers) AuditText(T(aHeader), aHeader);
         if (iNode.Collapsible && !iNode.Open) return;       // 收合的區塊不畫子節點 ⇒ 也不查
         foreach (var aChild in iNode.Children) AuditGlyphs(aChild);
     }
 
-    unsafe void AuditText(string iText)
+    /// <param name="iText">真的要交給 ImGui 的字串</param>
+    /// <param name="iShown">報告裡引用的原句（換過的字串含私用碼位，印出來是亂碼）</param>
+    unsafe void AuditText(string iText, string iShown)
     {
         if (string.IsNullOrEmpty(iText)) return;
         ImFontPtr aFont = ImGui.GetFont();
@@ -152,7 +164,7 @@ public sealed class GuiImGuiRenderer
             if (m_GlyphOk.Contains(aCp) || m_GlyphMissing.ContainsKey(aCp)) continue;
             bool aHas = aCp <= 0xFFFF && aFont.FindGlyphNoFallback((ushort)aCp).NativePtr != null;
             if (aHas) { m_GlyphOk.Add(aCp); continue; }
-            string aSnippet = iText.Length > 40 ? iText.Substring(0, 40) + "…" : iText;
+            string aSnippet = iShown.Length > 40 ? iShown.Substring(0, 40) + "…" : iShown;
             m_GlyphMissing[aCp] = (GlyphContext.Length > 0 ? GlyphContext + "：" : "") + aSnippet.Replace('\n', ' ');
         }
     }
@@ -244,13 +256,13 @@ public sealed class GuiImGuiRenderer
         {
             case SCP_GuiNodeKind.Title:
                 if (TitleFont.HasValue) ImGui.PushFont(TitleFont.Value);
-                ImGui.SeparatorText(iNode.Text);
+                ImGui.SeparatorText(T(iNode.Text));
                 if (TitleFont.HasValue) ImGui.PopFont();
                 break;
 
             case SCP_GuiNodeKind.Label:
                 if (iNode.Wrap) ImGui.PushTextWrapPos(0f);
-                ImGui.TextUnformatted(iNode.Text);
+                ImGui.TextUnformatted(T(iNode.Text));
                 if (iNode.Wrap) ImGui.PopTextWrapPos();
                 break;
 
@@ -262,7 +274,7 @@ public sealed class GuiImGuiRenderer
                 //   最後一層「不會拿『目前所在』頂替」在 1280px 寬的視窗裡整段落在畫面外。
                 //   ⚠ 那一格最貴的不是看不到，是**看不到跟沒寫同形** —— 讀的人不知道自己少讀了一層。
                 ImGui.PushTextWrapPos(0f);
-                ImGui.TextColored(Vec4(m_Style.NoteColor), "· " + iNode.Text);
+                ImGui.TextColored(Vec4(m_Style.NoteColor), "· " + T(iNode.Text));
                 ImGui.PopTextWrapPos();
                 break;
 
@@ -282,7 +294,7 @@ public sealed class GuiImGuiRenderer
                     if (aTex.Width > aTex.Height) { float c = (1f - (float)aTex.Height / aTex.Width) / 2f; aU0 = c; aU1 = 1f - c; }
                     else if (aTex.Height > aTex.Width) { float c = (1f - (float)aTex.Width / aTex.Height) / 2f; aV0 = c; aV1 = 1f - c; }
                     ImGui.Image((IntPtr)aTex.Handle, new Vector2(aSide, aSide), new Vector2(aU0, aV0), new Vector2(aU1, aV1));
-                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(iNode.Text);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(T(iNode.Text));
                 }
                 else
                 {
@@ -291,7 +303,7 @@ public sealed class GuiImGuiRenderer
                         ImGui.GetColorU32(new Vector4(0.35f, 0.35f, 0.38f, 1f)), aSide * 0.12f);
                     ImGui.Dummy(new Vector2(aSide, aSide));
                     if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip(iNode.Text + (iNode.Value.Length == 0 ? "（沒有頭像）"
+                        ImGui.SetTooltip(T(iNode.Text) + (iNode.Value.Length == 0 ? "（沒有頭像）"
                             : aTex?.Error != null ? "（" + aTex.Error + "）" : Textures == null ? "（這個宿主不載圖）" : ""));
                 }
                 break;
@@ -301,7 +313,7 @@ public sealed class GuiImGuiRenderer
             {
                 // ImGui 原生折線圖。⚠ 刻度（低／高／點數）另外印一行 —— PlotLines 自己只畫線不畫刻度，
                 //   而一條沒有刻度的線，「平」與「量尺太粗」同形（文字 renderer 印的是同一句 Describe）。
-                ImGui.TextUnformatted(iNode.Text);
+                ImGui.TextUnformatted(T(iNode.Text));
                 if (iNode.Series.Count == 0)
                 {
                     ImGui.TextColored(Vec4(m_Style.NoteColor), "· （無資料）");
@@ -332,8 +344,8 @@ public sealed class GuiImGuiRenderer
                 // 最小寬度走 style（一排按鈕寬度不一會讓版面看起來是壞的），
                 // ⚠ 但取 max 不是直接套：ImGui 的 size 是**確定尺寸**不是下限，
                 //   寫死就會把長標籤裁掉 —— 而裁掉的字不會報錯。
-                float aW = iForcedWidth > 0f ? iForcedWidth : ButtonNaturalWidth(iNode.Text);
-                if (ImGui.Button(iNode.Text + "##" + iNode.Id, new Vector2(aW, 0f)))
+                float aW = iForcedWidth > 0f ? iForcedWidth : ButtonNaturalWidth(T(iNode.Text));
+                if (ImGui.Button(T(iNode.Text) + "##" + iNode.Id, new Vector2(aW, 0f)))
                     ClickedId = iNode.Id;
                 break;
             }
@@ -350,7 +362,7 @@ public sealed class GuiImGuiRenderer
                 //   ⚠ 那不是「沒對齊」，是**對齊欄根本沒生效**，而它跟「有對齊但排版醜」同形。
                 //   ⇒ 修法是換版位（第一階：讓標籤長度不可能影響框的位置），
                 //     不是把 LabelWidth 調大（第三階：只把門檻推高，下一句更長的照樣掉出去）。
-                if (ImGui.Checkbox(iNode.Text + "##" + iNode.Id, ref aOn)) Toggles[iNode.Id] = aOn;
+                if (ImGui.Checkbox(T(iNode.Text) + "##" + iNode.Id, ref aOn)) Toggles[iNode.Id] = aOn;
                 break;
             }
 
@@ -430,7 +442,7 @@ public sealed class GuiImGuiRenderer
 
                 if (!iNode.Collapsible)
                 {
-                    if (ImGui.CollapsingHeader(iNode.Text, ImGuiTreeNodeFlags.DefaultOpen))
+                    if (ImGui.CollapsingHeader(T(iNode.Text), ImGuiTreeNodeFlags.DefaultOpen))
                     {
                         ImGui.Indent();
                         foreach (var c in iNode.Children) RenderNode(c, aUniform);
@@ -444,7 +456,7 @@ public sealed class GuiImGuiRenderer
                 //   （子節點在收合時根本沒被建出來 —— 那正是它省事的原因）。
                 bool aOpen = Folds.TryGetValue(iNode.Id, out bool aState) ? aState : iNode.Open;
                 ImGui.SetNextItemOpen(aOpen);
-                bool aNow = ImGui.CollapsingHeader(iNode.Text + "##" + iNode.Id);
+                bool aNow = ImGui.CollapsingHeader(T(iNode.Text) + "##" + iNode.Id);
                 if (aNow != aOpen) Folds[iNode.Id] = aNow;
                 if (aNow)
                 {
@@ -480,7 +492,7 @@ public sealed class GuiImGuiRenderer
 
         if (iTable.Headers.Count > 0)
         {
-            foreach (string h in iTable.Headers) ImGui.TableSetupColumn(h);
+            foreach (string h in iTable.Headers) ImGui.TableSetupColumn(T(h));
             for (int i = iTable.Headers.Count; i < aCols; i++) ImGui.TableSetupColumn("");
             ImGui.TableHeadersRow();
         }
@@ -495,7 +507,7 @@ public sealed class GuiImGuiRenderer
                 if (c < r.Children.Count)
                 {
                     var aCell = r.Children[c];
-                    if (aCell.Kind == SCP_GuiNodeKind.TableCell) ImGui.TextUnformatted(aCell.Text);
+                    if (aCell.Kind == SCP_GuiNodeKind.TableCell) ImGui.TextUnformatted(T(aCell.Text));
                     else RenderNode(aCell);
                 }
             }
@@ -505,17 +517,17 @@ public sealed class GuiImGuiRenderer
 
     /// <summary>一顆鈕不被撐開時的自然寬度（文字寬 ＋ padding，但不小於 style 的下限）。</summary>
     float ButtonNaturalWidth(string iText)
-        => Math.Max(m_Style.ButtonMinWidth, ImGui.CalcTextSize(iText).X + m_Style.FramePaddingX * 2f);
+        => Math.Max(m_Style.ButtonMinWidth, ImGui.CalcTextSize(T(iText)).X + m_Style.FramePaddingX * 2f);
 
     /// <summary>標籤畫在左邊、**不對齊頁面級欄位欄**時佔掉的水平空間。</summary>
     float LabelNaturalSpan(string iLabel)
-        => string.IsNullOrEmpty(iLabel) ? 0f : ImGui.CalcTextSize(iLabel).X + m_Style.ItemSpacingX;
+        => string.IsNullOrEmpty(iLabel) ? 0f : ImGui.CalcTextSize(T(iLabel)).X + m_Style.ItemSpacingX;
 
     /// <summary>標籤畫在左邊，緊貼著（不補到 LabelWidth）—— 給窄群組用。</summary>
     void LabelLeftCompact(string iLabel)
     {
         if (string.IsNullOrEmpty(iLabel)) return;
-        ImGui.TextUnformatted(iLabel);
+        ImGui.TextUnformatted(T(iLabel));
         ImGui.SameLine();
     }
 
@@ -540,8 +552,8 @@ public sealed class GuiImGuiRenderer
     void LabelLeft(string iLabel)
     {
         if (string.IsNullOrEmpty(iLabel)) return;
-        ImGui.TextUnformatted(iLabel);
-        float aTextW = ImGui.CalcTextSize(iLabel).X;
+        ImGui.TextUnformatted(T(iLabel));
+        float aTextW = ImGui.CalcTextSize(T(iLabel)).X;
         if (aTextW + m_Style.ItemSpacingX < m_Style.LabelWidth) ImGui.SameLine(m_Style.LabelWidth);
         else ImGui.SameLine();
     }

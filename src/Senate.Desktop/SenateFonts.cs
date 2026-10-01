@@ -24,6 +24,8 @@ public static class SenateFonts
     {
         0x0020, 0x00FF,   // 基本拉丁 ＋ Latin-1（含 · × ÷）
         0x2000, 0x206F,   // 一般標點（— … ‧）
+        // 🩸 TASK-0356 順手：酒館頁的書名「刺客正傳Ⅱ」裡的 `Ⅱ`（U+2161）住這一段，原本畫成 `?`（缺字守衛點名）。
+        0x2150, 0x218F,   // 數字形式（Ⅰ Ⅱ Ⅲ ½）
         0x2190, 0x21FF,   // 箭頭（→ ⇒）
         0x2200, 0x22FF,   // 數學運算子（≥ ≤ ≠ ∈）
         // 🩸 TASK-0342：`⏳ ⏸ ⏭` 住這一段，而它原本不在表上 ⇒ 全頁的「執行中」都畫成 `?`（截圖實測）。
@@ -66,7 +68,7 @@ public static class SenateFonts
     /// 依 <see cref="SCP_GuiStyle"/> 載入本文與標題兩個字級（含符號字型合併）。
     /// 回傳實際載到什麼 —— 沒載到要說，不要裝作正常。
     /// </summary>
-    public static FontSet Configure(ImGuiIOPtr iIo, string? iCjkFontPath, SCP_GuiStyle iStyle)
+    public static FontSet Configure(ImGuiIOPtr iIo, string? iCjkFontPath, SCP_GuiStyle iStyle, SenateEmoji? iEmoji = null)
     {
         var aLoaded = new List<string>();
         IntPtr aRanges = Pin(s_Ranges);
@@ -81,9 +83,55 @@ public static class SenateFonts
             ? AddOne(iIo, iCjkFontPath, aTitle, aRanges, aLoaded)
             : aSet.Body;
 
+        string aEmojiNote = iEmoji == null ? AtlasNote(iIo) : AddEmoji(iIo, iEmoji, aSet, aBody, aTitle);
+
         aSet.Description = string.Join(" + ", aLoaded)
-            + $"｜字級 本文 {aBody:0.#} / 標題 {aTitle:0.#}（scale {iStyle.Scale:0.##}）";
+            + $"｜字級 本文 {aBody:0.#} / 標題 {aTitle:0.#}（scale {iStyle.Scale:0.##}）" + aEmojiNote;
         return aSet;
+    }
+
+    // ===========================================================
+    // 區塊職責：**彩色 emoji 寫進 atlas**（TASK-0356）—— 每顆字型（本文／標題）各掛一份私用碼位的自訂字形格。
+    // 物理意義：順序是硬的 —— ① 字型都加完 ② AddCustomRectFontGlyph 登記格子 ③ Build ④ 取 RGBA32 寫圖 ⑤ 設 Colored。
+    //           ④ 必須在 Silk 上傳 atlas 之前：本函式在 onConfigureIO 裡跑，Silk 之後呼叫 GetTexDataAsRGBA32
+    //           拿到的是**同一塊**已轉好的 RGBA 緩衝（ImGui 不會重轉）⇒ 我們寫進去的像素會被上傳。
+    // ⚠ ⑤ Colored 位元**不經過 ImGui.NET 的 ImFontGlyph**：綁定把 bitfield `Colored:1 Visible:1 Codepoint:30`
+    //   生成成三個 uint（48 bytes，原生是 40）⇒ 照綁定的欄位寫會寫到別的地方，而且不報錯（reflection 實測）。
+    //   ⇒ 直接改原生指標的第 0 位元。沒設的話 ImGui 會拿文字色去乘 emoji，彩色變成文字色的濃淡。
+    // ===========================================================
+    /// <summary>沒有 emoji 時也印 atlas 尺寸 —— 那是有 emoji 時多付了多少的基準（Silk 之後拿的是這一份，不會重建）。</summary>
+    static string AtlasNote(ImGuiIOPtr iIo)
+    {
+        iIo.Fonts.GetTexDataAsRGBA32(out IntPtr _, out int aW, out int aH);
+        return $"｜atlas {aW}×{aH}";
+    }
+
+    static unsafe string AddEmoji(ImGuiIOPtr iIo, SenateEmoji iEmoji, FontSet iSet, float iBody, float iTitle)
+    {
+        var aFonts = new List<(ImFontPtr Font, float Px)> { (iSet.Body, iBody) };
+        if (iSet.Title.NativePtr != iSet.Body.NativePtr) aFonts.Add((iSet.Title, iTitle));
+
+        var aRects = new List<(int Id, SenateEmoji.Entry E, float Px, ImFontPtr Font)>();
+        foreach (var (aFont, aPx) in aFonts)
+            foreach (SenateEmoji.Entry e in iEmoji.Entries)
+            {
+                var (w, h) = iEmoji.CellSize(e, aPx);
+                int aId = iIo.Fonts.AddCustomRectFontGlyph(aFont, e.Pua, w, h, w, System.Numerics.Vector2.Zero);
+                aRects.Add((aId, e, aPx, aFont));
+            }
+
+        if (!iIo.Fonts.Build()) return "｜⚠ emoji：atlas 建不出來（格子太多？）—— 這次沒有彩色 emoji";
+        iIo.Fonts.GetTexDataAsRGBA32(out IntPtr aPixels, out int aTexW, out int aTexH);
+        uint* aDst = (uint*)aPixels;
+        foreach (var (aId, e, aPx, aFont) in aRects)
+        {
+            ImFontAtlasCustomRectPtr r = iIo.Fonts.GetCustomRectByIndex(aId);
+            // iBgra：Silk 把這張貼圖當 BGRA 上傳（見 SenateEmoji.Rasterize）
+            iEmoji.Rasterize(e, aPx, aDst + r.Y * aTexW + r.X, aTexW, r.Width, r.Height, iBgra: true);
+            ImFontGlyph* g = aFont.FindGlyphNoFallback(e.Pua).NativePtr;
+            if (g != null) *(uint*)g |= 1u;   // Colored（見上）
+        }
+        return $"｜emoji {iEmoji.Entries.Count} 顆（彩色 {iEmoji.ColoredCount}）× {aFonts.Count} 字級，atlas {aTexW}×{aTexH}";
     }
 
     /// <summary>載一顆字型 ＋ 合併符號字型。回傳的是**本文那一顆**的 handle（符號是 merge 進去的）。</summary>
@@ -106,8 +154,8 @@ public static class SenateFonts
         // 🩸 TASK-0342：這裡原本合併完第一顆就 `break`（理由是「一顆補齊就夠」）——
         //   而「補齊」從來沒有被量過：Segoe UI Emoji **一次都沒被合併**。
         //   ⇒ 兩顆都合；還缺什麼由 GuiImGuiRenderer 的缺字守衛點名，⛔ 不再靠推論。
-        // ⚠ 射程：本 build 的 ImWchar 是 16 位元（範圍表是 ushort[]）⇒ **U+FFFF 以上的字（📁 💾 🟢）結構上畫不出來**，
-        //   合幾顆字型都一樣。要支援得換 IMGUI_USE_WCHAR32 編的 cimgui（彩色另要 FreeType）—— 另案。
+        // ⚠ 射程：本 build 的 ImWchar 是 16 位元（範圍表是 ushort[]）⇒ U+FFFF 以上的字（📁 💾 🟢）**經這條路**進不來，
+        //   合幾顆字型都一樣。那些字改走 SenateEmoji（借放私用區＋自己畫彩色字形，見 AddEmoji，TASK-0356）。
         foreach (string aPath in s_SymbolFonts)
         {
             if (!File.Exists(aPath)) continue;

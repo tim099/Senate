@@ -297,6 +297,18 @@ public sealed class SenateWindow : IDisposable
         return (aW, aH);
     }
 
+    /// <summary>
+    /// 彩色 emoji 的字型。環境變數 `SENATE_EMOJI_FONT` ＝ 換一顆字型；＝ `none` ＝ 不載
+    /// （TASK-0356 驗收 ③ 的反向對照用：沒有 emoji 字型時視窗要照常開、缺字守衛要照常點名）。
+    /// </summary>
+    static SenateEmoji? LoadEmoji(out string oWhy)
+    {
+        string aPath = Environment.GetEnvironmentVariable("SENATE_EMOJI_FONT") ?? "";
+        if (aPath.Equals("none", StringComparison.OrdinalIgnoreCase)) { oWhy = "SENATE_EMOJI_FONT=none（刻意關掉）"; return null; }
+        if (aPath.Length == 0) aPath = @"C:\Windows\Fonts\seguiemj.ttf";
+        return SenateEmoji.Load(aPath, out oWhy);
+    }
+
     void OnLoad()
     {
         IWindow aWin = m_Window ?? throw new InvalidOperationException("OnLoad 在 window 建立前被呼叫");
@@ -308,12 +320,15 @@ public sealed class SenateWindow : IDisposable
         // 🩸 用 ImGuiFontConfig + GetGlyphRangesChineseFull 的第一版：中文好了，
         //    但 ✓ ≥ ⇒ ⚠ 全變成 ?（那份 range 不含符號區），而缺字不報錯。詳見 SenateFonts。
         SenateFonts.FontSet? aFonts = null;
+        // 彩色 emoji（TASK-0356）：讀不到就是 null —— 視窗照常開，那些字照舊由缺字守衛點名。
+        SenateEmoji? aEmoji = LoadEmoji(out string aEmojiWhy);
         m_Controller = new ImGuiController(m_Gl, aWin, m_Input, null,
             () =>
             {
-                aFonts = SenateFonts.Configure(ImGui.GetIO(), FontPath, m_Style);
-                LoadedFonts = aFonts.Description;
+                aFonts = SenateFonts.Configure(ImGui.GetIO(), FontPath, m_Style, aEmoji);
+                LoadedFonts = aFonts.Description + (aEmoji == null ? "｜⚠ 沒有彩色 emoji：" + aEmojiWhy : "");
             });
+        m_Renderer.Emoji = aEmoji;
 
         ApplyIniPath();
 
