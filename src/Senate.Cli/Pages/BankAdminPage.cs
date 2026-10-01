@@ -1297,8 +1297,13 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                     return;
                 }
                 g.SetField(PendingId, "");
-                bool aOk = SCP_PersonaProfile.WriteBankAccount(m_Letters.Value, aPersona, m_Region,
-                                                               aPick, "BankAdminPage", aReason.Trim(), out string aErr);
+                // 同值不寫（不留一筆什麼都沒改的稽核）—— 判準放在頁面這一層，寫入端本身與 CLI 同一支（TASK-0361）
+                if (SCP_PersonaProfile.ReadOwnBankBinding(m_Letters.Value, aPersona, m_Region, out _) == aPick.Trim())
+                { m_Message = $"・`{aPersona}` 在 `{m_Region}` 已經綁著 `{aPick}` ⇒ **沒有寫入**"; return; }
+                // ⭐ 唯一的寫入端（稽核落 `AwakenInit/_persona_write_audit.jsonl`，與 `senate cmd persona-profile` 同一行形狀）
+                bool aOk = SCP_PersonaProfileWrite.WriteBankBinding(m_Letters.Value, m_DataRoot.Value, aPersona, m_Region,
+                                                                    aPick, "BankAdminPage", aReason.Trim(), out string aWarn, out string aErr);
+                if (aOk && aWarn.Length > 0) aErr = "⚠ 綁定已生效，而" + aWarn;
                 // ⭐ 判準是**回讀**，不是上面那個 bool。
                 string aBack = SCP_PersonaProfile.GetBankAccount(m_Letters.Value, aPersona, m_Region,
                                                                  out string aSrc, out string _);

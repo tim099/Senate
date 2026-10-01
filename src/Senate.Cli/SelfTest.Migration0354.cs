@@ -140,10 +140,22 @@ public static partial class SelfTest
             bool aRebind = aReal.Copied == 1 && aReal.Conflicts == 1
                            && File.ReadAllText(Path.Combine(aLetters, "Template", "bank", "BTC.md")) == "T1\n"
                            && File.ReadAllText(Path.Combine(aLetters, "calli", "bank", "BTC.md")) == "Other\n";
-            bool aOk = aVec && aEmpty && aObj && aScalar && aAuditEsc && aZero && aDryZero && aRebind;
+            // 建 persona（TASK-0361）：綁定＋身分欄一次寫；已存在 ⇒ 擋、零寫入
+            var aNew = (SCP_UclLegacyObject)SCP_UclLegacyJson.Parse("{\"identity_vector\":[0.5],\"fork_lineage\":[],\"forked_from\":null,\"created_at\":\"t\",\"wake_count\":3}")!;
+            int aAuditBefore = File.ReadAllLines(SCP_PersonaProfileWrite.AuditPath(aTmp)).Length;
+            bool aCreate = SCP_PersonaProfileWrite.Create(aLetters, aTmp, "newbie", "Florin", "NB", aNew, "a", "r", out _, out _)
+                           && File.ReadAllText(Path.Combine(aLetters, "newbie", "bank", "Florin.md")) == "NB\n"
+                           && File.ReadAllText(Path.Combine(aLetters, "newbie", "profile", "forked_from.md")) == "\n"
+                           && !File.Exists(Path.Combine(aLetters, "newbie", "profile", "wake_count.md"))
+                           && File.ReadAllLines(SCP_PersonaProfileWrite.AuditPath(aTmp)).Last().Contains("\"profile:[forked_from,fork_lineage,created_at,identity_vector] skipped(\\u63a8\\u5c0e\\u6b04):[wake_count]\"");   // 中文在審計裡是 \u 轉義
+            int aAuditMid = File.ReadAllLines(SCP_PersonaProfileWrite.AuditPath(aTmp)).Length;
+            bool aCreateAgain = !SCP_PersonaProfileWrite.Create(aLetters, aTmp, "newbie", "Florin", "X", aNew, "a", "r", out _, out _)
+                                && File.ReadAllLines(SCP_PersonaProfileWrite.AuditPath(aTmp)).Length == aAuditMid
+                                && aAuditMid - aAuditBefore == 6;   // 綁定 1 ＋ 四欄 ＋ 總結 1
+            bool aOk = aVec && aEmpty && aObj && aScalar && aAuditEsc && aZero && aDryZero && aRebind && aCreate && aCreateAgain;
             return new CheckRow(aName,
                 $"數字陣列 CRLF＋R 格式={aVec}／空陣列={aEmpty}／物件陣列＋\\u 轉義={aObj}／純量欄去尾換行={aScalar}／審計 \\u 轉義={aAuditEsc}"
-                + $"／🔴 九道閘＋unset 不存在＝零寫入={aZero}／重綁 dry-run 零寫入={aDryZero}／重綁不覆寫衝突={aRebind}",
+                + $"／🔴 九道閘＋unset 不存在＝零寫入={aZero}／重綁 dry-run 零寫入={aDryZero}／重綁不覆寫衝突={aRebind}／建 persona={aCreate}／🔴 重建擋下零寫入={aCreateAgain}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
