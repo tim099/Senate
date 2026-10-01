@@ -2852,7 +2852,10 @@ public static partial class SelfTest
             }
 
             // reader.json 只拿**還停在初值**的那些當受測體 —— 讀過幾章之後那份本來就該長得不一樣。
-            int aReaderSame = 0, aReaderDiff = 0, aReaderLive = 0;
+            // 閘＝語意（含鍵集合，停在初值的那份鍵一定齊）；逐位元組只當讀數 —— 跟 work／media 同一條理由：
+            // 磁碟是多支 writer 的沉積。🩸 TASK-0357：meadow 那份（09-16，`"key": value` 版面）值逐鍵相同，
+            // 只因版面不同就讓整格紅；而版面本身由 `LibraryBuilderGolden` 的定值 fixture 釘住，不靠這格。
+            int aReaderSame = 0, aReaderDiff = 0, aReaderLive = 0, aReaderByteOnly = 0;
             foreach (string f in Directory.GetFiles(Path.Combine(aLibrary, SCP_LibraryStore.MediaDirName),
                                                     SCP_LibraryStore.ReaderJsonName, SearchOption.AllDirectories))
             {
@@ -2872,8 +2875,9 @@ public static partial class SelfTest
                     aTree.GetString(SCP_LibraryIO.Key_MediaId, ""),
                     aTree.GetString(SCP_LibraryIO.Key_ReaderPersona, ""),
                     aTree.GetInt(SCP_LibraryIO.Key_Anticipation, 0), aStarted);
-                if (Eol(aDisk) == Eol(SCP_JsonWriter.Write(aMine, SCP_JsonStyle.UclLegacy) + "\n")) aReaderSame++;
-                else aReaderDiff++;
+                if (!SameValues(aTree, aMine)) aReaderDiff++;
+                else if (Eol(aDisk) == Eol(SCP_JsonWriter.Write(aMine, SCP_JsonStyle.UclLegacy) + "\n")) aReaderSame++;
+                else aReaderByteOnly++;
             }
 
             // ⚠ 受測體歸零也是失敗 —— 「全部相符」與「一個都沒驗」⛔ 不可以同形。
@@ -2886,7 +2890,8 @@ public static partial class SelfTest
                 + $"（鍵集合不同 {aWorkOther}／物件形狀 alias {aWorkObjAlias}，兩者不當受測體）"
                 + $"　media 受測 {aMediaSame + aMediaDiff + aMediaByteOnly} ⇒ **語意不符 {aMediaDiff}（閘）**"
                 + $"／位元組相符 {aMediaSame}、只差鍵序或版面 {aMediaByteOnly}（鍵集合不同 {aMediaOther}）"
-                + $"　reader（只取停在初值的）**{aReaderSame}／{aReaderDiff}**（已在讀的 {aReaderLive} 不當受測體）"
+                + $"　reader（只取停在初值的）受測 {aReaderSame + aReaderDiff + aReaderByteOnly} ⇒ **語意不符 {aReaderDiff}（閘）**"
+                + $"／位元組相符 {aReaderSame}、只差版面 {aReaderByteOnly}（讀數）（已在讀的 {aReaderLive} 不當受測體）"
                 + "　⚠ 輸入是從輸出讀回來的 ⇒ ⛔ **驗不到 alias 合併語意**（那一格結構上同源）；"
                 + "鍵序與版面由 `LibraryBuilderGolden` 的定值 fixture 釘住" + aFirst + aFirstM,
                 aOk ? CheckResult.Pass : CheckResult.Fail);
