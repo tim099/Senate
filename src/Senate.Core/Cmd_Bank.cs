@@ -985,10 +985,35 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             return aRej;
         }
 
+        // ── 核准：動錢之前先回讀兩格（PayoutApprovalGuard）──────────
+        // 🔴 單子剛剛才從待審清單撈出來，而另一個入口（後台頁）可能在這中間批過它 ⇒ 再讀一次磁碟。
+        string aStatusNow = PayoutApprovalGuard.ReadStatus(aPath);
+        if (!string.Equals(aStatusNow, SCP_TreasuryRequests.StatusPending, StringComparison.Ordinal))
+            return SCP_CmdResult.Fail(1, $"✗ `{aId}` 現在是 `{(aStatusNow.Length > 0 ? aStatusNow : "（讀不了）")}` 不是 `pending` ⇒ **一毛錢沒動**");
+        // 🔴 帳上已經有這張單的入帳腳 ⇒ 不再付（不論上一次走增發或央行撥款 —— 兩條路的冪等鍵形狀不同，擋不到彼此）。
+        //   常見成因：上一次錢動了、裁決欄沒寫成 ⇒ 單子還在 pending。這裡只把裁決欄補上。
+        if (aIsPayout)
+        {
+            SCP_BankEntry? aPaid = PayoutApprovalGuard.FindPaidCredit(iRoot, aId);
+            if (aPaid != null)
+            {
+                bool aFixed = SCP_TreasuryRequests.Decide(aPath, "approved", aActor,
+                    (aNote.Length > 0 ? aNote + "　" : "") + $"（帳上已有入帳腳 {aPaid.Id}，本次未動錢）", null, out string aFixErr);
+                var aAlready = aFixed
+                    ? SCP_CmdResult.Success($"↻ `{aId}` 帳上**已經付過**（{aPaid.Id}：{aPaid.Amount} → {aPaid.AccountId}）⇒ ⛔ 這次沒有動錢，只補寫裁決欄")
+                    : SCP_CmdResult.Fail(1, $"✗ `{aId}` 帳上已經付過（{aPaid.Id}）⇒ 沒有動錢；而裁決欄也沒寫成：{aFixErr}");
+                aAlready.AddValue("decided", aFixed ? "approved" : "");
+                aAlready.AddValue("moved_money", "0");
+                aAlready.AddValue("already_paid_entry", aPaid.Id);
+                return aAlready;
+            }
+        }
+
         // ── 核准：先動錢，成功了才寫裁決欄 ──────────────────────
-        // ⭐ 冪等鍵綁單號 ⇒ 同一張單重送不會撥第二次（與視窗那條路同一把鍵）。
+        // ⭐ 冪等鍵綁單號 ⇒ 同一張單**沿同一條路**重送不會撥第二次。
         // ⭐ 增發走 `credit`（憑空生出，⛔ 沒有出款方）；央行撥款走 `transfer`（公庫 → 目標戶）。
-        //   兩條路**共用同一把冪等鍵**（綁單號）⇒ 同一張單無論走哪一種都只會生效一次。
+        //   ⚠ 兩條路在帳本上的鍵形狀**不同**（`payout/<id>` vs `payout/<id>/out`＋`/in`）⇒ 跨路的重複
+        //     由上面那一格（看入帳腳）擋，⛔ 不是由冪等鍵擋。
         var aRaw = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["op"] = aMint ? "credit" : "transfer",

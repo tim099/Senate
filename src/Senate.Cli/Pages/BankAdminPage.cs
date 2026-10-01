@@ -1351,49 +1351,44 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             // ── 請款 ──────────────────────────────────────────
             g.Title($"📨 請款（待審 {m_Payouts?.Count ?? 0} 張）");
 
-            // ⭐ 一鍵批准全部（Tim 2026-09-22）。⚠ 三件事讓它不會變成一顆「按了就後悔」的鈕：
-            //   ① **資金來源要先選**，而且兩顆鈕分開 —— 央行撥款與增發對公庫的影響相反，
-            //      合成一顆「全部核准」會讓那一欄消失，而它正是最該被看見的那一欄。
-            //   ② **二段確認**，且第二段印出**總額與筆數**（不是只印「確定嗎」）。
-            //   ③ **逐張走既有的 ApprovePayout** ⇒ 冪等鍵、先動錢再寫單、失敗保持 pending
-            //      三個保證原封不動。⛔ 不為了「快」另寫一條批次撥款路徑。
+            // ⭐ 一鍵批准全部（Tim 2026-09-22；2026-10-01 改成一顆鈕）。
+            //   ① **一顆鈕，每張照它自己的資金來源走**（單子宣告的，沒宣告用預設）——
+            //      增發與央行撥款一起批（Tim 2026-10-01）。⇒ 不再有「這一按蓋過單子宣告」那一格。
+            //      ⚠ 而「錢從哪來」那一欄**不能因此消失**：說明與二段確認都拆成兩列各自的張數與總額。
+            //   ② **二段確認**，第二段印出筆數與總額。
+            //   ③ **整批是同一件背景工作**、逐張走 ApprovePayoutCore（回讀兩格 ⇒ 先動錢再寫單 ⇒ 失敗保持 pending）。
+            //      🩸 2026-10-01 之前是逐張各開一件 `Start` ⇒ `Start` 同時只收一件，**只有第一張真的跑了**，
+            //      其餘五張被「前一筆還沒完」吞掉，而畫面印「已送出 6 張」⇒ 再按一次就重複付款（cc／zeta 各兩次）。
             if (m_Payouts != null && m_Payouts.Count > 0)
             {
-                int aSum = 0;
-                foreach (SCP_PayoutRequest r in m_Payouts) aSum += r.Amount;
-                int aDeclaredMint = 0;
+                int aMintN = 0, aMintSum = 0, aCentralN = 0, aCentralSum = 0;
                 foreach (SCP_PayoutRequest r in m_Payouts)
-                    if (string.Equals(r.Funding, SCP_PayoutFunding.Mint, StringComparison.Ordinal)) aDeclaredMint++;
-
-                g.Note($"**一鍵批准全部**：{m_Payouts.Count} 張、合計 **{aSum}** {m_Payouts[0].Currency}。"
-                       + (aDeclaredMint > 0
-                          ? $"　⚠ 其中 **{aDeclaredMint}** 張單子自己宣告了增發 —— 底下兩顆鈕會**蓋過**單子的宣告。"
-                          : "　⚠ 這些單子都沒宣告資金來源 ⇒ 由你這一按決定。"));
-                using (g.Row())
                 {
-                    foreach (string aMode in new[] { SCP_PayoutFunding.Central, SCP_PayoutFunding.Mint })
+                    if (string.Equals(RowFunding(r), SCP_PayoutFunding.Mint, StringComparison.Ordinal))
+                    { aMintN++; aMintSum += r.Amount; }
+                    else { aCentralN++; aCentralSum += r.Amount; }
+                }
+                string aCur = m_Payouts[0].Currency;
+                string aSplit = $"增發 **{aMintN}** 張合計 **{aMintSum}**（⛔ 不碰公庫，總量變多）／"
+                                + $"央行撥款 **{aCentralN}** 張合計 **{aCentralSum}**（從 `{aCentral}` 出，公庫少 {aCentralSum}）";
+
+                g.Note($"**一鍵批准全部**：{m_Payouts.Count} 張、合計 **{aMintSum + aCentralSum}** {aCur}　——　" + aSplit
+                       + "。⚠ 每張照**它自己的**資金來源走（單子沒宣告的用預設）。");
+                bool aBusy = m_Job != null;
+                bool aBatchArmed = g.FieldValue(PendingId, "") == "payout-all";
+                if (g.Button(aBusy ? "⏳ 還在跑上一件" : aBatchArmed ? $"⚠ 再按一次＝全部核准 {m_Payouts.Count} 張" : "全部核准",
+                             "bank/do/apprall"))
+                {
+                    if (aBusy) m_Message = "⏳ 前一件（" + m_JobLabel + "）還沒完 ⇒ 這次沒有動作";
+                    else if (!aBatchArmed)
                     {
-                        string aLabel = aMode == SCP_PayoutFunding.Mint ? "增發" : "央行撥款";
-                        string aBatchKey = "payout-all:" + aMode;
-                        bool aBatchArmed = g.FieldValue(PendingId, "") == aBatchKey;
-                        if (g.Button(aBatchArmed ? $"⚠ 再按一次＝全部{aLabel} {aSum}" : $"全部核准（{aLabel}）",
-                                     "bank/do/apprall/" + aMode))
-                        {
-                            if (!aBatchArmed)
-                            {
-                                g.SetField(PendingId, aBatchKey);
-                                m_Message = aMode == SCP_PayoutFunding.Mint
-                                    ? $"⚠ 待確認：對 {m_Payouts.Count} 張單**增發**合計 **{aSum}** —— "
-                                      + "憑空生出，⛔ 不碰公庫，**總量會變多**。再按一次才會動錢。"
-                                    : $"⚠ 待確認：從央行 `{aCentral}` 撥出合計 **{aSum}** 給 {m_Payouts.Count} 個目標 —— "
-                                      + "**公庫會少 " + aSum + "**。再按一次才會動錢。";
-                            }
-                            else
-                            {
-                                g.SetField(PendingId, "");
-                                ApproveAllPayouts(aCentral, aMode);
-                            }
-                        }
+                        g.SetField(PendingId, "payout-all");
+                        m_Message = $"⚠ 待確認：全部核准 {m_Payouts.Count} 張 —— " + aSplit + "。再按一次才會動錢。";
+                    }
+                    else
+                    {
+                        g.SetField(PendingId, "");
+                        ApproveAllPayouts(aCentral);
                     }
                 }
             }
@@ -1406,7 +1401,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                     bool aArmed = g.FieldValue(PendingId, "") == aKey;
                     // 🔴 資金來源印在金額旁邊 —— 兩種錢對公庫的影響相反，而單子上原本長得一樣。
                     bool aDeclared = SCP_PayoutFunding.IsValid(r.Funding);
-                    string aRowFunding = aDeclared ? r.Funding : SCP_PayoutFunding.Default;
+                    string aRowFunding = RowFunding(r);
                     g.Label($"· `{r.RequestId}`　**{r.Amount}** {r.Currency} → **{r.TargetBank}**"
                             + $"　{SCP_PayoutFunding.Describe(aRowFunding)}"
                             + (aDeclared ? "" : "⚠ 單子沒宣告，用預設")
@@ -1642,62 +1637,102 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         foreach (string p in aProblems) m_Problems.Add(p);
     }
 
-    /// <summary>
-    /// 核准請款：**先動錢**，成功了才寫裁決欄。
-    /// <para>🔴 錢從哪來由 <paramref name="iFunding"/> 決定（Tim 2026-09-22）：
-    /// <c>central</c>＝央行 → 目標（走 <c>transfer</c>，公庫變少）／
-    /// <c>mint</c>＝**增發**（走 <c>credit</c>，⛔ 不碰任何帳戶，總量變多）。
-    /// 兩條路**共用同一把冪等鍵**（綁單號）⇒ 同一張單無論走哪一種都只會生效一次。</para>
-    /// </summary>
+    /// <summary>單子的資金來源：單子宣告的；沒宣告（或宣告不合法）用預設。單張與一鍵批准共用這一格。</summary>
+    static string RowFunding(SCP_PayoutRequest iReq)
+        => SCP_PayoutFunding.IsValid(iReq.Funding) ? iReq.Funding : SCP_PayoutFunding.Default;
+
+    /// <summary>核准一張請款（背景工作）。實際步驟在 <see cref="ApprovePayoutCore"/>。</summary>
     void ApprovePayout(SCP_PayoutRequest iReq, string iCentral, string iNote, string iFunding)
     {
-        SCP_PayoutRequest aR = iReq; string aC = iCentral, aN = iNote;
+        SCP_PayoutRequest aR = iReq; string aC = iCentral, aN = iNote, aF = iFunding;
         bool aMint = string.Equals(iFunding, SCP_PayoutFunding.Mint, StringComparison.Ordinal);
-        Start((aMint ? "增發 " : "撥款 ") + aR.Amount + " → " + aR.TargetBank, () =>
-        {
-            var aPayArgs = new Dictionary<string, string>
-            {
-                ["account"] = aMint ? aR.TargetBank : aC,
-                ["amount"] = aR.Amount.ToString(),
-                ["kind"] = "payout_request",
-                ["ref"] = aR.RequestId,
-                ["description"] = aR.Reason,
-                ["caller"] = "BankAdminPage",
-                // 同一張單重送不該撥兩次 —— 冪等鍵綁單號。
-                ["idem_key"] = "payout/" + aR.RequestId,
-            };
-            if (!aMint) aPayArgs["to_account"] = aR.TargetBank;
-            SCP_CmdResult aRes = Dispatch(aMint ? "credit" : "transfer", aPayArgs);
-            if (!aRes.Ok)
-                // ⛔ 錢沒動 ⇒ 單子**保持 pending**（它會再出現在待審清單裡，那正是我們要的）
-                return "❌ 撥款失敗 exit " + aRes.ExitCode + "：" + FirstLine(aRes)
-                       + "\n  ⇒ 單子**保持 pending**（沒有寫裁決欄）";
-            bool aOk = SCP_TreasuryRequests.Decide(aR.Path, "approved", "BankAdminPage", aN, null, out string aErr);
-            return (aOk ? "✅ 已撥款並結單 " : "⚠ **錢撥了**，而裁決欄沒寫成功：" + aErr + "　")
-                   + aR.RequestId + "　" + Describe(aRes, aR.TargetBank);
-        });
-        ReloadRequests();
+        Start((aMint ? "增發 " : "撥款 ") + aR.Amount + " → " + aR.TargetBank,
+              () => ApprovePayoutCore(aR, aC, aN, aF));
     }
 
     /// <summary>
-    /// 一鍵批准**目前全部**待審請款（Tim 2026-09-22）。
-    /// <para>⭐ 逐張走 <see cref="ApprovePayout"/> —— 冪等鍵、先動錢再寫單、失敗保持 pending
-    /// 三個保證原封不動。⛔ 不為了「快」另寫一條批次撥款路徑：
-    /// 那會變成第二個寫入端，而兩份撥款邏輯在其中一份改過之後開始分岔，**兩邊都不會報錯**。</para>
-    /// <para>⚠ 逐張送出 ⇒ 中途某張失敗**不影響前面已成功的**（它們已經落帳且結單）。
-    /// 那是刻意的：批次不該有「全成或全不成」的幻覺 —— 錢是一筆一筆動的。</para>
+    /// 核准請款的實際步驟（**同步**，在背景工作裡跑）：回讀兩格 ⇒ **先動錢** ⇒ 成功了才寫裁決欄。
+    /// <para>🔴 錢從哪來由 <paramref name="iFunding"/> 決定（Tim 2026-09-22）：
+    /// <c>central</c>＝央行 → 目標（走 <c>transfer</c>，公庫變少）／
+    /// <c>mint</c>＝**增發**（走 <c>credit</c>，⛔ 不碰任何帳戶，總量變多）。</para>
+    /// <para>⚠ 兩條路在帳本上的冪等鍵形狀**不同**（<c>payout/&lt;id&gt;</c> vs <c>payout/&lt;id&gt;/out</c>＋<c>/in</c>），
+    /// 擋不到彼此 ⇒ 跨路的重複由 <see cref="PayoutApprovalGuard"/>（看帳上有沒有這張單的入帳腳）擋。</para>
     /// </summary>
-    void ApproveAllPayouts(string iCentral, string iFunding)
+    string ApprovePayoutCore(SCP_PayoutRequest aR, string aC, string aN, string iFunding)
+    {
+        bool aMint = string.Equals(iFunding, SCP_PayoutFunding.Mint, StringComparison.Ordinal);
+
+        // ── 動錢之前回讀兩格 ──
+        // 🔴 畫面上的待審清單可能是舊的（別處剛批過、或上一次按鈕的工作才剛做完）⇒ 再讀一次磁碟。
+        string aStatusNow = PayoutApprovalGuard.ReadStatus(aR.Path);
+        if (!string.Equals(aStatusNow, SCP_TreasuryRequests.StatusPending, StringComparison.Ordinal))
+            return "・" + aR.RequestId + "　現在是 `" + (aStatusNow.Length > 0 ? aStatusNow : "（讀不了）")
+                   + "` 不是 pending ⇒ **一毛錢沒動**";
+        SCP_BankEntry? aPaid = PayoutApprovalGuard.FindPaidCredit(m_BankRoot.Value, aR.RequestId);
+        if (aPaid != null)
+        {
+            // 上一次錢動了、裁決欄沒寫成 ⇒ 單子還在 pending。⛔ 不再付，只把裁決欄補上。
+            bool aFixed = SCP_TreasuryRequests.Decide(aR.Path, "approved", "BankAdminPage",
+                (aN.Length > 0 ? aN + "　" : "") + $"（帳上已有入帳腳 {aPaid.Id}，本次未動錢）", null, out string aFixErr);
+            return "↻ " + aR.RequestId + "　帳上**已經付過**（" + aPaid.Id + "：" + aPaid.Amount + " → " + aPaid.AccountId
+                   + "）⇒ ⛔ 這次沒有動錢" + (aFixed ? "，只補寫裁決欄" : "；而裁決欄也沒寫成：" + aFixErr);
+        }
+
+        var aPayArgs = new Dictionary<string, string>
+        {
+            ["account"] = aMint ? aR.TargetBank : aC,
+            ["amount"] = aR.Amount.ToString(),
+            ["kind"] = "payout_request",
+            ["ref"] = aR.RequestId,
+            ["description"] = aR.Reason,
+            ["caller"] = "BankAdminPage",
+            // 同一張單**沿同一條路**重送不該撥兩次 —— 冪等鍵綁單號。
+            ["idem_key"] = "payout/" + aR.RequestId,
+        };
+        if (!aMint) aPayArgs["to_account"] = aR.TargetBank;
+        SCP_CmdResult aRes = Dispatch(aMint ? "credit" : "transfer", aPayArgs);
+        if (!aRes.Ok)
+            // ⛔ 錢沒動 ⇒ 單子**保持 pending**（它會再出現在待審清單裡，那正是我們要的）
+            return "❌ " + aR.RequestId + "　撥款失敗 exit " + aRes.ExitCode + "：" + FirstLine(aRes)
+                   + "\n  ⇒ 單子**保持 pending**（沒有寫裁決欄）";
+        bool aOk = SCP_TreasuryRequests.Decide(aR.Path, "approved", "BankAdminPage", aN, null, out string aErr);
+        return (aOk ? "✅ 已" + (aMint ? "增發" : "撥款") + "並結單 " : "⚠ **錢撥了**，而裁決欄沒寫成功：" + aErr + "　")
+               + aR.RequestId + "　" + Describe(aRes, aR.TargetBank);
+    }
+
+    /// <summary>
+    /// 一鍵批准**目前全部**待審請款（Tim 2026-09-22；2026-10-01 改成一顆鈕、整批一件工作）。
+    /// <para>⭐ 每張照**它自己的**資金來源（<see cref="RowFunding"/>）走 <see cref="ApprovePayoutCore"/> ——
+    /// 回讀兩格、先動錢再寫單、失敗保持 pending 三個保證原封不動。⛔ 不另寫一條批次撥款路徑。</para>
+    /// <para>🔴 整批是**同一件**背景工作、逐張依序跑。🩸 之前逐張各開一件 <c>Start</c>，
+    /// 而 <c>Start</c> 同時只收一件 ⇒ 只有第一張跑了，畫面卻說「已送出 N 張」。</para>
+    /// <para>⚠ 中途某張失敗**不影響前面已成功的**（它們已經落帳且結單）——錢是一筆一筆動的。
+    /// 回報逐張一行 ＋ 一行計數；做完清單由 <see cref="PumpJob"/> 從磁碟重讀。</para>
+    /// </summary>
+    void ApproveAllPayouts(string iCentral)
     {
         if (m_Payouts == null || m_Payouts.Count == 0) { m_Message = "・沒有待審請款單。"; return; }
-        // ⚠ 先複製一份清單：`ApprovePayout` 會 `ReloadRequests()` 把 `m_Payouts` 換掉，
-        //   邊走邊改的集合會漏掉一半（而漏掉的那半看起來就像「本來就沒那麼多張」）。
+        // ⚠ 先複製一份清單：工作跑完會 `ReloadRequests()` 把 `m_Payouts` 換掉。
         var aList = new List<SCP_PayoutRequest>(m_Payouts);
-        foreach (SCP_PayoutRequest r in aList)
-            ApprovePayout(r, iCentral, "一鍵批准全部（" + iFunding + "）", iFunding);
-        m_Message = $"・已送出 {aList.Count} 張的核准（{SCP_PayoutFunding.Describe(iFunding)}）"
-                    + "　⚠ 逐張各自結算 —— 有沒有整批成功要看上面每一行的回報，"
-                    + "⛔ 這一句只說「送出了」。";
+        string aC = iCentral;
+        Start("全部核准 " + aList.Count + " 張", () =>
+        {
+            var aLines = new List<string>(aList.Count + 1);
+            int aDone = 0, aSkipped = 0, aFailed = 0;
+            foreach (SCP_PayoutRequest r in aList)
+            {
+                string aF = RowFunding(r);
+                string aLine;
+                try { aLine = ApprovePayoutCore(r, aC, "一鍵批准全部（" + aF + "）", aF); }
+                catch (Exception e) { aLine = "⚠ " + r.RequestId + "　那一步炸了：" + e.GetType().Name + ": " + e.Message; }
+                if (aLine.StartsWith("✅", StringComparison.Ordinal)) aDone++;
+                else if (aLine.StartsWith("↻", StringComparison.Ordinal) || aLine.StartsWith("・", StringComparison.Ordinal)) aSkipped++;
+                else aFailed++;
+                aLines.Add(aLine);
+            }
+            aLines.Insert(0, $"・全部核准 {aList.Count} 張：✅ 動錢並結單 **{aDone}**／↻ 沒動錢 **{aSkipped}**／❌⚠ 要看 **{aFailed}**");
+            return string.Join("\n", aLines);
+        });
     }
 
     /// <summary>核准轉帳：A→B（總量守恆）。同樣**先動錢再寫單**。</summary>
@@ -1724,7 +1759,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             return (aOk ? "✅ 已轉帳並結單 " : "⚠ **錢轉了**，而裁決欄沒寫成功：" + aErr + "　")
                    + aR.RequestId + "　" + Describe(aRes, aR.ToBank);
         });
-        ReloadRequests();
+        // ⚠ 不在這裡 ReloadRequests()：背景工作還沒跑完，讀到的是舊清單 ⇒ 交給 MarkStale（工作做完時）。
     }
 
     static string FirstLine(SCP_CmdResult iRes) => iRes.Lines.Count > 0 ? iRes.Lines[0] : "（沒有訊息）";
@@ -1755,7 +1790,22 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         // 不會重畫的宿主（CLI 單次 render）：背景跑等於把答案丟掉 —— 這裡同步。
         try { m_Message = iJob(); }
         catch (Exception e) { m_Message = "⚠ 那一步炸了：" + e.GetType().Name + ": " + e.Message; }
+        MarkStale();
+    }
+
+    /// <summary>
+    /// 工作做完 ⇒ 餘額與**待審清單**都標成要重讀（下一次畫的時候從磁碟讀）。
+    /// <para>🩸 2026-10-01 之前只標餘額：待審清單是在 <c>Start</c> 剛送出時就重讀的 ——
+    /// 那一刻背景工作還沒跑完，讀回來的是**舊清單**，已經批過的單還掛在畫面上，看起來就像「還沒批」，
+    /// 而人會再按一次。（Tim 2026-10-01：「批准後應該要刷新清單」）</para>
+    /// <para>⚠ 設成 null 而不是當場 <c>ReloadRequests()</c>：<c>Reload</c> 會重設 <c>m_Problems</c>，
+    /// 當場讀的話讀不了的單那幾行會在下一格被洗掉。</para>
+    /// </summary>
+    void MarkStale()
+    {
         m_Loaded = false;
+        m_Payouts = null;
+        m_Transfers = null;
     }
 
     void PumpJob()
@@ -1765,6 +1815,6 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         m_Job = null;
         try { m_Message = aJob.Result; }
         catch (Exception e) { m_Message = "⚠ 那一步炸了：" + e.GetType().Name + ": " + e.Message; }
-        m_Loaded = false;   // 回讀磁碟才是判準
+        MarkStale();   // 回讀磁碟才是判準（含待審清單）
     }
 }

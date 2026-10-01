@@ -128,6 +128,7 @@ public static partial class SelfTest
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
+        One(nameof(PayoutApprovalGuardCleanRoom), "bank", PayoutApprovalGuardCleanRoom),
         One(nameof(RegisteredMailCleanRoom), "letters", RegisteredMailCleanRoom),
         // 課程筆記／好感度／persona 設定的寫入端（TASK-0354）：本體在 SelfTest.Migration0354.cs
         One(nameof(LessonLogCleanRoom), "letters", LessonLogCleanRoom),
@@ -6065,6 +6066,49 @@ public static partial class SelfTest
             return new CheckRow(aName,
                 $"開單={aPay && aXfer}／補薪預設 mint={aBackfillMint}／審批端讀得到={aSeen}"
                 + $"／🔴 缺理由擋={aNoReason}、自轉擋={aSelf}、零寫入={aZeroWrite}／撤單={aCancel}、撤後不在待審={aGone}、再撤擋={aTwice}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    /// <summary>
+    /// 核准請款動錢前的兩道回讀（PayoutApprovalGuard）。
+    /// 🩸 2026-10-01 LY：增發寫 `payout/&lt;id&gt;`、央行撥款寫 `payout/&lt;id&gt;/in` ⇒ 冪等鍵擋不到彼此，cc／zeta 各付兩次。
+    /// ⇒ 判準改成「帳上有沒有這張單的入帳腳」—— 兩種鍵形狀都要認得，回捲那筆不算。
+    /// </summary>
+    static CheckRow PayoutApprovalGuardCleanRoom()
+    {
+        const string aName = "核准請款前回讀：帳上已有入帳腳（增發或撥款都認）⇒ 不再付；單子不是 pending ⇒ 擋（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_payguard_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aBank = Path.Combine(aTmp, "Bank");
+            Directory.CreateDirectory(aBank);
+            SCP_BankAccounts.TryOpen(aBank, "probe", "", "selftest", out _, out _);
+            SCP_TreasuryRequests.CreatePayout(aTmp, "probe", 5, "淨室", "", "", "", "gura", "", SCP_PayoutFunding.Mint, out SCP_PayoutRequest pMint, out _);
+            SCP_TreasuryRequests.CreatePayout(aTmp, "probe", 7, "淨室", "", "", "", "gura", "", "", out SCP_PayoutRequest pXfer, out _);
+            SCP_TreasuryRequests.CreatePayout(aTmp, "probe", 9, "淨室", "", "", "", "gura", "", "", out SCP_PayoutRequest pNone, out _);
+
+            // 反向對照：還沒付過的單 ⇒ 找不到入帳腳、狀態是 pending（不擋）
+            bool aCleanBefore = PayoutApprovalGuard.FindPaidCredit(aBank, pMint.RequestId) == null
+                                && PayoutApprovalGuard.ReadStatus(pMint.Path) == SCP_TreasuryRequests.StatusPending;
+            // 兩種鍵形狀：增發（payout/<id>）與撥款的收款腳（payout/<id>/in）
+            SCP_BankLedger.Credit(aBank, "probe", 5, "payout_request", pMint.RequestId, "", "selftest", "", "payout/" + pMint.RequestId);
+            SCP_BankLedger.Credit(aBank, "probe", 7, "payout_request", pXfer.RequestId, "", "selftest", "", "payout/" + pXfer.RequestId + "/in");
+            // 回捲那一筆不是付款 ⇒ 不算付過
+            SCP_BankLedger.Credit(aBank, "probe", 9, "transfer_rollback", pNone.RequestId, "", "selftest", "", "payout/" + pNone.RequestId + "/rollback");
+            bool aMintSeen = PayoutApprovalGuard.FindPaidCredit(aBank, pMint.RequestId)?.Amount == 5;
+            bool aXferSeen = PayoutApprovalGuard.FindPaidCredit(aBank, pXfer.RequestId)?.Amount == 7;
+            bool aRollbackNot = PayoutApprovalGuard.FindPaidCredit(aBank, pNone.RequestId) == null;
+            // 狀態回讀：裁決過 ⇒ 不是 pending；檔不存在 ⇒ 空字串（不是放行）
+            SCP_TreasuryRequests.Decide(pMint.Path, "approved", "selftest", "", null, out _);
+            bool aDecided = PayoutApprovalGuard.ReadStatus(pMint.Path) == "approved";
+            bool aMissing = PayoutApprovalGuard.ReadStatus(Path.Combine(aTmp, "nope.json")) == "";
+            bool aOk = aCleanBefore && aMintSeen && aXferSeen && aRollbackNot && aDecided && aMissing;
+            return new CheckRow(aName,
+                $"反向對照(未付不擋)={aCleanBefore}／增發鍵認得={aMintSeen}／撥款收款腳認得={aXferSeen}"
+                + $"／回捲不算={aRollbackNot}／裁決後非 pending={aDecided}／讀不到＝空={aMissing}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
