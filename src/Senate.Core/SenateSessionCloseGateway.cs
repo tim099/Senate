@@ -33,6 +33,13 @@ public sealed class SenateSessionCloseGateway : SCP_IActivitySessionCloseGateway
     public string Kind { get; }
 
     /// <summary>
+    /// true ＝ **晚安收工**要關的是本人**進行中**的場（Editor 的 SessionClose 平常只收過期殘留）。
+    /// <para>TASK-0361：晚安原本整步轉派給 Editor（為了這一段結算），lock 因此在 Unity 那側被刪；
+    /// 現在只把「關場＋結算」交過去，解鎖／廣播留在 Senate。⚠ Editor 那側只對 `goodnight-*` 的 reason 放行。</para>
+    /// </summary>
+    public bool AllowRunning { get; init; }
+
+    /// <summary>
     /// 委派 Editor 的 <c>SessionClose</c> 關掉這一場。
     /// </summary>
     /// <remarks>
@@ -55,6 +62,7 @@ public sealed class SenateSessionCloseGateway : SCP_IActivitySessionCloseGateway
             ["confirm"] = "1",
             ["reason"] = string.IsNullOrWhiteSpace(iReason) ? "closed-by-senate" : iReason,
         };
+        if (AllowRunning) aArgs["allow_running"] = "1";
         // ⚠ lane 用**目標**的 persona，不是呼叫者的 —— 那不是筆誤，是刻意的：
         //   同一場 session 的兩次關場請求會因此排在同一條 lane 上串行（併發關場自然不可能）。
         //   代價是 Editor 的回傳檔會落在**目標的** letters 夾（那份報告講的正是他的場）。
