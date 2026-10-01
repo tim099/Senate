@@ -425,6 +425,13 @@ public sealed class Cmd_Task : SCP_Cmd
 
     /// <summary>`<專案根>/.gitmodules` 裡路徑以 `UCL_Core` 結尾的那個 submodule 底下的 work_memory.py。</summary>
     internal static string? WorkMemoryTool(string iProjectRoot, out string oWhy)
+        => UclCoreTool(iProjectRoot, "work_memory.py", out oWhy);
+
+    /// <summary>
+    /// `<專案根>/.gitmodules` 裡路徑以 `UCL_Core` 結尾的那個 submodule 底下的 `Tools~/AgentCommands/<iFileName>`。
+    /// <para>⚠ 掛載路徑只從 `.gitmodules` 讀（git 宣告的事實）—— 雕刻（TASK-0363）也走這一支，⛔ 不另寫第二份。</para>
+    /// </summary>
+    internal static string? UclCoreTool(string iProjectRoot, string iFileName, out string oWhy)
     {
         oWhy = "";
         if (iProjectRoot.Length == 0) { oWhy = "找不到這個資料根對應的專案根（詞典／工具要它）"; return null; }
@@ -442,8 +449,8 @@ public sealed class Cmd_Task : SCP_Cmd
                 aHits.Add(p);
         }
         if (aHits.Count != 1) { oWhy = $".gitmodules 裡以 UCL_Core 結尾的 submodule 有 {aHits.Count} 個（⛔ 不猜）"; return null; }
-        string aTool = Path.Combine(iProjectRoot, aHits[0], "Tools~", "AgentCommands", "work_memory.py").Replace('\\', '/');
-        if (!File.Exists(aTool)) { oWhy = "work_memory.py 不在 " + aTool; return null; }
+        string aTool = Path.Combine(iProjectRoot, aHits[0], "Tools~", "AgentCommands", iFileName).Replace('\\', '/');
+        if (!File.Exists(aTool)) { oWhy = iFileName + " 不在 " + aTool; return null; }
         return aTool;
     }
 
