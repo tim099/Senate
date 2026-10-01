@@ -18,7 +18,8 @@ using SCP.Core.Market;
 namespace Senate.Core;
 
 /// <summary>以 <see cref="HttpClient"/> 實作的抓取器。單例共用一個 client（避免 socket 耗盡）。</summary>
-public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster, ISCP_HttpBytesFetcher, ISCP_HttpMultipartPoster
+public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster, ISCP_HttpBytesFetcher, ISCP_HttpMultipartPoster,
+                                        ISCP_HttpFormRequester
 {
     // ⚠ HttpClient 要**共用**不要每次 new：每次 new 會讓 TIME_WAIT 的 socket 堆起來，
     //   而它的失效樣子是「跑久了之後突然連不出去」，看起來像網路壞了。
@@ -115,6 +116,50 @@ public sealed class SenateHttpFetcher : ISCP_HttpHeaderFetcher, ISCP_HttpPoster,
             aForm.Add(aPart, f.FieldName, f.FileName);
         }
         return Post(iUrl, aForm, iTimeoutSec, out oBody, out oStatus, out oRetryAfterSec, out oError);
+    }
+
+    /// <summary>
+    /// 帶標頭的表單 POST（TASK-0362：Plurk OAuth）。**拿到回應就回 true**（不論狀態碼，body 照填）；
+    /// 連線層失敗才回 false、oStatus=0。⛔ 標頭（含簽章）與 URL 不進錯誤訊息。
+    /// </summary>
+    public bool TryPostForm(string iUrl, IReadOnlyDictionary<string, string> iHeaders,
+                            IReadOnlyList<KeyValuePair<string, string>> iFields, IReadOnlyList<SCP_HttpFilePart>? iFiles,
+                            int iTimeoutSec, out string oBody, out int oStatus, out string? oError)
+    {
+        oBody = ""; oStatus = 0; oError = null;
+        if (string.IsNullOrWhiteSpace(iUrl) || !iUrl.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase))
+        { oError = "端點必須是 https"; return false; }
+        if (iTimeoutSec <= 0) iTimeoutSec = 30;
+        try
+        {
+            HttpContent aContent;
+            if (iFiles == null)
+                aContent = new FormUrlEncodedContent(iFields ?? new List<KeyValuePair<string, string>>());
+            else
+            {
+                var aForm = new MultipartFormDataContent("SenateForm" + System.Guid.NewGuid().ToString("N"));
+                if (iFields != null)
+                    foreach (KeyValuePair<string, string> kv in iFields) aForm.Add(new StringContent(kv.Value ?? ""), kv.Key);
+                foreach (SCP_HttpFilePart f in iFiles)
+                {
+                    var aPart = new ByteArrayContent(f.Data);
+                    aPart.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(f.ContentType);
+                    aForm.Add(aPart, f.FieldName, f.FileName);
+                }
+                aContent = aForm;
+            }
+            using var aReq = new HttpRequestMessage(HttpMethod.Post, iUrl) { Content = aContent };
+            if (iHeaders != null)
+                foreach (KeyValuePair<string, string> h in iHeaders) aReq.Headers.TryAddWithoutValidation(h.Key, h.Value);
+            using var aCts = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(iTimeoutSec));
+            using HttpResponseMessage aRes = s_Client.Send(aReq, aCts.Token);
+            oStatus = (int)aRes.StatusCode;
+            using var aReader = new System.IO.StreamReader(aRes.Content.ReadAsStream(aCts.Token), System.Text.Encoding.UTF8);
+            oBody = aReader.ReadToEnd();
+            return true;
+        }
+        catch (System.OperationCanceledException) { oError = $"逾時（{iTimeoutSec}s）"; return false; }
+        catch (System.Exception e) { oError = e.GetType().Name + ": " + e.Message; return false; }
     }
 
     /// <summary>
