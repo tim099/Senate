@@ -186,6 +186,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             {
                 aSb.AppendLine($"- {kv.Key}: {kv.Value}");
                 ioResult.AddValue(kv.Key, kv.Value);
+                if (kv.Key == "pay_warning") ioResult.Lines.Add("⚠ 發薪（訊息已發，這一則可能沒領到）：" + kv.Value);
             }
 
         string aStatus = iArgs.Get("status").Trim();

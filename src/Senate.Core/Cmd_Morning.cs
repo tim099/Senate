@@ -290,7 +290,10 @@ public sealed class Cmd_MorningIntro : MorningLocalCmd
         aSb.AppendLine($"- brief 前置: `{aBriefPath}`（{aBriefLines} 行，mtime 晚於 locked_at）");
         foreach (var kv in aWrite.Values)
             if (kv.Key.StartsWith("pay_", StringComparison.Ordinal) || kv.Key.StartsWith("mention_", StringComparison.Ordinal))
+            {
                 aSb.AppendLine($"- {kv.Key}: {kv.Value}");
+                if (kv.Key == "pay_warning") ioResult.Lines.Add("⚠ 發薪（自介已發，這一則可能沒領到）：" + kv.Value);
+            }
         aSb.AppendLine("## next");
         aSb.AppendLine($"1. **required** — 酒館 catchup（知道在線同事＋追上訊息；照 ucl-ding 流程但**不強制回**）：");
         aSb.AppendLine($"   senate cmd morning-catchup --arg persona={aPersona}");

@@ -247,7 +247,13 @@ public class Cmd_TavernWrite : ServerDelegateCmd
             ioResult.AddValue("pay_failed", "plan");
             return;
         }
-        foreach (string aWarn in aPlan.Warnings) ioResult.Lines.Add("⚠ 發薪：" + aWarn);
+        // warning 同時進 Values：發文端成功時只轉 `pay_*`／`mention_*` 值、不轉 Lines
+        // ⇒ 只印 Lines 等於只給寫入端自己看（TASK-0359：09-30 判準檔讀不了，246 則零則有聲音）
+        foreach (string aWarn in aPlan.Warnings)
+        {
+            ioResult.Lines.Add("⚠ 發薪：" + aWarn);
+            ioResult.AddValue("pay_warning", aWarn);
+        }
         ioResult.AddValue("pay_items", aPlan.Items.Count.ToString());
         if (aPlan.Items.Count == 0) return;
 

@@ -151,6 +151,7 @@ public static partial class SelfTest
         One(nameof(BankLedgerConcurrentDebit), "bank", BankLedgerConcurrentDebit),
         One(nameof(JsonExtensionDataRoundTrip), "bank", JsonExtensionDataRoundTrip),
         One(nameof(VoucherDeadBatchRetention), "bank", VoucherDeadBatchRetention),
+        One(nameof(ReconcileLineUnmeasurableNotClean), "bank", ReconcileLineUnmeasurableNotClean),
 
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
         Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
@@ -1096,6 +1097,30 @@ public static partial class SelfTest
     //   ⇒ 活體是另外一格、由人挑時機跑；這一格是**每天都會跑到的那條路上的錨**。
     //   ⚠ 它**不涵蓋** ServerDelegateCmd 那一段的接線（那要活體）—— 兩者不可同形，所以這裡寫明。
     // 數值影響：純寫暫存根 + 讀回，零 Cmd 派遣、不碰任何真的資料根。
+    // 區塊職責：對帳摘要行（brief §6.1／bank-reconcile status 共用）不得把「量不到」印成「差集 0 ✓」。
+    // 🩸 TASK-0359：2026-10-01T00:25:21Z 那筆 run 頂層 missing=0，而 work_post unmeasurable=246
+    //   （LY 缺判準檔，09-30 整天沒發薪）⇒ 舊碼印 ✓。fixture 就是那筆 run 的 coverage 欄（逐字截取）。
+    // 數值影響：純字串，零 IO。
+    static CheckRow ReconcileLineUnmeasurableNotClean()
+    {
+        static string Run(string iMissing, string iWorkPostUnmeasurable)
+            => SCP.Core.Cmd.SCP_Cmd_BankReconcile.LastRunLine(SCP.Core.Json.SCP_JsonData.Parse(
+                "{\"at_utc\":\"2026-10-01T00:25:21.2295699Z\",\"trigger\":\"daily\",\"from\":\"2026-09-25\",\"to\":\"2026-10-01\","
+                + "\"missing\":" + iMissing + ",\"problems\":0,\"coverage\":{"
+                + "\"work_post\":{\"coverage\":\"covered\",\"expected\":0,\"matched\":0,\"settled\":0,\"missing\":0,\"unmeasurable\":" + iWorkPostUnmeasurable + "},"
+                + "\"commit\":{\"coverage\":\"covered\",\"expected\":65,\"matched\":65,\"settled\":0,\"missing\":0,\"unmeasurable\":0}}}"));
+
+        string aBlood = Run("0", "246");    // 那一筆：舊碼印 ✓
+        string aClean = Run("0", "0");      // 反向對照：真乾淨仍要印 ✓（否則 ⚠ 只是天天亮的背景音）
+        string aGap = Run("3", "0");        // 既有行為：差集 > 0 照舊 ⚠
+        bool aOk = aBlood.StartsWith("⚠") && aBlood.Contains("work_post 量不到 246")
+                   && aClean.StartsWith("✓") && !aClean.Contains("量不到")
+                   && aGap.StartsWith("⚠");
+        return new CheckRow("對帳摘要行：量不到 ≠ 差集 0",
+            $"unmeasurable=246 ⇒ {aBlood[..1]}（含類別={aBlood.Contains("work_post 量不到 246")}）／全零 ⇒ {aClean[..1]}／差集 3 ⇒ {aGap[..1]}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
     static CheckRow DelegateCarriesCmdExitCode()
     {
         string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_exit_" + Guid.NewGuid().ToString("N")[..8]);
