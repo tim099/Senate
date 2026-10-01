@@ -71,12 +71,13 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     // ⚠ 2026-09-18 **同一天改了兩次**，而中間那一版的定語當天就過期了：
     //   ① 早上：token 切到 Server ⇒ 寫成「token 走 Server／**券**與資格走 Editor」
     //   ② 下午：券也切到 Server（`voucher`）⇒ 上面那句的「券」當場變成假的
-    //   ⇒ 現在只剩**在場資格**（自由時間／session）還在 Editor。
+    //   ⇒ 那時只剩**在場資格**（自由時間／session）還在 Editor。
+    //   ③ 2026-10-01（TASK-0360）：自由時間搬進 Senate ⇒ 在場資格改讀 session 檔（就地），這裡跟著改第三次。
     // 🩸 記著這個形狀：**定語是跟著實作走的，而它不會自己跟** ——
     //   一句半對的定語比沒有定語貴，因為讀它的人會去錯的地方查為什麼沒扣到。
     public string HostQualifier
         => $"⤷ token 與券由 Senate Server 執行（`bank` / `voucher`）／"
-           + $"在場資格由 Unity Editor 執行 @ {m_ProjectLabel}（{m_DataRoot}）";
+           + $"在場資格就地讀 session 檔 @ {m_ProjectLabel}（{m_DataRoot}）";
 
     /// <summary>資料根 → 專案標籤（上一層目錄名）。解不出來就說「未宣告」，⛔ 不猜一個看起來合理的。</summary>
     static string DeriveProjectLabel(string iDataRoot)
@@ -96,25 +97,39 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
 
     // ───────────────────────────── 查詢（逾時 ⇒ 不知道）─────────────────────────────
 
+    // TASK-0360：自由時間搬進 Senate 之後，在場資格**就地讀 session 檔**（判準 `IsRunningAt` —— 與 `free-time` 同一支），
+    //   ⛔ 不再派 Unity 的 `SessionStatus`（那條路要 Editor 開著，關著時畫布的 freetime 付款就判不出來）。
     public SCP_CanvasTriState QueryInFreeTime(string iPersona, out string oDetail)
     {
-        var aArgs = new Dictionary<string, string> { ["scope"] = "persona", ["persona"] = iPersona };
-        if (!TryRun("SessionStatus", iPersona, aArgs, m_QueryTimeoutSec,
-                    out List<KeyValuePair<string, string>> aValues, out string aWhy))
+        try
         {
-            // 🩸 這一格是本檔最重要的一行：問不到就回 Unknown。
+            var aRoot = new SCP.Core.Paths.SCP_DataRoot(m_DataRoot);
+            string? aPath = SCP.Core.Session.SCP_ActivitySessionStore.PathOf(aRoot, iPersona);
+            if (aPath == null || !System.IO.File.Exists(aPath))
+            {
+                oDetail = "來源：session 檔不存在（`" + (aPath ?? "?") + "`）⇒ 不在";
+                return SCP_CanvasTriState.No;
+            }
+            // ⚠ `Load` 把**壞檔**與**換檔那一瞬間**都回 null（store 檔頭寫明）⇒ 直接拿它判會把「讀不出來」說成「不在」。
+            //   所以先自己讀一次、解析一次：這兩步失敗 ＝ 不知道；過得了才交給 Load 判 kind 與到期。
+            if (!SCP.Core.Io.SCP_AtomicFileRead.TryReadAllText(aPath, out string aText, out _))
+            {
+                oDetail = "session 檔讀不出來（`" + aPath + "`，可能正在換檔）⇒ 這是「不知道」不是「不在」";
+                return SCP_CanvasTriState.Unknown;
+            }
+            SCP.Core.Json.SCP_JsonParser.Parse(aText);   // 壞檔 ⇒ 丟例外 ⇒ 下面的 catch 回 Unknown
+            var aSession = SCP.Core.Session.SCP_ActivitySessionStore.Load(aRoot, iPersona, SCP.Core.Session.SCP_ActivitySessionKind.FreeTime);
+            bool aIn = aSession != null && aSession.IsRunningAt(DateTime.Now, out _);
+            oDetail = "來源：session 檔 `" + aPath + "`（kind=FreeTime，active 且未過 end_ts）⇒ " + (aIn ? "在" : "不在");
+            return aIn ? SCP_CanvasTriState.Yes : SCP_CanvasTriState.No;
+        }
+        catch (Exception e)
+        {
+            // 🩸 這一格是本檔最重要的一行：讀不到就回 Unknown。
             //    回 No 的話呼叫端會去開一場他其實已經在的自由時間，而沒有任何一層會喊。
-            oDetail = "問不到（" + aWhy + "）⇒ 這是「不知道」不是「不在」";
+            oDetail = "session 檔讀不到（" + e.GetType().Name + ": " + e.Message + "）⇒ 這是「不知道」不是「不在」";
             return SCP_CanvasTriState.Unknown;
         }
-        string aRaw = Value(aValues, "in_free_time");
-        if (aRaw.Length == 0)
-        {
-            oDetail = "Cmd 成功但沒有回 in_free_time 這一欄 ⇒ 仍然是「不知道」";
-            return SCP_CanvasTriState.Unknown;
-        }
-        oDetail = "來源：Cmd SessionStatus 的 values 欄 in_free_time=" + aRaw;
-        return aRaw == "1" ? SCP_CanvasTriState.Yes : SCP_CanvasTriState.No;
     }
 
     // ===========================================================

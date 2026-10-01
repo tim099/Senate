@@ -135,6 +135,10 @@ public static partial class SelfTest
         One(nameof(PersonaProfileWriteCleanRoom), "letters", PersonaProfileWriteCleanRoom),
         Many(nameof(RealRelationshipRecomputeMatchesEditor), "letters",
              () => RealRelationshipRecomputeMatchesEditor(iProjects)),
+        // 自由時間搬到 Senate（TASK-0360）：本體在 SelfTest.FreeTime0360.cs
+        One(nameof(FreeTimeSettingsCleanRoom), "freetime", FreeTimeSettingsCleanRoom),
+        One(nameof(FreeTimeActivityMdCleanRoom), "freetime", FreeTimeActivityMdCleanRoom),
+        One(nameof(FreeTimePageReadsDisk), "freetime", FreeTimePageReadsDisk),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),

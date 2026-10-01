@@ -148,6 +148,9 @@ public sealed class SenateModel : ISCP_GuiAppContext
     //   而同一台的 CLI 解得出真正的路徑（兩邊都不報錯）。
     public SCP_PathResolution LettersRoot => ResolvePath(SCP_PathId.LettersRoot);
 
+    // TASK-0360：自由時間後台頁找活動 md 用 —— 與 CLI `FillRootArg(project_root)` 同一個 SCP_PathId。
+    public SCP_PathResolution ProjectRoot => ResolvePath(SCP_PathId.ProjectRoot);
+
     /// <summary>
     /// 新銀行的根（TASK-0223）。**2026-09-17 起是推導值**：<c>&lt;資料根&gt;/Bank</c>（Tim 拍板「不額外設定」）。
     /// <para>⭐ 這一格從此跟其他推導路徑**同一條路**（`ResolvePath`）——
