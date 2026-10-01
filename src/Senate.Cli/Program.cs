@@ -1513,8 +1513,8 @@ public static class Program
     static readonly Dictionary<string, string> ForeignFlagHints = new(StringComparer.OrdinalIgnoreCase)
     {
         ["--arg-stdin"] = "那是 python `run_cmd.py` 的旗標。這顆 exe 走 `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）",
-        ["--wait-reply"] = "那是 python `run_cmd.py` 的**阻塞等回覆**。這顆 exe 沒有 client 端等待 ⇒ 要等回覆走 Cmd 層：`--arg op=wait` ＋ `--arg op=wait_check`",
-        ["--wait-reply-from"] = "同 `--wait-reply`：走 Cmd 層 `--arg op=wait --arg expect_from=<persona>`",
+        ["--wait-reply"] = "那是 python `run_cmd.py` 的**阻塞等回覆**。這顆 exe 沒有 client 端等待 ⇒ 要等回覆走 `senate cmd tavern-wait --arg persona=<你>`（Unity 的 op=wait 已退場，TASK-0364）",
+        ["--wait-reply-from"] = "同 `--wait-reply`：走 `senate cmd tavern-wait --arg persona=<你>`（Unity 的 op=wait 已退場，TASK-0364）",
     };
 
     // 全域旗標：**已宣告**但只在某支底下生效的那些。它們照舊走「出聲說沒生效」那條路

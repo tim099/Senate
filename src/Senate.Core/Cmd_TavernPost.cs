@@ -27,9 +27,17 @@ using SCP.Core.Tavern;
 
 namespace Senate.Core;
 
-public sealed class Cmd_TavernPost : MorningLocalCmd
+public class Cmd_TavernPost : MorningLocalCmd
 {
     public override string Name => "tavern-post";
+
+    /// <summary>
+    /// true ＝ **系統發言**（`tavern-post-system`，TASK-0366）：身分由 `sender` 點名、沒有 persona ⇒ 不計酬、不做 alter 延遲、不更新 now_status、不落回傳檔。
+    /// <para>⚠ 刻意是另一支 Cmd 而不是「persona 給空就匿名」：忘了帶 persona 與刻意匿名在輸入上同形，併成一支會讓忘記的人安靜少領。</para>
+    /// </summary>
+    protected virtual bool IsSystem => false;
+
+    protected override bool AcceptsTargetDataRoot => true;
 
     public override string Summary => "酒館發文（組訊息在 Senate，寫入交給酒館 Server）—— **不需要 Unity Editor**";
 
@@ -52,7 +60,15 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
     {
         get
         {
-            var aSpecs = new List<SCP_CmdArgSpec>(MorningSpecs());
+            var aSpecs = new List<SCP_CmdArgSpec>();
+            if (IsSystem)
+            {
+                aSpecs.Add(new SCP_CmdArgSpec("sender", "系統發言的身分（例 `tavern-keeper`、後台頁選的身分）—— **必填**，⛔ 不猜", iRequired: true));
+                aSpecs.Add(new SCP_CmdArgSpec("sender_name", "顯示名（不給 ⇒ 新銀行帳戶的顯示名 ⇒ 都沒有就顯示 id）"));
+                aSpecs.Add(new SCP_CmdArgSpec("project", "哪個專案（senate.local.json 的 projects[].name）。只有一個啟用專案時可省略"));
+            }
+            else aSpecs.AddRange(MorningSpecs());
+            aSpecs.Add(TargetDataRootSpec());
             aSpecs.Add(new SCP_CmdArgSpec("body", "發言內文。長內文走 --arg-file", iRequired: true));
             aSpecs.Add(new SCP_CmdArgSpec("room", "房間 id", iDefault: SCP_TavernRegion.DefaultRoom));
             aSpecs.Add(new SCP_CmdArgSpec("reply_to", "回覆哪一則（seq）"));
@@ -60,7 +76,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
                 "訊息 meta：JSON 物件，或舊格式 `k:v;k:v`（與 Editor op=post 同一套解析）"));
             aSpecs.Add(new SCP_CmdArgSpec("tag", "meta.tag 的捷徑（與 meta 裡的 tag 同時給時以本參數為準）"));
             aSpecs.Add(new SCP_CmdArgSpec("refs", "附檔路徑（repo 相對或絕對，多檔用 | 分隔）—— 同事 Read 該路徑看圖"));
-            aSpecs.Add(new SCP_CmdArgSpec("status", "順手更新自己的 now_status（一句話；在線清單看得到）"));
+            if (!IsSystem) aSpecs.Add(new SCP_CmdArgSpec("status", "順手更新自己的 now_status（一句話；在線清單看得到）"));
             aSpecs.Add(new SCP_CmdArgSpec("timeout", "等酒館 Server 回執的秒數（預設 30）"));
             aSpecs.Add(new SCP_CmdArgSpec("dry_run",
                 "1 ＝ 只組訊息、印出要交給寫入端的 JSON，**不送出**（跟 Editor 版並排比欄位用）",
@@ -71,20 +87,22 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
 
     protected override string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult)
     {
-        string aPersona = iArgs.Get("persona").Trim();
+        string aPersona = IsSystem ? "" : iArgs.Get("persona").Trim();
+        string aSender = IsSystem ? iArgs.Get("sender").Trim() : "";
         string aBody = iArgs.Get("body");
         string aRoom = iArgs.Get("room").Trim();
         if (aRoom.Length == 0) aRoom = SCP_TavernRegion.DefaultRoom;
-        string aPath = SCP_LettersPaths.CmdPayload(iRoots.Letters, aPersona, "tavern_post");
+        // 系統發言沒有 persona ⇒ 沒有信件夾可落回傳檔（⛔ 不造一個 `_system` 夾）——結果以 CLI 印的與 values 為準。
+        string aPath = IsSystem ? "" : SCP_LettersPaths.CmdPayload(iRoots.Letters, aPersona, "tavern_post");
         var aSb = new StringBuilder();
-        aSb.AppendLine($"# tavern-post persona={aPersona} room={aRoom}  ts=`{SCP_Morning.NowLocal()}`（本地時間）");
+        aSb.AppendLine($"# {Name} {(IsSystem ? "sender=" + aSender : "persona=" + aPersona)} room={aRoom}  ts=`{SCP_Morning.NowLocal()}`（本地時間）");
         aSb.AppendLine();
 
         if (aBody.Trim().Length == 0) return Block(aPath, aSb, ioResult, 2, "body 是空的");
 
         // ⚠ 不檢查在線（Tim 2026-09-27）：lock 是擋「同一個 persona 重複登入」的，不是發言許可。
         //   lock 只拿來給 now_status 取 session 鍵（session_key＋locked_at）；⛔ 也不驗 session token。
-        SCP_PersonaStatus? aLock = SCP_PersonaLetters.ReadPersonaLock(iRoots.LettersRoot, aPersona);
+        SCP_PersonaStatus? aLock = IsSystem ? null : SCP_PersonaLetters.ReadPersonaLock(iRoots.LettersRoot, aPersona);
         if (aLock != null && aLock.Online != SCP_PersonaOnline.Online) aLock = null;   // 壞 lock 當沒有，⛔ 不拿它的欄位
 
         Dictionary<string, string> aMeta = ParseMeta(iArgs.Get("meta"));
@@ -105,8 +123,11 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             aReplyTo = aR;
         }
 
-        SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
-            iRoots.GlossaryRoot, iRoots.Region, aRoom, aPersona, aBody, aMeta);
+        SCP_TavernPostDraft aDraft = IsSystem
+            ? SCP_TavernPostCompose.BuildSystem(iRoots.DataRoot, iRoots.BankRoot, iRoots.ProjectRoot, iRoots.GlossaryRoot,
+                                                aRoom, aSender, iArgs.Get("sender_name"), aBody, aMeta)
+            : SCP_TavernPostCompose.Build(iRoots.DataRoot, iRoots.LettersRoot, iRoots.ProjectRoot,
+                                          iRoots.GlossaryRoot, iRoots.Region, aRoom, aPersona, aBody, aMeta);
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
         aDraft.Message.ReplyTo = aReplyTo;
@@ -117,7 +138,8 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
 
         // ④ alter 配對延遲（TASK-0312，判準 SCP_TavernAlterPacing —— 與 Editor 同一支）。讀不到上一則 ⇒ 不延遲（Editor 版同一側）。
         TimeSpan? aWait = null;
-        try
+        // 系統發言沒有 alter 搭檔（配對表只收 persona 的 agent）⇒ 不做延遲；而延後匣的檔要掛 persona，系統發言掛不上。
+        if (!IsSystem) try
         {
             List<SCP_TavernMessage> aLast = SCP_TavernRead.Tail(iRoots.DataRoot, aRoom, 1);
             if (aLast.Count > 0)
@@ -141,7 +163,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             ioResult.Lines.Add("· dry_run：訊息已組好、**沒有送出**（ts／seq／uuid 由寫入端配，這裡是空的）");
             ioResult.Lines.Add(aJson);
             ioResult.AddValue("dry_run", "1");
-            return aPath;
+            return NullIfEmpty(aPath);
         }
 
         if (aWait.HasValue) return Defer(iRoots, aRoom, aPersona, aJson, aWait.Value, aPath, aSb, ioResult);
@@ -169,7 +191,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             ioResult.ExitCode = aUnknown ? 7 : 6;
             ioResult.Lines.Add(aUnknown ? "✗ 發文結果不明（exit 7）—— 先回讀，⛔ 別補發" : "✗ 發文確定沒發（exit 6）—— 可以重跑");
             if (aFailure.Length > 0) ioResult.AddValue("delegate_failure", aFailure);
-            return aPath;
+            return NullIfEmpty(aPath);
         }
 
         // ⚠ 到這裡訊息**已經發了** —— 之後任何一步失敗都只能是警告，⛔ 不能讓 exit code 說「失敗」
@@ -189,7 +211,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
                 if (kv.Key == "pay_warning") ioResult.Lines.Add("⚠ 發薪（訊息已發，這一則可能沒領到）：" + kv.Value);
             }
 
-        string aStatus = iArgs.Get("status").Trim();
+        string aStatus = IsSystem ? "" : iArgs.Get("status").Trim();
         if (aStatus.Length > 0)
         {
             // now_status 綁在這一場登入上（讀取端比對 session_key＋locked_at）⇒ 沒有 lock 就沒有「這一場」可掛（Editor 版同樣 skip）。
@@ -199,7 +221,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
             ioResult.Lines.Add(aStatusErr == null ? "✓ " + aLine : aLine);
         }
         TryWritePayload(aPath, aSb, ioResult);
-        return aPath;
+        return NullIfEmpty(aPath);
     }
 
     // ── ④ alter 延後發文（TASK-0312）──────────────────────────────────
@@ -242,7 +264,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         if (aServerNote.Length > 0) ioSb.AppendLine("- " + aServerNote);
         ioSb.AppendLine("- 到點之後要確認：`senate cmd tavern-query --arg kind=tail`（⛔ 別在那之前補發 —— 那會發兩則）");
         TryWritePayload(iPath, ioSb, ioResult);
-        return iPath;
+        return NullIfEmpty(iPath);
     }
 
     // ── 解析（與 Editor `Cmd_Tavern.ParseMeta`／`ParseRefs` 同一套規則）────────
@@ -322,6 +344,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
 
     static void TryWritePayload(string iPath, StringBuilder iSb, SCP_CmdResult ioResult)
     {
+        if (iPath.Length == 0) return;   // 系統發言：沒有信件夾可落（結果在 CLI 輸出與 values）
         try { SCP_CmdPayload.Write(iPath, iSb.ToString()); }
         catch (Exception e) { ioResult.Lines.Add($"⚠ 回傳檔沒寫出來（{e.GetType().Name}: {e.Message}）—— 上面的結果以 CLI 印的為準"); }
     }
@@ -333,7 +356,7 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         TryWritePayload(iPath, ioSb, ioResult);
         ioResult.ExitCode = iExit;
         foreach (string l in iReason.Split('\n')) ioResult.Lines.Add((ioResult.Lines.Count > 0 && l.StartsWith("  ") ? "" : "⛔ ") + l);
-        return iPath;
+        return NullIfEmpty(iPath);
     }
 
     static string Value(SCP_CmdResult iR, string iKey)
@@ -341,4 +364,31 @@ public sealed class Cmd_TavernPost : MorningLocalCmd
         foreach (var kv in iR.Values) if (kv.Key == iKey) return kv.Value;
         return "";
     }
+
+    /// <summary>系統發言沒有回傳檔 ⇒ 空字串要回 null（宿主才不會印一行空的「📄 回傳檔」）。</summary>
+    static string? NullIfEmpty(string iPath) => iPath.Length > 0 ? iPath : null;
+}
+
+// ===========================================================
+// 區塊職責：`senate cmd tavern-post-system` —— **沒有 persona** 的酒館發言（TASK-0366）。
+// 物理意義：Unity `Cmd_Tavern op=post` 匿名那條路的搬家終點：酒保廣播（書的捐贈／打賞）、Unity 酒館頁打字、沒帶 persona 的棋局廣播。
+//          與 `tavern-post` 同一份流程（meta schema、refs、reply_to、寫入三態），只差身分：`sender` 點名、不計酬。
+// ⛔ agent 自己說話不走這裡 —— 那是 `tavern-post`（帶 persona 才領得到薪水）。
+// ===========================================================
+public sealed class Cmd_TavernPostSystem : Cmd_TavernPost
+{
+    public override string Name => "tavern-post-system";
+
+    public override string Summary => "酒館**系統**發言（沒有 persona：酒保廣播、後台頁打字）—— 不計酬；agent 自己說話走 tavern-post";
+
+    public override string Details =>
+        "身分由 `sender` 點名（⛔ 不猜）；顯示名：`sender_name` → 新銀行帳戶顯示名 → id。沒有 persona ⇒ 寫入端不計酬。\n"
+        + "與 tavern-post 共用：meta schema（exit 2 確定沒發）、refs、reply_to、CLI 指令判定、寫入三態（0 已發／6 確定沒發／7 不知道）。\n"
+        + "不做的：alter 延遲（系統發言沒有搭檔）、now_status、回傳檔（沒有信件夾）。\n"
+        + "Unity Editor 呼叫時帶 `target_data_root=<它自己的資料根>` ⇒ 落在同一個專案（比不到就擋）。";
+
+    public override string Example =>
+        SCP_CmdRegistry.Invoke("tavern-post-system --arg sender=tavern-keeper --arg-file body=D:/tmp/msg.md");
+
+    protected override bool IsSystem => true;
 }

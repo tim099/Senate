@@ -117,6 +117,42 @@ public static class UnityTargetResolver
         }, "", "");
     }
 
+    /// <summary>
+    /// 以 AgentCommands **資料根**選專案（TASK-0366：Unity Editor 叫 Senate 發文時，給的是它自己的根，不是專案名）。
+    /// <para>比對啟用中專案解析出來的資料根（完整路徑、不分大小寫）。0 個 ⇒ 擋；同時給了專案名而不一致 ⇒ 擋。
+    /// ⛔ 比不到時**不退回預設專案** —— 那正是要防的事：Bar 的 Editor 發的文安靜地落進 LY 的酒館。</para>
+    /// </summary>
+    public static UnityTargetResolution ResolveByDataRoot(SenateConfig? iConfig, string iConfigPath, string iDataRoot, string? iProjectName)
+    {
+        if (iConfig == null)
+            return Fail($"還沒有設定檔（{iConfigPath}）", "先跑 senate init，把目標 Unity 專案寫進 projects[]");
+        string Norm(string p) => System.IO.Path.GetFullPath(p).Replace('\\', '/').TrimEnd('/');
+        string aWant;
+        try { aWant = Norm(iDataRoot); }
+        catch (System.Exception e) { return Fail($"target_data_root 不是合法路徑：{iDataRoot}（{e.Message}）", "給 AgentCommands 資料根的絕對路徑"); }
+
+        var aHits = new List<SenateProject>();
+        foreach (SenateProject p in iConfig.Projects.Where(p => p.Enabled && !string.IsNullOrWhiteSpace(p.Root)))
+        {
+            string? aDr = ProjectProbe.ResolveAgentCommandsRoot(p.Root, p.AgentCommandsRoot);
+            if (aDr != null && string.Equals(Norm(aDr), aWant, System.StringComparison.OrdinalIgnoreCase)) aHits.Add(p);
+        }
+        if (aHits.Count != 1)
+            return Fail(aHits.Count == 0 ? $"沒有任何啟用中的專案的資料根是 {aWant}" : $"有 {aHits.Count} 個專案的資料根都是 {aWant}，不猜",
+                        $"檢查 {iConfigPath} 的 projects[]（root / agentCommandsRoot / enabled）");
+        string aName = (iProjectName ?? "").Trim();
+        if (aName.Length > 0 && !string.Equals(aName, aHits[0].Name, System.StringComparison.OrdinalIgnoreCase))
+            return Fail($"--project '{aName}' 與 target_data_root（屬於 '{aHits[0].Name}'）指的不是同一個專案", "兩個只給一個，或讓它們一致");
+        UnityTargetResolution aRes = Resolve(iConfig, iConfigPath, aHits[0].Name);
+        if (!aRes.Ok) return aRes;
+        UnityTarget t = aRes.Target!;
+        return new UnityTargetResolution(new UnityTarget
+        {
+            ProjectName = t.ProjectName, ProjectRoot = t.ProjectRoot, DataRoot = t.DataRoot,
+            SelectionNote = $"依 target_data_root 選專案 '{t.ProjectName}'",
+        }, "", "");
+    }
+
     static UnityTargetResolution Fail(string iError, string iHint)
         => new UnityTargetResolution(null, iError, iHint);
 }

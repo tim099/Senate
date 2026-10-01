@@ -36,12 +36,25 @@ public abstract class MorningLocalCmd : SCP_Cmd
     /// <summary>本步的主體。回傳要附在結果最後的回傳檔路徑（可為 null）。</summary>
     protected abstract string? Run(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult ioResult);
 
+    /// <summary>
+    /// 子類宣告了 <see cref="TargetDataRootSpec"/> 時設 true：呼叫端給了 `target_data_root` ⇒ 以**資料根**選專案（TASK-0366）。
+    /// <para>🩸 為什麼不用 `data_root`：CLI 會替宣告了它的 Cmd **自動補**設定檔那一格（而補進去的值被當成顯式給的），
+    /// ⇒ 用它選專案時，「--project Bar 卻沒帶 data_root」會被補成 LY 的根、跟專案名對打。新名字沒有人會替它補。</para>
+    /// </summary>
+    protected virtual bool AcceptsTargetDataRoot => false;
+
+    protected static SCP_CmdArgSpec TargetDataRootSpec() => new SCP_CmdArgSpec("target_data_root",
+        "以 AgentCommands 資料根選專案（Unity Editor 呼叫時給它自己的根）—— 比不到啟用中的專案就擋，⛔ 不退回預設專案");
+
     public sealed override SCP_CmdResult Execute(SCP_CmdArgs iArgs)
     {
         if (UnityDelegateCmd.ConfigProvider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯");
         (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"));
+        string aTargetDr = AcceptsTargetDataRoot ? iArgs.Get("target_data_root").Trim() : "";
+        UnityTargetResolution aTarget = aTargetDr.Length > 0
+            ? UnityTargetResolver.ResolveByDataRoot(aConfig, aConfigPath, aTargetDr, iArgs.Get("project"))
+            : UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"));
         if (!aTarget.Ok) return SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint);
         UnityTarget aWhere = aTarget.Target!;
 

@@ -1,18 +1,12 @@
-// 區塊職責：畫布閘的 **CLI／Server 實作** —— **token 與券直接串 Server**（`bank` / `voucher`）；
-//           在場資格（自由時間／session）與分享仍派給 Unity Editor。
-// 物理意義：券／session／酒館 seq 的權威實作只有 Editor 那側有。Tim 2026-09-03 拍板
-//           「內部串 ucmd，不移植」⇒ 那幾格這裡不重寫，只把問題送過去、把答案讀回來。
-//           ⭐ 2026-09-18 起 **token 那一格不同**：權威已切到新銀行（TASK-0216 ⑨），
-//           而 Tim 說「Senate 端的金流直接串到 Server，不用走 ucmd 再繞一圈」——
-//           繞 Editor 的話是 CLI → 檔案協議 → Editor → 再 spawn 一顆 senate → Server，
-//           🩸 多出來的那一段**不增加任何保證，只多一個會逾時的地方**。
-// 數值影響：每一次呼叫 ＝ 一次 AgentCommand 檔案協議 round-trip（寫 queue＋trigger、等 result 檔）。
-//           取值一律讀 result 檔的 **values 欄**（`AgentCmdClient.ResultReport`），
-//           ⛔ 不 regex stdout —— python 那側是 parse `🔢 in_free_time = 0|1` 的字串，
-//           而字串會因為人讀輸出改版而靜默失配（那種錯的樣子跟「查不到」一模一樣）。
-// 設計取捨：① **判定先於讀檔**：逾時的時候 result 檔沒有被更新，讀到的是上一輪的內容，
-//              而它格式完整、數字合理（UCL 2026-08-16 血證）⇒ 這裡一律先看 Wait 的判定。
-//           ② 查詢類逾時回「不知道」（Unknown／-1），寫入類逾時回**失敗** ——
+// 區塊職責：畫布閘的 **CLI／Server 實作** —— 四格宿主能力**全部不經 Unity Editor**：
+//           token 與券串 Server（`bank` / `voucher`）、在場資格就地讀 session 檔、分享走 `tavern-post`（TASK-0366）。
+// 物理意義：原本券／session／酒館發文的權威實作只有 Editor 那側有（Tim 2026-09-03「內部串 ucmd，不移植」）；
+//           一格一格搬走之後：token 2026-09-18（TASK-0216 ⑨）、券同日（TASK-0243）、在場資格 2026-10-01（TASK-0360）、
+//           分享 2026-10-01（TASK-0366）。⇒ 本檔已經沒有 AgentCommand 檔案協議 round-trip。
+//           🩸 Tim 那句「Senate 端的金流直接串到 Server，不用走 ucmd 再繞一圈」的理由對每一格都成立：
+//           繞 Editor 多出來的那一段**不增加任何保證，只多一個會逾時的地方**。
+// 數值影響：取值一律讀 Cmd 結果的 **values 欄**，⛔ 不 regex stdout（字串會因人讀輸出改版而靜默失配）。
+// 設計取捨：② 查詢類逾時回「不知道」（Unknown／-1），寫入類逾時回**失敗** ——
 //              兩者方向相反是刻意的：查不到可以再問，而「不確定有沒有扣到錢」只能當沒扣，
 //              因為當成扣到了會讓像素白拿。
 //           ③ 查詢的 timeout 可調（預設短）：資格查詢卡 180 秒對使用者是「工具壞了」，
@@ -300,89 +294,34 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         return SCP_CanvasGateResult.Good("扣 " + iAmount + " token（Server 端 bank debit）");
     }
 
-    // 區塊職責：把分享（含預覽附件）派給 Editor 的 Cmd_Tavern op=post
-    // 物理意義：附件**原封不動送絕對路徑**，相對化交給收件端（`Cmd_Tavern.ParseRefs`）——
-    //   🩸 2026-09-07 我第一版在這裡相對化，實測整條路都掛不上附件。真因：Senate 的
-    //   `Program.RepoRoot()` 是**從 exe 自己的目錄**往上找 `.git` ⇒ 它永遠是 `D:/Unity/Senate`，
-    //   而預覽圖住在消費端專案（`D:/Unity/Bar/AgentCommands/Canvas/previews/`）⇒
-    //   `StartsWith` 永遠不成立、refs 永遠是空的。
-    //   ⇒ 本宿主**結構上不知道**那棵樹的 repo 根在哪；知道的是 Editor（mirror 就在它那邊）。
-    //   📌 一般形：路徑相對化要在**知道那個根的那一層**做，不是在手上剛好有一個根的那一層做。
-    // 數值影響：`iAttachAbsolutePath` 給 null ⇒ 不帶 refs（純文字分享，行為與加入前相同）；
-    //          `iTag` 給值時掛 `meta=tag:<tag>`（收件端用它分類，09-06 之前那批是 `canvas-share`）。
+    // 區塊職責：放點分享（含預覽附件）—— `tavern-post`（Senate 組訊息＋酒館 Server 寫入），⛔ 不再派給 Editor（TASK-0366）。
+    // 物理意義：附件**原封不動送絕對路徑**，相對化由 `tavern-post` 對**那個專案的根**做 ——
+    //   🩸 2026-09-07 第一版在這裡相對化，整條路掛不上附件：Senate 的 `Program.RepoRoot()` 永遠是 `D:/Unity/Senate`，
+    //   而預覽圖住在消費端專案 ⇒ `StartsWith` 永遠不成立。當時的結論是「知道那個根的是 Editor」。
+    //   ⭐ TASK-0366 起 `tavern-post` 以 `target_data_root`（＝本閘的資料根）選專案 ⇒ 它手上的專案根就是那棵樹的根。
+    //   📌 一般形照舊成立：路徑相對化要在**知道那個根的那一層**做 —— 只是那一層現在在 Senate。
+    // 數值影響：`iAttachAbsolutePath` 給 null ⇒ 不帶 refs；`iTag` 給值時掛 `tag`（09-06 之前那批是 `canvas-share`）。
+    //          分享失敗**不讓放點失敗** —— 像素已經落盤、錢已經扣了，廣播是 best-effort。
     public SCP_CanvasGateResult Share(string iPersona, string iRoom, string iBody,
                                       string? iAttachAbsolutePath = null, string? iTag = null)
     {
         var aArgs = new Dictionary<string, string>
         {
-            ["op"] = "post",
+            ["persona"] = iPersona,
             ["room"] = iRoom,
             ["body"] = iBody,
-            ["persona"] = iPersona,
+            ["target_data_root"] = m_DataRoot,
         };
-        if (!string.IsNullOrEmpty(iTag)) aArgs["meta"] = "tag:" + iTag;
-
+        if (!string.IsNullOrEmpty(iTag)) aArgs["tag"] = iTag!;
         string aAttach = iAttachAbsolutePath ?? "";
         if (aAttach.Length > 0) aArgs["refs"] = aAttach.Replace('\\', '/');
 
-        if (!TryRun("Tavern", iPersona, aArgs, AgentCmdClient.DefaultWaitTimeoutSec,
-                    out List<KeyValuePair<string, string>> aValues, out string aWhy))
-            // 分享失敗**不該讓放點失敗** —— 像素已經落盤、錢已經扣了，廣播是 best-effort。
-            return SCP_CanvasGateResult.Bad("分享沒發出去（" + aWhy + "）—— 像素與帳不受影響");
-        string aSeq = Value(aValues, "post_seq");
+        SCP_CmdResult aPost = SCP_CmdRegistry.Dispatch("tavern-post", aArgs);
+        if (aPost.ExitCode != 0)
+            return SCP_CanvasGateResult.Bad("分享沒發出去（tavern-post exit " + aPost.ExitCode
+                + (aPost.ExitCode == 7 ? "：**不知道**有沒有發，⛔ 別補發" : "") + "：" + FirstLineOf(aPost) + "）—— 像素與帳不受影響");
+        string aSeq = ValueOf(aPost, "post_seq");
         return SCP_CanvasGateResult.Good("已發" + (aSeq.Length > 0 ? "（seq " + aSeq + "）" : "")
-                                         + (aAttach.Length > 0 ? "，附預覽（相對化由收件端做）" : "，無附件"));
-    }
-
-    // ───────────────────────────── 底層：一次 round-trip ─────────────────────────────
-
-    bool TryRun(string iCmdType, string? iPersona, Dictionary<string, string> iArgs,
-                double iTimeoutSec, out List<KeyValuePair<string, string>> oValues, out string oWhy)
-    {
-        oValues = new List<KeyValuePair<string, string>>();
-        oWhy = "";
-        try
-        {
-            if (!AgentCmdClient.EnsureIdle(m_DataRoot, iPersona, 10, m_Log, out string aIdleWhy))
-            {
-                // 殘留檔在哪由 EnsureIdle 自己說 —— 我不改寫它的措辭（改寫等於把定語弄丟）
-                oWhy = "前一筆 Cmd 還卡在同一條 lane：" + aIdleWhy;
-                return false;
-            }
-            string aCmdId = AgentCmdClient.Submit(m_DataRoot, iPersona, iCmdType, iArgs, m_Log);
-            AgentCmdWaitResult aVerdict = AgentCmdClient.Wait(m_DataRoot, iPersona, aCmdId,
-                iTimeoutSec, AgentCmdClient.DefaultPollSec, m_Log, m_Log, iPrintOutputs: false);
-            // ⛔ 順序寫死：**先判定，才准碰 result 檔**（逾時讀到的是上一輪，而它看起來完全正常）
-            if (aVerdict != AgentCmdWaitResult.Success)
-            {
-                // ⛔ 不在這裡猜成因 —— 成因是**量**出來的，而量它的地方只有一個
-                //   （AgentCmdClient.DescribeWaitTimeout；理由見那支方法的血證註解）。
-                oWhy = aVerdict.IsIndeterminate()
-                    ? AgentCmdClient.DescribeWaitTimeout(m_DataRoot, iPersona, aCmdId, iTimeoutSec)
-                    : "Editor 端回報失敗";
-                return false;
-            }
-            (bool aFound, _, List<KeyValuePair<string, string>> aValues) =
-                AgentCmdClient.ResultReport(m_DataRoot, aCmdId);
-            if (!aFound)
-            {
-                oWhy = "沒有 result 檔（跟「有檔但沒有 values」不同形）";
-                return false;
-            }
-            oValues = aValues;
-            return true;
-        }
-        catch (Exception e)
-        {
-            oWhy = e.GetType().Name + ": " + e.Message;
-            return false;
-        }
-    }
-
-    static string Value(List<KeyValuePair<string, string>> iValues, string iKey)
-    {
-        foreach (KeyValuePair<string, string> aKv in iValues)
-            if (string.Equals(aKv.Key, iKey, StringComparison.Ordinal)) return aKv.Value;
-        return "";
+                                         + (aAttach.Length > 0 ? "，附預覽" : "，無附件"));
     }
 }

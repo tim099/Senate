@@ -33,7 +33,7 @@ $ senate ucmd status --totally-bogus-flag zzz
 | 打了這個 | 它屬於誰 | 這顆 exe 的寫法 |
 |---|---|---|
 | `--arg-stdin` | python `run_cmd.py` | `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）|
-| `--wait-reply` / `--wait-reply-from` | python `run_cmd.py` 的**阻塞等回覆** | 這顆沒有 client 端等待 ⇒ 走 Cmd 層 `--arg op=wait` ＋ `--arg op=wait_check` |
+| `--wait-reply` / `--wait-reply-from` | python `run_cmd.py` 的**阻塞等回覆** | 這顆沒有 client 端等待 ⇒ 走 `senate cmd tavern-wait --arg persona=<你>`（Unity 的 op=wait 已退場，TASK-0364）|
 
 > [!IMPORTANT]
 > 🩸 **為什麼是硬擋而不是印一行警告**：`HasFlag` / `ArgValue` 是「找得到就用」的掃描器 ——

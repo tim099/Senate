@@ -1,15 +1,15 @@
 // 區塊職責：`SCP_IChessGateway` 的 **Senate 端實作** —— 棋局本體要的兩格宿主能力（廣播、發券）。
 // 物理意義：TASK-0268 ⑥ —— `chess.py` 原本 `subprocess` 叫 `senate.exe ucmd run Tavern`；
 //           搬進 C# 之後在本 process 內直接派：
-//           · 廣播 ＝ `AgentCmdClient` 把 `Tavern op=post` 派給 Editor（同 `SenateCanvasGateway` 的分享那一格）
+//           · 廣播 ＝ `tavern-post`／`tavern-post-system`（TASK-0366 起不經 Editor；同 `SenateCanvasGateway` 的分享那一格）
 //           · 發券 ＝ `SCP_CmdRegistry.Dispatch("voucher")`（同 `SenateBooksGateway.GrantVoucher`）
-// 數值影響：廣播落 `queues/<persona>/queue-chess-<n>.json`（每局一條子分道）；券寫 `letters/<persona>/vouchers/canvas.json`。
+// 數值影響：廣播寫一則酒館訊息（經酒館 Server）；券寫 `letters/<persona>/vouchers/canvas.json`。
 //
 // 🩸 判準：
 //   ① **身分＝下棋的 persona，通道＝棋局編號**（Tim 2026-08-01 persona 資料夾制，照 python 那段註解）。
 //      `<persona>/chess-<n>` 是 lane 不是身分 —— ⛔ 不可以改成 `chess-N` 當 persona（那會長出
-//      `queues/chess-1/`，而**棋局不是人**）。沒有 persona（系統代發）⇒ 不帶身分，落 anonymous。
-//   ② **刻意不帶 sender_id** —— 顯示身分由 Cmd_Tavern 從 persona 推導
+//      `queues/chess-1/`，而**棋局不是人**）。沒有 persona（系統代發）⇒ 以 `tavern-keeper` 系統發言（不計酬）。
+//   ② **刻意不帶 sender_id** —— 顯示身分由 `SCP_TavernPostCompose` 從 persona 推導
 //      （2026-08-20 summit 血證：顯式帶 sender_id 會繞過 BUG-22 的修法，同一分鐘兩個署名）。
 //   ③ 失敗**回 false ＋ 理由**，⛔ 不丟例外：棋步已落盤，廣播／發券是 best-effort，由本體印出來。
 using System;
@@ -31,44 +31,39 @@ public sealed class SenateChessGateway : SCP_IChessGateway
     public SenateChessGateway(string iDataRoot) { m_DataRoot = iDataRoot; }
 
     public string HostQualifier
-        => "⤷ 棋局由 senate 本地跑／廣播派給 Unity Editor（Cmd_Tavern）／券由 Senate Server 發（`voucher`）";
+        => "⤷ 棋局由 senate 本地跑／廣播走 tavern-post（Senate 組訊息＋酒館 Server 寫入）／券由 Senate Server 發（`voucher`）";
 
     string LettersRoot()
         => SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(m_DataRoot)).Value;
 
+    // 區塊職責：棋局廣播 —— `tavern-post`（有 persona）／`tavern-post-system`（系統代發），⛔ 不再派給 Editor（TASK-0366）。
+    // 物理意義：`iLane`（`chess-<n>`）原本是 Editor 檔案協議的子分道（同一人兩盤棋的廣播不互相排隊）；
+    //          就地呼叫不經 queue ⇒ 沒有分道可排，收下不用（⛔ 不假造一條）。
+    // 數值影響：exit 7（不知道有沒有發）照實回 false ＋「別重發」—— 棋步已落盤，廣播是 best-effort。
     public bool Broadcast(string? iSenderPersona, string iLane, string iBody, string iMetaJson, out string oDetail)
     {
-        oDetail = "";
+        bool aSystem = string.IsNullOrEmpty(iSenderPersona);
         var aArgs = new Dictionary<string, string>
         {
-            ["op"] = "post",
             ["room"] = "tavern",
             ["body"] = iBody,
             ["meta"] = iMetaJson,
+            ["target_data_root"] = m_DataRoot,
+            ["timeout"] = k_BroadcastTimeoutSec.ToString(CultureInfo.InvariantCulture),
         };
-        if (!string.IsNullOrEmpty(iSenderPersona)) aArgs["persona"] = iSenderPersona;
-        // 判準①：`<persona>/<lane>` ⇒ `queues/<persona>/queue-<lane>.json`；沒有 persona 就不帶身分。
-        string? aRoute = string.IsNullOrEmpty(iSenderPersona) ? null : iSenderPersona + "/" + iLane;
+        if (aSystem) aArgs["sender"] = "tavern-keeper"; else aArgs["persona"] = iSenderPersona!;
         try
         {
-            if (!AgentCmdClient.EnsureIdle(m_DataRoot, aRoute, 10, _ => { }, out string aIdleWhy))
+            SCP_CmdResult aPost = SCP_CmdRegistry.Dispatch(aSystem ? "tavern-post-system" : "tavern-post", aArgs);
+            string aSeq = "";
+            foreach (KeyValuePair<string, string> kv in aPost.Values) if (kv.Key == "post_seq") aSeq = kv.Value;
+            if (aPost.ExitCode == 0)
             {
-                oDetail = "前一筆廣播還卡在同一條 lane：" + aIdleWhy;
-                return false;
-            }
-            string aCmdId = AgentCmdClient.Submit(m_DataRoot, aRoute, "Tavern", aArgs, _ => { });
-            AgentCmdWaitResult aVerdict = AgentCmdClient.Wait(m_DataRoot, aRoute, aCmdId,
-                k_BroadcastTimeoutSec, AgentCmdClient.DefaultPollSec, _ => { }, _ => { }, iPrintOutputs: false);
-            if (aVerdict == AgentCmdWaitResult.Success)
-            {
-                oDetail = "cmd_id=" + aCmdId;
+                oDetail = aSeq.Length > 0 ? "seq " + aSeq : "已排程（alter 延後，到點由酒館 Server 發）";
                 return true;
             }
-            // ⛔ 不在這裡猜成因 —— 逾時的成因只有一個地方量（AgentCmdClient.DescribeWaitTimeout）。
-            oDetail = aVerdict.IsIndeterminate()
-                ? AgentCmdClient.DescribeWaitTimeout(m_DataRoot, aRoute, aCmdId, k_BroadcastTimeoutSec)
-                  + "　⚠ 逾時是「不知道」不是「沒送出」—— 先看那條分道的 trigger 再決定要不要重發"
-                : "Editor 端回報失敗（cmd_id=" + aCmdId + "）";
+            oDetail = "tavern-post exit " + aPost.ExitCode + "：" + Reason(aPost)
+                      + (aPost.ExitCode == 7 ? "　⚠ 這是「不知道」不是「沒送出」—— 先 tavern-query 回讀，⛔ 別重發" : "");
             return false;
         }
         catch (Exception e)
