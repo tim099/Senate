@@ -60,6 +60,7 @@ public sealed class DiscordWebhookPage : SCP_GuiToolPage
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
+        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? SCP_DiscordPaths.Dir(m_DataRoot) : null, "dhook/open-dir");
         if (m_Job != null && m_Job.IsCompleted) { m_Message = m_JobResult; m_Job = null; Reload(); }
         if (iUi.Button("重新讀取", "dhook/btn/reload")) { Reload(); m_Message = "已重新讀取"; }
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot)) return;

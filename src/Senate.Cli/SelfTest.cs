@@ -100,6 +100,7 @@ public static partial class SelfTest
         One(nameof(RowLayout), "gui", RowLayout),
         One(nameof(SourceHint), "gui", SourceHint),
         One(nameof(SourceCapabilityFallback), "gui", SourceCapabilityFallback),
+        One(nameof(ExplorerArgsBackslash), "gui", ExplorerArgsBackslash),
         One(nameof(SourceMessageLifecycle), "gui", SourceMessageLifecycle),
 
         One(nameof(EntryDocBlock), "entrydoc", EntryDocBlock),
@@ -1855,6 +1856,24 @@ public static partial class SelfTest
         var aUi = new SCP_Ui(new SCP_GuiInput { ClickedId = iClickId });
         iPage.Draw(aUi);
         return aUi;
+    }
+
+    // 區塊職責：交給 explorer.exe 的路徑不得含正斜線。
+    // 🩸 2026-10-01 Tim：任務頁「開啟資料夾」開到 OneDrive\文件 —— SCP 路徑是 `D:/…`，explorer 不認、**不報錯**，退回預設位置。
+    //   視窗跳出來了，所以「開了」與「開錯了」在畫面上同形 ⇒ 釘在參數組字這一層。
+    // 數值影響：純字串，⛔ 不真的啟動 explorer。
+    static CheckRow ExplorerArgsBackslash()
+    {
+        if (!OperatingSystem.IsWindows())
+            return new CheckRow("explorer 參數只用反斜線", "非 Windows ⇒ 這條路不存在", CheckResult.Skipped);
+        string aDir = Senate.Core.SenateShell.ExplorerArgs("D:/Unity/LY/AgentCommands/Tasks/tasks", false);
+        string aFile = Senate.Core.SenateShell.ExplorerArgs("D:/Unity/LY/AgentCommands/Tasks/tasks/0357.md", true);
+        bool aOkDir = aDir == @"""D:\Unity\LY\AgentCommands\Tasks\tasks""";
+        bool aOkFile = aFile.StartsWith("/select,\"", StringComparison.Ordinal) && aFile.Substring("/select,".Length).IndexOf('/') < 0
+                       && aFile.EndsWith(@"\0357.md""", StringComparison.Ordinal);
+        return new CheckRow("explorer 參數只用反斜線",
+            $"資料夾 ⇒ {aDir}（{aOkDir}）／檔案 ⇒ {aFile}（{aOkFile}）（⛔ 沒有真的開 explorer）",
+            aOkDir && aOkFile ? CheckResult.Pass : CheckResult.Fail);
     }
 
     static CheckRow SourceCapabilityFallback()

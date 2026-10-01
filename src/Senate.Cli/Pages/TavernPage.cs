@@ -79,6 +79,7 @@ public sealed class TavernPage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", "tavern/btn/reload")) Reload();
+        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? SCP_TavernRooms.RoomDir(m_DataRoot, m_Room) : null, "tavern/open-dir");
         if (m_Rooms.Count > 0)
         {
             string aPick = iUi.Dropdown("房間", m_Rooms, m_Room, "tavern/sel/room");

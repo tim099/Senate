@@ -56,6 +56,7 @@ public sealed class DiscordRelayPage : SCP_GuiToolPage
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
+        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? SCP_DiscordPaths.Dir(m_DataRoot) : null, "drelay/open-dir");
         if (m_Job != null && m_Job.IsCompleted) { m_Message = m_JobResult; m_Job = null; }
         if (iUi.Button("重新讀取", "drelay/btn/reload")) { Reload(); m_Message = "已重新讀取"; }
     }

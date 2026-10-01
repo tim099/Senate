@@ -19,6 +19,17 @@ public static class SenateShell
     public static Func<string, string> MakeRevealer(string iRepoRoot)
         => iPath => Reveal(iPath, iRepoRoot);
 
+    /// <summary>
+    /// explorer.exe 的參數。路徑先轉成反斜線的完整路徑（理由見 <see cref="Reveal"/> 的 Windows 分支）；
+    /// 是檔 ⇒ `/select,` 選取它（使用者不必自己在一堆檔裡找），是資料夾 ⇒ 直接開。
+    /// <para>拆成純函式是為了 selftest 釘得住 —— 開出來的視窗本身沒有讀數。</para>
+    /// </summary>
+    public static string ExplorerArgs(string iPath, bool iIsFile)
+    {
+        string aWin = Path.GetFullPath(iPath);
+        return iIsFile ? $"/select,\"{aWin}\"" : $"\"{aWin}\"";
+    }
+
     /// <summary>在檔案總管裡顯示 iPath（可能是檔或資料夾）。回傳一行人可讀的結果。</summary>
     public static string Reveal(string iPath, string? iRepoRoot = null)
     {
@@ -47,9 +58,10 @@ public static class SenateShell
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                // /select 會**選取**那個檔而不只是開資料夾 —— 差別在於使用者不必自己在一堆檔裡找
-                if (File.Exists(aTarget)) Start("explorer.exe", $"/select,\"{aTarget}\"");
-                else Start("explorer.exe", $"\"{aTarget}\"");
+                // ⚠ explorer 只認反斜線：SCP 的路徑一律是 `/`（例 `D:/Unity/LY/AgentCommands/Tasks/tasks`），
+                //   原樣丟進去它**不報錯**，而是開到預設位置（使用者的「文件」）—— 跟開對了一樣有視窗跳出來。
+                //   🩸 2026-10-01 Tim：任務頁「開啟資料夾」開到 OneDrive\文件。原始碼鈕沒中是因為 CallerFilePath 本來就是反斜線。
+                Start("explorer.exe", ExplorerArgs(aTarget, File.Exists(aTarget)));
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {

@@ -54,6 +54,8 @@ public sealed class PersonaDisplayPage : SCP_GuiToolPage
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
+        // 選了 persona ⇒ 開那一位的 profile/（avatar.png／color.md 所在）；沒選 ⇒ 信件庫根
+        OpenFolderButton(iUi, m_Sel.Length > 0 ? SCP_PersonaDisplay.ProfileDir(m_LettersRoot, m_Sel) : m_LettersRoot, "persona/open-dir");
         if (m_SyncFields)
         {
             m_SyncFields = false;

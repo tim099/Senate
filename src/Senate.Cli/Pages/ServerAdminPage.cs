@@ -208,6 +208,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新探測", "server/reload")) { Reload(); m_Message = "・已重新探測全部"; }
+        OpenFolderButton(iUi, SenatePaths.RuntimeDir(m_Model.RepoRoot), "server/open-dir");
 
         string aSel = SelectedId(iUi);
         var aOpts = new List<SCP_GuiOption>(m_Statuses.Count);

@@ -85,6 +85,7 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
+        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? SCP_DiscordPaths.Dir(m_DataRoot) : null, "dbot/open-dir");
         if (m_Job != null && m_Job.IsCompleted)
         {
             m_Message = m_JobResult;

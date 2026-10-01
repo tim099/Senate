@@ -103,6 +103,9 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", "tasks/btn/reload")) m_Loaded = false;
+        // 對應 Unity 版的 Open Folder。⚠ 路徑直接取 model —— TopBar 先於 DrawContent 畫，第一次 Reload 前 m_DataRoot 還是空的
+        string aRoot = m_Model.AgentCommandsRoot.Value;
+        OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_TaskIO.TasksDir(new SCP_DataRoot(aRoot)) : null, "tasks/btn/open-dir");
         var aStatuses = new List<string> { "open", "all" };
         foreach (string s in Enum.GetNames(typeof(SCP_TaskStatus))) if (s != "all" && s != "open") aStatuses.Add(s);
         string aStatus = iUi.Dropdown("狀態", aStatuses, "open", StatusId);

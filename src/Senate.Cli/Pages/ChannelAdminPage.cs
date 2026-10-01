@@ -65,6 +65,7 @@ public sealed class ChannelAdminPage : SCP_GuiToolPage
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
+        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? Path.GetDirectoryName(SCP_TavernChannels.CategoriesPath(m_DataRoot)) : null, "channel/open-dir");
         if (m_SyncFields)
         {
             m_SyncFields = false;

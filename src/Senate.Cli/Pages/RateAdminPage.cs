@@ -119,6 +119,7 @@ public sealed class RateAdminPage : SCP_GuiToolPage
     // ===========================================================
     protected override void TopBarButtons(SCP_Ui iUi)
     {
+        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? SCP_MarketRateCache.MarketDir(m_DataRoot) : null, "rates/open-dir");
         if (iUi.Button("重新讀取", "rates/btn/refresh"))
         {
             Load();

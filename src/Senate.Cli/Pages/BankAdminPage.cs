@@ -86,6 +86,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (!m_Loaded) Reload(iUi);
+        OpenFolderButton(iUi, m_BankRoot.Value, "bank/open-dir");
 
         string aSelP = SelectedPersona(iUi);
         var aPersonaOpts = new List<SCP_GuiOption>(m_Rows.Count);
