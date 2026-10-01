@@ -334,6 +334,7 @@ public abstract class TavernCatchupCmdBase : MorningLocalCmd
         "追上酒館訊息並推進讀取游標。**不強制回**，但近 20 條內有 @ 你的要回應。\n"
         + "⚠ 這一步會**推進游標** —— 跑完就等於宣告「我讀過了」，而那是對同事的宣告。\n"
         + "   順序是**先落回傳檔、再推游標**：回傳檔寫不出來時，訊息不會被標成已讀。\n"
+        + "⚠ 積壓超過回捲上限時游標**拒推**（自己解不開）⇒ 顯式出口 `skip_backlog=1`：推到最新、回傳檔點名跳過哪一段（TASK-0369）。\n"
         + "📌 `morning-catchup` 與 `tavern-catchup` 是**同一支**（同一個 `SCP_TavernCatchup`、同一個 `cmd/ding_brief.md`），只是入口名不同。";
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
@@ -347,6 +348,10 @@ public abstract class TavernCatchupCmdBase : MorningLocalCmd
             aSpecs.Add(new SCP_CmdArgSpec("include_self", "=1 ⇒ 也列自己的訊息"));
             aSpecs.Add(new SCP_CmdArgSpec("inbox_show", "inbox 列最新幾筆（預設 10）"));
             aSpecs.Add(new SCP_CmdArgSpec("advance", "=0 ⇒ 不推游標（這次讀到的下次還會出現）"));
+            // TASK-0369：積壓超過回捲上限時游標永久卡死（每天的新訊息只會讓積壓更大）⇒ 給一個**顯式**出口。
+            //   ⛔ 不做成自動：跳過是對同事宣告「我沒讀那段」，要人決定；不帶時照舊拒推。
+            aSpecs.Add(new SCP_CmdArgSpec("skip_backlog",
+                "=1 ⇒ 積壓超過回捲上限時**整段跳過、推到最新**（回傳檔點名跳過哪一段）；積壓在上限內時不起作用", iChoices: new[] { "0", "1" }));
             return aSpecs;
         }
     }
@@ -360,9 +365,10 @@ public abstract class TavernCatchupCmdBase : MorningLocalCmd
         bool aQuiet = iArgs.Get("quiet_system") != "0";
         bool aSelf = iArgs.Get("include_self") == "1";
         bool aAdvance = iArgs.Get("advance") != "0";
+        bool aSkipBacklog = iArgs.Get("skip_backlog") == "1";
 
         SCP_TavernCatchupResult aBuilt = SCP_TavernCatchup.Build(iRoots.DataRoot, iRoots.LettersRoot, aPersona,
-            aRoom, aMin, aQuiet, aSelf, aShow);
+            aRoom, aMin, aQuiet, aSelf, aShow, aSkipBacklog);
         string aPath = SCP_LettersPaths.CmdPayload(iRoots.Letters, aPersona, "ding", "brief");
         // 先落回傳檔（游標那行暫寫「推進中」）—— 寫不出來就在這裡丟，游標不動。
         SCP_CmdPayload.Write(aPath, aBuilt.Body + "- 游標：推進中…（若停在這行，代表推進那一步沒跑完 —— 下次會重讀這一段）\n");
@@ -372,6 +378,11 @@ public abstract class TavernCatchupCmdBase : MorningLocalCmd
         ioResult.Lines.Add($"✓ 未讀 {aBuilt.Unread} 筆　{aLine.TrimStart('-', ' ')}");
         ioResult.AddValue("unread", aBuilt.Unread.ToString());
         ioResult.AddValue("cursor_advanced_to", aAdvancedTo ?? "(未推進)");
+        if (aBuilt.Skip.Applied)
+        {
+            ioResult.AddValue("backlog_skipped_at_least", aBuilt.Skip.SkippedInWindowAtLeast.ToString());
+            ioResult.AddValue("backlog_first_kept_seq", aBuilt.Skip.FirstKeptSeq.ToString());
+        }
         return aPath;
     }
 }

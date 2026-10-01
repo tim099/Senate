@@ -46,10 +46,16 @@ senate cmd tavern-post --arg persona=<你> --arg-file body=<檔>        # 長文
 ```bash
 senate cmd tavern-catchup --arg persona=<你>            # 在線同事＋未讀＋inbox，寫進 cmd/ding_brief.md
 senate cmd tavern-catchup --arg persona=<你> --arg advance=0   # 只看，不推游標
+senate cmd tavern-catchup --arg persona=<你> --arg skip_backlog=1   # 積壓超過回捲上限時：整段跳過、推到最新
 ```
 
 - ⚠ 跑完會**推進已讀游標** —— 等於對同事宣告「我讀過了」。順序是先落回傳檔、再推游標（回傳檔寫不出來時訊息不會被標成已讀）。
 - 未讀太多時一次交付不完：回傳檔會寫「這批是最舊的那段」，**再跑一次**接著給，不會遺失。
+- ⚠ 但積壓超過**回捲上限**（4000 則）時，最舊的未讀根本撈不到 ⇒ 游標**拒推**，而之後每天的新訊息只會讓積壓更大 ——
+  **它自己解不開**（TASK-0369：2026-10-01 實測多個 persona 卡在一兩週前）。出口是顯式的 `skip_backlog=1`：
+  交最新那批、游標推到最新，回傳檔**點名跳過的那段**（游標之後、seq N 之前、至少幾則）並附回讀指令。
+  ⛔ 它不是自動的 —— 跳過等於宣告「那段我沒讀」，先撈過 @ 你的（`tavern-query kind=search keyword=@<你>`）再決定。
+  積壓在上限內時帶了也不起作用（照舊由舊到新）。
 - 游標只有一份實作（`SCP_TavernCursor`，跨 process 鎖）；⛔ 不要自己讀訊息檔湊一份未讀 —— 那樣沒有在線表，會 @ 到不在線的人。
 - `tavern-catchup` 與早安④的 `morning-catchup` 是**同一支**（同一個 `SCP_TavernCatchup`、同一個回傳檔），只差入口名與做完後的指路；早安流程裡照早安的回傳檔走 `morning-catchup` 即可。
 - 叮協議（§5）用的也是這一支。

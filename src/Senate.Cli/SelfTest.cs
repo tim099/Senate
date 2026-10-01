@@ -145,6 +145,8 @@ public static partial class SelfTest
         One(nameof(FreeTimePageReadsDisk), "freetime", FreeTimePageReadsDisk),
         // 雕刻搬到 Senate（TASK-0363）：本體在 SelfTest.Sculpture0363.cs
         One(nameof(SculptureContractCleanRoom), "sculpture", SculptureContractCleanRoom),
+        // 酒館游標積壓出口（TASK-0369）：本體在 SelfTest.TavernCursor0369.cs
+        One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
