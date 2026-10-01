@@ -129,6 +129,12 @@ public static partial class SelfTest
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         One(nameof(RegisteredMailCleanRoom), "letters", RegisteredMailCleanRoom),
+        // 課程筆記／好感度／persona 設定的寫入端（TASK-0354）：本體在 SelfTest.Migration0354.cs
+        One(nameof(LessonLogCleanRoom), "letters", LessonLogCleanRoom),
+        One(nameof(RelationshipStoreCleanRoom), "letters", RelationshipStoreCleanRoom),
+        One(nameof(PersonaProfileWriteCleanRoom), "letters", PersonaProfileWriteCleanRoom),
+        Many(nameof(RealRelationshipRecomputeMatchesEditor), "letters",
+             () => RealRelationshipRecomputeMatchesEditor(iProjects)),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
