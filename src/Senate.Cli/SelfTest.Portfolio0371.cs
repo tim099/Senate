@@ -1,0 +1,148 @@
+// 區塊職責：TASK-0371（交易所報酬率／法幣）的自我對拍。
+// 物理意義：這幾格錯了都不會叫：
+//           ① 法幣匯率表解析：方向反了（沒取倒數）、底幣不是 USD、表裡沒這個幣 —— 前兩種出來的數字都「合理」。
+//           ② 平均成本重算：成本、已實現、報酬率；開帳快照不准重拍；帳上多出來的數量不准被當成 0 成本算進報酬。
+//           ③ 兌換溢位：法幣單位極小，目標券永久券超過 int 上限時 AddE8 會靜默繞成負數 ⇒ 必須在落盤前擋下。
+// 數值影響：只在 temp 目錄建假的資料根與 letters 根，跑完刪；⛔ 不碰真實資料。
+#nullable enable
+using SCP.Core.Market;
+using SCP.Core.Paths;
+using SCP.Core.Voucher;
+
+namespace Senate.Cli;
+
+public static partial class SelfTest
+{
+    static CheckRow PortfolioFxParserCleanRoom()
+    {
+        const string aName = "法幣匯率表解析：取倒數、底幣必須 USD、缺幣／失敗／非正數一律拒收";
+        try
+        {
+            const string aOk = "{\"result\":\"success\",\"base_code\":\"USD\",\"rates\":{\"USD\":1,\"JPY\":150,\"TWD\":32}}";
+            var r = SCP_RateSourceParser.Parse("JPY", SCP_RateSourceKind.FxRatesPerUsd, aOk);
+            bool aInv = r.Ok && r.Bid == 1m / 150m && r.Ask == r.Bid && !r.TwoSided;
+            // 🔴 反向對照：底幣不是 USD ⇒ 倒數單位錯，必須拒收（數字本身看起來完全合理）
+            bool aBase = !SCP_RateSourceParser.Parse("JPY", SCP_RateSourceKind.FxRatesPerUsd,
+                "{\"base_code\":\"EUR\",\"rates\":{\"JPY\":160}}").Ok;
+            bool aMissing = !SCP_RateSourceParser.Parse("KRW", SCP_RateSourceKind.FxRatesPerUsd, aOk).Ok;
+            bool aErr = !SCP_RateSourceParser.Parse("JPY", SCP_RateSourceKind.FxRatesPerUsd,
+                "{\"result\":\"error\",\"error-type\":\"invalid-key\"}").Ok;
+            bool aNeg = !SCP_RateSourceParser.Parse("JPY", SCP_RateSourceKind.FxRatesPerUsd,
+                "{\"base_code\":\"USD\",\"rates\":{\"JPY\":0}}").Ok;
+            bool aKnown = SCP_RateSourceKind.IsKnown(SCP_RateSourceKind.FxRatesPerUsd);
+            bool aAll = aInv && aBase && aMissing && aErr && aNeg && aKnown;
+            return new CheckRow(aName,
+                $"JPY 150/USD ⇒ {r.Bid:0.##########} USD（期望 1/150）={aInv}／🔴 底幣 EUR 拒收={aBase}／🔴 缺 KRW 拒收={aMissing}"
+                + $"／🔴 result=error 拒收={aErr}／🔴 0 拒收={aNeg}／kind 登記={aKnown}",
+                aAll ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+    }
+
+    static CheckRow PortfolioReplayCleanRoom()
+    {
+        const string aName = "投資組合：開帳＝當下現值、不准重拍；兌換記事件；平均成本／已實現／報酬率；帳上多出的不計入（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_portfolio_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aData = Path.Combine(aTmp, "data");
+            string aLettersDir = Path.Combine(aTmp, "letters");
+            Directory.CreateDirectory(aData);
+            Directory.CreateDirectory(Path.Combine(aLettersDir, "probe", "profile"));
+            var aLetters = new SCP_LettersRoot(aLettersDir);
+
+            var aCfg = new SCP_MarketRateConfig { TakerFeePct = 0m };
+            aCfg.Quotes["BTC"] = new SCP_RateQuote { Symbol = "BTC", Bid = 100m, Ask = 100m, IsEnabled = true };
+            aCfg.Quotes["JPY"] = new SCP_RateQuote { Symbol = "JPY", Bid = 0.01m, Ask = 0.01m, IsEnabled = true };
+            if (!SCP_MarketRateCache.Save(aData, aCfg, out string? aCfgErr)) throw new Exception("config: " + aCfgErr);
+
+            DateTime aT0 = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+            SaveBook(aLetters, "probe", "BTC", 10, aT0);
+            SaveBook(aLetters, "probe", "canvas", 5, aT0);
+
+            // 開帳：10 BTC × 100 = 1000 USD；canvas 沒報價 ⇒ 不進快照
+            var aProblems = new List<string>();
+            var aOpen = SCP_Portfolio.BuildOpening(aData, aLetters, aT0, aProblems);
+            bool aOpenOk = aOpen.Positions.Count == 1 && aOpen.Positions[0].ValueUsd == 1000m && aOpen.Unquoted.Count == 1
+                           && SCP_Portfolio.TryWriteOpening(aData, aOpen, out _);
+            // 🔴 反向對照：第二次開帳必須被拒
+            bool aNoRedo = !SCP_Portfolio.TryWriteOpening(aData, aOpen, out string? aRedoErr) && aRedoErr != null;
+
+            // BTC 漲到 120，換 2 BTC → JPY（免手續費）：2×120/0.01 = 24000 JPY
+            aCfg.Quotes["BTC"].Bid = 120m; aCfg.Quotes["BTC"].Ask = 120m;
+            SCP_MarketRateCache.Save(aData, aCfg, out _);
+            var aSwap = SCP_VoucherSwap.ExecuteSwap(aLetters, aData, "probe", "btc", "jpy", 2, aT0.AddMinutes(1));
+            bool aSwapOk = aSwap.Success && aSwap.PortfolioWarning == null && aSwap.ToAddedUnitsE8 == 24000L * SCP_VoucherBook.FractionScale;
+
+            // 🔴 沒報價的券不記事件
+            int aBefore = SCP_Portfolio.ReadEvents(aData, null, new List<string>()).Count;
+            SCP_Portfolio.RecordFlow(aData, "probe", "canvas", -1 * SCP_VoucherBook.FractionScale, "consume", "", aT0.AddMinutes(2), out bool aRecorded);
+            bool aSkipUnquoted = !aRecorded && SCP_Portfolio.ReadEvents(aData, null, new List<string>()).Count == aBefore;
+
+            var v = SCP_Portfolio.Build(aData, aLetters, "probe", aCfg, aT0.AddMinutes(3));
+            var aBtc = v.Positions.Find(p => p.Symbol == "BTC");
+            var aJpy = v.Positions.Find(p => p.Symbol == "JPY");
+            // BTC：剩 8 張、成本 800（均價 100）、已實現 2×120−200 = 40、現值 960、報酬 +20%
+            bool aBtcOk = aBtc != null && aBtc.TrackedE8 == 8 * SCP_VoucherBook.FractionScale && aBtc.CostUsd == 800m
+                          && aBtc.RealizedUsd == 40m && aBtc.Roi == 0.2m && aBtc.BasisLabel == "上線時估值";
+            // JPY：成本 240（＝放棄的 BTC 市值），標「實際成本」
+            bool aJpyOk = aJpy != null && aJpy.CostUsd == 240m && aJpy.HasActualBasis && !aJpy.HasOpeningBasis;
+
+            // 🔴 帳上憑空多 1 BTC（沒有事件）⇒ 只出現在差額，報酬率不變
+            SaveBook(aLetters, "probe", "btc", 9, aT0.AddMinutes(4));
+            var v2 = SCP_Portfolio.Build(aData, aLetters, "probe", aCfg, aT0.AddMinutes(5));
+            var aBtc2 = v2.Positions.Find(p => p.Symbol == "BTC");
+            bool aDrift = aBtc2 != null && aBtc2.DriftE8 == SCP_VoucherBook.FractionScale && aBtc2.Roi == 0.2m;
+
+            bool aAll = aOpenOk && aNoRedo && aSwapOk && aSkipUnquoted && aBtcOk && aJpyOk && aDrift && v.Problems.Count == 0;
+            return new CheckRow(aName,
+                $"開帳 1000 USD／canvas 不進={aOpenOk}／🔴 重拍被拒={aNoRedo}／兌換 24000 JPY＋事件={aSwapOk}／🔴 沒報價不記={aSkipUnquoted}"
+                + $"／BTC 成本 {aBtc?.CostUsd}、已實現 {aBtc?.RealizedUsd}、報酬 {aBtc?.Roi}={aBtcOk}／JPY 成本 {aJpy?.CostUsd}={aJpyOk}"
+                + $"／🔴 多 1 BTC 只進差額、報酬不變={aDrift}／problems={v.Problems.Count}",
+                aAll ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    static CheckRow PortfolioSwapOverflowGuardCleanRoom()
+    {
+        const string aName = "兌換溢位守衛：目標券永久券會超過 int 上限 ⇒ 落盤前拒絕、兩個券檔都不動（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_swapovf_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aData = Path.Combine(aTmp, "data");
+            string aLettersDir = Path.Combine(aTmp, "letters");
+            Directory.CreateDirectory(aData);
+            Directory.CreateDirectory(Path.Combine(aLettersDir, "probe", "profile"));
+            var aLetters = new SCP_LettersRoot(aLettersDir);
+            var aCfg = new SCP_MarketRateConfig { TakerFeePct = 0m };
+            aCfg.Quotes["BTC"] = new SCP_RateQuote { Symbol = "BTC", Bid = 100000m, Ask = 100000m, IsEnabled = true };
+            aCfg.Quotes["KRW"] = new SCP_RateQuote { Symbol = "KRW", Bid = 0.0007m, Ask = 0.0007m, IsEnabled = true };
+            SCP_MarketRateCache.Save(aData, aCfg, out _);
+            DateTime aT0 = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+            SaveBook(aLetters, "probe", "BTC", 200, aT0);
+
+            // 200 BTC × 100000 / 0.0007 ≈ 2.86e10 KRW > int.MaxValue
+            var aBig = SCP_VoucherSwap.ExecuteSwap(aLetters, aData, "probe", "btc", "krw", 200, aT0.AddMinutes(1));
+            var aBtcAfter = SCP_VoucherStore.Load(aLetters, "probe", "btc", out _);
+            bool aRejected = !aBig.Success && (aBig.Error ?? "").Contains("上限") && aBtcAfter.Permanent == 200;
+            // 對照組：1 BTC ≈ 1.43 億 KRW，在上限內 ⇒ 要成功
+            var aSmall = SCP_VoucherSwap.ExecuteSwap(aLetters, aData, "probe", "btc", "krw", 1, aT0.AddMinutes(2));
+            bool aSmallOk = aSmall.Success && aSmall.ToNewPermanent > 0;
+            return new CheckRow(aName,
+                $"🔴 200 BTC→KRW 拒絕且 BTC 仍 {aBtcAfter.Permanent} 張={aRejected}（{aBig.Error}）／對照 1 BTC→{aSmall.ToNewPermanent} KRW 成功={aSmallOk}",
+                aRejected && aSmallOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    static void SaveBook(SCP_LettersRoot iLetters, string iPersona, string iVoucher, int iPermanent, DateTime iNow)
+    {
+        var aBook = SCP_VoucherStore.Load(iLetters, iPersona, iVoucher, out string? aProblem);
+        if (aProblem != null) throw new Exception("load: " + aProblem);
+        aBook.Permanent = iPermanent;
+        if (!SCP_VoucherStore.Save(iLetters, aBook, iNow, "TEST", out _, out string? aErr)) throw new Exception("save: " + aErr);
+    }
+}

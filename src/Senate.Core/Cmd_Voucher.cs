@@ -14,6 +14,7 @@
 //      ⇒ 含 `/` 或 `..` 會憑空長出一個資料夾**而不報錯**。
 using System.Globalization;
 using SCP.Core.Cmd;
+using SCP.Core.Market;
 using SCP.Core.Paths;
 using SCP.Core.Voucher;
 
@@ -169,10 +170,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             return SCP_CmdResult.Fail(2, $"✗ amount 必須是正整數（收到 '{iArgs.Get("amount")}'）");
 
         string aData = iArgs.Get("data_root").Trim();
-        if (aData.Length == 0)
-        {
-            aData = Path.GetFullPath(Path.Combine(iLetters.Value, "../../..")).Replace('\\', '/');
-        }
+        if (aData.Length == 0) aData = SCP_Portfolio.DataRootOfLetters(iLetters);
 
         bool aConfirm = iArgs.Get("confirm").Trim() == "1";
         DateTime aNow = DateTime.UtcNow;
@@ -209,6 +207,9 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         aR.AddValue("to_permanent_added", aRes.ToPermanentAdded.ToString());
         aR.AddValue("to_new_permanent", aRes.ToNewPermanent.ToString());
         aR.AddValue("to_new_fractional_e8", aRes.ToNewFractionalE8.ToString());
+        if (aRes.PortfolioWarning != null)
+            aR.Lines.Add($"⚠ 兌換已成立，但**{aRes.PortfolioWarning}** ⇒ 報酬率會少這一筆（`portfolio op=show` 會顯示成「與紀錄不符」）");
+        aR.AddValue("portfolio_logged", aRes.PortfolioWarning == null ? "1" : "0");
         aR.AddValue("is_preview", aConfirm ? "0" : "1");
         return aR;
     }
@@ -261,6 +262,18 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
 
     // ── 寫 ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// 券已落盤之後記一筆交易事件（TASK-0371，報酬率用）。沒報價的券不記（SCP_Portfolio 守衛①）。
+    /// 回 null ＝ 已記或不需要記；回字串 ＝ 沒記成 —— ⛔ 不推翻已成立的券異動，由呼叫端印出來。
+    /// </summary>
+    static string? LogFlow(SCP_LettersRoot iLetters, SCP_CmdArgs iArgs, string iPersona, string iVoucher,
+                           long iDeltaE8, string iSource, string iRef, DateTime iNow)
+    {
+        string aData = iArgs.Get("data_root").Trim();
+        if (aData.Length == 0) aData = SCP_Portfolio.DataRootOfLetters(iLetters);
+        return SCP_Portfolio.RecordFlow(aData, iPersona, iVoucher, iDeltaE8, iSource, iRef, iNow, out _);
+    }
+
     /// <summary>寫入前的共用閘：`region` 必填（判準②）。</summary>
     static string? RequireRegion(SCP_CmdArgs iArgs, out string oRegion)
     {
@@ -298,11 +311,14 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
 
         if (!SCP_VoucherStore.Save(iLetters, aBook, aNow, aRegion, out int aDropped, out string? aError))
             return SCP_CmdResult.Fail(1, "✗ " + aError);
+        string? aLogWarn = LogFlow(iLetters, iArgs, iPersona, iVoucher, (long)aAmount * SCP_VoucherBook.FractionScale,
+                                   "grant:" + iArgs.Get("source"), iArgs.Get("ref"), aNow);
 
         var aResult = SCP_CmdResult.Success(
             $"✓ 發 {aAmount} 張 `{iVoucher}` 給 `{iPersona}`"
             + (aExpires.Length == 0 ? "（永久券）" : $"（限時券，到期 {aExpires}）"));
         Tail(aResult, aBook, aNow, aDropped);
+        if (aLogWarn != null) aResult.Lines.Add("⚠ 券已發，但" + aLogWarn);
         return aResult;
     }
 
@@ -327,8 +343,11 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
             //   ⛔ 不可以只說「寫入失敗」—— 呼叫端會不知道券到底有沒有少。
             return SCP_CmdResult.Fail(1, "✗ " + aError + "　⇒ **這一筆沒有成立**（記憶體扣了，磁碟沒動）");
 
+        string? aLogWarn = LogFlow(iLetters, iArgs, iPersona, iVoucher, -(long)aAmount * SCP_VoucherBook.FractionScale,
+                                   "consume", iArgs.Get("ref"), aNow);
         var aResult = SCP_CmdResult.Success($"✓ 花 {aAmount} 張 `{iVoucher}`（`{iPersona}`）");
         Tail(aResult, aBook, aNow, aDropped);
+        if (aLogWarn != null) aResult.Lines.Add("⚠ 券已扣，但" + aLogWarn);
         return aResult;
     }
 
@@ -384,6 +403,9 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         aResult.AddValue("migrated_permanent", aPermanent.ToString());
         aResult.AddValue("migrated_expiring", aExpSum.ToString());
         Tail(aResult, aBook, aNow, aDropped);
+        string? aLogWarn = LogFlow(iLetters, iArgs, iPersona, iVoucher,
+                                   (long)(aPermanent + aExpSum) * SCP_VoucherBook.FractionScale, "migrate:" + aRegion, "", aNow);
+        if (aLogWarn != null) aResult.Lines.Add("⚠ 已遷入，但" + aLogWarn);
         return aResult;
     }
 

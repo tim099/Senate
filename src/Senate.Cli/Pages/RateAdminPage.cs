@@ -586,6 +586,14 @@ public sealed class RateAdminPage : SCP_GuiToolPage
             UpdatedAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)
         };
 
+        // 🩸 沿用既有的抓取端點（TASK-0371）：手填只是改價，⛔ 不是「改成純手填」——
+        //   以前這裡整個換新物件，端點跟著消失 ⇒ 那個幣從此 `op=sync` 都跳過，而沒有任何一層會說。
+        if (m_Config!.Quotes.TryGetValue(iSymbol, out var aPrevQuote))
+        {
+            aQuote.SourceUrl = aPrevQuote.SourceUrl;
+            aQuote.SourceKind = aPrevQuote.SourceKind;
+            aQuote.TwoSided = aPrevQuote.TwoSided;
+        }
         m_Config!.Quotes[iSymbol] = aQuote;
 
         if (SCP_MarketRateCache.Save(m_DataRoot, m_Config, out string? aSaveErr))
