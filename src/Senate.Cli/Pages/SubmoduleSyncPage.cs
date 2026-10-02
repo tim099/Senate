@@ -149,9 +149,10 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         //   即使它們的節點要等 DrawContent 才被建出來（工具列**先於**內容區畫）。
         //   ⭐ 這就是操作鈕能放在工具列的原因：設定的真相源在 session，不在「這一輪畫到哪了」。
         bool aFetch = g.ToggleValue(FetchId, m_Saved?.Fetch ?? false);
-        // 掃描中不畫那顆鈕（同「執行中不畫操作鈕」的判準）—— 一顆按了不會有事的鈕看起來像壞的。
-        if (m_ScanJob != null) { g.Label("⏳ 掃描中…"); return; }
-        if (g.Button(aFetch ? "重新掃描（含 fetch）" : "重新掃描", "submodule/rescan"))
+        // 掃描中不畫「重新掃描」（同「執行中不畫操作鈕」的判準）—— 一顆按了不會有事的鈕看起來像壞的。
+        // ⚠ 但**不 return**（Tim 2026-10-02）：下面那三顆操作鈕掃描中照樣畫，按下去是**排隊**（見 m_Queued）。
+        if (m_ScanJob != null) g.Label("⏳ 掃描中…");
+        else if (g.Button(aFetch ? "重新掃描（含 fetch）" : "重新掃描", "submodule/rescan"))
         {
             // ⚠ 顯式傳生效值，不靠 `m_Scan?.Root` 兜 —— 新 process 的第一輪 `m_Scan` 還是 null
             //   ⇒ 那條路會掃到「Senate 自己」，而畫面下一段馬上又用生效值掃一次。
@@ -164,6 +165,20 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         // ⚠ 執行中一律**不畫**操作鈕（不是畫成灰的 —— 共用層沒有 disabled，
         //   而一顆按了沒事的鈕看起來像壞的）。進度顯示在內容區頂部。
         if (m_Job != null) { g.Label($"⏳ {m_Job.Label} 執行中…"); return; }
+
+        // 排隊中：三顆操作鈕換成一顆 Cancel（Tim 2026-10-02）。
+        // ⚠ 不跟「確認／取消」兩段式共用 id：那顆取消的是「還沒按確定」，這顆取消的是「已經確定、還沒開跑」——
+        //   兩件事共用一顆鈕的話，CLI 那側 `--click` 一個 id 會因為狀態不同而做不同的事。
+        if (m_Queued != null)
+        {
+            if (g.Button($"✗ Cancel（排隊中：{m_Queued.Label}）", "submodule/queue-cancel"))
+            {
+                m_JobMessage = $"・已取消排隊的「{m_Queued.Label}」—— 什麼都沒有執行。";
+                m_Queued = null;
+                m_QueuedRoot = null;
+            }
+            return;
+        }
 
         // 🩸 這裡原本有一道「`m_Scan` 沒資料就不畫鈕」的閘，而它讓那三顆鈕**永遠不出現**：
         //   工具列**先於**內容區畫，而掃描發生在內容區 ⇒ 工具列看到的 `m_Scan` 永遠是 null。
@@ -235,13 +250,64 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     string? m_JobMessage;
 
     /// <summary>
-    /// 按下操作鈕的入口 —— **先確保有一張可用的照片，再起 job**。
+    /// 掃描（含 fetch）還沒結束時按下的操作 —— 等掃描收割後才執行（Tim 2026-10-02）。null ＝ 沒有排隊。
+    /// <para>🩸 原本這裡是 <c>m_ScanJob.WaitForExit()</c>：按下去之後視窗**凍到 fetch 結束**（走網路、十幾顆），
+    /// 而凍住的視窗跟「當掉了」同形；更早一版乾脆掃描中不畫鈕，人只能乾等。</para>
+    /// <para>⚠ 住頁面欄位不住 session：會排隊的只有背景掃描，而背景掃描只發生在**會重畫的宿主**
+    /// （同一個 process 活著）—— 純文字那側掃描是就地跑完的，根本不會走到排隊。</para>
+    /// </summary>
+    SyncAction? m_Queued;
+
+    /// <summary>排隊當下的生效 root。執行前 repo 換了 ⇒ 取消（⛔ 不帶著「對 A 按的確定」去推 B）。</summary>
+    string? m_QueuedRoot;
+
+    /// <summary>
+    /// 按下操作鈕的入口 —— **先確保有一張可用的照片，再起 job**；背景還在掃就先排隊。
     /// </summary>
     void RequestJob(SCP_Ui g, SyncAction iAction)
     {
         m_JobMessage = null;
+        if (m_ScanJob != null)
+        {
+            m_Queued = iAction;
+            m_QueuedRoot = g.FieldValue(RootAppliedId, DefaultRoot);
+            return;
+        }
         if (!EnsureScannedForJob(g)) return;
         StartJob(g, iAction);
+    }
+
+    /// <summary>
+    /// 掃描收割之後，把排隊的那一個送出去。
+    /// <para>⚠ 照片要是用**現在這組設定**拍的才送：掃描期間使用者可能改了開關／逐項覆寫，
+    /// 也可能這張照片是第一輪（還沒帶 overrides）。不符就**再丟一輪背景掃描、繼續排著** ——
+    /// ⛔ 不交給 EnsureScannedForJob 去就地重掃（那條路會凍住視窗，正是排隊要避免的事）。</para>
+    /// </summary>
+    void RunQueuedIfReady(SCP_Ui g)
+    {
+        if (m_Queued == null || m_ScanJob != null || m_Job != null) return;
+
+        string aRoot = g.FieldValue(RootAppliedId, DefaultRoot);
+        if (m_QueuedRoot != null && !SameRepo(aRoot, m_QueuedRoot))
+        {
+            m_JobMessage = $"⚠ repo 換了（{m_QueuedRoot} → {aRoot}）⇒ 排隊的「{m_Queued.Label}」**已取消**，什麼都沒有執行。要做請重按一次。";
+            m_Queued = null;
+            m_QueuedRoot = null;
+            return;
+        }
+
+        string aBranch = g.FieldValue(BranchAppliedId, DefaultBranch);
+        var aSettings = CollectSettings(g);
+        if (m_Scan == null || Fingerprint(aRoot, aBranch, aSettings.Overrides, aSettings.Options.Fetch) != m_ScannedFingerprint)
+        {
+            Rescan(aSettings.Options.Fetch, aRoot, aBranch, aSettings.Overrides);
+            return;
+        }
+
+        SyncAction aAction = m_Queued;
+        m_Queued = null;
+        m_QueuedRoot = null;
+        RequestJob(g, aAction);   // 掃不到／沒有 submodule 的理由照舊由 EnsureScannedForJob 寫進 m_JobMessage
     }
 
     /// <summary>
@@ -256,8 +322,9 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         string aRoot = g.FieldValue(RootAppliedId, DefaultRoot);
         string aBranch = g.FieldValue(BranchAppliedId, DefaultBranch);
 
-        // ⓪ 背景正在掃 ⇒ **等它**（不是丟掉重來）。接下來那一輪批次是分鐘級的，
-        //    等一輪唯讀掃描是相稱的代價；而丟掉重來會讓同一份 git 被問兩次。
+        // ⓪ 背景正在掃 ⇒ **等它**（不是丟掉重來）。
+        //    ⚠ 按鈕那條路（RequestJob）已經改成**排隊**、不會走到這裡（2026-10-02：等 fetch 會凍住視窗）——
+        //    這一格只剩防呆：哪天有新的呼叫端繞過 RequestJob，至少拿到的是完整照片而不是半張。
         //    ⚠ 這是整頁**唯一**准許 WaitForExit 的地方（見 SubmoduleScanJob 的註解）。
         if (m_ScanJob != null) { m_ScanJob.WaitForExit(); HarvestScan(); }
 
@@ -340,6 +407,13 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     {
         // 擋下的理由要看得見 —— 按了沒反應跟「這顆鈕壞了」同形。
         if (m_JobMessage != null) g.Note($"　{m_JobMessage}");
+
+        // 排隊中也要說出來 —— 按下去之後畫面沒動，跟「沒按到」同形。
+        if (m_Queued != null)
+        {
+            g.Note($"　⏳ 已排隊：「{m_Queued.Label}」—— 掃描（含 fetch）結束後自動執行；"
+                   + "不要了就按工具列的 Cancel。⚠ 執行前若換了 repo，它會自己取消。");
+        }
 
         if (m_Job != null)
         {
@@ -440,6 +514,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         // ── ⓿ 批次／掃描跑完了就收割（UI 執行緒做，背景不直接寫頁面狀態）──────
         HarvestScan();
         HarvestJob(g);
+        RunQueuedIfReady(g);   // ⚠ 在兩個收割之後：要拿到剛收進來的照片、且確定沒有 job 在跑
         DrawJobStatus(g);
 
         string aAppliedRoot = g.FieldValue(RootAppliedId, DefaultRoot);

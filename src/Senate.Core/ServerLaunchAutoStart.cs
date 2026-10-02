@@ -37,12 +37,15 @@ public static class ServerLaunchAutoStart
     /// <para>· `server`：生命週期本身 —— `server stop` 之後自己又被拉起來＝停不掉；`server start` 自己就是在起。</para>
     /// <para>· `pages-check`／`selftest`：build／驗收流程裡跑的，⛔ 不該在驗收當中生出常駐行程。</para>
     /// <para>· `--version`／`help`：只想問一題的人，⛔ 不替他生一顆行程。</para>
+    /// <para>· `sync-window`（雙擊 senate-sync.exe）：**先同步、再起 Server** —— Server 一起來就補跨日發券、
+    ///   把信件庫寫髒，同步頁就全部跳過（Tim 2026-10-02）。那顆 exe 存在的理由就是這一格。</para>
     /// </summary>
     public static bool AppliesTo(string iCmd)
     {
         switch (iCmd)
         {
             case "server":
+            case "sync-window":
             case "pages-check":
             case "selftest":
             case "--version": case "-v": case "version":

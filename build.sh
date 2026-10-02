@@ -129,7 +129,7 @@ if [ -f "$root/publish/senate.exe" ]; then
     powershell.exe -NoProfile -NonInteractive -Command '
       $t = $env:SENATE_EXE_WIN
       $r = $env:SENATE_ROOT_WIN
-      $ps = @(Get-Process -Name senate, senate-server -ErrorAction SilentlyContinue |
+      $ps = @(Get-Process -Name senate, senate-sync, senate-server -ErrorAction SilentlyContinue |
               Where-Object { $_.Path -and $_.Path.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase) })
       if ($ps.Count -gt 0) {
         Write-Host ("· 收掉 " + $ps.Count + " 顆還開著的 senate（它們鎖著要被覆寫的檔）")
@@ -222,6 +222,26 @@ if command -v powershell.exe >/dev/null 2>&1; then
     "\$s=(New-Object -ComObject WScript.Shell).CreateShortcut('$winlnk'); \$s.TargetPath='$winexe'; \$s.WorkingDirectory='$windir'; \$s.Save()" >/dev/null 2>&1 \
     && echo "✓ 根層捷徑：senate.lnk → publish/senate.exe（雙擊用）" \
     || echo "⚠ 捷徑沒建成 —— 不影響指令，publish/senate.exe 照樣能跑"
+fi
+
+# senate-sync.exe（Tim 2026-10-02）：**同一份二進位**換個檔名 —— 沒帶參數時只開 Submodule 同步頁、⛔ 不拉 Server
+#   （先同步、再讓 Server 起來補跨日發券；理由見 src/Senate.Cli/SyncWindowExe.cs）。
+# ⚠ 用複製不用 hardlink：理由同上（下一次 publish 會打斷 link，外層靜默停在舊版）。
+#   每趟 build 都重新複製 ⇒ 兩顆永遠是同一趟 build，不會版本不符。
+sync_exe="$root/publish/senate-sync.exe"
+if cp -f "$exe" "$sync_exe" 2>/dev/null; then
+  echo "✓ publish/senate-sync.exe（senate.exe 的複本；雙擊只開 Submodule 同步頁、不拉 Server）"
+  if command -v powershell.exe >/dev/null 2>&1; then
+    winsync="$(cygpath -w "$sync_exe" 2>/dev/null || echo "$sync_exe")"
+    winsynclnk="$(cygpath -w "$root/senate-sync.lnk" 2>/dev/null || echo "$root/senate-sync.lnk")"
+    powershell.exe -NoProfile -NonInteractive -Command \
+      "\$s=(New-Object -ComObject WScript.Shell).CreateShortcut('$winsynclnk'); \$s.TargetPath='$winsync'; \$s.WorkingDirectory='$windir'; \$s.Save()" >/dev/null 2>&1 \
+      && echo "✓ 根層捷徑：senate-sync.lnk → publish/senate-sync.exe（雙擊用）" \
+      || echo "⚠ senate-sync.lnk 沒建成 —— publish/senate-sync.exe 照樣能雙擊"
+  fi
+else
+  # ⛔ 不靜默：沒複製成功的話，外層那顆是**上一趟**的 senate-sync.exe，而它看起來完全正常。
+  echo "⚠ 複製 publish/senate-sync.exe 失敗（多半是它還開著）—— 那顆仍是上一趟 build 的，關掉它再重跑 build"
 fi
 
 mb=$(( $(stat -c %s "$exe" 2>/dev/null || stat -f %z "$exe") / 1048576 ))

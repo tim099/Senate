@@ -171,6 +171,25 @@ public static class Program
         SCP.Core.Sculpture.SCP_SculptRenderers.Register(new SenateSculptRenderer());
 
 
+        // senate-sync.exe（Tim 2026-10-02）：沒帶參數 ⇒ 只開 Submodule 頁，⛔ 不拉 Server（理由見 SyncWindowExe）。
+        // ⚠ 放在下面那段雙擊判斷**之前**：那段會先 LaunchAutoStart —— 而這顆 exe 存在的理由就是不拉。
+        if (iArgs.Length == 0 && SyncWindowExe.IsCurrent())
+        {
+            if (ConsoleHost.LaunchedFromExplorer())
+            {
+                // 同 senate.exe：預設不留 Console（設定同一格 `senate.showConsole`）。
+                bool aShowSync = ServerConsolePref.Resolve(aRepoRoot, ServerConsolePref.SenateShowConsole, null, out _);
+                if (!aShowSync)
+                {
+                    if (ConsoleHost.TryRelaunchWithoutConsole(new[] { SyncWindowExe.Subcommand }, out string aWhy)) return 0;
+                    if (Environment.GetEnvironmentVariable(ConsoleHost.ChildEnv) != "1")
+                        Console.Error.WriteLine("⚠ 沒能以無 Console 的方式重開（" + aWhy + "）⇒ 照舊開介面，這個視窗可能會留著。");
+                    ConsoleHost.HideConsoleWindow();
+                }
+            }
+            return CmdSyncWindow(aRepoRoot, new[] { SyncWindowExe.Subcommand });
+        }
+
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。
         //    使用者雙擊的期待是「開介面」，而在終端機裡打同一個指令的期待是「印文字」——
         //    兩者要分辨得出來，不是二選一。判準見 ConsoleHost（GetConsoleProcessList，不是猜）。
@@ -210,6 +229,7 @@ public static class Program
                 "init" => CmdInit(aRepoRoot),
                 "doctor" => CmdDoctor(aRepoRoot, iArgs),
                 "ui" => CmdUi(aRepoRoot, iArgs),
+                SyncWindowExe.Subcommand => CmdSyncWindow(aRepoRoot, iArgs),
                 "submodule" => CmdSubmodule(aRepoRoot, iArgs),
                 "ucmd" => CmdAgent(aRepoRoot, iArgs),   // Unity 那套（AgentCommand，走檔案協議）
                 "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
@@ -579,7 +599,16 @@ public static class Program
     // 物理意義：**同一份頁面碼**餵給 ImGui renderer —— 頁面一行都沒改。
     //           --screenshot 是給沒有眼睛的人（CI／agent）用的驗收出口：
     //           原生視窗拍不到就沒有讀數，而「中文變方塊」這種事不會報錯。
-    static int RunWindow(string iRepoRoot, string[] iArgs, string? iShot)
+    // ── senate sync-window（＝ 雙擊 senate-sync.exe）────────────
+    // 物理意義：只開 Submodule 頁的視窗，**不拉 Server**（ServerLaunchAutoStart.AppliesTo 排除了這支）。
+    //           頁面是**同一個** SubmoduleSyncPage —— 這裡只換「堆疊底層放哪一頁」與視窗標題。
+    static int CmdSyncWindow(string iRepoRoot, string[] iArgs)
+        => RunWindow(iRepoRoot, iArgs, ArgValue(iArgs, "--screenshot"), iOnlyPage: SubmoduleSyncPage.PageKey);
+
+    /// <param name="iOnlyPage">非 null ＝ 堆疊**只放這一頁**（沒有入口頁 ⇒ 不畫返回列、點不到別的頁）。
+    /// ⚠ 這顆窗也**不對外宣告**自己是常駐窗：`senate ui --list` 該描述的是主視窗，
+    /// 兩顆窗搶同一個橋的話，CLI 指到哪一顆會看誰最後寫心跳。</param>
+    static int RunWindow(string iRepoRoot, string[] iArgs, string? iShot, string? iOnlyPage = null)
     {
         var aModel = new SenateModel(iRepoRoot);   // 讀數在開窗前取好（探測不可以每幀跑）
         var aStyle = StyleFrom(iArgs, aModel);
@@ -588,21 +617,29 @@ public static class Program
         //   視窗活著的期間導覽狀態就在記憶體裡，不必像 CLI 那樣存進 session。
         var aCatalog = SenatePages.BuildCatalog(aModel);
         var aCtrl = new SCP_GuiPageController();
-        aCtrl.Push(SenatePages.Root(aCatalog));
-
-        // `--page <key>` 直接停在某一頁。⭐ 存在的理由是**驗收**：
-        //    視窗裡的頁面本來只有人點得到（截圖模式沒有點擊入口），
-        //    於是「那一頁在視窗裡畫不畫得出來」就沒有讀數。這條旗標把它變成有。
-        string? aPage = ArgValue(iArgs, "--page");
-        if (aPage != null)
+        if (iOnlyPage != null)
         {
-            if (!TryResolvePage(aCatalog, aPage, out SCP_GuiPage? aTarget)) return 2;
-            if (aTarget!.Key != SenatePages.RootKey) aCtrl.Push(aTarget);
+            if (!TryResolvePage(aCatalog, iOnlyPage, out SCP_GuiPage? aOnly)) return 2;
+            aCtrl.Push(aOnly!);
+        }
+        else
+        {
+            aCtrl.Push(SenatePages.Root(aCatalog));
+
+            // `--page <key>` 直接停在某一頁。⭐ 存在的理由是**驗收**：
+            //    視窗裡的頁面本來只有人點得到（截圖模式沒有點擊入口），
+            //    於是「那一頁在視窗裡畫不畫得出來」就沒有讀數。這條旗標把它變成有。
+            string? aPage = ArgValue(iArgs, "--page");
+            if (aPage != null)
+            {
+                if (!TryResolvePage(aCatalog, aPage, out SCP_GuiPage? aTarget)) return 2;
+                if (aTarget!.Key != SenatePages.RootKey) aCtrl.Push(aTarget);
+            }
         }
 
         // ⚠ 傳的是**同一顆 style 物件**（不是複本）—— 使用者在頁面上換尺寸時，
         //   renderer 下一幀就讀得到新的間距。字級例外（綁在載入時的 atlas），要重開視窗。
-        var aWin = new SenateWindow("Senate", input =>
+        var aWin = new SenateWindow(iOnlyPage != null ? "Senate · Submodule 同步" : "Senate", input =>
         {
             var aUi = new SCP_Ui(input);
             aCtrl.Tick();
@@ -667,7 +704,7 @@ public static class Program
         //   不含待測物的窗，那個綠燈跟沒量過一模一樣。
         // ⚠ 但**只有互動模式對外宣告自己是那顆常駐窗**（寫心跳）：
         //   截圖／soak 的窗活幾百毫秒就沒了，讓 CLI 指到它等於指到一個正在消失的宿主。
-        bool aAdvertise = iShot == null && ArgValue(iArgs, "--soak") == null;
+        bool aAdvertise = iShot == null && ArgValue(iArgs, "--soak") == null && iOnlyPage == null;
         using var aBridge = new GuiBridgeHost(iRepoRoot, aWin, aStyle,
             () => aCtrl.TopPage?.Key ?? "", aAdvertise);
         aBridge.Start();
@@ -1489,6 +1526,8 @@ public static class Program
         // 值型旗標（下一個 token 是值）標在 ValueFlags；這裡是「合法」的全集。
         ["doctor"] = new[] { "--width", "--scale", "--size" },
         ["init"] = new string[0],
+        // senate-sync.exe 的入口：`--screenshot` 給驗收用，其餘是尺寸。
+        [SyncWindowExe.Subcommand] = new[] { "--screenshot", "--win-size", "--width", "--scale", "--size" },
         ["ui"] = new[] { "--window", "--screenshot", "--soak", "--reset", "--click", "--set", "--toggle",
                          "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--scroll-probe", "--unpin",
                          "--no-cleanup", "--width", "--scale", "--size", "--win-size", "--local" },
@@ -1903,6 +1942,7 @@ public static class Program
               （不給指令 ＝ doctor；**從檔案總管雙擊 ＝ 直接開 GUI 視窗**）
 
               --version           印這顆執行檔的 build id（publish 時塞入的 git SHA＋時間；`dotnet run` 印 unversioned）
+              sync-window         只開 Submodule 同步頁的視窗，**不拉常駐 Server**（＝ 雙擊 senate-sync.exe／senate-sync.lnk）
               init                建立 SenateData/config/senate.local.json（樣板：同目錄的 senate.local.example.json；已存在則不覆寫）
               doctor              印出環境與各專案的讀數（唯讀）。exit 1 ＝ 有項目不通過
               ui                  把後台頁面輸出成純文字
