@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
 description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、頁面要宿主的值一律問介面（不自存第二份）、非 UI 操控介面與 session 狀態
-last_updated: 2026-09-04
+last_updated: 2026-10-02 (TableRowScope／TableCell：表格列裡放按鈕)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -35,6 +35,20 @@ void Draw(SCP_Ui g)
     using (g.Table("單號", "標題"))
         foreach (var b in m_Bugs) g.TableRow(b.Index.ToString(), b.Title);
 }
+```
+
+表格的一列要放按鈕時改用 `TableRowScope()`：scope 裡每個直接子節點佔一格，字用 `TableCell`，按鈕照常寫 `Button`
+（例：登入狀態頁每列最前面那顆「複製」）。這裡沒有新增節點型別，兩個 renderer 本來就會把不是 TableCell 的格子當一般節點畫。
+⚠ 一格只放一個節點；按鈕要傳顯式 key（`login/copy-morning/<persona>`），清單增刪時 id 才不會漂。
+
+```csharp
+using (g.Table("早安", "persona"))
+    foreach (var p in aList)
+        using (g.TableRowScope())
+        {
+            if (g.Button("複製", $"login/copy-morning/{p.Name}")) Copy(p.Name);
+            g.TableCell(p.Name);
+        }
 ```
 
 ## 為什麼值錢：不是「換畫布方便」
