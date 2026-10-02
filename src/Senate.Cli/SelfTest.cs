@@ -2796,7 +2796,15 @@ public static partial class SelfTest
                                                                true, out _);
                 if (aMine == null) { aUnrenderable++; continue; }
 
-                bool aSame = Eol(StripGeneratedAt(aEditorText)) == Eol(StripGeneratedAt(aMine));
+                // 🩸 TASK-0384：`library op=recall --arg full=0` 合法地寫出「只有章節索引、不帶 round 正文」的精簡版，
+                //   而本格過去一律拿完整版去比 ⇒ 任何人用 full=0 追回過、那份又是新鮮的，這格必紅，紅得沒有資訊。
+                //   ⇒ 兩種渲染都試，**任一版逐字相符**就算相符。
+                //   ⛔ 不是放寬：真的渲染不符的檔，完整版與精簡版兩邊都對不上，照樣算不符（selftest 有反向對照）。
+                string? aLean = SCP_LibraryRecall.RenderRecall(p.AgentCommandsRoot, aMediaId, aPersona,
+                                                               false, out _);
+                string aDisk = Eol(StripGeneratedAt(aEditorText));
+                bool aSame = aDisk == Eol(StripGeneratedAt(aMine))
+                          || (aLean != null && aDisk == Eol(StripGeneratedAt(aLean)));
                 bool aFresh = RecallIsFresh(p.AgentCommandsRoot, aMediaId, aPersona, f);
                 if (aFresh) { if (aSame) aFreshSame++; else aFreshDiff++; }
                 else { if (aSame) aStaleSame++; else aStaleDiff++; }
