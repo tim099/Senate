@@ -116,7 +116,8 @@ public sealed class SenateWindow : IDisposable
     public void InjectClick(string iId) => m_Renderer.InjectClick(iId);
 
     /// <summary>注入欄位寫入／勾選／摺疊（立刻寫進 renderer 的跨幀狀態，下一幀畫出來）。</summary>
-    public void InjectField(string iId, string iValue) => m_Renderer.Fields[iId] = iValue;
+    // ⚠ 一次 set ＝ 一次寫完的值 ⇒ 同時報一次「編輯完成」（跟手放開滑桿同一格，見 SCP_GuiInput.Committed）。
+    public void InjectField(string iId, string iValue) { m_Renderer.Fields[iId] = iValue; m_Renderer.InjectCommitted(iId); }
     public void InjectToggle(string iId, bool iOn) => m_Renderer.Toggles[iId] = iOn;
     public void InjectFold(string iId, bool iOpen) => m_Renderer.Folds[iId] = iOpen;
     public bool TryGetToggle(string iId, out bool oOn) => m_Renderer.Toggles.TryGetValue(iId, out oOn);

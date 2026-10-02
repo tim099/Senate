@@ -64,14 +64,16 @@ public static class UiDriver
     /// 兩側行為不同這件事要知道，不然「同一顆按鈕在視窗要按兩次」會被當成 bug。</para>
     /// </summary>
     public static (SCP_GuiNode tree, string text) Apply(
-        SCP_GuiPageCatalog iCatalog, SCP_GuiState iState, string? iClickId, SCP_GuiStyle iStyle)
+        SCP_GuiPageCatalog iCatalog, SCP_GuiState iState, string? iClickId, SCP_GuiStyle iStyle,
+        string? iCommittedId = null)
     {
         var aCtrl = BuildController(iCatalog, iState);
 
-        // 第一趟：帶 click，讓 handler 真的跑（回傳的樹是舊畫面，不拿來顯示）
-        if (iClickId != null)
+        // 第一趟：帶 click／「編輯完成」（`--set`），讓 handler 真的跑（回傳的樹是舊畫面，不拿來顯示）
+        //   ⚠ 編輯完成跟點擊一樣是事件：只進第一趟，第二趟不帶 —— 帶兩趟的話頁面會對同一次 set 反應兩次
+        if (iClickId != null || iCommittedId != null)
         {
-            var aFirst = new SCP_Ui(iState.ToInput(iClickId));
+            var aFirst = new SCP_Ui(iState.ToInput(iClickId, iCommittedId));
             aCtrl.Draw(aFirst);
             ApplyWrites(aFirst, iState);   // ⚠ 要在第二趟之前套 —— 不然第二趟畫的是「選之前」的下拉
         }

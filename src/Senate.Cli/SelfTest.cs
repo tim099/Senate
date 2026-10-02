@@ -96,6 +96,7 @@ public static partial class SelfTest
         One(nameof(InspectorEdits), "gui", InspectorEdits),
         One(nameof(FoldSemantics), "gui", FoldSemantics),
         One(nameof(DropdownWidget), "gui", DropdownWidget),
+        One(nameof(SliderWidget), "gui", SliderWidget),
         One(nameof(PageCatalogShape), "gui", PageCatalogShape),
         One(nameof(PageAutoRegister), "gui", PageAutoRegister),
         One(nameof(RowLayout), "gui", RowLayout),
@@ -1449,6 +1450,80 @@ public static partial class SelfTest
         return new CheckRow("摺疊",
             $"展開時內容在={aOpenOk}／收合時子節點不存在={aShutOk}／出現在可互動清單（--fold）={aListed}"
             + $"／session 存讀={aPersisted}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 數值滑桿（TASK-0377）：值住在 TextField 同一份欄位狀態 ⇒ session 存讀、CLI `--set`、文字輸出全走同一條；
+    /// 夾範圍、不是數字不寫、「編輯完成」事件只活一輪。
+    /// <para>⚠ 第⑤格是 `--set` 真正走的那一支（SCP_GuiQuery.NormalizeSet —— CLI 與常駐窗共用）：
+    /// 驗的是「不是數字 ⇒ 拒絕」而不是「寫進去、畫面顯示預設」—— 後者會讓畫面與頁面讀到的值各說各話。</para>
+    /// </summary>
+    static CheckRow SliderWidget()
+    {
+        static (SCP_Ui ui, double v) Draw(string? iRaw, string? iCommitted = null)
+        {
+            var aIn = new SCP_GuiInput();
+            if (iRaw != null) aIn.Fields["probe/s"] = iRaw;
+            if (iCommitted != null) aIn.Committed.Add(iCommitted);
+            var aUi = new SCP_Ui(aIn);
+            double v = aUi.Slider("角度", "probe/s", -90, 90, 30, "0.0");
+            return (aUi, v);
+        }
+
+        // ① 欄位值 → 回傳值（invariant）＋ session 存讀不走樣
+        var (aUi1, aV1) = Draw("12.5");
+        var aState = new SCP_GuiState();
+        aState.Fields["probe/s"] = "12.5";
+        var aBack = SCP_GuiState.FromJson(SCP_JsonData.Parse(aState.ToJson().ToJson()));
+        var (_, aVBack) = Draw(aBack.ToInput(null).Fields["probe/s"]);
+        bool aRoundTrip = aV1 == 12.5 && aVBack == 12.5;
+
+        // ② 夾範圍／空白 ＝ 預設／不是數字 ＝ 預設（而且文字輸出照實說）
+        var (_, aHi) = Draw("999");
+        var (aUiBlank, aBlank) = Draw(null);
+        var (aUiBad, aBad) = Draw("abc");
+        string aBlankText = SCP_GuiTextRenderer.Render(aUiBlank.Root, 120);
+        string aBadText = SCP_GuiTextRenderer.Render(aUiBad.Root, 120);
+        bool aClampOk = aHi == 90 && aBlank == 30 && aBad == 30
+                        && aBlankText.Contains("預設", StringComparison.Ordinal)
+                        && aBadText.Contains("不是數字", StringComparison.Ordinal);
+
+        // ③ 文字輸出：`標籤: 值 (min..max)`
+        string aText = SCP_GuiTextRenderer.Render(aUi1.Root, 120);
+        bool aTextOk = aText.Contains("角度: 12.5 (-90.0..90.0)", StringComparison.Ordinal);
+
+        // ④ 可互動清單：有它、帶範圍、HowTo 是 --set
+        var aEl = SCP_GuiQuery.Find(aUi1.Root, "probe/s");
+        var aElBlank = SCP_GuiQuery.Find(aUiBlank.Root, "probe/s");
+        bool aListed = aEl != null && aEl.Kind == SCP_GuiNodeKind.Slider && aEl.Min == -90 && aEl.Max == 90
+                       && aEl.Value == "12.5" && !aEl.IsDefault && aEl.HowTo.StartsWith("--set probe/s=", StringComparison.Ordinal)
+                       && aElBlank != null && aElBlank.IsDefault && aElBlank.Value == "30.0";
+
+        // ⑤ `--set` 的驗證（CLI 與常駐窗共用）：夾＋說出來／捨入到格式／空白＝清掉／不是數字＝拒絕
+        bool aN1 = SCP_GuiQuery.NormalizeSet(aEl!, "200", out string aClamped, out string aNote1);
+        bool aN2 = SCP_GuiQuery.NormalizeSet(aEl!, "33.333", out string aRounded, out _);
+        bool aN3 = SCP_GuiQuery.NormalizeSet(aEl!, " ", out string aCleared, out _);
+        bool aN4 = SCP_GuiQuery.NormalizeSet(aEl!, "abc", out _, out string aNote4);
+        bool aN5 = SCP_GuiQuery.NormalizeSet(aEl!, "NaN", out _, out _);
+        bool aSetOk = aN1 && aClamped == "90.0" && aNote1.Contains("夾", StringComparison.Ordinal)
+                      && aN2 && aRounded == "33.3" && aN3 && aCleared == "" && !aN4 && aNote4.Contains("不是數字", StringComparison.Ordinal) && !aN5;
+
+        // ⑥ 「編輯完成」是一次性事件：帶了才 true；state.ToInput(null, id) 送得進去；沒帶就是 false
+        var (aUiC, _) = Draw("1", "probe/s");
+        var aUiC2 = new SCP_Ui(aState.ToInput(null, "probe/s"));
+        bool aCommitOk = aUiC.Committed("probe/s") && aUiC.AnyCommitted && aUiC2.Committed("probe/s")
+                         && !aUi1.Committed("probe/s") && !new SCP_Ui(aState.ToInput(null)).AnyCommitted;
+
+        // ⑦ 格式工具：-0 不印成「-0」、小數位數 ＝ printf 用的位數
+        bool aFmtOk = SCP_Ui.FormatSlider(-0.001, "0") == "0" && SCP_Ui.SliderDecimals("0.00") == 2
+                      && SCP_Ui.SliderDecimals("0") == 0 && SCP_Ui.SliderDecimals(null) == 2;
+
+        bool aOk = aRoundTrip && aClampOk && aTextOk && aListed && aSetOk && aCommitOk && aFmtOk;
+        return new CheckRow("滑桿",
+            $"欄位↔值 ＋ session 存讀={aRoundTrip}／夾範圍・空白＝預設・非數字照實說={aClampOk}／文字輸出={aTextOk}"
+            + $"／可互動清單（範圍・--set）={aListed}／--set 驗證（夾・捨入・清空・拒絕非數字）={aSetOk}"
+            + $"／編輯完成只活一輪={aCommitOk}／格式工具={aFmtOk}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 

@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-09-29 (server 節補「啟動 senate.exe 時拉起常駐 Server」設定與 ServerAdminPage 定時刷新；TASK-0329) | 2026-09-16 (旗標紀律補「取值旗標的值被寫成另一個旗標／沒有值 ⇒ exit 2」；`ui` 逾時的兩種成因分開印；TASK-0229／TASK-0230) | 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
+last_updated: 2026-10-02 (`ui --set` 對滑桿驗數字＋夾範圍、算一次「編輯完成」；TASK-0377) | 2026-09-29 (server 節補「啟動 senate.exe 時拉起常駐 Server」設定與 ServerAdminPage 定時刷新；TASK-0329) | 2026-09-16 (旗標紀律補「取值旗標的值被寫成另一個旗標／沒有值 ⇒ exit 2」；`ui` 逾時的兩種成因分開印；TASK-0229／TASK-0230) | 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -572,7 +572,7 @@ Debug 當 Server、exe 當 CLI ⇒ `running_build_mismatch`，exe 照樣停得�
 |---|---|
 | `--list` | 列出畫面上所有可互動元件（id／類型／標籤／現值／怎麼操作） |
 | `--click <id>` | 按下按鈕 —— **真的會跑該頁的 handler**（兩趟繪製，見下） |
-| `--set <id>=<值>` | 填欄位（跨次記住） |
+| `--set <id>=<值>` | 填欄位（跨次記住）。滑桿（`Slider`）：不是數字 ⇒ exit 2 不寫、超出範圍 ⇒ 夾進去並印出來、空值 ⇒ 清掉（回預設）；每次 `--set` 也算一次「編輯完成」（頁面的 `Committed(id)`，例：雕刻觀測頁據此重渲） |
 | `--toggle <id>` | 切換勾選（讀現值後反轉） |
 | `--fold <id>` | 摺疊／展開一個區塊。⚠ 收合時**內容不會被建出來**，所以 `--list` 也看不到那一段的欄位 |
 | `--json` | 整棵畫面樹輸出成 JSON（給程式讀；文字輸出是給人看的） |

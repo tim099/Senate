@@ -16,9 +16,14 @@
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元 ⇒ 方框，TASK-0356）；子行程輸出裡的 emoji 是原文，照印。
 // ⚠ 「空白 ＝ 沿用」：手動欄位留空就不送那個參數 ⇒ 由設定檔疊加鏈（內建 → 共用作用中 → 個人作用中）決定。
 //   三態的開關（陰影／AO／投影／地板）因此用下拉（沿用／開／關），⛔ 不用二態勾選（二態表達不了「沿用」）。
-// ⚠ 「目前對象」（Tim 2026-10-02）：渲染展品 ⇒ 展品 id；全景 ⇒ 全景；手動渲染且 region 有填 ⇒ 那個 region。
+// ⚠ 「目前對象」（Tim 2026-10-02）：渲染展品 ⇒ 展品 id；全景 ⇒ 全景；選展品 ⇒ 那件展品；region 欄**編輯完成**（Enter／離開欄位／--set）且有填 ⇒ 那個 region。
 //   之後的環繞／切投影／手動渲染都重渲**同一個對象**（展品 ⇒ 帶 exhibit=<id> ＋相機欄位）——
-//   ⛔ region 欄空白不代表「改看全景」（那會把正在看的展品默默換成整個空間）。對象存 session ⇒ 文字模式跨指令也記得。
+//   ⛔ 只是「region 欄有字」不換對象（自動渲染每動一下都重渲 ⇒ 按了全景再拖滑桿會默默跳回那個 region）；
+//   ⛔ region 欄清空也不把正在看的展品換成全景（只有原本看 region 時才回全景）。對象存 session ⇒ 文字模式跨指令也記得。
+// ⭐ 自動渲染（Tim 2026-10-02）：進頁畫一張目前對象（預設全景）；之後參數一改就重渲 —— 不必按「渲染」。
+//   觸發：滑桿／下拉／persona／設定檔鏈／對象變了，或文字欄「編輯完成」（Enter／離開欄位；⛔ 不是每打一個字）。
+//   合併：同時間只跑一張；跑的途中又變了 ⇒ 記一筆「還要再畫」，畫完再用**最新**的參數補一張（latest wins）。
+//   ⛔ 渲染永遠不在 GUI 執行緒跑（視窗模式背景 Task；文字模式本來就是單次同步）。
 #nullable enable
 using System.Diagnostics;
 using System.Globalization;
@@ -76,6 +81,40 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     const string SubjectFull = "full", SubjectExhibit = "exhibit:", SubjectRegion = "region:";
 
     /// <summary>非空預設值的欄位 —— 摺起來時讀值（FieldValue）與畫出來時（TextField）要用同一個預設，否則兩條路給不同的值。</summary>
+    /// <summary>
+    /// 一條「可沿用」的滑桿：欄位空白 ＝ 沿用設定檔鏈（滑桿停在鏈上的值）；一動就變成覆寫；「沿用」鈕清掉覆寫。
+    /// <para>範圍取 CLI 的驗證契約（例：pitch −89..89、skybox_tilt −89..89）—— 比契約窄的話，鏈上合法的值會被畫在端點上而看不出來。</para>
+    /// </summary>
+    sealed record SliderSpec(string Name, string Id, string Label, double Min, double Max, string Format,
+                             Func<SCP_SculptRenderParams, double> Chain);
+
+    static readonly SliderSpec[] s_CamSliders =
+    {
+        new("yaw", FYaw, "yaw（度）", 0, 360, "0", p => p.YawDeg),
+        new("pitch", FPitch, "pitch（度）", -89, 89, "0", p => p.PitchDeg),
+        new("roll", FRoll, "roll（度）", -180, 180, "0", p => p.RollDeg),
+        new("fov", FFov, "fov（透視，度）", 5, 120, "0", p => p.FovDeg),
+    };
+    static readonly SliderSpec[] s_LightSliders =
+    {
+        new("ambient", FAmbient, "ambient", 0, 1, "0.00", p => p.Ambient),
+    };
+    static readonly SliderSpec[] s_SkySliders =
+    {
+        new("skybox_yaw", FSkyYaw, "skybox_yaw（度）", -180, 180, "0", p => p.SkyboxYawDeg),
+        new("skybox_tilt", FSkyTilt, "skybox_tilt（度）", -89, 89, "0", p => p.SkyboxTiltDeg),
+    };
+
+    /// <summary>
+    /// 文字欄參數：只在「編輯完成」（Enter／離開欄位／CLI `--set`）時觸發自動重渲 ——
+    /// 每打一個字就畫一張的話，打「10..20」的途中會先畫出「1」「10.」那些不完整的值（而且會報錯）。
+    /// </summary>
+    static readonly string[] s_TextParamIds =
+    {
+        FRegion, FExclude, FTarget, FEye, FDistance, FZoom, FLightDir, FWidth, FHeight,
+        FFloorTile, FFloorZ, FFloorMargin, FFloorMarginRatio, FFloorColor, FFloorFade,
+    };
+
     static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
     {
         [FSliceAxis] = "z+",
@@ -111,6 +150,23 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     DateTime m_JobStartUtc;
     string? m_Message;
 
+    // ── 自動渲染（見檔頭）────────────────────────────────────
+    /// <summary>進頁後第一次 DrawContent 要畫一張（OnPush 只立旗標 —— ⛔ 不在 OnPush／ctor 做 IO）。</summary>
+    bool m_OpenRender;
+    /// <summary>上一輪看到的「觸發用」讀數（非文字參數 ＋ persona ＋ 設定檔鏈）；null ＝ 這個頁面實例還沒畫過（文字模式每道指令都是新實例）。</summary>
+    string? m_PrevTrigger;
+    string? m_PrevSubject;
+    /// <summary>剛由工作結果寫回的對象 —— 那不是使用者改的，⛔ 不觸發（不然每張展品圖畫完都會再補一張）。</summary>
+    string? m_SubjectFromJob;
+    /// <summary>還要再畫一張（工作跑的途中又變了）；<see cref="m_AutoForce"/> ＝ 就算參數跟上一張一樣也畫（進頁、按了「渲染」）。</summary>
+    bool m_AutoWanted, m_AutoForce;
+    string m_AutoWhy = "";
+    /// <summary>最近一次**手動路徑**（RunManual）送出的完整參數讀數 —— 補畫前比對，一樣就不再畫。</summary>
+    string? m_LastStartedSig;
+    DateTime m_LastAutoStartUtc;
+    /// <summary>視窗模式兩張自動渲染之間至少隔多久（拖曳中的節流；工作本身的耗時是第二道節流）。</summary>
+    static readonly TimeSpan AutoMinInterval = TimeSpan.FromMilliseconds(250);
+
     /// <summary>一個動作的結果：紀錄 ＋ 要寫回 session 的欄位 ＋ 要不要重讀磁碟。</summary>
     sealed class Outcome
     {
@@ -129,6 +185,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     {
         base.OnPush();
         m_Dirty = true;   // ⛔ 不在這裡讀（拿不到畫面上選的 persona）—— 下一幀 DrawContent 開頭讀
+        m_OpenRender = true;   // 進頁畫一張（真的畫在 DrawContent 的 AutoRender；文字模式只在還沒有圖時畫）
     }
 
     // ===========================================================
@@ -228,6 +285,9 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         if (aPersona == None) aPersona = "";
         string aScope = g.FieldValue(ProfScope + "/value", "shared");
         if (m_Dirty || aPersona != m_LoadedPersona || aScope != m_LoadedScope) Reload(aPersona, aScope);
+        // ⚠ 放在畫任何區塊**之前**：文字模式的渲染是同步的 ⇒ 這一趟底下的結果區就看得到新圖
+        //   （放在最後的話，`--set` 那一趟畫的是舊圖，要再下一道指令才看得到）。
+        AutoRender(g, aPersona);
 
         if (m_Error != null) g.Note("[注意] " + m_Error);
         if (m_Job != null)
@@ -282,7 +342,11 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         if (aPick != aSeen)
         {
             var aEx = m_Exhibits.Find(e => e.Id == aPick);
-            if (aSeen.Length > 0 && aEx.Id != null) { g.SetField(FRegion, S(aEx.Data, "region")); g.SetField(FExclude, S(aEx.Data, "exclude_color")); }
+            if (aSeen.Length > 0 && aEx.Id != null)
+            {
+                g.SetField(FRegion, S(aEx.Data, "region")); g.SetField(FExclude, S(aEx.Data, "exclude_color"));
+                g.SetField(SSubject, SubjectExhibit + aPick);   // 選了別件 ⇒ 對象換成它（下一輪自動渲染畫它）
+            }
             g.SetField(SExhibitSeen, aPick);
         }
         var aCur = m_Exhibits.Find(e => e.Id == aPick);
@@ -302,13 +366,13 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     {
         using (g.Row())
         {
-            if (g.Button("渲染", P + "btn/render")) RunManual(g, "手動渲染", iPersona);
+            if (g.Button("渲染", P + "btn/render")) RequestRender("按了「渲染」", iForce: true);
             if (g.Button("切換 正交／透視", P + "btn/proj-flip"))
             {
                 string aNow = g.FieldValue(FProjection + "/value", None);
                 if (aNow == None) aNow = m_Resolved?.Projection == SCP_SculptProjection.Perspective ? "perspective" : "orthographic";
                 g.SetField(FProjection + "/value", aNow == "perspective" ? "orthographic" : "perspective");
-                RunManual(g, "切換投影 → " + g.FieldValue(FProjection + "/value"), iPersona);
+                RequestRender("切換投影 → " + g.FieldValue(FProjection + "/value"), iForce: true);
             }
             Orbit(g, "yaw -45", FYaw, -45, iPersona);
             Orbit(g, "yaw -15", FYaw, -15, iPersona);
@@ -317,19 +381,30 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
             Orbit(g, "pitch -10", FPitch, -10, iPersona);
             Orbit(g, "pitch +10", FPitch, 10, iPersona);
         }
+        // 滑桿放在摺疊外層、預設展開（Tim 2026-10-02：拿滑桿調鏡頭，放開就重渲）
+        using (var aCam = g.Fold("鏡頭滑桿（放開就重渲）", P + "fold/sliders", iDefaultOpen: true))
+        {
+            if (aCam.Open)
+            {
+                g.Note("「沿用中」＝ 不送這個參數、滑桿停在設定檔鏈的值；一拖就變成覆寫，按「沿用」清掉覆寫。"
+                       + "（⚠ 對象是展品時，展品自己的 preset 可能再蓋過鏈上的值 —— 以結果區的 layers 為準）");
+                foreach (SliderSpec s in s_CamSliders) InheritSlider(g, s);
+                foreach (SliderSpec s in s_LightSliders) InheritSlider(g, s);
+                foreach (SliderSpec s in s_SkySliders) InheritSlider(g, s);
+            }
+        }
         using var aFold = g.Fold("相機與光影（手動）", P + "fold/manual", iDefaultOpen: false);
         if (!aFold.Open) return;
-        g.Note("空白 ＝ 不送這個參數（沿用設定檔鏈：內建 → 共用作用中 → 個人作用中）。快速環繞鈕會改欄位並立刻重渲。");
+        g.Note("空白 ＝ 不送這個參數（沿用設定檔鏈：內建 → 共用作用中 → 個人作用中）。快速環繞鈕會改欄位並立刻重渲。文字欄按 Enter／離開欄位就重渲。");
         Field(g, "region（x1..x2,y1..y2,z1..z2；空＝全空間）", FRegion);
         Field(g, "exclude_color（c,c,…）", FExclude);
         Tri(g, "投影", FProjection, "orthographic", "正交 orthographic", "perspective", "透視 perspective");
         // ⚠ 文字欄不放進同一個 Row（ImGui 的欄位標籤會疊在下一格上 —— 2026-10-02 截圖實測）
-        Field(g, "yaw（度）", FYaw); Field(g, "pitch（度）", FPitch); Field(g, "roll（度）", FRoll);
+        // yaw／pitch／roll／fov／ambient／skybox_yaw／skybox_tilt 在上面的滑桿區（同一個欄位 id，不再有文字欄）
         Field(g, "target（x,y,z｜auto）", FTarget); Field(g, "eye（x,y,z｜auto）", FEye);
-        Field(g, "distance（透視；auto）", FDistance); Field(g, "fov（透視，度）", FFov); Field(g, "zoom（正交；auto）", FZoom);
+        Field(g, "distance（透視；auto）", FDistance); Field(g, "zoom（正交；auto）", FZoom);
         using (g.Row())
         {
-            Field(g, "ambient（0..1）", FAmbient);
             Tri(g, "AO", FAo, "1", "開", "0", "關");
             Tri(g, "陰影", FShadow, "1", "開", "0", "關");
         }
@@ -363,8 +438,6 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         var aSky = new List<SCP_GuiOption> { new(None, "（沿用）"), new(SCP_SculptRenderProfiles.SkyboxBuiltin, "builtin（渲染器內建天空）"), new("none", "none（純色背景）") };
         foreach (string s in m_Skyboxes) aSky.Add(new SCP_GuiOption(s));
         g.Dropdown("skybox", aSky, None, FSkybox);
-        Field(g, "skybox_yaw（度）", FSkyYaw);
-        Field(g, "skybox_tilt（度，正交時背景往上抬 −89..89；透視忽略）", FSkyTilt);
         Field(g, "width（px）", FWidth); Field(g, "height（px）", FHeight);
         Tri(g, "自動框住可放大（fit_upscale；展品／region 預設開）", FFitUpscale, "1", "開", "0", "關");
 
@@ -382,6 +455,26 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         Field(g, "floor_color（#RRGGBB 色調）", FFloorColor);
         Field(g, "floor_fade（邊緣淡出 0..0.5）", FFloorFade);
         if (m_Resolved != null) g.Label("目前疊加結果的地板：" + FloorSpec(m_Resolved));
+    }
+
+    /// <summary>
+    /// 一條可沿用的滑桿（見 <see cref="SliderSpec"/>）：欄位空白 ⇒ 滑桿停在鏈上的值並標「沿用中」；
+    /// 有值 ⇒ 標覆寫並給一顆「沿用」鈕（清空欄位 ⇒ 下一輪自動重渲）。
+    /// </summary>
+    void InheritSlider(SCP_Ui g, SliderSpec iSpec)
+    {
+        double aChain = iSpec.Chain(m_Resolved ?? new SCP_SculptRenderParams());
+        bool aOverride = g.FieldValue(iSpec.Id, "").Trim().Length > 0;
+        using (g.Row())
+        {
+            g.Slider(iSpec.Label, iSpec.Id, iSpec.Min, iSpec.Max, aChain, iSpec.Format);
+            if (aOverride)
+            {
+                if (g.Button("沿用", P + "btn/inherit/" + iSpec.Name)) g.SetField(iSpec.Id, "");
+                g.Note("覆寫中（鏈上是 " + SCP_Ui.FormatSlider(aChain, iSpec.Format) + "）");
+            }
+            else g.Note("沿用中（鏈）");
+        }
     }
 
     void Orbit(SCP_Ui g, string iLabel, string iField, double iDelta, string iPersona)
@@ -417,25 +510,122 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     }
 
     /// <summary>
-    /// 手動渲染（含環繞／切投影）：手動欄位 ＋ **目前對象**（見檔頭）。
-    /// region 有填 ⇒ 對象改成那個 region —— 例外：目前對象是展品、而 region 跟那件展品的一模一樣（選展品時帶進來的）⇒ 仍是展品
-    /// （用展品的 preset 打光／鏡頭，不是只裁切）。region 空白 ⇒ 沿用目前對象（⛔ 不默默放大成全景）。
+    /// 手動渲染（含環繞／切投影／自動渲染）：手動欄位 ＋ **目前對象**（見檔頭）—— 對象說了算，region 欄**不在這裡**改對象。
+    /// <para>🩸 舊規則是「region 有填 ⇒ 對象改成那個 region」：自動渲染上線後（每動一下滑桿就走這裡），
+    /// 按了「全景」再拖一下 yaw ⇒ 對象默默跳回選展品時帶進來的那個 region（2026-10-02 文字模式實測）。
+    /// ⇒ 改成 region 欄「編輯完成」那一刻才換對象（<see cref="RegionCommitted"/>）；選展品 ⇒ 對象＝那件展品。</para>
     /// </summary>
     void RunManual(SCP_Ui g, string iLabel, string iPersona)
     {
+        Dictionary<string, string> a = ManualRequest(g, iPersona, out string aSubject);
+        // 正在跑 ⇒ 排一筆（畫完用最新參數補畫），⛔ 不丟掉這次的要求
+        if (m_Job != null) { RequestRender(iLabel, iForce: true); return; }
+        m_LastStartedSig = RequestSig(a, iPersona);
+        RunView(g, iLabel + "｜" + SubjectText(aSubject), a, iPersona, aSubject);
+    }
+
+    /// <summary>手動路徑這一刻會送出的參數（手動欄位 ＋ 目前對象，規則見 <see cref="RunManual"/>）。純讀，不啟動任何東西。</summary>
+    Dictionary<string, string> ManualRequest(SCP_Ui g, string iPersona, out string oSubject)
+    {
         Dictionary<string, string> a = ManualViewArgs(g);
+        a.Remove("region");   // 範圍由對象決定（見上）
         string aSubject = g.FieldValue(SSubject, SubjectFull);
-        string aRegion = a.TryGetValue("region", out string? r) ? r : "";
-        string? aExId = aSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal) ? aSubject.Substring(SubjectExhibit.Length) : null;
+        if (aSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal)) a["exhibit"] = aSubject.Substring(SubjectExhibit.Length);
+        else if (aSubject.StartsWith(SubjectRegion, StringComparison.Ordinal)) a["region"] = aSubject.Substring(SubjectRegion.Length);
+        oSubject = aSubject;
+        return a;
+    }
+
+    /// <summary>
+    /// region 欄編輯完成 ⇒ 換對象：有填 ⇒ 那個 region（例外：目前是展品、而 region 就是那件展品的 ⇒ 仍是展品，
+    /// 用展品的 preset 打光／鏡頭）；清空 ⇒ 原本看的是 region 才回全景（⛔ 不把正在看的展品默默換成整個空間）。
+    /// </summary>
+    void RegionCommitted(SCP_Ui g)
+    {
+        string aRegion = g.FieldValue(FRegion, "").Trim();
+        string aSubject = g.FieldValue(SSubject, SubjectFull);
+        string aNew = aSubject;
         if (aRegion.Length > 0)
         {
+            string? aExId = aSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal) ? aSubject.Substring(SubjectExhibit.Length) : null;
             var aEx = aExId != null ? m_Exhibits.Find(e => e.Id == aExId) : default;
-            if (aEx.Id != null && S(aEx.Data, "region") == aRegion) { a.Remove("region"); a["exhibit"] = aExId!; }
-            else aSubject = SubjectRegion + aRegion;
+            aNew = aEx.Id != null && S(aEx.Data, "region") == aRegion ? aSubject : SubjectRegion + aRegion;
         }
-        else if (aExId != null) a["exhibit"] = aExId;
-        else if (aSubject.StartsWith(SubjectRegion, StringComparison.Ordinal)) a["region"] = aSubject.Substring(SubjectRegion.Length);
-        RunView(g, iLabel + "｜" + SubjectText(aSubject), a, iPersona, aSubject);
+        else if (aSubject.StartsWith(SubjectRegion, StringComparison.Ordinal)) aNew = SubjectFull;
+        if (aNew != aSubject) g.SetField(SSubject, aNew);
+    }
+
+    /// <summary>一組要求的讀數（鍵排序後串起來）—— 比對「這張跟上一張是不是同一組參數」。</summary>
+    static string RequestSig(Dictionary<string, string> iArgs, string iPersona)
+        => "persona=" + iPersona + ";" + string.Join(";", iArgs.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value));
+
+    // ===========================================================
+    // 區塊職責：自動渲染（見檔頭）—— 每輪 DrawContent 開頭跑一次：判斷要不要畫、合併連發、節流。
+    // 物理意義：觸發讀數 ＝ 非文字參數（滑桿／下拉）＋ persona ＋ 設定檔鏈的疊加結果；對象另外比（工作寫回的不算）。
+    //           文字欄只認「編輯完成」事件（SCP_Ui.Committed）。滑桿兩條都認：拖曳中（節流）與放開（一定補最後一張）。
+    // 數值影響：同時間最多一張；視窗模式兩張之間 ≥ AutoMinInterval；參數跟上一張一模一樣 ⇒ 不畫（除非強制）。
+    //           文字模式（每道指令一個新頁面實例）⇒ 進頁只在**還沒有圖**時畫（⛔ 不讓每一道 `ui` 指令都花幾秒重渲）。
+    // ===========================================================
+    void AutoRender(SCP_Ui g, string iPersona)
+    {
+        if (g.Committed(FRegion)) RegionCommitted(g);   // ⚠ 先換對象再取讀數 ⇒ 這一輪就畫新對象
+        string aTrigger = TriggerSig(g, iPersona);
+        string aSubject = g.FieldValue(SSubject, SubjectFull);
+        if (m_OpenRender)
+        {
+            m_OpenRender = false;
+            string aPath = g.FieldValue(SViewPath, "");
+            if (SCP_GuiHost.RedrawsContinuously || aPath.Length == 0 || !File.Exists(aPath)) RequestRender("進頁", iForce: true);
+        }
+        if (m_PrevTrigger != null && aTrigger != m_PrevTrigger) RequestRender("參數變了");
+        if (m_PrevSubject != null && aSubject != m_PrevSubject && aSubject != m_SubjectFromJob) RequestRender("換了對象");
+        foreach (string aId in CommitIds()) if (g.Committed(aId)) { RequestRender("編輯完成 " + aId.Substring(P.Length)); break; }
+        m_PrevTrigger = aTrigger;
+        m_PrevSubject = aSubject;
+        m_SubjectFromJob = null;
+
+        if (!m_AutoWanted || m_Job != null) return;   // 正在跑 ⇒ 等它跑完（PumpJob 收掉之後的那一輪再來）
+        if (SCP_GuiHost.RedrawsContinuously && DateTime.UtcNow - m_LastAutoStartUtc < AutoMinInterval) return;
+        Dictionary<string, string> a = ManualRequest(g, iPersona, out _);
+        bool aSame = RequestSig(a, iPersona) == m_LastStartedSig;
+        string aWhy = m_AutoWhy;
+        bool aForce = m_AutoForce;
+        m_AutoWanted = false; m_AutoForce = false; m_AutoWhy = "";
+        if (aSame && !aForce) return;                  // 跟上一張同一組參數（例：環繞鈕已經畫過）⇒ 不再畫
+        m_LastAutoStartUtc = DateTime.UtcNow;
+        RunManual(g, "自動渲染（" + aWhy + "）", iPersona);
+    }
+
+    /// <summary>記一筆「要畫」（合併：多次要求只留一筆，原因串起來；強制旗標取 OR）。</summary>
+    void RequestRender(string iWhy, bool iForce = false)
+    {
+        m_AutoWanted = true;
+        m_AutoForce |= iForce;
+        if (!m_AutoWhy.Contains(iWhy, StringComparison.Ordinal)) m_AutoWhy = m_AutoWhy.Length == 0 ? iWhy : m_AutoWhy + "＋" + iWhy;
+    }
+
+    /// <summary>會發「編輯完成」的參數欄位：文字欄 ＋ 滑桿。</summary>
+    static IEnumerable<string> CommitIds()
+    {
+        foreach (string s in s_TextParamIds) yield return s;
+        foreach (SliderSpec s in s_CamSliders) yield return s.Id;
+        foreach (SliderSpec s in s_LightSliders) yield return s.Id;
+        foreach (SliderSpec s in s_SkySliders) yield return s.Id;
+    }
+
+    /// <summary>觸發讀數：滑桿＋下拉（⛔ 不含文字欄 —— 那條只認編輯完成）＋ persona ＋ 設定檔鏈的疊加結果。</summary>
+    string TriggerSig(SCP_Ui g, string iPersona)
+    {
+        var sb = new StringBuilder();
+        sb.Append("persona=").Append(iPersona).Append(';');
+        foreach (string aId in CommitIds())
+            if (Array.IndexOf(s_TextParamIds, aId) < 0) sb.Append(aId).Append('=').Append(g.FieldValue(aId, "").Trim()).Append(';');
+        foreach (string aSel in new[] { FProjection, FAo, FShadow, FSkybox, FFitUpscale, FFloor, FFloorTex, FFloorFull })
+            sb.Append(aSel).Append('=').Append(g.FieldValue(aSel + "/value", None)).Append(';');
+        // 設定檔鏈變了（「使用」別組、存了新設定檔、換層）⇒ 圖也該跟著換
+        sb.Append("chain=").Append(string.Join(">", m_ResolvedLayers)).Append('|');
+        if (m_Resolved != null) foreach (string s in Describe(m_Resolved)) sb.Append(s).Append('|');
+        return sb.ToString();
     }
 
     /// <summary>對象 → 給人看的字（結果區標頭用）。</summary>
@@ -485,6 +675,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold("渲染結果", P + "fold/result", iDefaultOpen: true);
         if (!aFold.Open) return;
         if (aPath.Length == 0) { g.Note("（還沒渲染 —— 按「全景」「渲染展品」或「渲染」）"); return; }
+        if (m_Job != null) g.Note("渲染中…（" + m_JobLabel + "）" + (m_AutoWanted ? "　畫完會用最新參數再補一張" : ""));
         g.Label("目前對象：" + SubjectText(g.FieldValue(SSubject, SubjectFull)) + "（環繞／切投影／手動渲染都重渲這個對象）");
         g.Label("renderer：" + g.FieldValue(SRenderer, "?"));
         g.Label("layers：" + g.FieldValue(SLayers, "?"));
@@ -817,6 +1008,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     void Apply(SCP_Ui g, Outcome o)
     {
         foreach (var kv in o.Fields) g.SetField(kv.Key, kv.Value);
+        if (o.Fields.TryGetValue(SSubject, out string? aSubj)) m_SubjectFromJob = aSubj;   // 工作寫回的對象 ⛔ 不觸發自動渲染
         string aLog = o.Log.Length > 12000 ? o.Log.Substring(0, 12000) + "\n…（截斷）" : o.Log;
         g.SetField(SLog, aLog);
         int aNl = aLog.IndexOf('\n');

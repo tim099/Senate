@@ -194,8 +194,16 @@ sealed class GuiBridgeHost : IDisposable
                 m_Window.InjectClick(aId);
                 break;
             case "set":
-                m_Window.InjectField(aId, SplitSetValue(aReq.Value));
+            {
+                // 滑桿：驗數字＋夾範圍（跟 CLI `--set` 吃同一份 SCP_GuiQuery.NormalizeSet）
+                if (!SCP_GuiQuery.NormalizeSet(aElem, SplitSetValue(aReq.Value), out string aNorm, out string aNote))
+                {
+                    Respond(Fail($"{aId}：{aNote} ⇒ 沒有寫入"));
+                    return;
+                }
+                m_Window.InjectField(aId, aNorm);
                 break;
+            }
             case "toggle":
                 m_Window.InjectToggle(aId, !(m_Window.TryGetToggle(aId, out bool aOn) ? aOn : aElem.On));
                 break;

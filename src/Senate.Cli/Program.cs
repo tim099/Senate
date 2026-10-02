@@ -411,6 +411,7 @@ public static class Program
         string? aSet = ArgValue(iArgs, "--set");
         string? aToggle = ArgValue(iArgs, "--toggle");
         string? aFold = ArgValue(iArgs, "--fold");
+        string? aCommitId = null;
 
         foreach (string? aId in new[] { aClick, aToggle, aFold })
         {
@@ -429,12 +430,22 @@ public static class Program
             if (eq <= 0) { Console.Error.WriteLine("✗ --set 的格式是 <id>=<值>"); return 2; }
             string aSetId = aSet.Substring(0, eq);
             string aVal = aSet.Substring(eq + 1);
-            if (SCP_GuiQuery.Find(aProbeTree, aSetId) == null)
+            var aSetElem = SCP_GuiQuery.Find(aProbeTree, aSetId);
+            if (aSetElem == null)
             {
                 Console.Error.WriteLine($"✗ 畫面上沒有這個 id：{aSetId}（`senate ui --list` 看清單）");
                 return 2;
             }
+            // 滑桿：驗數字＋夾範圍（同一份規則常駐窗那條路也吃 —— SCP_GuiQuery.NormalizeSet）
+            if (!SCP_GuiQuery.NormalizeSet(aSetElem, aVal, out string aNorm, out string aSetNote))
+            {
+                Console.Error.WriteLine($"✗ {aSetId}：{aSetNote} ⇒ 沒有寫入");
+                return 2;
+            }
+            if (aSetNote.Length > 0) Console.WriteLine($"・{aSetId}：{aSetNote}");
+            aVal = aNorm;
             aState.Fields[aSetId] = aVal;
+            aCommitId = aSetId;   // 一次 --set ＝ 一次寫完的值 ⇒ 這一趟報「編輯完成」（SCP_GuiInput.Committed）
             // 密碼欄（id 帶 #secret，TASK-0300）⛔ 不回顯值 —— stdout 常被導進 log／agent 的對話紀錄
             Console.WriteLine(SCP_Ui.IsMaskedId(aSetId)
                 ? $"・已設定 {aSetId} = {SCP_GuiTextRenderer.MaskedText(aVal)}　⚠ 密碼走 --set 會留在指令歷程裡，只適合測試"
@@ -457,7 +468,7 @@ public static class Program
             Console.WriteLine($"・已{(aOld ? "收合" : "展開")} {aFold}");
         }
 
-        var (aTree, aText) = UiDriver.Apply(aCatalog, aState, aClick, aStyle);
+        var (aTree, aText) = UiDriver.Apply(aCatalog, aState, aClick, aStyle, aCommitId);
         UiDriver.Save(iRepoRoot, aState);
 
         if (HasFlag(iArgs, "--list")) { Console.Write(UiDriver.ListElements(aTree, aStyle)); return 0; }

@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
 description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、頁面要宿主的值一律問介面（不自存第二份）、非 UI 操控介面與 session 狀態
-last_updated: 2026-10-02 (TableRowScope／TableCell：表格列裡放按鈕)
+last_updated: 2026-10-02 (Slider 數值滑桿＋「編輯完成」事件 SCP_GuiInput.Committed；TASK-0377)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -95,6 +95,11 @@ ImGui renderer 的互動是「這一幀記下誰被按了 → 下一幀透過 `S
 CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler 真的執行，
 第二趟才是要顯示的畫面。只畫一趟的話，畫面顯示的是按下**前**的狀態。
 
+**「編輯完成」也是事件**（`SCP_GuiInput.Committed`，頁面問 `g.Committed(id)`）：
+視窗在 ImGui `IsItemDeactivatedAfterEdit`（滑桿放開、輸入框 Enter／離開）時報；
+CLI `--set` 與常駐窗的 set 請求各算一次完成（跟 click 一樣只進第一趟）。
+用途：要做貴的事（重渲一張圖）的頁面認這一格，⛔ 不認拖曳中每一幀都在變的欄位值。
+
 ---
 
 ## Row 的排版規則（兩個 renderer，**同一棵樹、不同能力**）
@@ -104,7 +109,7 @@ CLI 那側用**兩趟繪製**處理同一件事：第一趟帶 click 讓 handler
 | **ImGui**（有真正的水平版位） | 每個子節點都 `SameLine`；**群組包在 `BeginGroup`／`EndGroup` 裡** ⇒ 群組內每一行從群組起點開始，可以排在別人右邊 |
 | **文字**（沒有水平版位） | 連續的 inline 併成一行；**遇到群組就換行**，並印一行 `· ⟨視窗模式：下面這塊排在上一行的右邊⟩` |
 
-誰算 inline 只有一份 —— `SCP_GuiNode.IsInline`（Label／Note／Button／Toggle／TextField）。
+誰算 inline 只有一份 —— `SCP_GuiNode.IsInline`（Label／Note／Button／Toggle／TextField／Slider／Image）。
 
 🩸 **血證（2026-08-23，Tim 的截圖）**：ImGui renderer 原本對**每一個**子節點都 `SameLine()`，
 包括群組。`SameLine` 只把游標移到前一個元件的右邊，而群組會往下長好幾行 ——
@@ -269,6 +274,30 @@ if (g.Button("開啟", "home/open")) Open(aPick);
 | 邊界上**不畫**上一頁／下一頁 | 畫一顆按了沒事的鈕（那看起來像壞的） |
 | 現值不在清單裡 ⇒ 標 `⚠(不在清單裡)` | 靜默跳到第 0 項 —— 使用者會以為自己選的是那一項 |
 | 選項為空 ⇒ 畫一行「(沒有可選的項目)」 | 什麼都不畫（「沒選項」與「元件沒畫出來」不得同形） |
+
+---
+
+## 數值滑桿：`SCP_Ui.Slider`
+
+```csharp
+double aYaw = g.Slider("yaw（度）", "sculpt/f/yaw", 0, 360, iDefault: aChainYaw, iFormat: "0");
+if (g.Committed("sculpt/f/yaw")) Rerender();   // 放開滑鼠那一輪才 true
+```
+
+這一個**有**新增節點型別（`SCP_GuiNodeKind.Slider`）—— 五個地方一起改過：enum／撰寫端／文字 renderer／
+ImGui renderer（`SliderFloat` ＋ `AlwaysClamp`）／可互動元件清單。
+
+| 判準 | 而不是 |
+|---|---|
+| 值住在**跟 TextField 同一份欄位狀態**（invariant 字串）⇒ session、`--set id=值`、常駐窗 set 全部現成 | 另開一份數值狀態 —— 每一條驅動方式都要再接一次，漏接的那條不會報錯 |
+| 欄位**空白 ＝ 沒設** ⇒ 顯示呼叫端的 `iDefault`（頁面可以拿來做「沿用上游設定」） | 沒設就寫進預設值 —— 「使用者選了 45」與「沒選、預設剛好 45」從此分不開 |
+| 回傳值一律夾進 `[min, max]`；寫回欄位照 `iFormat` 的小數位捨入（＝步距） | 拖出一串 `44.99999` 落盤 |
+| `--set` 經 `SCP_GuiQuery.NormalizeSet`（CLI 與常駐窗**共用**）：空白 ＝ 清掉、超出範圍 ⇒ 夾並**說出來**、不是數字 ⇒ exit 2 **不寫** | 寫進去 —— 畫面顯示預設、頁面卻讀到那串字，兩邊各說各話 |
+| 文字輸出 `標籤: 值 (min..max)`；空白標「未設 ＝ 預設」、欄位有字但不是數字標 ⚠ | 只印值 —— 「預設」與「設成同一個值」同形 |
+| 「拖完了沒」問 `g.Committed(id)` | 比對欄位值有沒有變 —— 拖曳中每一幀都在變，會做 60 次貴的事 |
+| key 必填（逐字採用） | 自動 id —— 會漂，而這個值要進 session、要被 `--set` 指名 |
+
+⚠ 小數格式是 C# 自訂格式（`0`／`0.##`／`0.00`），ImGui 那側由 `SCP_Ui.SliderDecimals` 換成 `%.Nf`。
 
 ---
 

@@ -50,10 +50,21 @@ public sealed class GuiImGuiRenderer
     /// 它記在自己的 id 空間裡，頁面／CLI／session 都讀不到，於是「我摺起來的東西」換個驅動方式就散了。</summary>
     public Dictionary<string, bool> Folds { get; } = new();
 
+    /// <summary>
+    /// 這一幀「編輯完成」的欄位 id（滑桿放開／輸入框 Enter 或離開；ImGui `IsItemDeactivatedAfterEdit`）。
+    /// 跟 <see cref="ClickedId"/> 一樣是**一次性事件**：下一次 <see cref="TakeInput"/> 送出去就清掉。
+    /// </summary>
+    readonly HashSet<string> m_Committed = new();
+
+    /// <summary>由宿主注入一次「編輯完成」（常駐窗的 set 請求 —— 跟手放開滑桿走同一格）。</summary>
+    public void InjectCommitted(string iId) => m_Committed.Add(iId);
+
     /// <summary>把上一幀收集到的互動包成下一次 Draw 的輸入，並清掉一次性的點擊。</summary>
     public SCP_GuiInput TakeInput()
     {
         var aInput = new SCP_GuiInput { ClickedId = ClickedId };
+        foreach (string aId in m_Committed) aInput.Committed.Add(aId);
+        m_Committed.Clear();       // 同點擊：只送一次
         foreach (var kv in Fields) aInput.Fields[kv.Key] = kv.Value;
         foreach (var kv in Toggles) aInput.Toggles[kv.Key] = kv.Value;
         foreach (var kv in Folds) aInput.Folds[kv.Key] = kv.Value;
@@ -397,6 +408,36 @@ public sealed class GuiImGuiRenderer
                 // 密碼欄（SCP_Ui.PasswordField，TASK-0300）⇒ ImGui 自帶的遮罩輸入：畫面上是 *、也不能被複製出去
                 ImGuiInputTextFlags aFlags = iNode.Masked ? ImGuiInputTextFlags.Password : ImGuiInputTextFlags.None;
                 if (ImGui.InputText("##" + iNode.Id, ref aVal, 4096, aFlags)) Fields[iNode.Id] = aVal;
+                if (ImGui.IsItemDeactivatedAfterEdit()) m_Committed.Add(iNode.Id);
+                break;
+            }
+
+            case SCP_GuiNodeKind.Slider:
+            {
+                // 數值滑桿（TASK-0377）：值寫回**同一份 Fields**（invariant 字串，照節點格式捨入 ⇒ 跟 CLI `--set` 寫出同一個字）。
+                // ⚠ 現值先看 renderer 這邊的 Fields：拖曳中這一幀的值比節點（上一輪頁面畫的）新一幀；
+                //   Fields 是空白（「沿用」清掉的）⇒ 用節點的有效值（頁面給的預設）。
+                double aCur = Fields.TryGetValue(iNode.Id, out string? aRaw)
+                              && SCP_Ui.TryParseSlider(aRaw, iNode.SliderMin, iNode.SliderMax, out double aParsed)
+                    ? aParsed : iNode.SliderValue;
+                float aF = (float)aCur;
+                if (iForcedWidth > 0f)
+                {
+                    float aLabelW = LabelNaturalSpan(iNode.Text);
+                    LabelLeftCompact(iNode.Text);
+                    ImGui.SetNextItemWidth(Math.Max(m_Style.ButtonMinWidth * 0.5f, iForcedWidth - aLabelW));
+                }
+                else
+                {
+                    LabelLeft(iNode.Text);
+                    ImGui.SetNextItemWidth(m_Style.TextFieldWidth);
+                }
+                string aFmt = "%." + SCP_Ui.SliderDecimals(iNode.SliderFormat) + "f";
+                // AlwaysClamp：Ctrl+點擊改成直接輸入時也夾進範圍（不夾的話欄位會存進範圍外的值，而滑桿畫在端點上看不出來）
+                if (ImGui.SliderFloat("##" + iNode.Id, ref aF, (float)iNode.SliderMin, (float)iNode.SliderMax, aFmt, ImGuiSliderFlags.AlwaysClamp))
+                    Fields[iNode.Id] = SCP_Ui.FormatSlider(aF, iNode.SliderFormat);
+                // ⭐ 放開的那一幀才報「完成」—— 頁面拿這格決定要不要做貴的事（重渲），⛔ 不是拖曳的每一幀
+                if (ImGui.IsItemDeactivatedAfterEdit()) m_Committed.Add(iNode.Id);
                 break;
             }
 
