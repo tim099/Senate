@@ -165,6 +165,10 @@ public static class Program
         // ⚠ 沒裝閘不是「推了」—— `cmd commit` 會明說「沒有登記推單閘 ⇒ 狀態沒有動」並印手動補的指令。
         SCP.Core.Tasks.SCP_TaskCommitGatewayHost.Factory =
             aDataRoot => new SenateTaskCommitGateway(aDataRoot, Console.WriteLine);
+        // 宿主能力⑥：雕刻 GPU 渲染器（TASK-0377）—— `cmd sculpture op=view`／分享圖／觀測頁預覽**同一個實作**。
+        // ⚠ 註冊只是 new 一個物件：GL context（隱藏 GLFW 視窗）在第一次 TryRender 才建 ⇒ 不畫圖的指令零成本。
+        //   建不出 context 時 TryRender 回 false 與原因（⛔ 不丟例外）；Senate.Server 不引用 Desktop ⇒ 那邊不註冊，呼叫端要大聲說。
+        SCP.Core.Sculpture.SCP_SculptRenderers.Register(new SenateSculptRenderer());
 
 
         // 🩸 雙擊 senate.exe 原本會「閃一下就關」（console app 沒參數 ⇒ 跑 doctor ⇒ 印完結束）。

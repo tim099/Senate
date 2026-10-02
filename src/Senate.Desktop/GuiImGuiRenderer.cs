@@ -287,8 +287,15 @@ public sealed class GuiImGuiRenderer
                 // 正方形頭像。非方形的圖**裁中間**（UV 取中間那一塊），⛔ 不壓扁。
                 // 沒有圖／讀不了 ⇒ 灰色佔位框，滑鼠提示說為什麼 —— 「沒有圖」與「圖壞了」要分得開。
                 float aSide = m_Style.Scaled(iNode.ImageSize > 0f ? iNode.ImageSize : 48f);
-                SenateTextureCache.Entry? aTex = iNode.Value.Length > 0 ? Textures?.Get(iNode.Value) : null;
-                if (aTex != null && aTex.Handle != 0)
+                SenateTextureCache.Entry? aTex = iNode.Value.Length > 0 ? Textures?.Get(iNode.Value, iNode.ImageFit) : null;
+                if (iNode.ImageFit && aTex != null && aTex.Handle != 0)
+                {
+                    // 整張縮進框（TASK-0377）：長邊＝aSide、照原比例，⛔ 不裁切。
+                    float aK = aSide / Math.Max(aTex.Width, aTex.Height);
+                    ImGui.Image((IntPtr)aTex.Handle, new Vector2(aTex.Width * aK, aTex.Height * aK));
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(T(iNode.Text) + $"（{aTex.Width}×{aTex.Height}）");
+                }
+                else if (aTex != null && aTex.Handle != 0)
                 {
                     float aU0 = 0f, aU1 = 1f, aV0 = 0f, aV1 = 1f;
                     if (aTex.Width > aTex.Height) { float c = (1f - (float)aTex.Height / aTex.Width) / 2f; aU0 = c; aU1 = 1f - c; }

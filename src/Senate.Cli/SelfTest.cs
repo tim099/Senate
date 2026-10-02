@@ -143,8 +143,11 @@ public static partial class SelfTest
         One(nameof(FreeTimeSettingsCleanRoom), "freetime", FreeTimeSettingsCleanRoom),
         One(nameof(FreeTimeActivityMdCleanRoom), "freetime", FreeTimeActivityMdCleanRoom),
         One(nameof(FreeTimePageReadsDisk), "freetime", FreeTimePageReadsDisk),
-        // 雕刻搬到 Senate（TASK-0363）：本體在 SelfTest.Sculpture0363.cs
+        // 雕刻搬到 Senate（TASK-0363）＋引擎改 in-process C#（TASK-0377）：本體在 SelfTest.Sculpture0363.cs
         One(nameof(SculptureContractCleanRoom), "sculpture", SculptureContractCleanRoom),
+        One(nameof(SculptureViewCleanRoom), "sculpture", SculptureViewCleanRoom),
+        One(nameof(SculptureRenderProfileCleanRoom), "sculpture", SculptureRenderProfileCleanRoom),
+        One(nameof(SculpturePlaceCleanRoom), "sculpture", SculpturePlaceCleanRoom),
         // 交易所報酬率／法幣（TASK-0371）：本體在 SelfTest.Portfolio0371.cs
         One(nameof(PortfolioFxParserCleanRoom), "market", PortfolioFxParserCleanRoom),
         One(nameof(PortfolioReplayCleanRoom), "market", PortfolioReplayCleanRoom),

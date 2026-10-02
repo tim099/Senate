@@ -29,34 +29,39 @@ public sealed class SenateTextureCache : IDisposable
 
     public SenateTextureCache(GL iGl) { m_Gl = iGl; }
 
+    /// <summary>「原解析度」那一路的長邊上限（整張預覽用；超過才縮，⛔ 不是頭像那條 256）。</summary>
+    public const int FullMaxSide = 4096;
+
     /// <summary>拿一張貼圖；讀不了回的 Entry 帶 Error、Handle=0。路徑空 ⇒ null（＝本來就沒有圖）。</summary>
-    public Entry? Get(string iPath)
+    /// <param name="iFull">true ＝ 原解析度（長邊 ≤ <see cref="FullMaxSide"/>）；false ＝ 頭像縮圖（≤ <see cref="MaxSide"/>）。兩者分開快取。</param>
+    public Entry? Get(string iPath, bool iFull = false)
     {
         if (string.IsNullOrEmpty(iPath)) return null;
+        string aKey = iFull ? "full|" + iPath : iPath;
         DateTime aMtime;
         try { aMtime = File.Exists(iPath) ? File.GetLastWriteTimeUtc(iPath) : DateTime.MinValue; }
         catch (Exception) { aMtime = DateTime.MinValue; }
 
-        if (m_Map.TryGetValue(iPath, out Entry? aOld) && aOld.WriteTimeUtc == aMtime) return aOld;
+        if (m_Map.TryGetValue(aKey, out Entry? aOld) && aOld.WriteTimeUtc == aMtime) return aOld;
         if (aOld != null && aOld.Handle != 0) m_Gl.DeleteTexture(aOld.Handle);
 
         var aNew = new Entry { WriteTimeUtc = aMtime };
         if (aMtime == DateTime.MinValue) aNew.Error = "檔案不存在：" + iPath;
         else
         {
-            try { Upload(iPath, aNew); }
+            try { Upload(iPath, aNew, iFull ? FullMaxSide : MaxSide); }
             catch (Exception e) { aNew.Error = $"讀不了（{e.GetType().Name}: {e.Message}）"; }
         }
-        m_Map[iPath] = aNew;
+        m_Map[aKey] = aNew;
         return aNew;
     }
 
-    unsafe void Upload(string iPath, Entry ioEntry)
+    unsafe void Upload(string iPath, Entry ioEntry, int iMaxSide)
     {
         ImageResult aImg;
         using (var aFs = File.OpenRead(iPath)) aImg = ImageResult.FromStream(aFs, ColorComponents.RedGreenBlueAlpha);
 
-        (byte[] aPixels, int aW, int aH) = Downscale(aImg.Data, aImg.Width, aImg.Height, MaxSide);
+        (byte[] aPixels, int aW, int aH) = Downscale(aImg.Data, aImg.Width, aImg.Height, iMaxSide);
 
         uint aTex = m_Gl.GenTexture();
         m_Gl.BindTexture(TextureTarget.Texture2D, aTex);
