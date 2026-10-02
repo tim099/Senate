@@ -1,0 +1,266 @@
+{
+  "//": "知識庫評估題庫（TASK-0378）：每題一句話＋該找到的檔。查詢刻意不抄標題用字（測語意不是測字面）。",
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "frag-01",
+      "target": "fragments",
+      "q": "批次送出只回一個有沒有成功的布林，結果其中幾個目標漏掉了也看不出來，那條提醒在哪",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/basecamp/fragments/lesson_aggregate-hides-partial-failure.md"
+      ]
+    },
+    {
+      "id": "frag-02",
+      "target": "fragments",
+      "q": "有人反省過自責說自己不夠謹慎其實是在逃避去修機制，那篇心得是誰寫的",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/calli/fragments/lesson_apology-as-escape.md"
+      ]
+    },
+    {
+      "id": "frag-03",
+      "target": "fragments",
+      "q": "發現數字對不上但只記在腦子裡沒有落盤，別人就無法複驗，講這個區別的筆記在哪",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/gura/fragments/lesson_testimony-vs-evidence.md"
+      ]
+    },
+    {
+      "id": "frag-04",
+      "target": "fragments",
+      "q": "誇了同事一個其實他改之前就存在的功能、又替自己記了一筆沒發生的犧牲，那篇關於假帳的反省",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kaguya/fragments/lesson_goodwill-does-not-balance-books.md"
+      ]
+    },
+    {
+      "id": "frag-05",
+      "target": "fragments",
+      "q": "為了驗證別人回報的圖檔尺寸不對，我一跑工具就把原本那張檔案覆寫掉了，那次的教訓",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kiara/fragments/lesson_reading-destroys-evidence.md"
+      ]
+    },
+    {
+      "id": "frag-06",
+      "target": "fragments",
+      "q": "交接清單上的待辦看起來都正常，結果它指向的腳本早就被刪掉了，誰記過這件事",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_todo-outlives-the-thing-it-points-at.md"
+      ]
+    },
+    {
+      "id": "frag-07",
+      "target": "fragments",
+      "q": "OCR 一直零命中結果是型別錯誤被外層例外處理默默吃掉，那篇講錯誤要浮出來的筆記",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/summit/fragments/lesson_broad_except_swallows_truth.md"
+      ]
+    },
+    {
+      "id": "frag-08",
+      "target": "fragments",
+      "q": "看雕塑時先確認實際的形體，再加上自己想像的故事，不要把兩者混成同一個事實，那段隨筆",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/Sirius/fragments/practice_weight-before-story.md"
+      ]
+    },
+    {
+      "id": "frag-09",
+      "target": "fragments",
+      "q": "終端印出錯誤但實際狀態其實已經寫進去了，應該以讀回持久狀態為準，那條心得在哪",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/meadow/fragments/lesson_readback-over-terminal-text.md"
+      ]
+    },
+    {
+      "id": "core-01",
+      "target": "coredocs",
+      "q": "有沒有一支指令可以自動檢查元件上的說明連結指向的文件是不是真的存在",
+      "expect": [
+        "Assets/Plugins/UCL_Core/Docs~/zh-Hant/API/UCL_AgentCommand/Cmd_HelpUrlCheck.md"
+      ]
+    },
+    {
+      "id": "core-02",
+      "target": "coredocs",
+      "q": "以前 Discord 頻道要對應到哪個酒館房間是怎麼設定的，現在那套還在嗎",
+      "expect": [
+        "Assets/Plugins/UCL_Core/Docs~/zh-Hant/Mechanics/Discord_Channel_Routing.md"
+      ]
+    },
+    {
+      "id": "core-03",
+      "target": "coredocs",
+      "q": "多個 persona 同時跑指令會互相卡住，想讓各自的佇列並行，那份規劃文件寫了什麼前置條件",
+      "expect": [
+        "Assets/Plugins/UCL_Core/Docs~/zh-Hant/Plan/Plan_Cmd_Concurrency_Hardening.md"
+      ]
+    },
+    {
+      "id": "core-04",
+      "target": "coredocs",
+      "q": "多型欄位在編輯器畫面能編但存成 JSON 的判斷條件不一樣，有份文件分析這個不一致",
+      "expect": [
+        "Assets/Plugins/UCL_Core/Docs~/zh-Hant/Plan/SerializeReference_Symmetry_Plan.md"
+      ]
+    },
+    {
+      "id": "core-05",
+      "target": "coredocs",
+      "q": "想把帶子模組的專案整個展開成一般檔案複製到另一個倉庫，有工具頁可以做嗎",
+      "expect": [
+        "Assets/Plugins/UCL_Core/Docs~/zh-Hant/UCL_EditorPage/UCL_GitFlattenSyncPage.md"
+      ]
+    },
+    {
+      "id": "core-06",
+      "target": "coredocs",
+      "q": "自由時間可以在共用的立體空間裡堆方塊再挖掉做作品，那個活動怎麼收費怎麼操作",
+      "expect": [
+        "Assets/Plugins/UCL_Core/Docs~/zh-Hant/FreeTime/Activities/sculpt-3d.md"
+      ]
+    },
+    {
+      "id": "wm-01",
+      "target": "work_memory",
+      "q": "讀檔時遇到別人正在寫導致找不到檔案也要重試，這個防護最後決定放在讀的那一側，記在哪",
+      "expect": [
+        "AgentCommands/WorkMemory/agentcmd-queue-lost-update/decision_guard-lives-on-reader-side.md"
+      ]
+    },
+    {
+      "id": "wm-02",
+      "target": "work_memory",
+      "q": "我在 Unity 那份改完程式也編譯過了，但命令列跑的其實是另一份舊程式建出來的執行檔，那個坑",
+      "expect": [
+        "AgentCommands/WorkMemory/bank-demurrage-voucher/pitfall_two-worktrees-two-binaries.md"
+      ]
+    },
+    {
+      "id": "wm-03",
+      "target": "work_memory",
+      "q": "在專案資料夾裡直接建置那個 csproj 會生出 dll 讓 Unity 報組件重複的錯，誰查到成因的",
+      "expect": [
+        "AgentCommands/WorkMemory/compile-verification/pitfall_dotnet-build-in-assets-breaks-unity.md"
+      ]
+    },
+    {
+      "id": "wm-04",
+      "target": "work_memory",
+      "q": "噗浪共用帳號底下室友點名我的回應都收不到，原因是一個提早跳過的判斷，那筆紀錄在哪",
+      "expect": [
+        "AgentCommands/WorkMemory/plurk-integration/pitfall_mentions-shared-account-swallow.md"
+      ]
+    },
+    {
+      "id": "wm-05",
+      "target": "work_memory",
+      "q": "字幕辨識的區域原本只能調上下，後來加了左右寬度用中心點來調，當時的做法筆記",
+      "expect": [
+        "AgentCommands/WorkMemory/screenstream-recording/knowhow_ocr-band-horizontal.md"
+      ]
+    },
+    {
+      "id": "wm-06",
+      "target": "work_memory",
+      "q": "在這台機器上看得到任務單卻找不到觀影的紀錄，因為不同資料根目錄有些東西不共用，那個坑在哪",
+      "expect": [
+        "AgentCommands/WorkMemory/streamwatch-segment-ledger/pitfall_cross-root-not-found-is-not-absent.md"
+      ]
+    },
+    {
+      "id": "doc-01",
+      "target": "docs",
+      "q": "Codex 連最簡單的 pwd 都跑不起來，錯誤是在建立終端程序之前就失敗，有排障說明嗎",
+      "expect": [
+        "Docs/Agent/Terminal_Executor_Initialization_Troubleshooting.md"
+      ]
+    },
+    {
+      "id": "doc-02",
+      "target": "docs",
+      "q": "高潮或劇情播放時要暫停玩家操作，多個來源疊加鎖住的那個服務是怎麼運作的",
+      "expect": [
+        "Docs/API/HScenes/InteractionLockService.md"
+      ]
+    },
+    {
+      "id": "doc-03",
+      "target": "docs",
+      "q": "公式裡想取興奮的段數而不是數值，是從零開始算還是從一，上限是多少",
+      "expect": [
+        "Docs/API/FloatValueProvider/FP_SatisfiedLevel.md"
+      ]
+    },
+    {
+      "id": "doc-04",
+      "target": "docs",
+      "q": "劇本檔放在雲端硬碟上大家一起編，要怎麼同步下載到專案資料夾",
+      "expect": [
+        "Docs/API/AssetsDocuments/GoogleDriveDownloaderAsset.md"
+      ]
+    },
+    {
+      "id": "lesson-01",
+      "target": "lessons",
+      "q": "守衛檢查的欄位名稱如果沒有用別名統一後的正式名稱，條件就永遠不會觸發，那條教訓",
+      "expect": [
+        "AgentCommands/Lessons/lessons.jsonl"
+      ],
+      "expect_text": "守衛讀的 key 名要跟 alias 歸一後的 canonical 名"
+    },
+    {
+      "id": "lesson-02",
+      "target": "lessons",
+      "q": "測早晚安流程時應該用測試用的空殼角色，不要拿真實角色的醒來次數反覆跑，有人記過",
+      "expect": [
+        "AgentCommands/Lessons/lessons.jsonl"
+      ],
+      "expect_text": "驗流程用 Template 測試殼"
+    },
+    {
+      "id": "lesson-03",
+      "target": "lessons",
+      "q": "把判斷依據寫在任務留言裡然後馬上關單，之後就沒人會再看到，那條在哪",
+      "expect": [
+        "AgentCommands/Lessons/lessons.jsonl"
+      ],
+      "expect_text": "結單會讓判準變成史料"
+    },
+    {
+      "id": "lesson-04",
+      "target": "lessons",
+      "q": "存檔後欄位名稱前面的成員前綴被去掉，腳本照原名去讀就拿到空值，那條經驗",
+      "expect": [
+        "AgentCommands/Lessons/lessons.jsonl"
+      ],
+      "expect_text": "UCL_Json 落檔會拿掉 m_ 前綴"
+    },
+    {
+      "id": "alaya-01",
+      "target": "alaya",
+      "q": "陪人看劇的時候不要把自己已經知道的後續情節講出來，那條大家共用的守則",
+      "expect": [
+        "AgentCommands/Alaya/fragments/lesson_no-spoilers.md"
+      ]
+    },
+    {
+      "id": "code-01",
+      "target": "coding",
+      "q": "遇到很難重現的問題，應該先建立一個能穩定失敗的快速驗證方式再去猜原因，那份方法論",
+      "expect": [
+        "AgentCommands/Knowledge/coding/debugging-feedback-loop.md"
+      ]
+    },
+    {
+      "id": "code-02",
+      "target": "coding",
+      "q": "skill 數量一多要怎麼區分正式版跟實驗中的，用放置位置表示成熟度的那篇",
+      "expect": [
+        "AgentCommands/Knowledge/coding/skill-repo-lifecycle-buckets.md"
+      ]
+    }
+  ]
+}

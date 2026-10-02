@@ -187,7 +187,7 @@ public static class ServerSpawn
     /// ⛔ 不要讓一個「看起來成功」的脫樹把真正的失敗蓋掉。</para>
     /// <para>⛔ 非 Windows 一律回 false（不是失敗，是這條路不適用）—— 那邊沒有套件身分這回事。</para>
     /// </summary>
-    static bool TrySpawnDetached(ProcessStartInfo iInfo, bool iShowConsole, out int oPid, out string oWhy)
+    internal static bool TrySpawnDetached(ProcessStartInfo iInfo, bool iShowConsole, out int oPid, out string oWhy)
     {
         oPid = 0; oWhy = "";
         if (!OperatingSystem.IsWindows()) { oWhy = "非 Windows，這條路不適用"; return false; }

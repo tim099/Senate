@@ -40,6 +40,8 @@ publish/
 !/SenateData/config/senate.local.example.json
 # 安裝系統的相依清單（TASK-0375）：資料不是機器狀態，大家要同一份 ⇒ 入版控
 !/SenateData/config/install_catalog.json
+# 知識庫評估題庫（TASK-0378）：新舊版要拿同一份題目量 ⇒ 入版控
+!/SenateData/config/kb_eval.json
 
 ### 一鍵 build 的產物 —— 根層現在只剩一個給人雙擊的捷徑（執行檔住 publish/，已被上面擋掉）
 /senate.lnk

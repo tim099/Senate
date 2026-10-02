@@ -167,6 +167,10 @@ public static partial class SelfTest
         One(nameof(InstallPlannerRules), "install", InstallPlannerRules),
         One(nameof(InstallSkillRequires), "install", InstallSkillRequires),
         One(nameof(InstallEnvResolve), "install", InstallEnvResolve),
+        // 知識庫搬到 Senate（TASK-0378）：本體在 SelfTest.Kb0378.cs
+        One(nameof(KbChunkerRules), "kb", KbChunkerRules),
+        One(nameof(KbIndexRoundTrip), "kb", KbIndexRoundTrip),
+        One(nameof(KbGlobRules), "kb", KbGlobRules),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),

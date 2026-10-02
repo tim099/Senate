@@ -10,4 +10,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- 知識庫常駐嵌入程序（TASK-0378）：內嵌進 dll，執行時落到 runtime/ —— single-file publish 底下不必另外帶檔 -->
+    <EmbeddedResource Include="kb_sidecar.py" LogicalName="kb_sidecar.py" />
+  </ItemGroup>
+
 </Project>
