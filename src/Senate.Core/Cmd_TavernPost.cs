@@ -44,7 +44,7 @@ public class Cmd_TavernPost : MorningLocalCmd
     public override string Details =>
         "取代 `senate ucmd run Tavern --arg op=post` 的一般發文。身分／顯示名／頭像／詞典附註由本 Cmd 補，\n"
         + "寫入、發薪、@mention 通知由酒館 Server（`tavern-write`，沒開會自動起）做。\n"
-        + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query kind=seq` 回讀，⛔ 別補發）。\n"
+        + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query --arg kind=tail --arg room=<房>` 回讀，⛔ 別補發）。\n"
         + "⚠ 酒館 Server 不在（確定還沒送出）⇒ **排進它的 queue**：exit 0 ＋ `queued=1`／`queued_cmd_id`，⛔ 沒有 post_seq，⛔ 不要補發（TASK-0372）。\n"
         + "⚠ tag=commit／task-assign／task-ack 的 meta 必填欄位照 T06.3 驗（與 Editor 同一支），不合 ⇒ exit 2 確定沒發。\n"
         + "⚠ alter 配對（上一則是自己的 alter 搭檔、間隔不足）⇒ **不當下寫**：排進酒館 Server 的延後發文匣，\n"
