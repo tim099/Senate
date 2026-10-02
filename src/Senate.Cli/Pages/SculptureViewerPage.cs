@@ -59,7 +59,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     const string FSkybox = P + "sel/skybox", FSkyYaw = P + "f/skybox_yaw", FSkyTilt = P + "f/skybox_tilt", FWidth = P + "f/width", FHeight = P + "f/height";
     const string FFitUpscale = P + "sel/fit_upscale";
     const string FFloor = P + "sel/floor", FFloorTex = P + "sel/floor_texture", FFloorTile = P + "f/floor_tile", FFloorZ = P + "f/floor_z";
-    const string FFloorFull = P + "sel/floor_full_grid", FFloorMargin = P + "f/floor_margin", FFloorColor = P + "f/floor_color", FFloorFade = P + "f/floor_fade";
+    const string FFloorFull = P + "sel/floor_full_grid", FFloorMargin = P + "f/floor_margin", FFloorMarginRatio = P + "f/floor_margin_ratio", FFloorColor = P + "f/floor_color", FFloorFade = P + "f/floor_fade";
     const string ProfScope = P + "sel/prof_scope", ProfSaveName = P + "f/prof_name";
     const string ProfCopyScope = P + "sel/prof_copy_scope", ProfCopyName = P + "f/prof_copy_name";
     const string Pending = P + "pending";
@@ -377,7 +377,8 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         Field(g, "floor_tile（貼圖每幾格重複一次；網格忽略）", FFloorTile);
         Field(g, "floor_z（地板高度，世界 z）", FFloorZ);
         Tri(g, "範圍", FFloorFull, "1", "整個 0..256 空間", "0", "voxel 外框＋margin");
-        Field(g, "floor_margin（外框模式外擴幾格）", FFloorMargin);
+        Field(g, "floor_margin_ratio（外擴 ＝ 作品最長邊 × 比例；0 ＝ 固定）", FFloorMarginRatio);
+        Field(g, "floor_margin（外擴上限格數）", FFloorMargin);
         Field(g, "floor_color（#RRGGBB 色調）", FFloorColor);
         Field(g, "floor_fade（邊緣淡出 0..0.5）", FFloorFade);
         if (m_Resolved != null) g.Label("目前疊加結果的地板：" + FloorSpec(m_Resolved));
@@ -411,7 +412,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         PutSel("skybox", FSkybox); Put("skybox_yaw", FSkyYaw); Put("skybox_tilt", FSkyTilt); Put("width", FWidth); Put("height", FHeight);
         PutSel("fit_upscale", FFitUpscale);
         PutSel("floor", FFloor); PutSel("floor_texture", FFloorTex); Put("floor_tile", FFloorTile); Put("floor_z", FFloorZ);
-        PutSel("floor_full_grid", FFloorFull); Put("floor_margin", FFloorMargin); Put("floor_color", FFloorColor); Put("floor_fade", FFloorFade);
+        PutSel("floor_full_grid", FFloorFull); Put("floor_margin", FFloorMargin); Put("floor_margin_ratio", FFloorMarginRatio); Put("floor_color", FFloorColor); Put("floor_fade", FFloorFade);
         return a;
     }
 

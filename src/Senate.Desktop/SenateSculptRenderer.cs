@@ -853,7 +853,7 @@ void main() {
         if (f == null) return null;
         if (f.FullGrid) return new FloorSetup { X0 = 0, Y0 = 0, X1 = FullGridSize, Y1 = FullGridSize, Z = (float)f.Z, Src = f, Tex = iTex };
         if (iMesh.VoxelCount == 0) return null;   // 外框模式沒有外框 ⇒ 不畫（見檔頭）
-        float m = (float)f.Margin;
+        float m = (float)f.EffectiveMargin(Math.Max(iMesh.Max.X - iMesh.Min.X, iMesh.Max.Y - iMesh.Min.Y));
         return new FloorSetup
         {
             X0 = iMesh.Min.X - m, Y0 = iMesh.Min.Y - m, X1 = iMesh.Max.X + m, Y1 = iMesh.Max.Y + m,
@@ -1096,7 +1096,8 @@ void main() {
             return iMesh.Centers;
         }
         oMin = iMesh.Min; oMax = iMesh.Max;
-        if (iFloor == null || Math.Abs(iMesh.Min.Z - iFloor.Z) > iFloor.Src.Margin) return iMesh.Centers;
+        if (iFloor == null || Math.Abs(iMesh.Min.Z - iFloor.Z)
+            > iFloor.Src.EffectiveMargin(Math.Max(iMesh.Max.X - iMesh.Min.X, iMesh.Max.Y - iMesh.Min.Y))) return iMesh.Centers;
         // 每顆 voxel 正下方在地板上的那一格（格中心 z 在地板下半格 ⇒ 加回 ±0.5 剛好是地板面）—— 只框「作品實際踩著的地方」，
         // ⛔ 不用外框四角：細長斜放的作品外框比剪影寬很多，框四角會讓作品縮小（2026-10-02 燈塔實測）。
         int n = iMesh.Centers.Length;

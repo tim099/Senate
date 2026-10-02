@@ -48,7 +48,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         + "· view 要 `out=<絕對路徑>` 或 persona（⇒ `letters/<P>/cmd/sculpture_view.png`）；slice 同理（`sculpture_slice.png`）。\n"
         + "  參數疊層：內建預設 → 共用作用中設定 → persona 作用中設定（或 `profile=` 指定一份）→ 展品 preset → CLI；`layers` 印出用了哪幾層。\n"
         + "  給了 exhibit 或 region ⇒ 自動框住時主體填滿畫面（fit_upscale=1，可放大超過 24 px／voxel）；全景維持只縮不放；`fit_upscale=0|1` 顯式指定。\n"
-        + "  地板：`floor=on|off` ＋ floor_z／floor_full_grid／floor_margin／floor_texture（相對 ⇒ Sculpture/floors/；builtin ＝ 量尺網格）／floor_tile／floor_color／floor_fade。\n"
+        + "  地板：`floor=on|off` ＋ floor_z／floor_full_grid／floor_margin（上限）／floor_margin_ratio（外擴＝作品最長邊×比例，預設 0.5；0 ＝ 固定 margin）／floor_texture（相對 ⇒ Sculpture/floors/；builtin ＝ 量尺網格）／floor_tile／floor_color／floor_fade。\n"
         + "· render-profile：`sub=list|show|set|use|copy|delete|reset` 管長期保存的渲染設定（鏡頭／燈／天空／地板／尺寸）。\n"
         + "· 引擎是 in-process 的 SCP_Core `SCP_SculptEngine`；圖由宿主註冊的渲染器畫（`renderer` 值印出是哪一個）。\n"
         + "exit：0 成功／2 參數不合／3 付款被拒（零副作用）／4 拿不到鎖／5 引擎拒絕（未落子、未扣費）／1 已落子但結算沒收齊（要對帳）或觀測出不了結果。";
@@ -79,7 +79,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     {
         "region", "exclude_color", "light_dir", "ambient", "shadow", "ao", "zoom", "projection", "yaw", "pitch", "roll",
         "target", "eye", "distance", "fov", "skybox", "skybox_yaw", "skybox_tilt", "width", "height", "lights", "light_add", "light_clear",
-        "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_texture", "floor_tile", "floor_color", "floor_fade",
+        "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
     };
 
     /// <summary>render-profile set 吃的設定鍵（＝ <see cref="SCP_SculptRenderProfiles.TryEdit"/> 認得的那幾個）。</summary>
@@ -87,7 +87,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     {
         "projection", "yaw", "pitch", "roll", "target", "eye", "distance", "fov", "zoom", "ambient", "ao", "shadow",
         "skybox", "skybox_yaw", "skybox_tilt", "background", "width", "height", "lights", "light_add", "light_clear", "unset",
-        "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_texture", "floor_tile", "floor_color", "floor_fade",
+        "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
     };
 
     /// <summary>render-profile set 除了設定鍵以外還吃的（路由／身分）。其餘顯式給的參數 ⇒ 擋（⛔ 不靜默忽略）。</summary>
@@ -149,7 +149,8 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("floor", "view／render-profile set：地板 on|off（不給 ⇒ 沿用設定檔鏈；內建預設沒有地板）"),
         new SCP_CmdArgSpec("floor_z", "地板高度（世界 z，" + SCP_SculptRenderProfiles.FloorZMin + ".." + SCP_SculptRenderProfiles.FloorZMax + "）"),
         new SCP_CmdArgSpec("floor_full_grid", "地板範圍：1 ＝ 整個 0..256 空間；0 ＝ 可見 voxel 外框外擴 floor_margin"),
-        new SCP_CmdArgSpec("floor_margin", "地板外框模式外擴幾格（0.." + SCP_SculptRenderProfiles.FloorMarginMax + "）"),
+        new SCP_CmdArgSpec("floor_margin", "地板外框模式外擴的上限格數（0.." + SCP_SculptRenderProfiles.FloorMarginMax + "；margin_ratio=0 時就是固定外擴）"),
+        new SCP_CmdArgSpec("floor_margin_ratio", "地板外擴 ＝ 作品 xy 最長邊 × 本值，封頂 floor_margin（0.." + SCP_SculptRenderProfiles.FloorMarginRatioMax + "，預設 0.5；0 ＝ 固定外擴）"),
         new SCP_CmdArgSpec("floor_texture", "地板貼圖：builtin（量尺網格）| 檔名（相對 ⇒ Sculpture/floors/）| 絕對路徑"),
         new SCP_CmdArgSpec("floor_tile", "地板貼圖每重複一次涵蓋幾格（" + SCP_SculptRenderProfiles.FloorTileMin + ".." + SCP_SculptRenderProfiles.FloorTileMax + "；網格忽略）"),
         new SCP_CmdArgSpec("floor_color", "地板色調 #RRGGBB（乘在貼圖／網格上）"),
