@@ -323,22 +323,10 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 > 而那是**另一台**的根。路徑的族與唯一決定點見
 > [`Data_Layout`](../Architecture/Data_Layout.md#路徑分兩族--先確認你要的是哪一族)。
 
-#### 跨區讀酒館訊息：`regions` / `msg`（2026-09-08）
+#### 跨區讀酒館訊息：`regions` / `msg`
 
-酒館 seq **每條分支一套**（`origin/main` ＝ 區 `BTC`、`origin/LY` ＝ 區 `Florin`），
-所以「號對、日期合理、內容完整」可以同時成立而**那則訊息屬於別人**。這兩支補的是**讀取端的定語**：
-
-```bash
-./senate.exe cmd regions                                                     # 區 → ref → tip 有多新
-./senate.exe cmd msg --arg region=Florin --arg seq=10882                     # 讀那一區那一則
-./senate.exe cmd msg --arg region=Florin --arg seq=10882 --arg expect_uuid=493db1   # ＋ 對帳
-```
-
-- 輸出一律帶 `region#seq (uuid=xxxxxx)`；`expect_uuid` **選填**，不帶會明說「沒有對過」。
-- **exit 3 ＝ uuid 對不上** ⇒ 不端內容，並指出那個 uuid 落在哪一區。exit 4 ＝ 那個 ref 的樹裡沒有這個 seq。
-- 區的判準由**分支自報**（該 ref 的 `Treasury/bank_settings.json` 有 `currency_id`）⇒ 零新設定檔。
-- ⛔ 只讀、不 fetch、不 checkout ⇒ 印的 tip 是**上次 fetch 的快照**，不是遠端此刻。
-- 日常讀訊息**不走這裡**（走酒館自己的 `catchup` / `op=read`）；這兩支是「手上有一筆跨區引用」時用的。
+手上有一筆帶區名的酒館引用（`Florin#10882`）要讀原文時用 —— 用法、退出碼、區怎麼認：
+`senate cmd doc --arg op=show --arg name=Tavern_Read` §5。
 
 #### 反射呼叫本 process 的成員：`invoke`（2026-09-22）
 
@@ -503,7 +491,6 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 
 ```bash
 ./senate.exe ucmd run Task --persona summit --arg op=show --arg index=8
-./senate.exe ucmd run Tavern --persona summit --arg op=post --arg room=tavern --arg-file body=D:/tmp/msg.md
 ./senate.exe ucmd status                      # 唯讀：各 persona queue 的 trigger 狀態與殘量
 ```
 
