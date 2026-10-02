@@ -58,6 +58,11 @@ public static class SenatePathBinding
             }
             case SCP_PathId.LettersRoot:
                 return SCP_PathStoredValue.Of(iConfig.Awakening.LettersRoot ?? "");
+            // 安裝系統（TASK-0375）：空白是合法值（＝用預設），解析結果的 Origin 會是「未設定」，由 InstallEnv 解讀。
+            case SCP_PathId.PythonEnvRoot:
+                return SCP_PathStoredValue.Of(iConfig.Install.PythonEnvRoot ?? "");
+            case SCP_PathId.ModelsRoot:
+                return SCP_PathStoredValue.Of(iConfig.Install.ModelsRoot ?? "");
             // 詞典根（Tim 2026-09-27）：Project 那一格 —— 詞典是跟著專案 repo 走的內容。
             case SCP_PathId.GlossaryRoot:
             {
@@ -110,6 +115,12 @@ public static class SenatePathBinding
             }
             case SCP_PathId.LettersRoot:
                 iConfig.Awakening.LettersRoot = iValue;
+                return true;
+            case SCP_PathId.PythonEnvRoot:
+                iConfig.Install.PythonEnvRoot = iValue;
+                return true;
+            case SCP_PathId.ModelsRoot:
+                iConfig.Install.ModelsRoot = iValue;
                 return true;
             default:
                 oError = $"{iId} 不是可設定的格子（Derived 的路徑算出來，不儲存）";

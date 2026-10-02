@@ -95,7 +95,10 @@ public sealed class Cmd_Paths : SCP_Cmd
                 aResult.Lines.Add("- 儲存鍵：`" + d.JsonKey + "`　現值：`"
                                   + (StoredOf(d.Id).Raw.Length == 0 ? "（未設定）" : StoredOf(d.Id).Raw) + "`");
             aResult.Lines.Add("- 算式：" + SCP_PathRegistry.Formula(d.Id));
-            if (aRes.Error != null)
+            // 空白在這一格是合法的預設（TASK-0375）⇒ 不算「解不出來」，也不印 ⚠。
+            if (d.IsBlankDefault(aRes))
+                aResult.Lines.Add("- ⇒ 空白＝" + d.BlankMeans);
+            else if (aRes.Error != null)
             {
                 aUnresolved++;
                 aResult.Lines.Add("- ⚠ 解不出來（" + aRes.Origin + "）：" + aRes.Error);

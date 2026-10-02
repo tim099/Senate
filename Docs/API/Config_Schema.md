@@ -1,7 +1,7 @@
 ---
 title: senate.local.json 規格
 description: 本機設定檔的欄位、schemaVersion 的處置、AgentCommands 資料根的解析規則、三態不得同形的驗證原則
-last_updated: 2026-09-01
+last_updated: 2026-10-02 (install 區塊：pythonEnvRoot／modelsRoot，TASK-0375)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -53,6 +53,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `projects[].profile` | string | 分群規則 profile 名（尚未實作，保留） |
 | `ui.scale` | float | 介面縮放（0.5〜4，**預設 1.0** —— 實機按過四段之後定的，見 D13）。基準尺寸的唯一來源是 `SCP_GuiStyle`，這裡只存「使用者選了什麼」 |
 | `ui.textWidth` | int | 純文字輸出寬（字元格，預設 96）⚠ **不吃 `ui.scale`** —— 終端機的一格是字元不是像素 |
+| `install.pythonEnvRoot` | string | 安裝系統把 Python 套件裝進哪一份 Python（資料夾：安裝目錄或 venv）。**空白＝自動找系統安裝的 Python**（TASK-0375，見 [`Install`](../Workflows/Install.md)） |
+| `install.modelsRoot` | string | 模型快取根（＝`HF_HOME`）。**空白＝HF 預設**（`%USERPROFILE%/.cache/huggingface`） |
 
 `ui` 區塊是**這台機器的顯示偏好**，所以只住在不入版控的那一份：進了版控就會變成
 「別人的螢幕決定我的字級」。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。

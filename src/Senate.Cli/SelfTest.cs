@@ -153,6 +153,12 @@ public static partial class SelfTest
         One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
+        // 安裝系統（TASK-0375）：本體在 SelfTest.Install0375.cs
+        One(nameof(InstallCatalogShape), "install", InstallCatalogShape),
+        One(nameof(InstallModelStates), "install", InstallModelStates),
+        One(nameof(InstallPlannerRules), "install", InstallPlannerRules),
+        One(nameof(InstallSkillRequires), "install", InstallSkillRequires),
+        One(nameof(InstallEnvResolve), "install", InstallEnvResolve),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),

@@ -137,6 +137,24 @@ public sealed class BankSettings
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
 }
 
+/// <summary>
+/// 安裝系統的設定（TASK-0375）：套件裝進哪一份 Python、模型下載到哪裡。
+/// <para>兩格都是**空白＝用預設**（系統 Python／HF 預設快取），不是「還沒設定所以不能用」。</para>
+/// </summary>
+public sealed class InstallSettings
+{
+    /// <summary>Python 環境的資料夾（安裝目錄或 venv）。空 ＝ 自動找系統安裝的 Python。</summary>
+    public string PythonEnvRoot { get; set; } = "";
+
+    /// <summary>Hugging Face 快取根（HF_HOME）。空 ＝ HF 預設（%USERPROFILE%/.cache/huggingface）。</summary>
+    public string ModelsRoot { get; set; } = "";
+
+    /// <summary>本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。</summary>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+}
+
 /// <summary>senate.local.json 的根物件。</summary>
 public sealed class SenateConfig
 {
@@ -164,6 +182,9 @@ public sealed class SenateConfig
     /// <para>純新增欄位 ⇒ schemaVersion 不動（1）：舊檔讀得進來、寫回去會多這一段。</para>
     /// </summary>
     public BankSettings Bank { get; set; } = new();
+
+    /// <summary>安裝系統（TASK-0375）。純新增欄位 ⇒ schemaVersion 不動；舊檔沒有這一段 ⇒ 兩格空白＝用預設。</summary>
+    public InstallSettings Install { get; set; } = new();
 
     /// <summary>
     /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。

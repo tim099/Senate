@@ -1,0 +1,100 @@
+{
+  "//": "安裝系統的相依清單（TASK-0375）。新增一個可安裝項目＝在 items 加一筆，不改程式。欄位說明見 Docs/Workflows/Install.md。",
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "py-torch-cu126",
+      "name": "PyTorch（CUDA 12.6 GPU 版）",
+      "desc": "所有本地模型的地基。⚠ 從 PyTorch 的 cu126 索引裝；從 PyPI 直接裝會拿到 CPU 版。",
+      "kind": "pip",
+      "dists": ["torch"],
+      "imports": ["torch"],
+      "check": "torch.cuda.is_available()",
+      "checkHint": "torch 裝了但不是 GPU 版（或顯卡驅動不支援 CUDA 12.6）",
+      "pipArgs": ["torch", "--index-url", "https://download.pytorch.org/whl/cu126"],
+      "shared": true,
+      "sizeMb": 2600,
+      "source": "https://download.pytorch.org/whl/cu126"
+    },
+    {
+      "id": "py-hf-hub",
+      "name": "huggingface_hub",
+      "desc": "下載 Hugging Face 模型用（模型類項目都靠它）。",
+      "kind": "pip",
+      "dists": ["huggingface_hub"],
+      "imports": ["huggingface_hub"],
+      "pipArgs": ["huggingface_hub"],
+      "shared": true,
+      "sizeMb": 5,
+      "source": "https://pypi.org/project/huggingface-hub/"
+    },
+    {
+      "id": "py-flagembedding",
+      "name": "FlagEmbedding",
+      "desc": "BGE-M3 嵌入與 BGE reranker 的推論套件（知識庫用）。",
+      "kind": "pip",
+      "requires": ["py-torch-cu126", "py-hf-hub"],
+      "dists": ["FlagEmbedding"],
+      "imports": ["FlagEmbedding"],
+      "pipArgs": ["FlagEmbedding"],
+      "sizeMb": 400,
+      "source": "https://pypi.org/project/FlagEmbedding/"
+    },
+    {
+      "id": "model-bge-m3",
+      "name": "BAAI/bge-m3（嵌入模型）",
+      "desc": "知識庫的嵌入模型（dense＋sparse＋ColBERT 三合一）。",
+      "kind": "hf_model",
+      "requires": ["py-hf-hub"],
+      "repo": "BAAI/bge-m3",
+      "requiredFiles": ["config.json", "tokenizer.json", "pytorch_model.bin"],
+      "sizeMb": 4300,
+      "source": "https://huggingface.co/BAAI/bge-m3"
+    },
+    {
+      "id": "model-bge-reranker-v2-m3",
+      "name": "BAAI/bge-reranker-v2-m3（重排模型）",
+      "desc": "檢索結果重排用（TASK-0370 方案 A）。",
+      "kind": "hf_model",
+      "requires": ["py-hf-hub"],
+      "repo": "BAAI/bge-reranker-v2-m3",
+      "requiredFiles": ["config.json", "tokenizer.json", "model.safetensors"],
+      "sizeMb": 2300,
+      "source": "https://huggingface.co/BAAI/bge-reranker-v2-m3"
+    },
+    {
+      "id": "py-openai-whisper",
+      "name": "openai-whisper",
+      "desc": "語音轉文字（直播陪看的即時字幕）。",
+      "kind": "pip",
+      "requires": ["py-torch-cu126"],
+      "dists": ["openai-whisper"],
+      "imports": ["whisper"],
+      "pipArgs": ["openai-whisper"],
+      "sizeMb": 20,
+      "source": "https://pypi.org/project/openai-whisper/"
+    },
+    {
+      "id": "py-soundcard",
+      "name": "soundcard",
+      "desc": "擷取系統音訊（語音轉文字的輸入端）。",
+      "kind": "pip",
+      "dists": ["soundcard"],
+      "imports": ["soundcard"],
+      "pipArgs": ["soundcard"],
+      "sizeMb": 1,
+      "source": "https://pypi.org/project/SoundCard/"
+    },
+    {
+      "id": "py-rapidocr",
+      "name": "rapidocr-onnxruntime",
+      "desc": "字幕／畫面文字辨識（OCR）。",
+      "kind": "pip",
+      "dists": ["rapidocr-onnxruntime"],
+      "imports": ["rapidocr_onnxruntime"],
+      "pipArgs": ["rapidocr-onnxruntime"],
+      "sizeMb": 60,
+      "source": "https://pypi.org/project/rapidocr-onnxruntime/"
+    }
+  ]
+}

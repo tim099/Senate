@@ -131,7 +131,9 @@ public sealed class PathsPage : SCP_GuiToolPage
                 }
 
                 // 值與「誰決定的」一起印 —— 看不出來源的路徑沒辦法被質疑。
-                if (aRes.Error != null) g.Note($"⚠ 解不出來（{aRes.Origin}）：{aRes.Error}");
+                // 空白在這一格是合法的預設（TASK-0375）⇒ 說它代表什麼，⛔ 不印成「⚠ 解不出來」（那句在這裡是假的）。
+                if (aD.IsBlankDefault(aRes)) g.Note($"⇒ 空白＝{aD.BlankMeans}");
+                else if (aRes.Error != null) g.Note($"⚠ 解不出來（{aRes.Origin}）：{aRes.Error}");
                 else g.Note($"⇒ `{aRes.Value}`　（{aRes.Origin}）{Existence(aRes.Value)}");
                 g.Note(aD.Note);
             }

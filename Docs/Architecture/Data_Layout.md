@@ -1,7 +1,7 @@
 ---
 title: SenateData 資料根版面
 description: Senate 自己的設定檔與專案內資料一律住 SenateData/ — 三層分類的判準（config / prefs / runtime）、新東西該往哪放、路徑分兩族（Senate 自己的檔 vs 外部動態路徑）與各自的唯一決定點、以及改路徑必須同時做 migration 的理由
-last_updated: 2026-09-04
+last_updated: 2026-10-02 (.gitignore 形狀改 /SenateData/* ＋ install_catalog.json，TASK-0375)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -31,7 +31,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 <repo>/SenateData/
 ├─ config/     人編輯的設定
 │   ├─ senate.local.json           ❌ 不入版控（含機器絕對路徑）
-│   └─ senate.local.example.json   ✅ 入版控（樣板，不得含絕對路徑）
+│   ├─ senate.local.example.json   ✅ 入版控（樣板，不得含絕對路徑）
+│   └─ install_catalog.json        ✅ 入版控（安裝系統的相依清單，TASK-0375 —— 資料不是機器狀態）
 ├─ prefs/      程式替使用者寫的偏好
 │   ├─ senate.pages.local.json     ❌ 各頁「儲存本頁設定」的落點
 │   └─ imgui.ini                   ❌ ImGui 視窗版面
@@ -166,10 +167,16 @@ SenatePaths.ServerRoot(iRepoRoot)        // SenateData/runtime/server/（底下�
 用「**先全擋、再放行樣板**」，不逐檔列舉：
 
 ```gitignore
-/SenateData/
+/SenateData/*
 !/SenateData/config/
+/SenateData/config/*
 !/SenateData/config/senate.local.example.json
+!/SenateData/config/install_catalog.json
 ```
+
+⚠ 寫成 `/SenateData/*` 而**不是** `/SenateData/`：後者擋的是整個目錄，git 不會走進被擋的目錄，
+底下的 `!` **一條都不生效**。🩸 舊寫法下樣板檔看起來有效，只是因為它早就被追蹤了 ——
+2026-10-02 新增 `install_catalog.json` 時才量到（`check-ignore` 回「被 `/SenateData/` 擋」）。
 
 ⚠ 逐檔列舉的話，日後新增一個帶機器路徑的檔會**預設入版控** ——
 而那件事不會有人發現，它長得就像一筆正常的 diff。
@@ -179,9 +186,12 @@ SenatePaths.ServerRoot(iRepoRoot)        // SenateData/runtime/server/（底下�
 驗 ignore 規則時**問具體檔案，不要問目錄**：
 
 ```bash
-git check-ignore -v SenateData/config/senate.local.json          # 該被擋
-git check-ignore -v SenateData/config/senate.local.example.json  # 該放行
+git check-ignore -v --no-index SenateData/config/senate.local.json          # 該被擋
+git check-ignore -v --no-index SenateData/config/senate.local.example.json  # 該放行
 ```
+
+⚠ 要帶 `--no-index`：不帶的話，**已經被追蹤的檔一律不回報**（不管規則擋不擋它）——
+於是「規則放行了」與「規則其實擋著，只是它早就在版控裡」同形。
 
 ## repo 根還留著什麼
 
