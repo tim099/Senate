@@ -151,6 +151,8 @@ public static partial class SelfTest
         One(nameof(PortfolioSwapOverflowGuardCleanRoom), "market", PortfolioSwapOverflowGuardCleanRoom),
         // 酒館游標積壓出口（TASK-0369）：本體在 SelfTest.TavernCursor0369.cs
         One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
+        // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
+        One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
