@@ -147,6 +147,8 @@ public static partial class SelfTest
         One(nameof(SculptureContractCleanRoom), "sculpture", SculptureContractCleanRoom),
         One(nameof(SculptureViewCleanRoom), "sculpture", SculptureViewCleanRoom),
         One(nameof(SculptureRenderProfileCleanRoom), "sculpture", SculptureRenderProfileCleanRoom),
+        One(nameof(SculptureFloorCleanRoom), "sculpture", SculptureFloorCleanRoom),
+        One(nameof(SculptureFitAndTiltCleanRoom), "sculpture", SculptureFitAndTiltCleanRoom),
         One(nameof(SculpturePlaceCleanRoom), "sculpture", SculpturePlaceCleanRoom),
         // 交易所報酬率／法幣（TASK-0371）：本體在 SelfTest.Portfolio0371.cs
         One(nameof(PortfolioFxParserCleanRoom), "market", PortfolioFxParserCleanRoom),

@@ -292,8 +292,8 @@ public sealed class GuiImGuiRenderer
                 {
                     // 整張縮進框（TASK-0377）：長邊＝aSide、照原比例，⛔ 不裁切。
                     float aK = aSide / Math.Max(aTex.Width, aTex.Height);
+                    // ⛔ 不掛 hover 提示（Tim 2026-10-02：預覽圖上浮一塊字會擋住作品）；檔名與尺寸頁面自己印在圖上方。
                     ImGui.Image((IntPtr)aTex.Handle, new Vector2(aTex.Width * aK, aTex.Height * aK));
-                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(T(iNode.Text) + $"（{aTex.Width}×{aTex.Height}）");
                 }
                 else if (aTex != null && aTex.Handle != 0)
                 {

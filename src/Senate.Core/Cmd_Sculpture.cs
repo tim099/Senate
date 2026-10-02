@@ -47,7 +47,9 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         + "  分享失敗（含這個宿主沒有渲染器）不讓落子失敗，原因寫在回傳檔與 `share_skipped`。\n"
         + "· view 要 `out=<絕對路徑>` 或 persona（⇒ `letters/<P>/cmd/sculpture_view.png`）；slice 同理（`sculpture_slice.png`）。\n"
         + "  參數疊層：內建預設 → 共用作用中設定 → persona 作用中設定（或 `profile=` 指定一份）→ 展品 preset → CLI；`layers` 印出用了哪幾層。\n"
-        + "· render-profile：`sub=list|show|set|use|copy|delete|reset` 管長期保存的渲染設定（鏡頭／燈／天空／尺寸）。\n"
+        + "  給了 exhibit 或 region ⇒ 自動框住時主體填滿畫面（fit_upscale=1，可放大超過 24 px／voxel）；全景維持只縮不放；`fit_upscale=0|1` 顯式指定。\n"
+        + "  地板：`floor=on|off` ＋ floor_z／floor_full_grid／floor_margin／floor_texture（相對 ⇒ Sculpture/floors/；builtin ＝ 量尺網格）／floor_tile／floor_color／floor_fade。\n"
+        + "· render-profile：`sub=list|show|set|use|copy|delete|reset` 管長期保存的渲染設定（鏡頭／燈／天空／地板／尺寸）。\n"
         + "· 引擎是 in-process 的 SCP_Core `SCP_SculptEngine`；圖由宿主註冊的渲染器畫（`renderer` 值印出是哪一個）。\n"
         + "exit：0 成功／2 參數不合／3 付款被拒（零副作用）／4 拿不到鎖／5 引擎拒絕（未落子、未扣費）／1 已落子但結算沒收齊（要對帳）或觀測出不了結果。";
 
@@ -76,14 +78,16 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     static readonly string[] s_ViewRenderKeys =
     {
         "region", "exclude_color", "light_dir", "ambient", "shadow", "ao", "zoom", "projection", "yaw", "pitch", "roll",
-        "target", "eye", "distance", "fov", "skybox", "skybox_yaw", "width", "height", "lights", "light_add", "light_clear",
+        "target", "eye", "distance", "fov", "skybox", "skybox_yaw", "skybox_tilt", "width", "height", "lights", "light_add", "light_clear",
+        "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_texture", "floor_tile", "floor_color", "floor_fade",
     };
 
     /// <summary>render-profile set 吃的設定鍵（＝ <see cref="SCP_SculptRenderProfiles.TryEdit"/> 認得的那幾個）。</summary>
     static readonly string[] s_ProfileEditKeys =
     {
         "projection", "yaw", "pitch", "roll", "target", "eye", "distance", "fov", "zoom", "ambient", "ao", "shadow",
-        "skybox", "skybox_yaw", "background", "width", "height", "lights", "light_add", "light_clear", "unset",
+        "skybox", "skybox_yaw", "skybox_tilt", "background", "width", "height", "lights", "light_add", "light_clear", "unset",
+        "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_texture", "floor_tile", "floor_color", "floor_fade",
     };
 
     /// <summary>render-profile set 除了設定鍵以外還吃的（路由／身分）。其餘顯式給的參數 ⇒ 擋（⛔ 不靜默忽略）。</summary>
@@ -140,6 +144,16 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("fov", "透視：垂直視角（度）"),
         new SCP_CmdArgSpec("skybox", "天空：路徑（相對 ⇒ Sculpture/skyboxes/）| builtin | none（純色背景）"),
         new SCP_CmdArgSpec("skybox_yaw", "天空水平旋轉（度）"),
+        new SCP_CmdArgSpec("skybox_tilt", "正交時背景視窗往上抬（度，−89..89；透視忽略）"),
+        new SCP_CmdArgSpec("fit_upscale", "view／render-profile set：自動框住可放大超過 24 px／voxel 1|0（view 給了 exhibit／region 時預設 1）"),
+        new SCP_CmdArgSpec("floor", "view／render-profile set：地板 on|off（不給 ⇒ 沿用設定檔鏈；內建預設沒有地板）"),
+        new SCP_CmdArgSpec("floor_z", "地板高度（世界 z，" + SCP_SculptRenderProfiles.FloorZMin + ".." + SCP_SculptRenderProfiles.FloorZMax + "）"),
+        new SCP_CmdArgSpec("floor_full_grid", "地板範圍：1 ＝ 整個 0..256 空間；0 ＝ 可見 voxel 外框外擴 floor_margin"),
+        new SCP_CmdArgSpec("floor_margin", "地板外框模式外擴幾格（0.." + SCP_SculptRenderProfiles.FloorMarginMax + "）"),
+        new SCP_CmdArgSpec("floor_texture", "地板貼圖：builtin（量尺網格）| 檔名（相對 ⇒ Sculpture/floors/）| 絕對路徑"),
+        new SCP_CmdArgSpec("floor_tile", "地板貼圖每重複一次涵蓋幾格（" + SCP_SculptRenderProfiles.FloorTileMin + ".." + SCP_SculptRenderProfiles.FloorTileMax + "；網格忽略）"),
+        new SCP_CmdArgSpec("floor_color", "地板色調 #RRGGBB（乘在貼圖／網格上）"),
+        new SCP_CmdArgSpec("floor_fade", "地板邊緣淡出寬度（佔邊長比例 0.." + SCP_SculptRenderProfiles.FloorFadeMax + "；0 ＝ 硬邊）"),
         new SCP_CmdArgSpec("width", "出圖寬（16-8192）"),
         new SCP_CmdArgSpec("height", "出圖高（16-8192）"),
         new SCP_CmdArgSpec("smooth", "view／exhibit register：python 時代的旗標（只影響 summary 文字，GPU 渲染不吃）"),
@@ -676,7 +690,9 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     // 區塊職責：view —— 參數疊層 → 引擎準備場景（鎖內）→ 渲染器出圖（鎖外）→ 寫到呼叫端自己的檔。
     // 物理意義：疊層順序（下 → 上）：內建預設 → 共用作用中 → persona 作用中（或 `profile=` 一次性指定）→ 展品 preset → CLI。
     //          展品 preset 與「引擎認得的 CLI 鍵」由 <see cref="SCP_SculptEngine.PrepareView"/> 疊；
-    //          ao／skybox／skybox_yaw／width／height 與 target／eye／distance／zoom 的 auto 由本檔在它之後疊（CLI 是最上層）。
+    //          ao／skybox／skybox_yaw／skybox_tilt／width／height／地板／fit_upscale 與 target／eye／distance／zoom 的 auto
+    //          由本檔在它之後疊（CLI 是最上層）。
+    //          fit_upscale：給了 exhibit 或 region ⇒ 預設 true（主體填滿畫面）；顯式 fit_upscale=0|1 最大；都沒有 ⇒ 沿用設定檔鏈。
     // 數值影響：⛔ 沒有渲染器 ⇒ exit 1 並說出來（不寫空白圖、不留舊圖）。輸出檔是呼叫端專屬的 ⇒ 不會被別人的 view 換掉。
     // ===========================================================
     static string? OpView(Ctx c)
@@ -694,6 +710,8 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         catch (SCP_FileLockTimeoutException e) { return Blocked(c, 4, "拿不到雕刻鎖：" + e.Message); }
         if (aPlan.ExitCode != 0) return Blocked(c, aPlan.ExitCode == 2 ? 2 : 1, "引擎：" + aPlan.Error);
         if (!TryApplyViewTail(c, aPlan.Params, aAutos, out string aTailBad)) return Blocked(c, 2, aTailBad);
+        if (!c.Args.IsExplicit("fit_upscale") && (aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
+            aPlan.Params.FitUpscale = true;
 
         if (aViewArgs.Exhibit.Length > 0) aLayers.Add("展品 `" + aViewArgs.Exhibit + "`");
         var aCli = new List<string>();
@@ -820,11 +838,25 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         return true;
     }
 
-    /// <summary>CLI 最上層、引擎 PrepareView 不管的那幾格：多燈（lights／light_add／light_clear）／ao／skybox／skybox_yaw／width／height ＋ auto。</summary>
+    /// <summary>CLI 最上層、引擎 PrepareView 不管的那幾格：多燈（lights／light_add／light_clear）／ao／skybox／skybox_yaw／
+    /// skybox_tilt／width／height／fit_upscale／地板 ＋ auto。</summary>
     static bool TryApplyViewTail(Ctx c, SCP_SculptRenderParams p, ViewAutos iAutos, out string oBad)
     {
         oBad = "";
         if (!TryApplyViewLights(c, p, out oBad)) return false;
+        if (!TryApplyViewFloor(c, p, out oBad)) return false;
+        string aFit = c.Args.Get("fit_upscale").Trim();
+        if (aFit.Length > 0)
+        {
+            if (!TryBool01(aFit, out bool aOn)) { oBad = "fit_upscale 要 1|0：'" + aFit + "'"; return false; }
+            p.FitUpscale = aOn;
+        }
+        string aTilt = c.Args.Get("skybox_tilt").Trim();
+        if (aTilt.Length > 0)
+        {
+            if (!TryFinite(aTilt, out double t) || t < -89 || t > 89) { oBad = "skybox_tilt 要在 −89..89：'" + aTilt + "'"; return false; }
+            p.SkyboxTiltDeg = t;
+        }
         if (iAutos.Target) p.TargetX = p.TargetY = p.TargetZ = null;
         if (iAutos.Eye) p.EyeX = p.EyeY = p.EyeZ = null;
         if (iAutos.Distance) p.Distance = null;
@@ -888,6 +920,28 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         return true;
     }
 
+    /// <summary>
+    /// view 的一次性地板：與 `render-profile set` 同一支 TryEdit 解析、同一支 TryApply 驗證（臨時設定檔只放 floor 物件）——
+    /// 疊在設定檔鏈的地板上（沒給 floor=on|off ⇒ 開關沿用下層；只給 floor_texture ⇒ 只換貼圖）。貼圖不存在 ⇒ 擋。
+    /// </summary>
+    static bool TryApplyViewFloor(Ctx c, SCP_SculptRenderParams p, out string oBad)
+    {
+        oBad = "";
+        var aEdit = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string k in SCP_SculptRenderProfiles.FloorFlatKeys)
+        {
+            string v = c.Args.Get(k).Trim();
+            if (v.Length > 0) aEdit[k] = v;
+        }
+        if (aEdit.Count == 0) return true;
+        var aTemp = SCP_JsonData.NewObject();
+        if (!SCP_SculptRenderProfiles.TryEdit(aTemp, aEdit, new List<string>(), out oBad)) return false;
+        if (!SCP_SculptRenderProfiles.TryApply(aTemp, p, SCP_SculptRenderProfiles.SkyboxesDir(c.Data),
+                                               SCP_SculptRenderProfiles.FloorsDir(c.Data), out oBad))
+        { oBad = "地板：" + oBad; return false; }
+        return true;
+    }
+
     /// <summary>渲染參數 → 設定檔同形的 JSON（`show` 的「實際生效值」與 view 回傳檔用）。</summary>
     public static SCP_JsonData DescribeParams(SCP_SculptRenderParams p)
     {
@@ -912,6 +966,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         aCam.Set("distance", Opt(p.Distance));
         aCam.Set("fov", p.FovDeg);
         aCam.Set("zoom", Opt(p.Zoom));
+        aCam.Set("fit_upscale", p.FitUpscale);
         aOut.Set("camera", aCam);
         var aLights = SCP_JsonData.NewArray();
         foreach (SCP_SculptLight l in p.Lights)
@@ -930,7 +985,9 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         var aSky = SCP_JsonData.NewObject();
         aSky.Set("path", p.Skybox ?? SCP_SculptRenderProfiles.SkyboxBuiltin);
         aSky.Set("yaw", p.SkyboxYawDeg);
+        aSky.Set("tilt", p.SkyboxTiltDeg);
         aOut.Set("skybox", aSky);
+        aOut.Set("floor", SCP_SculptRenderProfiles.DescribeFloor(p));
         aOut.Set("background", Hex(p.BgR, p.BgG, p.BgB));
         aOut.Set("width", (long)p.Width);
         aOut.Set("height", (long)p.Height);

@@ -5,6 +5,10 @@
 //              沒有渲染器 ⇒ exit 1 而且**沒有檔**（不出空白圖）。
 //           ③ 渲染設定：set／use／show／list／copy／delete／reset；作用中的不准刪；不認得的鍵擋；persona 層要 persona；
 //              疊層（共用 → 個人 → CLI）在 `layers` 看得到、而且真的照那個順序蓋；skybox 檔不存在 ⇒ 擋。
+//           ③b 地板（Tim 2026-10-02）：設定檔 floor 物件逐欄疊、沒寫 enabled 的層不改開關、關著時欄位也記得；
+//              不認得的鍵／越界／貼圖不存在 ⇒ 擋且零寫入；view 的 floor_* 一次性參數真的到渲染器參數。
+//           ③c 框景放大（fit_upscale）：給了 region ⇒ 預設開、顯式 0 關、全景維持關、設定檔 camera.fit_upscale；
+//              正交背景上抬（skybox_tilt）：CLI／設定檔都到參數、越界擋。
 //           ④ 落子：收費（實際落地 ⇒ 扣幾張）、餘額不足 ⇒ 引擎不跑；沒有渲染器 ⇒ 落子照樣成功、分享略過並寫明原因；
 //              有渲染器 ⇒ 分享圖直接寫 `previews/share_*.png` 並交給發文端。
 //           ⚠ 渲染器與付款閘、發文端都換成探針（GPU／Server／酒館不在本對拍的射程 —— 那幾格走 exe 實跑）。
@@ -322,6 +326,147 @@ public static partial class SelfTest
                 + $"／show+list={aShowList}／🔴 作用中不准刪、reset+delete={aDelete}／use none⇒跟共用={aFollow}／🔴 天空與壞設定擋={aGuards}"
                 + $"／一次性多燈 add={aLightAdd} lights={aLightsSet} clear={aLightClear} 🔴 與 light_dir 同給／壞語法擋={aLightGuards}"
                 + $"／共用 use none⇒內建預設={aSharedCleared}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+    }
+
+    // ───────────────────────────── 地板 ─────────────────────────────
+
+    static CheckRow SculptureFloorCleanRoom()
+    {
+        const string aName = "雕刻地板：設定檔 floor 逐欄疊（沒寫 enabled 的層不改開關、關著也記得欄位）、不認得鍵／越界／貼圖不存在⇒擋且零寫入、"
+                             + "unset floor／floor_*、view 的 floor_* 到渲染器參數（淨室，TASK-0377）";
+        try
+        {
+            using var r = new SculptRoom();
+            var aProbe = new SculptProbeRenderer();
+            SCP_SculptRenderers.Register(aProbe);
+            r.Engine().Box(new SCP_SculptBoxArgs { X1 = 0, X2 = 1, Y1 = 0, Y2 = 1, Z1 = 0, Z2 = 0, Color = 19, Persona = "seed" });
+            string aFloors = r.Sculpt + "/floors";
+            Directory.CreateDirectory(aFloors);
+            File.WriteAllBytes(aFloors + "/t.png", SCP_CanvasPng.EncodeRgb(new byte[12], 0, 0, 2, 2, 2));
+            string aTexAbs = aFloors + "/t.png";
+            string aBase = r.Sculpt + "/render_profiles/base.json";
+
+            // 內建預設 ⇒ 沒有地板
+            SCP_CmdResult aV0 = r.Run(("op", "view"), ("persona", "p"));
+            bool aDefaultNone = aV0.ExitCode == 0 && aProbe.Last != null && aProbe.Last.Floor == null;
+
+            // 共用：開地板、內建網格、z 2；個人：只寫貼圖 ⇒ 開關沿用共用（開）、z 沿用 2、貼圖換成 t.png
+            SCP_CmdResult aSet = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("floor", "on"), ("floor_texture", "builtin"), ("floor_z", "2"));
+            SCP_CmdResult aUse = r.Run(("op", "render-profile"), ("sub", "use"), ("name", "base"));
+            SCP_CmdResult aSetP = r.Run(("op", "render-profile"), ("sub", "set"), ("scope", "persona"), ("persona", "p"), ("name", "mine"), ("floor_texture", "t.png"));
+            SCP_CmdResult aUseP = r.Run(("op", "render-profile"), ("sub", "use"), ("scope", "persona"), ("persona", "p"), ("name", "mine"));
+            SCP_CmdResult aV1 = r.Run(("op", "view"), ("persona", "p"));
+            SCP_SculptFloor? f1 = aProbe.Last?.Floor;
+            bool aLayerOn = aSet.ExitCode == 0 && aUse.ExitCode == 0 && aSetP.ExitCode == 0 && aUseP.ExitCode == 0 && aV1.ExitCode == 0
+                            && f1 != null && f1.Z == 2 && f1.Texture == aTexAbs && !f1.FullGrid && f1.Margin == 24;
+            // 沒給 persona（只有共用層）⇒ 內建網格（Texture null）
+            SCP_CmdResult aV1s = r.Run(("op", "view"), ("out", r.Root + "/s.png"));
+            bool aSharedOnly = aV1s.ExitCode == 0 && aProbe.Last?.Floor != null && aProbe.Last.Floor.Texture == null && aProbe.Last.Floor.Z == 2;
+
+            // 共用關掉 ⇒ 個人只寫貼圖的那層「不改開關」⇒ 沒有地板；但 CLI floor=on ⇒ 開，且記得 z 2 與 t.png
+            SCP_CmdResult aOff = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("floor", "off"));
+            SCP_CmdResult aV2 = r.Run(("op", "view"), ("persona", "p"));
+            bool aOffKept = aOff.ExitCode == 0 && aV2.ExitCode == 0 && aProbe.Last != null && aProbe.Last.Floor == null;
+            SCP_CmdResult aV3 = r.Run(("op", "view"), ("persona", "p"), ("floor", "on"));
+            SCP_SculptFloor? f3 = aProbe.Last?.Floor;
+            bool aRemembered = aV3.ExitCode == 0 && f3 != null && f3.Z == 2 && f3.Texture == aTexAbs
+                               && SculptRoom.V(aV3, "layers").Contains("floor=on");
+
+            // view 的一次性 floor_* 全部到參數
+            SCP_CmdResult aV4 = r.Run(("op", "view"), ("persona", "p"), ("floor", "on"), ("floor_full_grid", "1"), ("floor_margin", "3"),
+                                      ("floor_tile", "4"), ("floor_color", "#102030"), ("floor_fade", "0.25"), ("floor_z", "-1.5"), ("floor_texture", "builtin"));
+            SCP_SculptFloor? f4 = aProbe.Last?.Floor;
+            bool aCli = aV4.ExitCode == 0 && f4 != null && f4.FullGrid && f4.Margin == 3 && f4.TileSize == 4 && f4.R == 0x10 && f4.G == 0x20
+                        && f4.B == 0x30 && f4.Fade == 0.25 && f4.Z == -1.5 && f4.Texture == null;
+
+            // 🔴 擋：越界、貼圖不存在、規格內但值壞（color）—— set 零寫入；view 不渲染
+            byte[] aBefore = File.ReadAllBytes(aBase);
+            int aCalls = aProbe.Calls;
+            SCP_CmdResult aB1 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("floor_fade", "0.9"));
+            SCP_CmdResult aB2 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("floor_texture", "missing.jpg"));
+            SCP_CmdResult aB3 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("floor_color", "#zz0000"));
+            SCP_CmdResult aB4 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("floor", "maybe"));
+            SCP_CmdResult aB5 = r.Run(("op", "view"), ("persona", "p"), ("floor_texture", "missing.jpg"));
+            SCP_CmdResult aB6 = r.Run(("op", "view"), ("persona", "p"), ("floor_tile", "0"));
+            bool aGuards = aB1.ExitCode == 2 && aB2.ExitCode == 2 && aB3.ExitCode == 2 && aB4.ExitCode == 2 && aB5.ExitCode == 2 && aB6.ExitCode == 2
+                           && SculptRoom.All(aB2).Contains("地板貼圖不存在") && SculptRoom.All(aB5).Contains("地板貼圖不存在")
+                           && File.ReadAllBytes(aBase).SequenceEqual(aBefore) && aProbe.Calls == aCalls;
+            // 🔴 設定檔裡 floor 物件有不認得的鍵 ⇒ use 擋
+            File.WriteAllText(r.Sculpt + "/render_profiles/typo.json", "{ \"floor\": { \"enabeld\": true } }\n");
+            SCP_CmdResult aTypo = r.Run(("op", "render-profile"), ("sub", "use"), ("name", "typo"));
+            bool aTypoBlocked = aTypo.ExitCode == 2 && SculptRoom.All(aTypo).Contains("floor.enabeld") && SCP_SculptRenderProfiles.GetActive(r.Sculpt) == "base";
+
+            // unset：floor_z 拿掉一格、floor 拿掉整個物件
+            SCP_CmdResult aU1 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("unset", "floor_z"));
+            string aJ1 = File.ReadAllText(aBase);
+            SCP_CmdResult aU2 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("unset", "floor"));
+            string aJ2 = File.ReadAllText(aBase);
+            bool aUnset = aU1.ExitCode == 0 && aJ1.Contains("\"floor\"") && !aJ1.Contains("\"z\"") && aU2.ExitCode == 0 && !aJ2.Contains("\"floor\"");
+
+            // show（沒給 name）印出生效的 floor 物件
+            SCP_CmdResult aShow = r.Run(("op", "render-profile"), ("sub", "show"), ("persona", "p"));
+            bool aShowFloor = aShow.ExitCode == 0 && SculptRoom.All(aShow).Contains("\"floor\"") && SculptRoom.All(aShow).Contains("t.png");
+
+            bool aOk = aDefaultNone && aLayerOn && aSharedOnly && aOffKept && aRemembered && aCli && aGuards && aTypoBlocked && aUnset && aShowFloor;
+            return new CheckRow(aName,
+                $"內建預設沒地板={aDefaultNone}／共用開＋個人只換貼圖⇒開著且換了={aLayerOn}／只看共用⇒網格={aSharedOnly}"
+                + $"／共用關⇒個人層不改開關={aOffKept}／CLI 開⇒記得 z 與貼圖={aRemembered}／CLI floor_* 全到參數={aCli}"
+                + $"／🔴 越界/貼圖不存在/壞色/壞開關 擋且零寫入、view 不渲染={aGuards}（{aB1.ExitCode},{aB2.ExitCode},{aB3.ExitCode},{aB4.ExitCode},{aB5.ExitCode},{aB6.ExitCode}）"
+                + $"／🔴 floor 物件錯字⇒use 擋={aTypoBlocked}／unset floor_z、floor={aUnset}／show 印 floor={aShowFloor}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+    }
+
+    static CheckRow SculptureFitAndTiltCleanRoom()
+    {
+        const string aName = "雕刻框景放大＋背景上抬：region⇒fit_upscale 開、顯式 0 關、全景維持關、設定檔 camera.fit_upscale；skybox_tilt CLI／設定檔到參數、越界擋（淨室，TASK-0377）";
+        try
+        {
+            using var r = new SculptRoom();
+            var aProbe = new SculptProbeRenderer();
+            SCP_SculptRenderers.Register(aProbe);
+            r.Engine().Box(new SCP_SculptBoxArgs { X1 = 0, X2 = 1, Y1 = 0, Y2 = 1, Z1 = 0, Z2 = 0, Color = 19, Persona = "seed" });
+
+            SCP_CmdResult aFull = r.Run(("op", "view"), ("persona", "p"));
+            bool aFullOff = aFull.ExitCode == 0 && aProbe.Last != null && !aProbe.Last.FitUpscale;
+            SCP_CmdResult aReg = r.Run(("op", "view"), ("persona", "p"), ("region", "0..1,0..1,0..0"));
+            bool aRegOn = aReg.ExitCode == 0 && aProbe.Last != null && aProbe.Last.FitUpscale;
+            SCP_CmdResult aReg0 = r.Run(("op", "view"), ("persona", "p"), ("region", "0..1,0..1,0..0"), ("fit_upscale", "0"));
+            bool aRegExplicitOff = aReg0.ExitCode == 0 && aProbe.Last != null && !aProbe.Last.FitUpscale;
+            SCP_CmdResult aFull1 = r.Run(("op", "view"), ("persona", "p"), ("fit_upscale", "1"));
+            bool aFullExplicitOn = aFull1.ExitCode == 0 && aProbe.Last != null && aProbe.Last.FitUpscale;
+
+            // 設定檔 camera.fit_upscale ＋ skybox.tilt
+            SCP_CmdResult aSet = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("fit_upscale", "1"), ("skybox_tilt", "20"));
+            SCP_CmdResult aUse = r.Run(("op", "render-profile"), ("sub", "use"), ("name", "base"));
+            SCP_CmdResult aVp = r.Run(("op", "view"), ("persona", "p"));
+            bool aProfile = aSet.ExitCode == 0 && aUse.ExitCode == 0 && aVp.ExitCode == 0 && aProbe.Last != null
+                            && aProbe.Last.FitUpscale && aProbe.Last.SkyboxTiltDeg == 20
+                            && File.ReadAllText(r.Sculpt + "/render_profiles/base.json").Contains("\"fit_upscale\"");
+            // CLI skybox_tilt 蓋過設定檔；🔴 越界擋（CLI 與 set 都擋、零渲染零寫入）
+            SCP_CmdResult aTilt = r.Run(("op", "view"), ("persona", "p"), ("skybox_tilt", "-12.5"));
+            bool aTiltCli = aTilt.ExitCode == 0 && aProbe.Last != null && aProbe.Last.SkyboxTiltDeg == -12.5;
+            int aCalls = aProbe.Calls;
+            byte[] aBefore = File.ReadAllBytes(r.Sculpt + "/render_profiles/base.json");
+            SCP_CmdResult aBad1 = r.Run(("op", "view"), ("persona", "p"), ("skybox_tilt", "100"));
+            SCP_CmdResult aBad2 = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("skybox_tilt", "95"));
+            SCP_CmdResult aBad3 = r.Run(("op", "view"), ("persona", "p"), ("fit_upscale", "maybe"));
+            bool aGuards = aBad1.ExitCode == 2 && aBad2.ExitCode == 2 && aBad3.ExitCode == 2 && aProbe.Calls == aCalls
+                           && File.ReadAllBytes(r.Sculpt + "/render_profiles/base.json").SequenceEqual(aBefore);
+            // unset skybox_tilt ⇒ 回到 0
+            SCP_CmdResult aUn = r.Run(("op", "render-profile"), ("sub", "set"), ("name", "base"), ("unset", "skybox_tilt,fit_upscale"));
+            SCP_CmdResult aVu = r.Run(("op", "view"), ("persona", "p"));
+            bool aUnset = aUn.ExitCode == 0 && aVu.ExitCode == 0 && aProbe.Last != null && aProbe.Last.SkyboxTiltDeg == 0 && !aProbe.Last.FitUpscale;
+
+            bool aOk = aFullOff && aRegOn && aRegExplicitOff && aFullExplicitOn && aProfile && aTiltCli && aGuards && aUnset;
+            return new CheckRow(aName,
+                $"全景⇒關={aFullOff}／region⇒開={aRegOn}／region＋fit_upscale=0⇒關={aRegExplicitOff}／全景＋fit_upscale=1⇒開={aFullExplicitOn}"
+                + $"／設定檔 fit_upscale＋tilt={aProfile}／CLI tilt 蓋設定檔={aTiltCli}／🔴 越界與壞值擋、零渲染零寫入={aGuards}"
+                + $"（{aBad1.ExitCode},{aBad2.ExitCode},{aBad3.ExitCode}）／unset⇒回預設={aUnset}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }

@@ -15,7 +15,10 @@
 //           結果（圖路徑／renderer／layers／紀錄）存進 session 欄位 ⇒ 文字模式跨指令也接得上。
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元 ⇒ 方框，TASK-0356）；子行程輸出裡的 emoji 是原文，照印。
 // ⚠ 「空白 ＝ 沿用」：手動欄位留空就不送那個參數 ⇒ 由設定檔疊加鏈（內建 → 共用作用中 → 個人作用中）決定。
-//   三態的開關（陰影／AO／投影）因此用下拉（沿用／開／關），⛔ 不用二態勾選（二態表達不了「沿用」）。
+//   三態的開關（陰影／AO／投影／地板）因此用下拉（沿用／開／關），⛔ 不用二態勾選（二態表達不了「沿用」）。
+// ⚠ 「目前對象」（Tim 2026-10-02）：渲染展品 ⇒ 展品 id；全景 ⇒ 全景；手動渲染且 region 有填 ⇒ 那個 region。
+//   之後的環繞／切投影／手動渲染都重渲**同一個對象**（展品 ⇒ 帶 exhibit=<id> ＋相機欄位）——
+//   ⛔ region 欄空白不代表「改看全景」（那會把正在看的展品默默換成整個空間）。對象存 session ⇒ 文字模式跨指令也記得。
 #nullable enable
 using System.Diagnostics;
 using System.Globalization;
@@ -53,7 +56,10 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     const string FTarget = P + "f/target", FEye = P + "f/eye", FDistance = P + "f/distance", FFov = P + "f/fov", FZoom = P + "f/zoom";
     const string FAmbient = P + "f/ambient", FAo = P + "sel/ao", FShadow = P + "sel/shadow", FLightDir = P + "f/light_dir";
     const string FLights = P + "f/lights", FLightNew = P + "f/light_new";
-    const string FSkybox = P + "sel/skybox", FSkyYaw = P + "f/skybox_yaw", FWidth = P + "f/width", FHeight = P + "f/height";
+    const string FSkybox = P + "sel/skybox", FSkyYaw = P + "f/skybox_yaw", FSkyTilt = P + "f/skybox_tilt", FWidth = P + "f/width", FHeight = P + "f/height";
+    const string FFitUpscale = P + "sel/fit_upscale";
+    const string FFloor = P + "sel/floor", FFloorTex = P + "sel/floor_texture", FFloorTile = P + "f/floor_tile", FFloorZ = P + "f/floor_z";
+    const string FFloorFull = P + "sel/floor_full_grid", FFloorMargin = P + "f/floor_margin", FFloorColor = P + "f/floor_color", FFloorFade = P + "f/floor_fade";
     const string ProfScope = P + "sel/prof_scope", ProfSaveName = P + "f/prof_name";
     const string ProfCopyScope = P + "sel/prof_copy_scope", ProfCopyName = P + "f/prof_copy_name";
     const string Pending = P + "pending";
@@ -65,6 +71,9 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     const string SSlicePath = P + "state/slice_path", SSliceInfo = P + "state/slice_info";
     const string SStampPath = P + "state/stamp_path", SStampCmd = P + "state/stamp_cmd", SStampInfo = P + "state/stamp_info";
     const string SExportPath = P + "state/export_path", SLog = P + "state/log", SExhibitSeen = P + "state/exhibit_seen";
+    /// <summary>目前對象：<c>full</c>｜<c>exhibit:&lt;id&gt;</c>｜<c>region:&lt;x1..x2,y1..y2,z1..z2&gt;</c>（見檔頭）。</summary>
+    const string SSubject = P + "state/subject";
+    const string SubjectFull = "full", SubjectExhibit = "exhibit:", SubjectRegion = "region:";
 
     /// <summary>非空預設值的欄位 —— 摺起來時讀值（FieldValue）與畫出來時（TextField）要用同一個預設，否則兩條路給不同的值。</summary>
     static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
@@ -86,6 +95,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     readonly List<(string Id, SCP_JsonData Data)> m_Exhibits = new();
     List<string> m_Personas = new();
     List<string> m_Skyboxes = new();
+    List<string> m_Floors = new();
     // 設定檔（目前選的那一層）
     string? m_ScopeDir;
     List<string> m_Profiles = new();
@@ -133,7 +143,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         m_Error = null;
         m_DataRoot = m_Model.AgentCommandsRoot.Value ?? "";
         m_LettersRoot = m_Model.LettersRoot.Value ?? "";
-        m_Exhibits.Clear(); m_Skyboxes = new(); m_Profiles = new(); m_ProfJson.Clear();
+        m_Exhibits.Clear(); m_Skyboxes = new(); m_Floors = new(); m_Profiles = new(); m_ProfJson.Clear();
         m_ScopeDir = null; m_ProfActive = null; m_Resolved = null; m_ResolvedLayers = new(); m_ResolveError = "";
         if (m_DataRoot.Length == 0 || !Directory.Exists(m_DataRoot))
         {
@@ -157,6 +167,14 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
                 if (aExt == ".png" || aExt == ".jpg" || aExt == ".jpeg" || aExt == ".hdr") m_Skyboxes.Add(Path.GetFileName(f));
             }
         m_Skyboxes.Sort(StringComparer.OrdinalIgnoreCase);
+        string aFloors = SCP_SculptRenderProfiles.FloorsDir(aData);
+        if (Directory.Exists(aFloors))
+            foreach (string f in Directory.GetFiles(aFloors))
+            {
+                string aExt = Path.GetExtension(f).ToLowerInvariant();
+                if (aExt == ".png" || aExt == ".jpg" || aExt == ".jpeg") m_Floors.Add(Path.GetFileName(f));
+            }
+        m_Floors.Sort(StringComparer.OrdinalIgnoreCase);
 
         SCP_LettersRoot? aLetters = m_LettersRoot.Length > 0 ? new SCP_LettersRoot(m_LettersRoot) : null;
         string? aPersona = iPersona.Length > 0 ? iPersona : null;
@@ -250,9 +268,9 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
             if (g.Button("渲染展品", P + "btn/render-exhibit"))
             {
                 if (aSel.Length == 0 || !m_Exhibits.Exists(e => e.Id == aSel)) m_Message = "沒有選展品（或展品清單是空的）⇒ 這次沒有動作";
-                else RunView(g, "渲染展品 " + aSel, new() { ["exhibit"] = aSel }, iPersona);
+                else RunView(g, "渲染展品 " + aSel, new() { ["exhibit"] = aSel }, iPersona, SubjectExhibit + aSel);
             }
-            if (g.Button("全景", P + "btn/render-all")) RunView(g, "全景", new(), iPersona);
+            if (g.Button("全景", P + "btn/render-all")) RunView(g, "全景", new(), iPersona, SubjectFull);
         }
         using var aFold = g.Fold($"展品導覽（{m_Exhibits.Count} 件）", P + "fold/exhibits", iDefaultOpen: true);
         if (!aFold.Open) return;
@@ -346,7 +364,23 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         foreach (string s in m_Skyboxes) aSky.Add(new SCP_GuiOption(s));
         g.Dropdown("skybox", aSky, None, FSkybox);
         Field(g, "skybox_yaw（度）", FSkyYaw);
+        Field(g, "skybox_tilt（度，正交時背景往上抬 −89..89；透視忽略）", FSkyTilt);
         Field(g, "width（px）", FWidth); Field(g, "height（px）", FHeight);
+        Tri(g, "自動框住可放大（fit_upscale；展品／region 預設開）", FFitUpscale, "1", "開", "0", "關");
+
+        // 地板：空白／沿用 ＝ 不送 ⇒ 沿用設定檔鏈（沒寫開關的層不改開關 —— 只換貼圖也行）
+        g.Label("地板");
+        Tri(g, "地板", FFloor, "on", "開", "off", "關");
+        var aFloorOpts = new List<SCP_GuiOption> { new(None, "（沿用）"), new(SCP_SculptRenderProfiles.FloorBuiltin, "builtin（量尺網格：每 1／16／64 格）") };
+        foreach (string s in m_Floors) aFloorOpts.Add(new SCP_GuiOption(s));
+        g.Dropdown("地板貼圖（Sculpture/floors/）", aFloorOpts, None, FFloorTex);
+        Field(g, "floor_tile（貼圖每幾格重複一次；網格忽略）", FFloorTile);
+        Field(g, "floor_z（地板高度，世界 z）", FFloorZ);
+        Tri(g, "範圍", FFloorFull, "1", "整個 0..256 空間", "0", "voxel 外框＋margin");
+        Field(g, "floor_margin（外框模式外擴幾格）", FFloorMargin);
+        Field(g, "floor_color（#RRGGBB 色調）", FFloorColor);
+        Field(g, "floor_fade（邊緣淡出 0..0.5）", FFloorFade);
+        if (m_Resolved != null) g.Label("目前疊加結果的地板：" + FloorSpec(m_Resolved));
     }
 
     void Orbit(SCP_Ui g, string iLabel, string iField, double iDelta, string iPersona)
@@ -374,16 +408,52 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         Put("yaw", FYaw); Put("pitch", FPitch); Put("roll", FRoll);
         Put("target", FTarget); Put("eye", FEye); Put("distance", FDistance); Put("fov", FFov); Put("zoom", FZoom);
         Put("ambient", FAmbient); PutSel("ao", FAo); PutSel("shadow", FShadow); Put("light_dir", FLightDir);
-        PutSel("skybox", FSkybox); Put("skybox_yaw", FSkyYaw); Put("width", FWidth); Put("height", FHeight);
+        PutSel("skybox", FSkybox); Put("skybox_yaw", FSkyYaw); Put("skybox_tilt", FSkyTilt); Put("width", FWidth); Put("height", FHeight);
+        PutSel("fit_upscale", FFitUpscale);
+        PutSel("floor", FFloor); PutSel("floor_texture", FFloorTex); Put("floor_tile", FFloorTile); Put("floor_z", FFloorZ);
+        PutSel("floor_full_grid", FFloorFull); Put("floor_margin", FFloorMargin); Put("floor_color", FFloorColor); Put("floor_fade", FFloorFade);
         return a;
     }
 
-    void RunManual(SCP_Ui g, string iLabel, string iPersona) => RunView(g, iLabel, ManualViewArgs(g), iPersona);
+    /// <summary>
+    /// 手動渲染（含環繞／切投影）：手動欄位 ＋ **目前對象**（見檔頭）。
+    /// region 有填 ⇒ 對象改成那個 region —— 例外：目前對象是展品、而 region 跟那件展品的一模一樣（選展品時帶進來的）⇒ 仍是展品
+    /// （用展品的 preset 打光／鏡頭，不是只裁切）。region 空白 ⇒ 沿用目前對象（⛔ 不默默放大成全景）。
+    /// </summary>
+    void RunManual(SCP_Ui g, string iLabel, string iPersona)
+    {
+        Dictionary<string, string> a = ManualViewArgs(g);
+        string aSubject = g.FieldValue(SSubject, SubjectFull);
+        string aRegion = a.TryGetValue("region", out string? r) ? r : "";
+        string? aExId = aSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal) ? aSubject.Substring(SubjectExhibit.Length) : null;
+        if (aRegion.Length > 0)
+        {
+            var aEx = aExId != null ? m_Exhibits.Find(e => e.Id == aExId) : default;
+            if (aEx.Id != null && S(aEx.Data, "region") == aRegion) { a.Remove("region"); a["exhibit"] = aExId!; }
+            else aSubject = SubjectRegion + aRegion;
+        }
+        else if (aExId != null) a["exhibit"] = aExId;
+        else if (aSubject.StartsWith(SubjectRegion, StringComparison.Ordinal)) a["region"] = aSubject.Substring(SubjectRegion.Length);
+        RunView(g, iLabel + "｜" + SubjectText(aSubject), a, iPersona, aSubject);
+    }
+
+    /// <summary>對象 → 給人看的字（結果區標頭用）。</summary>
+    string SubjectText(string iSubject)
+    {
+        if (iSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal))
+        {
+            string aId = iSubject.Substring(SubjectExhibit.Length);
+            var aEx = m_Exhibits.Find(e => e.Id == aId);
+            return aEx.Id != null ? $"展品《{S(aEx.Data, "title")}》（{aId}）" : $"展品 {aId}（清單裡找不到）";
+        }
+        if (iSubject.StartsWith(SubjectRegion, StringComparison.Ordinal)) return "region " + iSubject.Substring(SubjectRegion.Length);
+        return "全景";
+    }
 
     // ===========================================================
     // 區塊職責：view —— spawn `cmd sculpture --arg op=view --arg out=<暫存>/view.png …`，讀回 path／renderer／layers。
     // ===========================================================
-    void RunView(SCP_Ui g, string iLabel, Dictionary<string, string> iArgs, string iPersona)
+    void RunView(SCP_Ui g, string iLabel, Dictionary<string, string> iArgs, string iPersona, string? iSubject = null)
     {
         string aOut = Path.Combine(PageTempDir, "view.png");
         var aArgs = new Dictionary<string, string>(iArgs, StringComparer.Ordinal) { ["op"] = "view", ["out"] = aOut };
@@ -397,6 +467,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
             string aPath = r.Value("path", aOut);
             if (!File.Exists(aPath)) { o.Log += "\n[注意] exit 0 但圖不在：" + aPath; return o; }
             o.Fields[SViewPath] = aPath;
+            if (iSubject != null) o.Fields[SSubject] = iSubject;
             o.Fields[SRenderer] = r.Value("renderer", "（沒回報）");
             o.Fields[SLayers] = r.Value("layers", "（沒回報）");
             o.Fields[SViewInfo] = $"{DateTime.Now:HH:mm:ss}　{iLabel}　{r.Value("width", "?")}×{r.Value("height", "?")}"
@@ -413,6 +484,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold("渲染結果", P + "fold/result", iDefaultOpen: true);
         if (!aFold.Open) return;
         if (aPath.Length == 0) { g.Note("（還沒渲染 —— 按「全景」「渲染展品」或「渲染」）"); return; }
+        g.Label("目前對象：" + SubjectText(g.FieldValue(SSubject, SubjectFull)) + "（環繞／切投影／手動渲染都重渲這個對象）");
         g.Label("renderer：" + g.FieldValue(SRenderer, "?"));
         g.Label("layers：" + g.FieldValue(SLayers, "?"));
         g.Label(g.FieldValue(SViewInfo, ""));
@@ -875,7 +947,19 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
                      + $"　eye {Vec(p.EyeX, p.EyeY, p.EyeZ)}　distance {Opt(p.Distance)}　fov {F(p.FovDeg)}　zoom {Opt(p.Zoom)}";
         yield return $"光影：ambient {F(p.Ambient)}　AO {(p.AmbientOcclusion ? "開" : "關")}　陰影 {(p.Shadow ? "開" : "關")}　燈 {p.Lights.Count} 盞"
                      + (p.Lights.Count > 0 ? "（" + string.Join("｜", p.Lights.Select(LightSpec)) + "）" : "");
-        yield return $"skybox：{p.Skybox ?? "builtin"}　skybox_yaw {F(p.SkyboxYawDeg)}　背景 #{p.BgR:x2}{p.BgG:x2}{p.BgB:x2}　尺寸 {p.Width}×{p.Height}";
+        yield return $"skybox：{p.Skybox ?? "builtin"}　skybox_yaw {F(p.SkyboxYawDeg)}　skybox_tilt {F(p.SkyboxTiltDeg)}　背景 #{p.BgR:x2}{p.BgG:x2}{p.BgB:x2}　尺寸 {p.Width}×{p.Height}"
+                     + (p.FitUpscale ? "　fit_upscale 開" : "");
+        yield return "地板：" + FloorSpec(p);
+    }
+
+    static string FloorSpec(SCP_SculptRenderParams p)
+    {
+        SCP_JsonData f = SCP_SculptRenderProfiles.DescribeFloor(p);
+        string aTex = f["texture"].AsString();
+        return (f["enabled"].AsBool() ? "開" : "關（以下是記住的欄位）")
+               + $"　貼圖 {(aTex == SCP_SculptRenderProfiles.FloorBuiltin ? aTex : Path.GetFileName(aTex))}　tile {F(f["tile_size"].AsDouble())}"
+               + $"　z {F(f["z"].AsDouble())}　{(f["full_grid"].AsBool() ? "整個空間" : "外框＋" + F(f["margin"].AsDouble()))}"
+               + $"　色調 {f["color"].AsString()}　淡出 {F(f["fade"].AsDouble())}";
     }
 
     static bool TryXywh(string iText, out int x, out int y, out int w, out int h)

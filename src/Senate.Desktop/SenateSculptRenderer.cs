@@ -10,13 +10,23 @@
 //     於是預設視角與舊圖**同一個朝向**。Yaw／Eye／Target／Light 全在世界座標給，映射由本檔處理。
 //   ・預設鏡頭 yaw 45、pitch 30 ＝ 真正的正交投影：頂面是 2:1 菱形（與舊圖相同），
 //     ⚠ 但垂直牆高是 cos30×(24/√2) ≈ 14.7 px／voxel（舊圖為了畫起來整齊壓成 12 px）—— 舊圖不是真投影，這裡是。
-//   ・縮放（正交）：Zoom＝null ⇒ 投影外框填滿 92%、上限 24 px／voxel 寬（只縮不放）；有值 ⇒ 24×Zoom px。
+//   ・縮放（正交）：Zoom＝null ⇒ 投影外框填滿 92%、上限 24 px／voxel 寬（只縮不放；FitUpscale ⇒ 不設上限、一律填滿）；
+//     有值 ⇒ 24×Zoom px。
 //     「voxel 寬」＝ yaw 45 時一顆 voxel 的水平投影寬（√2 個世界單位）⇒ 每單位 24×Zoom/√2 px，換 yaw 刻度不變。
 //   ・光照：多盞平行光（最多 8 盞；Dir 是光**行進**方向，色×強度）的 Lambert 總和 ＋ 半球環境光×Ambient ＋ AO；
 //     投陰影的光最多 2 盞，各一張 2048² 陰影圖 ＋ 3×3 PCF。半球環境光色：有 skybox ⇒ 由全景上下半球平均色調出色偏。
 //     沒有後製：只有一道 0.85 起的柔肩＋歸一（一盞白光強度 1、正對它且無遮蔽的面 ＝ 光量 1.0 ＝ 調色盤原色，實測逐位元）。
 //   ・背景：Skybox＝null ⇒ 內建黃昏天空（程式生成）；路徑 ⇒ 等距柱狀全景；"none" ⇒ 純色 Bg ＋極淡垂直漸層。
-//     透視 ⇒ 每像素視線查全景；正交 ⇒ 視線全平行，改用跟著 yaw 轉的「假透視」視窗（垂直 70°、俯角 1/4）。
+//     透視 ⇒ 每像素視線查全景；正交 ⇒ 視線全平行，改用跟著 yaw 轉的「假透視」視窗（垂直 70°、俯角 1/4，再加 SkyboxTiltDeg 往上抬）。
+//   ・地板（Floor≠null，Tim 2026-10-02）：z＝Floor.Z 的水平四邊形，畫序 天空 → 地板（預乘 alpha 淡出）→ voxel。
+//     範圍：FullGrid ⇒ 0..256 方格；否則可見 voxel 外框（xy）外擴 Margin；⚠ 外框模式＋沒有 voxel ⇒ 不畫地板。
+//     光照：同一組燈＋陰影（只有 voxel 投影，地板只接不投）＋半球環境光的天空色，沒有 AO；單面（鏡頭在地板下方 ⇒ 剔除）。
+//     貼圖：Texture＝null ⇒ fragment shader 程式畫的量尺網格（每 1／16／64 格一條線，fwidth 反鋸齒，線落在整數世界座標
+//     ＝ voxel 邊界）；路徑 ⇒ 重複鋪（每 TileSize 格一次，mipmap＋各向異性），以「路徑＋修改時間＋大小」快取。
+//     邊緣淡出：距範圍邊 < Fade×邊長 的區域 alpha 平滑降到 0，蓋在已畫好的天空上 ⇒ 淡到「那個像素看到的背景」。
+//     框景：⚠ **只框 voxel**（＋voxel 在地板上的投影腳印，僅當地板與 voxel 底部的距離 ≤ Margin）——
+//     FullGrid 的 256 格地板不參與框景（不然作品會被縮成一個點），地板超出畫面就讓它出去；
+//     例外：沒有 voxel 而有 FullGrid ⇒ 框整片地板（不然畫面上什麼都沒有）。深度範圍（近／遠平面）則一律涵蓋地板。
 // 執行緒：GL context 在**第一次 TryRender 的執行緒**上建立（隱藏 GLFW 視窗）。之後每次呼叫都 MakeCurrent／
 //         結束時 ClearContext，並以 lock 序列化 ⇒ 換執行緒呼叫也行，但建議固定在 CLI 主執行緒（GLFW 的慣例）。
 // 失敗：建不出 context（沒有顯卡／遠端桌面沒有 GL 3.3…）⇒ TryRender 回 false 與原因，⛔ 不丟例外；
@@ -52,7 +62,9 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     int m_MaxSamples;
     int m_MaxRbSize;
 
-    uint m_MainProg, m_ShadowProg, m_BgProg, m_SkyProg;
+    uint m_MainProg, m_ShadowProg, m_BgProg, m_SkyProg, m_FloorProg;
+    /// <summary>各向異性過濾上限（0 ＝ 這張卡／驅動沒有那個擴充）。</summary>
+    float m_MaxAniso;
     uint m_EmptyVao;
     readonly uint[] m_ShadowFbo = new uint[MaxShadowMaps], m_ShadowTex = new uint[MaxShadowMaps];
     const int MaxShadowMaps = SCP_SculptRenderParams.MaxShadowLights;
@@ -83,10 +95,13 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
                 m_Context!.MakeCurrent();
                 SkyTexture? aSky = null;
                 if (!IsSkyNone(iParams.Skybox) && !ResolveSky(iParams.Skybox, out aSky, out oError)) return false;
+                FloorTexture? aFloorTex = null;
+                if (iParams.Floor?.Texture != null && !ResolveFloorTexture(iParams.Floor.Texture, out aFloorTex, out oError)) return false;
                 var aMesh = BuildMesh(iVoxels, iParams.AmbientOcclusion);
-                if (!SolveCamera(aMesh, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError)) return false;
-                var aLights = SolveLights(aMesh, iParams);
-                oRgba = RenderGpu(aMesh, iParams, aViewProj, aLights, aSky, aSkyView);
+                FloorSetup? aFloor = SolveFloor(aMesh, iParams, aFloorTex);
+                if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError)) return false;
+                var aLights = SolveLights(aMesh, aFloor, iParams);
+                oRgba = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView);
                 var aErr = m_Gl!.GetError();
                 if (aErr != GLEnum.NoError) { oRgba = Array.Empty<byte>(); oError = "OpenGL 錯誤：" + aErr; return false; }
                 return true;
@@ -149,8 +164,21 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         if (iP.Skybox != null && !IsSkyNone(iP.Skybox) && !Path.IsPathRooted(iP.Skybox))
         { oError = "Skybox 需是絕對路徑（或 null＝內建天空、\"none\"＝純色背景）：" + iP.Skybox; return false; }
         if (!Finite(iP.SkyboxYawDeg)) { oError = "SkyboxYawDeg 是 NaN／無限大"; return false; }
+        if (!Finite(iP.SkyboxTiltDeg) || iP.SkyboxTiltDeg < -89 || iP.SkyboxTiltDeg > 89)
+        { oError = "SkyboxTiltDeg 需在 −89..89：" + iP.SkyboxTiltDeg; return false; }
         if (iP.Projection != SCP_SculptProjection.Orthographic && iP.Projection != SCP_SculptProjection.Perspective)
         { oError = "認不得的投影模式：" + iP.Projection; return false; }
+        var aF = iP.Floor;
+        if (aF != null)
+        {
+            if (!Finite(aF.Z) || !Finite(aF.Margin) || !Finite(aF.TileSize) || !Finite(aF.Fade))
+            { oError = "Floor 參數含 NaN／無限大"; return false; }
+            if (aF.Margin < 0) { oError = "Floor.Margin 需 ≥ 0：" + aF.Margin; return false; }
+            if (aF.TileSize <= 0) { oError = "Floor.TileSize 需 > 0：" + aF.TileSize; return false; }
+            if (aF.Fade < 0 || aF.Fade > 0.5) { oError = "Floor.Fade 需在 0..0.5：" + aF.Fade; return false; }
+            if (aF.Texture != null && !Path.IsPathRooted(aF.Texture))
+            { oError = "Floor.Texture 需是絕對路徑（或 null＝內建量尺網格）：" + aF.Texture; return false; }
+        }
         return true;
     }
 
@@ -179,6 +207,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             m_GlInfo = (m_Gl.GetStringS(StringName.Version) ?? "?") + "｜" + (m_Gl.GetStringS(StringName.Renderer) ?? "?");
             m_MaxSamples = m_Gl.GetInteger((GetPName)GLEnum.MaxSamples);
             m_MaxRbSize = m_Gl.GetInteger(GetPName.MaxRenderbufferSize);
+            m_MaxAniso = QueryMaxAnisotropy(m_Gl);
             CreateStaticResources();
             m_Context.Clear();
             return true;
@@ -327,6 +356,97 @@ void main() {
     oColor = vec4(textureLod(uSky, uv, uLod).rgb, 1.0);
 }";
 
+    // 地板：一片 z＝Floor.Z 的四邊形（GL 座標；vWorld 把 y 取負還原成世界 xy ⇒ 網格線與 voxel 邊界同一套整數座標）。
+    // 光 ＝ 與 voxel 同式（法線 +z、半球取天空那一端、沒有 AO），陰影用同兩張陰影圖（地板只接不投、不做法線偏移）。
+    const string FloorVs = @"#version 330 core
+layout(location=0) in vec3 aPos;
+uniform mat4 uViewProj;
+uniform mat4 uLightVP0;
+uniform mat4 uLightVP1;
+out vec2 vWorld;
+out vec4 vLightPos0;
+out vec4 vLightPos1;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vWorld = vec2(aPos.x, -aPos.y);
+    vLightPos0 = uLightVP0 * vec4(aPos, 1.0);
+    vLightPos1 = uLightVP1 * vec4(aPos, 1.0);
+}";
+
+    // 量尺網格：底色深石板；每 1 格一條細線（淡）、每 16 格（較亮、較粗）、每 64 格（最亮）。
+    // 線寬以「螢幕像素」計（fwidth）⇒ 任何縮放都一樣銳利；線距小於約 3 px 時那一級線淡掉（不然糊成一片灰／摩爾紋）。
+    // 輸出是**預乘 alpha**（rgb×a, a）—— 混色式 ONE, ONE_MINUS_SRC_ALPHA 蓋在已畫好的天空上 ⇒ 邊緣淡到該像素看到的背景。
+    const string FloorFs = @"#version 330 core
+in vec2 vWorld;
+in vec4 vLightPos0;
+in vec4 vLightPos1;
+uniform int uLightCount;
+uniform vec3 uLightDir[8];
+uniform vec3 uLightCol[8];
+uniform int uLightShadow[8];
+uniform float uAmbient;
+uniform float uToneScale;
+uniform sampler2DShadow uShadowMap0;
+uniform sampler2DShadow uShadowMap1;
+uniform float uTexel;
+uniform float uBias;
+uniform float uSun;
+uniform vec3 uHemiSky;
+uniform vec4 uRect;
+uniform vec2 uFadeW;
+uniform vec3 uTint;
+uniform int uMode;
+uniform sampler2D uTex;
+uniform float uTile;
+out vec4 oColor;
+float shoulder(float x) { if (x > 0.85) x = 0.85 + 0.15 * (1.0 - exp(-(x - 0.85) / 0.15)); return x; }
+float shadowFactor(sampler2DShadow iMap, vec4 iLightPos) {
+    vec3 p = iLightPos.xyz / iLightPos.w * 0.5 + 0.5;
+    if (p.z >= 1.0) return 1.0;
+    float s = 0.0;
+    for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++)
+            s += texture(iMap, vec3(p.xy + vec2(x, y) * uTexel, p.z - uBias));
+    return s / 9.0;
+}
+float lineCov(vec2 iP, float iPeriod, float iHalfPx) {
+    vec2 q = iP / iPeriod;
+    vec2 fw = max(fwidth(q), vec2(1e-6));
+    vec2 d = abs(fract(q + 0.5) - 0.5) / fw;
+    float cov = clamp(iHalfPx + 0.5 - min(d.x, d.y), 0.0, 1.0);
+    float cellPx = 1.0 / max(fw.x, fw.y);
+    return cov * clamp((cellPx - 3.0) / 6.0, 0.0, 1.0);
+}
+void main() {
+    vec2 dEdge = min(vWorld - uRect.xy, uRect.zw - vWorld);
+    float a = 1.0;
+    if (uFadeW.x > 0.0) a *= smoothstep(0.0, uFadeW.x, dEdge.x);
+    if (uFadeW.y > 0.0) a *= smoothstep(0.0, uFadeW.y, dEdge.y);
+    if (a < 1.0 / 512.0) discard;
+    vec3 albedo;
+    if (uMode == 1) albedo = texture(uTex, vWorld / uTile).rgb;
+    else {
+        albedo = vec3(0.150, 0.170, 0.205);
+        albedo = mix(albedo, vec3(0.245, 0.270, 0.315), lineCov(vWorld, 1.0, 0.5) * 0.60);
+        albedo = mix(albedo, vec3(0.360, 0.395, 0.455), lineCov(vWorld, 16.0, 0.8) * 0.85);
+        albedo = mix(albedo, vec3(0.500, 0.545, 0.610), lineCov(vWorld, 64.0, 1.1) * 0.95);
+    }
+    albedo *= uTint;
+    vec3 direct = vec3(0.0);
+    for (int i = 0; i < uLightCount; i++) {
+        float ndl = max(uLightDir[i].z, 0.0);
+        if (ndl <= 0.0) continue;
+        float sh = 1.0;
+        if (uLightShadow[i] == 0) sh = shadowFactor(uShadowMap0, vLightPos0);
+        else if (uLightShadow[i] == 1) sh = shadowFactor(uShadowMap1, vLightPos1);
+        direct += uLightCol[i] * (ndl * sh);
+    }
+    vec3 light = uAmbient * uHemiSky + (1.0 - uAmbient) * uSun * direct;
+    light = vec3(shoulder(light.r), shoulder(light.g), shoulder(light.b)) * uToneScale;
+    vec3 c = clamp(albedo * light, 0.0, 1.0);
+    oColor = vec4(c * a, a);
+}";
+
     unsafe void CreateStaticResources()
     {
         var gl = m_Gl!;
@@ -334,6 +454,7 @@ void main() {
         m_ShadowProg = Link(ShadowVs, ShadowFs);
         m_BgProg = Link(BgVs, BgFs);
         m_SkyProg = Link(SkyVs, SkyFs);
+        m_FloorProg = Link(FloorVs, FloorFs);
         m_EmptyVao = gl.GenVertexArray();
 
         float* aBorder = stackalloc float[4] { 1, 1, 1, 1 };
@@ -582,13 +703,15 @@ void main() {
     /// <summary>
     /// 正交鏡頭的背景：所有視線平行 ⇒ 查全景只會得到一個顏色。改用「假透視」視窗：
     /// 水平方向跟鏡頭（yaw 轉天空就轉），俯角只取 1/4（30° 俯視 ⇒ 背景看向 −7.5°，地平線落在畫面上半），垂直視角 70°。
+    /// <para>iTiltDeg（SkyboxTiltDeg）：在那個俯角上再往上抬（正值 ＝ 看更高的天空、地面變少），結果夾在 ±89°。</para>
     /// </summary>
-    static SkyView OrthoSkyView(Vector3 iForward, Vector3 iUp, double iRollDeg, float iAspect)
+    static SkyView OrthoSkyView(Vector3 iForward, Vector3 iUp, double iRollDeg, float iAspect, double iTiltDeg)
     {
         Vector2 aH = new(iForward.X, iForward.Y);
         if (aH.LengthSquared() < 1e-6f) aH = new Vector2(iUp.X, iUp.Y) * (iForward.Z < 0 ? 1 : -1);
         aH = aH.LengthSquared() < 1e-12f ? Vector2.UnitX : Vector2.Normalize(aH);
-        double aEl = Math.Asin(Math.Clamp(iForward.Z, -1f, 1f)) * 0.25;
+        double aEl = Math.Asin(Math.Clamp(iForward.Z, -1f, 1f)) * 0.25 + iTiltDeg * Math.PI / 180;
+        aEl = Math.Clamp(aEl, -89 * Math.PI / 180, 89 * Math.PI / 180);
         var aF = new Vector3(aH.X * (float)Math.Cos(aEl), aH.Y * (float)Math.Cos(aEl), (float)Math.Sin(aEl));
         Vector3 aR = Vector3.Normalize(Vector3.Cross(aF, Vector3.UnitZ));
         Vector3 aU = Vector3.Cross(aR, aF);
@@ -691,6 +814,118 @@ void main() {
         uint h = iX * 0x8DA6B343u ^ iY * 0xD8163841u;
         h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
         return h;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════
+    // 區塊職責：地板 —— 範圍解析（FullGrid／外框＋Margin）與貼圖讀取快取。
+    // 物理意義：範圍在**世界** xy（voxel 邊界＝整數座標）；外框模式的範圍 ＝ 可見 voxel 外緣（Min..Max，已是格的外緣）± Margin。
+    //           ⛔ 貼圖路徑給了但讀不了 ⇒ TryRender 回 false（不默默換成內建網格）。
+    // 數值影響：貼圖 RGBA8、Repeat 雙軸、三線性 mipmap、各向異性取驅動上限與 16 的小者（地板常是斜看，沒有它遠處會糊）。
+    // ════════════════════════════════════════════════════════════════════════════════════
+    sealed class FloorTexture
+    {
+        public uint Tex;
+        public DateTime WriteTimeUtc;
+        public long Length;
+    }
+
+    /// <summary>這一張圖要畫的地板（世界座標的矩形 ＋ 高度）。</summary>
+    sealed class FloorSetup
+    {
+        public float X0, Y0, X1, Y1, Z;
+        public SCP_SculptFloor Src = new();
+        public FloorTexture? Tex;
+
+        /// <summary>四個角（世界座標）。</summary>
+        public Vector3[] Corners => new[]
+        {
+            new Vector3(X0, Y0, Z), new Vector3(X1, Y0, Z), new Vector3(X1, Y1, Z), new Vector3(X0, Y1, Z),
+        };
+    }
+
+    /// <summary>FullGrid 的邊長（＝ voxel 空間 0..255 的外緣）。</summary>
+    const float FullGridSize = 256f;
+    readonly Dictionary<string, FloorTexture> m_FloorCache = new(StringComparer.OrdinalIgnoreCase);
+
+    static FloorSetup? SolveFloor(Mesh iMesh, SCP_SculptRenderParams iP, FloorTexture? iTex)
+    {
+        var f = iP.Floor;
+        if (f == null) return null;
+        if (f.FullGrid) return new FloorSetup { X0 = 0, Y0 = 0, X1 = FullGridSize, Y1 = FullGridSize, Z = (float)f.Z, Src = f, Tex = iTex };
+        if (iMesh.VoxelCount == 0) return null;   // 外框模式沒有外框 ⇒ 不畫（見檔頭）
+        float m = (float)f.Margin;
+        return new FloorSetup
+        {
+            X0 = iMesh.Min.X - m, Y0 = iMesh.Min.Y - m, X1 = iMesh.Max.X + m, Y1 = iMesh.Max.Y + m,
+            Z = (float)f.Z, Src = f, Tex = iTex,
+        };
+    }
+
+    static float QueryMaxAnisotropy(GL iGl)
+    {
+        int aCount = iGl.GetInteger(GetPName.NumExtensions);
+        bool aHas = false;
+        for (int i = 0; i < aCount && !aHas; i++)
+        {
+            string? e = iGl.GetStringS(StringName.Extensions, (uint)i);
+            aHas = e == "GL_EXT_texture_filter_anisotropic" || e == "GL_ARB_texture_filter_anisotropic";
+        }
+        if (!aHas) return 0;
+        iGl.GetFloat((GetPName)0x84FF, out float aMax);   // GL_MAX_TEXTURE_MAX_ANISOTROPY
+        return iGl.GetError() == GLEnum.NoError ? aMax : 0;
+    }
+
+    unsafe bool ResolveFloorTexture(string iPath, out FloorTexture? oTex, out string oError)
+    {
+        oTex = null;
+        oError = "";
+        DateTime aMtime;
+        long aLen;
+        try
+        {
+            var aInfo = new FileInfo(iPath);
+            if (!aInfo.Exists) { oError = "地板貼圖不存在：" + iPath; return false; }
+            aMtime = aInfo.LastWriteTimeUtc;
+            aLen = aInfo.Length;
+        }
+        catch (Exception e) { oError = "地板貼圖讀不了（" + e.GetType().Name + "）：" + iPath; return false; }
+
+        if (m_FloorCache.TryGetValue(iPath, out var aOld))
+        {
+            if (aOld.WriteTimeUtc == aMtime && aOld.Length == aLen) { oTex = aOld; return true; }
+            m_Gl!.DeleteTexture(aOld.Tex);
+            m_FloorCache.Remove(iPath);
+        }
+
+        StbImageSharp.ImageResult aImg;
+        try
+        {
+            byte[] aBytes = File.ReadAllBytes(iPath);
+            aImg = StbImageSharp.ImageResult.FromMemory(aBytes, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+        }
+        catch (Exception e) { oError = "地板貼圖解碼失敗（" + e.GetType().Name + "：" + e.Message + "）：" + iPath; return false; }
+        if (aImg == null || aImg.Data == null || aImg.Width <= 0 || aImg.Height <= 0)
+        { oError = "地板貼圖解碼失敗（空影像）：" + iPath; return false; }
+        var gl = m_Gl!;
+        int aMaxTex = gl.GetInteger(GetPName.MaxTextureSize);
+        if (aImg.Width > aMaxTex || aImg.Height > aMaxTex)
+        { oError = $"地板貼圖 {aImg.Width}×{aImg.Height} 超過這張顯卡的貼圖上限 {aMaxTex}：" + iPath; return false; }
+
+        var aTex = new FloorTexture { WriteTimeUtc = aMtime, Length = aLen, Tex = gl.GenTexture() };
+        gl.BindTexture(TextureTarget.Texture2D, aTex.Tex);
+        gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        fixed (byte* p = aImg.Data)
+            gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)aImg.Width, (uint)aImg.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, p);
+        gl.GenerateMipmap(TextureTarget.Texture2D);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+        if (m_MaxAniso > 1f)
+            gl.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, Math.Min(16f, m_MaxAniso));   // GL_TEXTURE_MAX_ANISOTROPY
+        m_FloorCache[iPath] = aTex;
+        oTex = aTex;
+        return true;
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════
@@ -838,13 +1073,50 @@ void main() {
     // ════════════════════════════════════════════════════════════════════════════════════
     static Vector3 ToGl(double iX, double iY, double iZ) => new((float)iX, (float)-iY, (float)iZ);
 
-    static bool SolveCamera(Mesh iMesh, SCP_SculptRenderParams iP, out Matrix4x4 oViewProj, out SkyView oSky, out string oError)
+    /// <summary>
+    /// 框景用的點（世界座標的「格中心」，框景時每點各帶 ±0.5 的半寬）：voxel 中心；有地板且地板與 voxel 底部距離 ≤ Margin ⇒
+    /// 再加每顆 voxel 在地板上的腳印（接觸面與近處陰影要在畫面裡）；沒有 voxel 但有 FullGrid ⇒ 整片地板的四角。
+    /// <para>⚠ FullGrid／Margin 外圈**不**參與框景（見檔頭）。</para>
+    /// </summary>
+    static Vector3[] FramePoints(Mesh iMesh, FloorSetup? iFloor, out Vector3 oMin, out Vector3 oMax)
+    {
+        if (iMesh.VoxelCount == 0)
+        {
+            if (iFloor != null)
+            {
+                oMin = new Vector3(iFloor.X0, iFloor.Y0, iFloor.Z - 1);
+                oMax = new Vector3(iFloor.X1, iFloor.Y1, iFloor.Z);
+                return new[]
+                {
+                    new Vector3(iFloor.X0 + 0.5f, iFloor.Y0 + 0.5f, iFloor.Z - 0.5f), new Vector3(iFloor.X1 - 0.5f, iFloor.Y0 + 0.5f, iFloor.Z - 0.5f),
+                    new Vector3(iFloor.X1 - 0.5f, iFloor.Y1 - 0.5f, iFloor.Z - 0.5f), new Vector3(iFloor.X0 + 0.5f, iFloor.Y1 - 0.5f, iFloor.Z - 0.5f),
+                };
+            }
+            oMin = Vector3.Zero; oMax = Vector3.One;
+            return iMesh.Centers;
+        }
+        oMin = iMesh.Min; oMax = iMesh.Max;
+        if (iFloor == null || Math.Abs(iMesh.Min.Z - iFloor.Z) > iFloor.Src.Margin) return iMesh.Centers;
+        // 每顆 voxel 正下方在地板上的那一格（格中心 z 在地板下半格 ⇒ 加回 ±0.5 剛好是地板面）—— 只框「作品實際踩著的地方」，
+        // ⛔ 不用外框四角：細長斜放的作品外框比剪影寬很多，框四角會讓作品縮小（2026-10-02 燈塔實測）。
+        int n = iMesh.Centers.Length;
+        var aPts = new Vector3[n * 2];
+        Array.Copy(iMesh.Centers, aPts, n);
+        float aZ = iFloor.Z - 0.5f;
+        for (int i = 0; i < n; i++) aPts[n + i] = new Vector3(iMesh.Centers[i].X, iMesh.Centers[i].Y, aZ);
+        oMin = Vector3.Min(oMin, new Vector3(iMesh.Min.X, iMesh.Min.Y, iFloor.Z));
+        oMax = Vector3.Max(oMax, new Vector3(iMesh.Max.X, iMesh.Max.Y, iFloor.Z));
+        return aPts;
+    }
+
+    static bool SolveCamera(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP, out Matrix4x4 oViewProj, out SkyView oSky, out string oError)
     {
         oViewProj = Matrix4x4.Identity;
         oSky = default;
         oError = "";
-        bool aHasVoxels = iMesh.VoxelCount > 0;
-        Vector3 aMinW = aHasVoxels ? iMesh.Min : Vector3.Zero, aMaxW = aHasVoxels ? iMesh.Max : Vector3.One;
+        Vector3[] aPts = FramePoints(iMesh, iFloor, out Vector3 aMinW, out Vector3 aMaxW);
+        // 深度範圍（近／遠平面）額外涵蓋的點：地板四角（框景不看它們）
+        Vector3[] aDepthOnly = iFloor?.Corners ?? Array.Empty<Vector3>();
         Vector3 aCenterW = (aMinW + aMaxW) * 0.5f;
         bool aTargetGiven = iP.TargetX.HasValue || iP.TargetY.HasValue || iP.TargetZ.HasValue;
         // 注視點：逐軸 —— 沒給的軸用可見 voxel 外框中心。
@@ -888,7 +1160,6 @@ void main() {
         // 每顆 voxel 投影在 right／up／forward 軸上的半寬（單位立方體的支撐函數）。
         float HalfExtent(Vector3 iAxis) => 0.5f * (Math.Abs(iAxis.X) + Math.Abs(iAxis.Y) + Math.Abs(iAxis.Z));
         float aHr = HalfExtent(aRight), aHu = HalfExtent(aUp), aHf = HalfExtent(aForward);
-        Vector3[] aPts = iMesh.Centers;
         int aN = aPts.Length;
         float aAspect = (float)iP.Width / iP.Height;
 
@@ -906,6 +1177,11 @@ void main() {
                 aMinF = Math.Min(aMinF, f - aHf); aMaxF = Math.Max(aMaxF, f + aHf);
             }
             if (aN == 0) { aMinR = aMinU = aMinF = -1; aMaxR = aMaxU = aMaxF = 1; }
+            foreach (Vector3 w in aDepthOnly)
+            {
+                float f = Vector3.Dot(ToGl(w.X, w.Y, w.Z) - aTarget, aForward);
+                aMinF = Math.Min(aMinF, f); aMaxF = Math.Max(aMaxF, f);
+            }
 
             double aBasePx = VoxelWidthPx / Math.Sqrt(2.0);   // Zoom 1：每世界單位的像素數
             // 畫面中心：有注視點 ⇒ 注視點在正中；沒有 ⇒ 投影外框中心（與舊引擎相同）。
@@ -919,7 +1195,8 @@ void main() {
                 double aExtU = aTargetGiven ? 2 * Math.Max(Math.Abs(aMinU), Math.Abs(aMaxU)) : aMaxU - aMinU;
                 aExtR = Math.Max(1e-3, aExtR * aBasePx);
                 aExtU = Math.Max(1e-3, aExtU * aBasePx);
-                aScale = Math.Min(1.0, Math.Min(iP.Width * FitFill / aExtR, iP.Height * FitFill / aExtU));
+                aScale = Math.Min(iP.Width * FitFill / aExtR, iP.Height * FitFill / aExtU);
+                if (!iP.FitUpscale) aScale = Math.Min(1.0, aScale);   // 舊行為：只縮不放（見 FitUpscale）
             }
             double aPx = aBasePx * aScale;
             float aHalfW = (float)(iP.Width / 2.0 / aPx), aHalfH = (float)(iP.Height / 2.0 / aPx);
@@ -931,7 +1208,7 @@ void main() {
             float aNear = 0.5f, aFar = aBack + Math.Max(0, aMaxF) + 2f;
             var aView = LookAt(aEyePos, aRight, aUp, aForward);
             oViewProj = aView * Ortho(-aHalfW, aHalfW, -aHalfH, aHalfH, aNear, aFar);
-            oSky = OrthoSkyView(aForward, aUp, iP.RollDeg, aAspect);
+            oSky = OrthoSkyView(aForward, aUp, iP.RollDeg, aAspect, iP.SkyboxTiltDeg);
             return true;
         }
 
@@ -981,6 +1258,16 @@ void main() {
         }
         if (aN == 0) { aMinDepth = 1; aMaxDepth = 10; }
         float aZNear = Math.Max(0.05f, aMinDepth - 1f);
+        if (aDepthOnly.Length > 0)
+        {
+            foreach (Vector3 w in aDepthOnly)
+                aMaxDepth = Math.Max(aMaxDepth, Vector3.Dot(ToGl(w.X, w.Y, w.Z) - aEyeP, aForward) + 1f);
+            // 地板離鏡頭最近的可見點：鏡頭到地板平面的距離 h × 視錐半對角的 cos（視錐裡的點離鏡頭至少 h，沿視線的深度至少再乘 cos）
+            float aH = Math.Abs(aEyeP.Z - aDepthOnly[0].Z);
+            float aCos = 1f / MathF.Sqrt(1f + aTanX * aTanX + aTanY * aTanY);
+            if (aH > 1e-3f) aZNear = Math.Max(0.05f, Math.Min(aZNear, aH * aCos * 0.9f));
+            else aZNear = 0.05f;
+        }
         float aZFar = Math.Max(aZNear + 1f, aMaxDepth + 1f);
         // 深度精度：近平面太貼（鏡頭在場景裡面）時夾住遠近比，免得 24-bit 深度失真。
         aZNear = Math.Max(aZNear, aZFar / 100000f);
@@ -1043,6 +1330,10 @@ void main() {
     // ════════════════════════════════════════════════════════════════════════════════════
     // 區塊職責：光源 —— 每盞光轉進 GL 座標；投影光各配一張陰影圖（正交視錐框住**全部** voxel 的 AABB ⇒ 正交與透視都被涵蓋）。
     // 數值影響：全場景（約 250 單位）時每 voxel ≈ 7 texel；裁切的小展品則精細得多。
+    // 地板：陰影圖的 xy（光的橫向）**只框投影者（voxel）** —— 平行光下一顆 voxel 與它落在地板上的影子在光空間是同一個 xy，
+    //       所以框住 voxel 就框住了所有落在地板上的影子；框外的地板取樣落在邊框色（深度 1）⇒ 照亮，本來就沒有東西擋。
+    //       ⚠ 但**深度**範圍必須延伸到地板（否則地板像素的光空間深度 ≥ 1 ⇒ 一律當成照亮，影子整片消失 —— 而且不會報錯）。
+    //       這樣陰影圖解析度不會因為 FullGrid 的 256 格地板被稀釋。
     // ════════════════════════════════════════════════════════════════════════════════════
     sealed class LightSetup
     {
@@ -1054,7 +1345,7 @@ void main() {
         public int ShadowMaps;
     }
 
-    static LightSetup SolveLights(Mesh iMesh, SCP_SculptRenderParams iP)
+    static LightSetup SolveLights(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP)
     {
         var aSet = new LightSetup();
         bool aShadows = iP.Shadow && iMesh.IndexCount > 0;
@@ -1069,13 +1360,13 @@ void main() {
             if (aShadows && aL.CastShadow && aSet.ShadowMaps < MaxShadowMaps)   // 上限已在 Validate 擋過
             {
                 aSet.ShadowMap[i] = aSet.ShadowMaps;
-                aSet.ShadowVp[aSet.ShadowMaps++] = LightViewProj(iMesh, aTravel);
+                aSet.ShadowVp[aSet.ShadowMaps++] = LightViewProj(iMesh, iFloor, aTravel);
             }
         }
         return aSet;
     }
 
-    static Matrix4x4 LightViewProj(Mesh iMesh, Vector3 iTravel)
+    static Matrix4x4 LightViewProj(Mesh iMesh, FloorSetup? iFloor, Vector3 iTravel)
     {
         Vector3 aUpRef = Math.Abs(iTravel.Z) > 0.999f ? Vector3.UnitY : Vector3.UnitZ;
         Vector3 aRight = Vector3.Normalize(Vector3.Cross(iTravel, aUpRef));
@@ -1091,6 +1382,12 @@ void main() {
             aMinU = Math.Min(aMinU, u); aMaxU = Math.Max(aMaxU, u);
             aMinF = Math.Min(aMinF, f); aMaxF = Math.Max(aMaxF, f);
         }
+        if (iFloor != null)
+            foreach (Vector3 w in iFloor.Corners)
+            {
+                float f = Vector3.Dot(ToGl(w.X, w.Y, w.Z), iTravel);
+                aMinF = Math.Min(aMinF, f); aMaxF = Math.Max(aMaxF, f);
+            }
         const float aPad = 1f;
         var aView = LookAt(Vector3.Zero, aRight, aUp, iTravel);
         return aView * Ortho(aMinR - aPad, aMaxR + aPad, aMinU - aPad, aMaxU + aPad, aMinF - aPad, aMaxF + aPad);
@@ -1099,15 +1396,18 @@ void main() {
     // ════════════════════════════════════════════════════════════════════════════════════
     // 區塊職責：GPU 三趟 —— 陰影圖 → MSAA 主畫（背景＋網格）→ blit 解析 → ReadPixels（翻成由上到下）。
     // ════════════════════════════════════════════════════════════════════════════════════
-    unsafe byte[] RenderGpu(Mesh iMesh, SCP_SculptRenderParams iP, Matrix4x4 iViewProj, LightSetup iLights,
+    unsafe byte[] RenderGpu(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP, Matrix4x4 iViewProj, LightSetup iLights,
                             SkyTexture? iSky, SkyView iSkyView)
     {
         var gl = m_Gl!;
         int aW = iP.Width, aH = iP.Height;
         EnsureTargets(aW, aH);
 
-        uint aVao = 0, aVbo = 0, aIbo = 0;
+        uint aVao = 0, aVbo = 0, aIbo = 0, aFloorVao = 0, aFloorVbo = 0;
         bool aHasMesh = iMesh.IndexCount > 0;
+        // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
+        // 有 ⇒ 由全景上下半球的平均色調出色偏（亮度仍由 Ambient 決定）。
+        Vector3 aHs = iSky?.HemiSky ?? Vector3.One, aHg = iSky?.HemiGround ?? new Vector3(0.62f);
         try
         {
             if (aHasMesh)
@@ -1179,6 +1479,47 @@ void main() {
             gl.BindVertexArray(m_EmptyVao);
             gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
 
+            // ②b 地板：天空之後、voxel 之前；預乘 alpha 蓋在天空上（目標 alpha 保持 1）。寫深度 ⇒ 地板下方的 voxel 被擋住。
+            if (iFloor != null)
+            {
+                // 世界 (x,y) → GL (x,−y)：y 鏡像讓繞序反轉 ⇒ 依世界 (x0,y0)→(x0,y1)→(x1,y1)→(x1,y0) 排，從 +z 看在 GL 裡才是逆時針。
+                float x0 = iFloor.X0, x1 = iFloor.X1, y0 = -iFloor.Y0, y1 = -iFloor.Y1, z = iFloor.Z;
+                float[] aQuad = { x0, y0, z, x0, y1, z, x1, y1, z, x0, y0, z, x1, y1, z, x1, y0, z };
+                aFloorVao = gl.GenVertexArray();
+                gl.BindVertexArray(aFloorVao);
+                aFloorVbo = gl.GenBuffer();
+                gl.BindBuffer(BufferTargetARB.ArrayBuffer, aFloorVbo);
+                gl.BufferData<float>(BufferTargetARB.ArrayBuffer, aQuad.AsSpan(), BufferUsageARB.StaticDraw);
+                gl.EnableVertexAttribArray(0);
+                gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 3 * sizeof(float), (void*)0);
+
+                gl.Enable(EnableCap.DepthTest);
+                gl.DepthFunc(DepthFunction.Less);
+                gl.DepthMask(true);
+                gl.Enable(EnableCap.CullFace);      // 單面：鏡頭在地板下方 ⇒ 不畫（從下面看一片不透明的地板只會擋住作品）
+                gl.CullFace(TriangleFace.Back);
+                gl.Enable(EnableCap.Blend);
+                gl.BlendFuncSeparate(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha, BlendingFactor.Zero, BlendingFactor.One);
+                gl.UseProgram(m_FloorProg);
+                SetLitUniforms(m_FloorProg, iViewProj, iLights, iP, aHs);
+                // 偏移沿用 voxel 的 0.0005（SetLitUniforms 設的）：地板只接不投、不會自遮蔽，但貼地 voxel 的底面與地板同平面 ——
+                // 偏移太小時 PCF 的鄰格比到底面深度，迎光的貼地邊緣會描出一圈假黑邊（2026-10-02 放大實測）。
+                var f = iFloor.Src;
+                gl.Uniform4(gl.GetUniformLocation(m_FloorProg, "uRect"), iFloor.X0, iFloor.Y0, iFloor.X1, iFloor.Y1);
+                gl.Uniform2(gl.GetUniformLocation(m_FloorProg, "uFadeW"),
+                            (float)(f.Fade * (iFloor.X1 - iFloor.X0)), (float)(f.Fade * (iFloor.Y1 - iFloor.Y0)));
+                gl.Uniform3(gl.GetUniformLocation(m_FloorProg, "uTint"), f.R / 255f, f.G / 255f, f.B / 255f);
+                gl.Uniform1(gl.GetUniformLocation(m_FloorProg, "uMode"), iFloor.Tex != null ? 1 : 0);
+                gl.Uniform1(gl.GetUniformLocation(m_FloorProg, "uTile"), (float)f.TileSize);
+                // ⚠ uTex 一定要指到自己的單元：預設 0 會跟 sampler2DShadow 的單元 0 撞型別 ⇒ draw 時 INVALID_OPERATION
+                gl.ActiveTexture(TextureUnit.Texture2);
+                gl.BindTexture(TextureTarget.Texture2D, iFloor.Tex?.Tex ?? 0);
+                gl.Uniform1(gl.GetUniformLocation(m_FloorProg, "uTex"), 2);
+                gl.ActiveTexture(TextureUnit.Texture0);
+                gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+                gl.Disable(EnableCap.Blend);
+            }
+
             if (aHasMesh)
             {
                 gl.Enable(EnableCap.DepthTest);
@@ -1186,37 +1527,10 @@ void main() {
                 gl.Enable(EnableCap.CullFace);
                 gl.CullFace(TriangleFace.Back);
                 gl.UseProgram(m_MainProg);
-                SetMat(m_MainProg, "uViewProj", iViewProj);
-                SetMat(m_MainProg, "uLightVP0", iLights.ShadowVp[0]);
-                SetMat(m_MainProg, "uLightVP1", iLights.ShadowVp[1]);
-                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uLightCount"), iLights.Count);
-                for (int i = 0; i < iLights.Count; i++)
-                {
-                    Vector3 d = iLights.ToLight[i], c = iLights.Color[i];
-                    gl.Uniform3(gl.GetUniformLocation(m_MainProg, $"uLightDir[{i}]"), d.X, d.Y, d.Z);
-                    gl.Uniform3(gl.GetUniformLocation(m_MainProg, $"uLightCol[{i}]"), c.X, c.Y, c.Z);
-                    gl.Uniform1(gl.GetUniformLocation(m_MainProg, $"uLightShadow[{i}]"), iLights.ShadowMap[i]);
-                }
-                float aAmb = (float)iP.Ambient;
-                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uAmbient"), aAmb);
-                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uToneScale"), 1f / Shoulder(aAmb + (1f - aAmb) * SunGain));
-                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uTexel"), 1f / ShadowMapSize);
-                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uBias"), 0.0005f);
+                SetLitUniforms(m_MainProg, iViewProj, iLights, iP, aHs);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uNormalOffset"), 0.08f);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uAoMin"), 0.5f);
-                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uSun"), SunGain);
-                // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
-                // 有 ⇒ 由全景上下半球的平均色調出色偏（亮度仍由 Ambient 決定）。
-                Vector3 aHs = iSky?.HemiSky ?? Vector3.One, aHg = iSky?.HemiGround ?? new Vector3(0.62f);
-                gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uHemiSky"), aHs.X, aHs.Y, aHs.Z);
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uHemiGround"), aHg.X, aHg.Y, aHg.Z);
-                for (int m = 0; m < MaxShadowMaps; m++)
-                {
-                    gl.ActiveTexture(TextureUnit.Texture0 + m);
-                    gl.BindTexture(TextureTarget.Texture2D, m_ShadowTex[m]);
-                    gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uShadowMap" + m), m);
-                }
-                gl.ActiveTexture(TextureUnit.Texture0);
                 gl.BindVertexArray(aVao);
                 gl.DrawElements(PrimitiveType.Triangles, (uint)iMesh.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
             }
@@ -1249,7 +1563,43 @@ void main() {
             if (aVbo != 0) gl.DeleteBuffer(aVbo);
             if (aIbo != 0) gl.DeleteBuffer(aIbo);
             if (aVao != 0) gl.DeleteVertexArray(aVao);
+            if (aFloorVbo != 0) gl.DeleteBuffer(aFloorVbo);
+            if (aFloorVao != 0) gl.DeleteVertexArray(aFloorVao);
         }
+    }
+
+    /// <summary>
+    /// voxel 與地板共用的光照 uniform（鏡頭、兩張陰影圖、燈、環境光、色調刻度）—— 兩者同一套光才會「站在同一個場景裡」。
+    /// 各自不同的（voxel：法線偏移／AO／地面半球色；地板：偏移量、範圍、貼圖）由呼叫端另設。
+    /// </summary>
+    void SetLitUniforms(uint iProg, Matrix4x4 iViewProj, LightSetup iLights, SCP_SculptRenderParams iP, Vector3 iHemiSky)
+    {
+        var gl = m_Gl!;
+        SetMat(iProg, "uViewProj", iViewProj);
+        SetMat(iProg, "uLightVP0", iLights.ShadowVp[0]);
+        SetMat(iProg, "uLightVP1", iLights.ShadowVp[1]);
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uLightCount"), iLights.Count);
+        for (int i = 0; i < iLights.Count; i++)
+        {
+            Vector3 d = iLights.ToLight[i], c = iLights.Color[i];
+            gl.Uniform3(gl.GetUniformLocation(iProg, $"uLightDir[{i}]"), d.X, d.Y, d.Z);
+            gl.Uniform3(gl.GetUniformLocation(iProg, $"uLightCol[{i}]"), c.X, c.Y, c.Z);
+            gl.Uniform1(gl.GetUniformLocation(iProg, $"uLightShadow[{i}]"), iLights.ShadowMap[i]);
+        }
+        float aAmb = (float)iP.Ambient;
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uAmbient"), aAmb);
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uToneScale"), 1f / Shoulder(aAmb + (1f - aAmb) * SunGain));
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uTexel"), 1f / ShadowMapSize);
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uBias"), 0.0005f);
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uSun"), SunGain);
+        gl.Uniform3(gl.GetUniformLocation(iProg, "uHemiSky"), iHemiSky.X, iHemiSky.Y, iHemiSky.Z);
+        for (int m = 0; m < MaxShadowMaps; m++)
+        {
+            gl.ActiveTexture(TextureUnit.Texture0 + m);
+            gl.BindTexture(TextureTarget.Texture2D, m_ShadowTex[m]);
+            gl.Uniform1(gl.GetUniformLocation(iProg, "uShadowMap" + m), m);
+        }
+        gl.ActiveTexture(TextureUnit.Texture0);
     }
 
     /// <summary>直射光增益（見主 shader 說明）。</summary>
@@ -1282,8 +1632,11 @@ void main() {
                 m_Gl.DeleteProgram(m_ShadowProg);
                 m_Gl.DeleteProgram(m_BgProg);
                 m_Gl.DeleteProgram(m_SkyProg);
+                m_Gl.DeleteProgram(m_FloorProg);
                 foreach (var aSky in m_SkyCache.Values) m_Gl.DeleteTexture(aSky.Tex);
                 m_SkyCache.Clear();
+                foreach (var aTex in m_FloorCache.Values) m_Gl.DeleteTexture(aTex.Tex);
+                m_FloorCache.Clear();
                 m_Gl.Dispose();
                 m_Window?.Dispose();
             }
