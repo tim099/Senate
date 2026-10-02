@@ -18,7 +18,7 @@ public enum InstallState
     Missing = 2,
     /// <summary>裝了但不能用（import 失敗、檢查式不成立、模型缺檔）。</summary>
     Broken = 3,
-    /// <summary>下載到一半（HF 快取裡有 .incomplete）。再按一次安裝可以接著下載。</summary>
+    /// <summary>下載到一半（HF 快取裡有 .incomplete）。再按一次安裝會從斷點接續（resume_partial）。</summary>
     Partial = 4,
 }
 
@@ -162,10 +162,10 @@ print('__PROBE__' + json.dumps(out))
             //   檔案直接放在 snapshots/ 裡、blobs/ 是空的（2026-10-02 實測 bge-m3 就是這樣）——
             //   只數 blobs/ 會量出 0，而 0 會讓「已下載 4 GB 但缺一個檔」被判成「沒安裝」。
             //   symlink 本身的 Length 是連結的大小不是目標的 ⇒ 有 blobs 時兩邊各算一次也不會重複（連結近乎 0）。
-            long aSize = 0; int aIncomplete = 0;
+            long aSize = 0; int aIncomplete = 0; long aIncompleteBytes = 0;
             foreach (string f in Directory.EnumerateFiles(aDir, "*", SearchOption.AllDirectories))
             {
-                if (f.EndsWith(".incomplete", StringComparison.OrdinalIgnoreCase)) { aIncomplete++; continue; }
+                if (f.EndsWith(".incomplete", StringComparison.OrdinalIgnoreCase)) { aIncomplete++; aIncompleteBytes += new FileInfo(f).Length; continue; }
                 var fi = new FileInfo(f);
                 if (fi.LinkTarget == null) aSize += fi.Length;
             }
@@ -182,11 +182,20 @@ print('__PROBE__' + json.dumps(out))
                     if (aMiss.Count < aMissingBest.Count) aMissingBest = aMiss;
                 }
 
-            // ⚠ 有 .incomplete 就是「不完整」，就算必要檔都在：權重檔可能正是那一個沒下完的。
-            if (aIncomplete > 0)
-                return new(iItem, InstallState.Partial, aGood ?? "", $"有 {aIncomplete} 個下載到一半的檔 —— 再按一次安裝會接著下載", aSize);
+            // ⭐ 必要檔齊 ⇒ 已安裝，**就算旁邊還有 .incomplete**。
+            // 🩸 2026-10-02 實測推翻了我原本的寫法（「有 .incomplete 就是不完整」）：HF 把檔案下載完才放進 snapshots/，
+            //   而 huggingface_hub 1.24 每一次嘗試的暫存檔都帶**隨機後綴**（`<hash>.<rand>.incomplete`）⇒
+            //   中斷之後再跑**不會從斷點接續**，是重新下載一份；被砍掉那次的暫存檔就變成孤兒留在 blobs/。
+            //   舊判準因此把「已經下載完的 2.3 GB 模型」判成「不完整」，而再按一次安裝也永遠不會變綠。
+            //   ⇒ 殘留暫存檔只寫進說明（附清除指令），不影響判定。
             if (aGood != null)
-                return new(iItem, InstallState.Installed, "snapshot " + Short(aGood), "", aSize);
+                return new(iItem, InstallState.Installed, "snapshot " + Short(aGood),
+                           aIncomplete > 0
+                               ? $"有 {aIncomplete} 個上次中斷留下的暫存檔（{FormatSize(aIncompleteBytes)}），可清掉：senate cmd install --arg op=clean_partial --arg ids={iItem.Id} --arg confirm=1"
+                               : "", aSize);
+            if (aIncomplete > 0)
+                return new(iItem, InstallState.Partial, "",
+                           $"有 {aIncomplete} 個下載到一半的檔（{FormatSize(aIncompleteBytes)}）—— 再按一次安裝會先從斷點接續、再補齊其他檔；不要了就 op=clean_partial 清掉", aSize);
             return new(iItem, aSize > 0 ? InstallState.Broken : InstallState.Missing, "",
                        aSize > 0 ? "快取目錄在，但缺必要檔：" + string.Join("、", aMissingBest) : "", aSize);
         }

@@ -19,6 +19,9 @@ public sealed class InstallPage : SCP_GuiToolPage
     InstallEnv? m_Env;
     List<InstallItemStatus>? m_Status;
 
+    /// <summary>每個模型的下載暫存檔（量狀態時一起算好；不在每一幀列目錄）。</summary>
+    Dictionary<string, (int Count, long Bytes)> m_Partial = new();
+
     InstallJob<List<InstallItemStatus>>? m_ProbeJob;
     InstallJob<string?>? m_ActionJob;
     string? m_LastActionResult;
@@ -61,6 +64,13 @@ public sealed class InstallPage : SCP_GuiToolPage
             if (s.Finished)
             {
                 m_Status = s.Result;
+                m_Partial = new();
+                if (m_Status != null && m_Env != null)
+                    foreach (InstallItemStatus st in m_Status)
+                    {
+                        var aFiles = InstallRunner.PartialFiles(m_Env, st.Item);
+                        if (aFiles.Count > 0) m_Partial[st.Item.Id] = (aFiles.Count, aFiles.Sum(f => f.Length));
+                    }
                 if (s.Error != null) m_LastActionResult = "⚠ 量狀態失敗：" + s.Error;
                 m_ProbeJob = null;
             }
@@ -111,13 +121,14 @@ public sealed class InstallPage : SCP_GuiToolPage
             return;
         }
 
-        using (g.Table("動作", "項目", "名稱", "狀態", "版本", "大小", "說明"))
+        using (g.Table("動作", "暫存檔", "項目", "名稱", "狀態", "版本", "大小", "說明"))
         {
             foreach (InstallItemStatus s in m_Status)
             {
                 using (g.TableRowScope())
                 {
                     DrawActionCell(g, s);
+                    DrawPartialCell(g, s);
                     // ⚠ 格子裡不放換行：文字版表格以「一列一行」對齊，換行會把後面幾格推到下一行去。
                     g.TableCell(s.Item.Id);
                     g.TableCell(s.Item.Name);
@@ -148,7 +159,8 @@ public sealed class InstallPage : SCP_GuiToolPage
                 if (g.Button("重裝", $"install/install/{aId}")) ArmInstall(aId);
                 break;
             case InstallState.Partial:
-                if (g.Button("接著下載", $"install/install/{aId}")) ArmInstall(aId);
+                // 先從斷點接續暫存檔、再補齊其他檔（InstallRunner.Install 會先做 ResumePartial）
+                if (g.Button("接續下載", $"install/install/{aId}")) ArmInstall(aId);
                 break;
             default:
                 g.TableCell("量不到");   // ⛔ 不知道有沒有，就不給裝也不給拆
@@ -185,10 +197,33 @@ public sealed class InstallPage : SCP_GuiToolPage
         m_LastActionResult = null;
     }
 
+    // 下載中斷留下的 .incomplete（Tim 2026-10-02：殘留要能刪除或接續下載）。
+    // 接續下載走「動作」那一格（不完整時）；這一格只負責清掉 —— 裝好之後留下的孤兒暫存檔只會佔空間。
+    void DrawPartialCell(SCP_Ui g, InstallItemStatus s)
+    {
+        if (!m_Partial.TryGetValue(s.Item.Id, out var p)) { g.TableCell("—"); return; }
+        if (Busy || m_Armed != null) { g.TableCell($"{p.Count} 個（{InstallProbe.FormatSize(p.Bytes)}）"); return; }
+        if (g.Button($"清掉暫存檔（{InstallProbe.FormatSize(p.Bytes)}）", $"install/clean-partial/{s.Item.Id}"))
+        {
+            var aLines = new List<string> { $"刪掉 {s.Item.Id} 的 {p.Count} 個下載暫存檔（{InstallProbe.FormatSize(p.Bytes)}）—— 正在被寫入的會跳過" };
+            aLines.Add(s.State == InstallState.Installed
+                ? "模型已經裝好了，這些是上次中斷留下的孤兒，刪了不影響使用。"
+                : "⚠ 模型還沒裝好：刪了之後要從頭下載（不刪的話，按「接續下載」會從斷點接著下）。");
+            m_Armed = ("clean_partial", s.Item.Id, aLines);
+            m_LastActionResult = null;
+        }
+    }
+
     void DrawConfirm(SCP_Ui g, InstallEnv iEnv)
     {
         var (aKind, aId, aPlan) = m_Armed!.Value;
-        string aTitle = aKind == "install" ? $"確認安裝 {aId}" : aKind == "uninstall" ? $"確認解除安裝 {aId}" : "確認建 venv";
+        string aTitle = aKind switch
+        {
+            "install" => $"確認安裝 {aId}",
+            "uninstall" => $"確認解除安裝 {aId}",
+            "clean_partial" => $"確認清掉 {aId} 的暫存檔",
+            _ => "確認建 venv",
+        };
         using (g.Box(aTitle, "install/confirm"))
         {
             foreach (string l in aPlan) g.Note(l);
@@ -234,6 +269,11 @@ public sealed class InstallPage : SCP_GuiToolPage
                 string? e = InstallRunner.Uninstall(iEnv, aCat.Find(iId)!, log);
                 return e != null ? "✗ " + e : $"✓ {iId} 已解除安裝（重新量過）";
             },
+            "clean_partial" => log =>
+            {
+                long aFreed = InstallRunner.CleanPartial(iEnv, aCat.Find(iId)!, log);
+                return $"✓ 清掉 {InstallProbe.FormatSize(aFreed)}（正在被寫入的會跳過，見上方紀錄）";
+            },
             _ => log =>
             {
                 if (iEnv.CreatableEnvDir == null) return "⛔ 沒有可以建 venv 的位置";
@@ -241,7 +281,7 @@ public sealed class InstallPage : SCP_GuiToolPage
                 return e != null ? "✗ " + e : "✓ venv 建好了";
             },
         };
-        string aLabel = iKind == "install" ? "安裝 " + iId : iKind == "uninstall" ? "解除安裝 " + iId : "建 venv";
+        string aLabel = iKind switch { "install" => "安裝 " + iId, "uninstall" => "解除安裝 " + iId, "clean_partial" => "清暫存檔 " + iId, _ => "建 venv" };
         m_ActionJob = new InstallJob<string?>(aLabel, aWork);
         m_ActionJob.Start();
         if (!SCP_GuiHost.RedrawsContinuously) { m_ActionJob.WaitForExit(); Harvest(); }

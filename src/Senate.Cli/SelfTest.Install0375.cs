@@ -50,7 +50,7 @@ public static partial class SelfTest
 
     static CheckRow InstallModelStates()
     {
-        const string aName = "安裝・模型狀態：沒目錄＝沒安裝／齊＝已安裝／🔴 有 .incomplete＝不完整／缺必要檔＝壞了（假快取，TASK-0375）";
+        const string aName = "安裝・模型狀態：沒目錄＝沒安裝／缺檔＋暫存檔＝不完整／缺檔＝壞了／齊＝已安裝／🔴 齊＋孤兒暫存檔＝仍是已安裝、clean_partial 清得掉（假快取，TASK-0375）";
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_installmodel_" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
@@ -69,15 +69,23 @@ public static partial class SelfTest
             File.WriteAllText(Path.Combine(aSnap, "config.json"), "{}");
             Expect("缺權重檔", InstallState.Broken);
 
-            File.WriteAllText(Path.Combine(aSnap, "w.bin"), "weights");
-            Expect("必要檔齊", InstallState.Installed);
-
+            // 缺權重檔＋下載暫存檔 ⇒ 不完整（下載被中斷在權重檔上）
             string aBlobs = Path.Combine(InstallProbe.ModelDir(aEnv, aItem), "blobs");
             Directory.CreateDirectory(aBlobs);
-            File.WriteAllText(Path.Combine(aBlobs, "deadbeef.incomplete"), "half");
-            Expect("🔴 必要檔齊但有 .incomplete", InstallState.Partial);
+            File.WriteAllText(Path.Combine(aBlobs, "deadbeef.1a2b3c4d.incomplete"), "half");
+            Expect("缺權重檔＋暫存檔", InstallState.Partial);
 
-            return new CheckRow(aName, aFails.Count == 0 ? "四態逐格對上" : string.Join("；", aFails),
+            // 🔴 2026-10-02 實測推翻的那格：重下一份成功後，上次的暫存檔變孤兒 ⇒ 必要檔齊就是已安裝（舊版判成不完整、永遠不會變綠）
+            File.WriteAllText(Path.Combine(aSnap, "w.bin"), "weights");
+            Expect("🔴 必要檔齊＋孤兒暫存檔", InstallState.Installed);
+            if (!InstallProbe.ProbeModel(aEnv, aItem).Detail.Contains("clean_partial")) aFails.Add("孤兒暫存檔沒在說明裡提到怎麼清");
+
+            long aFreed = InstallRunner.CleanPartial(aEnv, aItem, _ => { });
+            if (aFreed != 4 || InstallRunner.PartialFiles(aEnv, aItem).Count != 0) aFails.Add($"clean_partial 沒清乾淨（清了 {aFreed} bytes）");
+            // 對照組：清完之後必要檔還在、仍是已安裝（⛔ 不准清到真檔）
+            Expect("清完之後", InstallState.Installed);
+
+            return new CheckRow(aName, aFails.Count == 0 ? "六格逐格對上、孤兒清得掉且不碰真檔" : string.Join("；", aFails),
                                 aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }

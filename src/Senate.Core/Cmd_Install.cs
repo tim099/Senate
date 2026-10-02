@@ -28,11 +28,11 @@ public sealed class Cmd_Install : SCP_Cmd
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
-        new SCP_CmdArgSpec("op", "status（預設）｜check｜install｜uninstall｜create_env", iDefault: "status",
-                           iChoices: new[] { "status", "check", "install", "uninstall", "create_env" }),
+        new SCP_CmdArgSpec("op", "status（預設）｜check｜install｜uninstall｜create_env｜clean_partial｜resume_partial", iDefault: "status",
+                           iChoices: new[] { "status", "check", "install", "uninstall", "create_env", "clean_partial", "resume_partial" }),
         new SCP_CmdArgSpec("ids", "項目 id，逗號分隔（check／install；uninstall 一次一個）"),
         new SCP_CmdArgSpec("skill", "check：skill 名或 SKILL.md 路徑 —— 讀它 frontmatter 的 `requires_install`"),
-        new SCP_CmdArgSpec("confirm", "install／uninstall／create_env：=1 才真的動手（不給＝只印計畫）"),
+        new SCP_CmdArgSpec("confirm", "install／uninstall／create_env／clean_partial／resume_partial：=1 才真的動手（不給＝只印計畫）"),
         new SCP_CmdArgSpec("project_root", "check：找 skill 用（`.claude/skills` 等）；沒給 ⇒ 用設定檔那一格"),
         new SCP_CmdArgSpec("only", "status：只列某一種狀態（installed｜missing｜broken｜partial｜unknown）—— 要知道「裝了哪些、之後可以拆」用 installed",
                            iChoices: new[] { "installed", "missing", "broken", "partial", "unknown" }),
@@ -63,6 +63,8 @@ public sealed class Cmd_Install : SCP_Cmd
             case "install": return Install(r, aEnv, aCatalog, Ids(iArgs), aConfirm);
             case "uninstall": return Uninstall(r, aEnv, aCatalog, Ids(iArgs), aConfirm);
             case "create_env": return CreateEnv(r, aEnv, aConfirm);
+            case "clean_partial": return CleanPartial(r, aEnv, aCatalog, Ids(iArgs), aConfirm);
+            case "resume_partial": return ResumePartial(r, aEnv, aCatalog, Ids(iArgs), aConfirm);
             default: return SCP_CmdResult.Fail(2, "✗ 不認得的 op：" + aOp);
         }
     }
@@ -180,7 +182,7 @@ public sealed class Cmd_Install : SCP_Cmd
     static string PlanLine(InstallEnv iEnv, InstallItemStatus s)
     {
         string aWhere = s.Item.Kind == InstallKind.HfModel ? InstallProbe.ModelDir(iEnv, s.Item) : "Python：" + (iEnv.PythonExe ?? "?");
-        string aWhy = s.State == InstallState.Missing ? "" : $"（現在：{InstallItemStatus.StateText(s.State)}，會重裝／接著下載）";
+        string aWhy = s.State == InstallState.Missing ? "" : $"（現在：{InstallItemStatus.StateText(s.State)}，會重裝／重新下載完）";
         return $"{s.Item.Name}（{s.Item.Id}）約 {s.Item.SizeMb} MB，來源 {s.Item.Source}，裝到 {aWhere}{aWhy}";
     }
 
@@ -269,6 +271,56 @@ public sealed class Cmd_Install : SCP_Cmd
         string? aErr = InstallRunner.CreateVenv(aEnv.CreatableEnvDir, l => Console.Error.WriteLine("  " + l));
         if (aErr != null) { r.ExitCode = 5; r.Lines.Add("✗ " + aErr); return r; }
         r.Lines.Add("✓ venv 建好了");
+        return r;
+    }
+
+    // ── clean_partial ───────────────────────────────────────────────
+
+    // 清模型快取裡的 .incomplete 暫存檔（中斷的下載留下的；HF 不會再接續它們）。對照 Unity media_admin.py 的 clean-partial。
+    static SCP_CmdResult CleanPartial(SCP_CmdResult r, InstallEnv aEnv, InstallCatalog aCatalog, List<string> aIds, bool aConfirm)
+    {
+        if (aIds.Count != 1) return SCP_CmdResult.Fail(2, "✗ op=clean_partial 一次一個 `ids=<模型 id>`");
+        InstallItem? aItem = aCatalog.Find(aIds[0]);
+        if (aItem == null) return SCP_CmdResult.Fail(1, $"⛔ 不認得的項目 '{aIds[0]}'");
+        if (aItem.Kind != InstallKind.HfModel) return SCP_CmdResult.Fail(1, $"⛔ {aItem.Id} 不是模型 —— 只有模型會留下載暫存檔");
+        List<FileInfo> aFiles = InstallRunner.PartialFiles(aEnv, aItem);
+        r.Lines.Add($"## 計畫：清掉 {aItem.Id} 的 {aFiles.Count} 個暫存檔（{InstallProbe.FormatSize(aFiles.Sum(f => f.Length))}）");
+        foreach (FileInfo f in aFiles) r.Lines.Add($"  - {f.Name}　{InstallProbe.FormatSize(f.Length)}　{f.LastWriteTime:yyyy-MM-dd HH:mm}");
+        r.AddValue("partial_files", aFiles.Count.ToString(CultureInfo.InvariantCulture));
+        if (aFiles.Count == 0) { r.Lines.Add("✓ 沒有暫存檔"); return r; }
+        r.Lines.Add("  ⚠ 正在被寫入的會跳過（不刪別人正在下載的檔）");
+        if (!aConfirm) { r.Lines.Add("· 沒有帶 confirm=1 ⇒ 只印計畫，什麼都沒動"); r.AddValue("dry_run", "1"); return r; }
+        long aFreed = InstallRunner.CleanPartial(aEnv, aItem, l => Console.Error.WriteLine("  " + l));
+        r.Lines.Add($"✓ 清掉 {InstallProbe.FormatSize(aFreed)}");
+        r.AddValue("freed_bytes", aFreed.ToString(CultureInfo.InvariantCulture));
+        return r;
+    }
+
+    // ── resume_partial ──────────────────────────────────────────────
+
+    // 把中斷留下的暫存檔從斷點接續下載完（Tim 2026-10-02）。⚠ op=install 對「不完整」的模型本來就會先做這一步；
+    // 這支是「只接續、不做其他事」的顯式入口。
+    static SCP_CmdResult ResumePartial(SCP_CmdResult r, InstallEnv aEnv, InstallCatalog aCatalog, List<string> aIds, bool aConfirm)
+    {
+        if (aIds.Count != 1) return SCP_CmdResult.Fail(2, "✗ op=resume_partial 一次一個 `ids=<模型 id>`");
+        InstallItem? aItem = aCatalog.Find(aIds[0]);
+        if (aItem == null) return SCP_CmdResult.Fail(1, $"⛔ 不認得的項目 '{aIds[0]}'");
+        if (aItem.Kind != InstallKind.HfModel) return SCP_CmdResult.Fail(1, $"⛔ {aItem.Id} 不是模型 —— 只有模型會留下載暫存檔");
+        List<FileInfo> aFiles = InstallRunner.PartialFiles(aEnv, aItem);
+        r.Lines.Add($"## 計畫：從斷點接續 {aItem.Id} 的 {aFiles.Count} 個暫存檔（已下載 {InstallProbe.FormatSize(aFiles.Sum(f => f.Length))}，只補剩下的部分；來源 {aItem.Source}）");
+        foreach (FileInfo f in aFiles) r.Lines.Add($"  - {f.Name}　{InstallProbe.FormatSize(f.Length)}　{f.LastWriteTime:yyyy-MM-dd HH:mm}");
+        r.Lines.Add("  ⚠ 完整檔已經在的暫存檔直接刪；伺服器不接受續傳的跳過（之後 op=install 會整份重下）；下完驗 sha256，對不上就刪掉那個壞檔");
+        r.AddValue("partial_files", aFiles.Count.ToString(CultureInfo.InvariantCulture));
+        if (aFiles.Count == 0) { r.Lines.Add("✓ 沒有暫存檔"); return r; }
+        if (!aConfirm) { r.Lines.Add("· 沒有帶 confirm=1 ⇒ 只印計畫，什麼都沒動"); r.AddValue("dry_run", "1"); return r; }
+        string? aErr = InstallRunner.ResumePartial(aEnv, aItem, l => Console.Error.WriteLine("  " + l));
+        InstallItemStatus aAfter = InstallProbe.Probe(aEnv, new[] { aItem })[0];
+        r.Lines.Add(aErr != null ? "✗ " + aErr : "· 接續跑完");
+        r.Lines.Add($"· 重新量：{InstallItemStatus.StateText(aAfter.State)}" + (aAfter.Detail.Length > 0 ? "　" + aAfter.Detail : ""));
+        if (aAfter.State != InstallState.Installed)
+            r.Lines.Add($"  ↳ 還缺的檔用 `senate cmd install --arg op=install --arg ids={aItem.Id} --arg confirm=1` 補齊");
+        if (aErr != null) r.ExitCode = 5;
+        r.AddValue("remaining_partial", InstallRunner.PartialFiles(aEnv, aItem).Count.ToString(CultureInfo.InvariantCulture));
         return r;
     }
 }

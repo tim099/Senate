@@ -16,7 +16,7 @@ target_audience: [AI_Agent, Tools_Maintainer]
 | 入口 | 用途 |
 |---|---|
 | `senate cmd install` | agent／腳本用。`op=status`（預設）／`check`／`install`／`uninstall`／`create_env` |
-| 後台「安裝管理」頁（`senate ui --page install`） | 人用。每列一顆鈕（安裝／重裝／接著下載／解除安裝），兩段式確認 |
+| 後台「安裝管理」頁（`senate ui --page install`） | 人用。每列一顆鈕（安裝／重裝／繼續安裝／解除安裝），兩段式確認 |
 | 「路徑管理」頁（`senate ui --page paths`） | 改 Python 環境（`PythonEnvRoot`）與模型位置（`ModelsRoot`）—— 安裝頁本身**不存路徑** |
 
 ⭐ **不帶 `confirm=1` 一律只印計畫**（要裝哪些、多大、從哪下載、裝到哪），一個檔都不動。
@@ -31,7 +31,7 @@ target_audience: [AI_Agent, Tools_Maintainer]
 | ✓ 已安裝 | 能用 | pip：在**新的子程序**裡實際 import 成功（有 `check` 的還要它成立）；模型：snapshot 裡必要檔全在 |
 | ・沒安裝 | 沒有 | pip：import 回 ModuleNotFoundError 而且讀不到版本；模型：快取目錄不在 |
 | ✗ 裝了但壞了 | 有東西但不能用 | import 失敗、`check` 不成立（例：torch 是 CPU 版）、模型缺必要檔 |
-| ◐ 不完整 | 下載到一半 | HF 快取裡有 `.incomplete` —— 再按一次安裝會接著下載 |
+| ◐ 不完整 | 下載到一半 | HF 快取裡有 `.incomplete`、而必要檔不齊 —— 再按一次安裝會從斷點接續（見 §5.5） |
 | ？ 量不到 | 不知道 | 找不到 Python、探針自己炸了 —— ⛔ **不是「沒安裝」**，不給裝也不給拆 |
 
 ⚠ 量一次 pip 狀態大約 40 秒（要 import torch）—— 後台頁在背景量。
@@ -74,6 +74,25 @@ target_audience: [AI_Agent, Tools_Maintainer]
 2. **它正在被使用** ⇒ 不拆。pip：同一顆 python.exe 有程序在跑；模型：有檔案獨佔開不了（有人正讀著）。
 
 另外：一次只拆一個；模型的解除安裝是**刪掉整個快取目錄，不可復原**；後台頁按下確認之後會**重新量一次、重新判一次**才動手。
+
+## 5.5 下載中斷之後：接續或清掉（2026-10-02 實測，Tim：殘留要能刪除或接續下載）
+
+- huggingface_hub 1.24 **自己不接續**：每一次下載嘗試的暫存檔都帶隨機後綴（`<sha256>.<隨機>.incomplete`），
+  而且原始碼註明「反正也不能重用」。被硬砍的那次會跳過它自己的清理 ⇒ 暫存檔變成孤兒留在 `blobs/`。
+- ⇒ **接續是我們補的**（`InstallRunner.ResumePartial`）：暫存檔名的前綴就是完整檔的 sha256 ⇒ 用它對回 repo 裡是哪一個 LFS 檔，
+  從斷點用 HTTP Range 續傳，下完**驗 sha256**，直接放到 snapshot 的位置（HF 看到它已經在就跳過）。
+  - 完整檔已經在了 ⇒ 暫存檔是孤兒，直接刪（不白下）。
+  - 伺服器不回 206（不接受續傳）⇒ 不碰它，交給一般下載整份重下。
+  - sha256 對不上 ⇒ 刪掉那個壞檔（它不可能變成對的）。
+- 判定規則：**必要檔齊 ＝ 已安裝**（就算旁邊有孤兒，說明欄會提）；必要檔不齊而有暫存檔 ＝ 不完整。
+
+| 想做的事 | CLI | 後台頁 |
+|---|---|---|
+| 接續下載 | `op=resume_partial --arg ids=<模型>`（只接續）；`op=install` 對不完整的模型也會**先接續**再補齊 | 不完整那列的「接續下載」 |
+| 清掉暫存檔 | `op=clean_partial --arg ids=<模型>` | 「暫存檔」那一格的「清掉暫存檔」 |
+
+兩支都是不帶 `confirm=1` 只列出來；正在被寫入的暫存檔一律跳過（⛔ 不刪、不接別人正在下載的檔）。
+模型安裝成功之後會自動清一次孤兒。
 
 ## 6. ⭐ skill 缺相依時：先問，同意了才裝
 
