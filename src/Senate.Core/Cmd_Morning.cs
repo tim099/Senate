@@ -271,13 +271,34 @@ public sealed class Cmd_MorningIntro : MorningLocalCmd
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
 
         string aTimeout = iArgs.Get("timeout");
-        SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
+        // Server 不在而這一筆確定還沒送出 ⇒ 排進它的 queue（TASK-0372）；⛔ 不要再直接 Dispatch("tavern-write")。
+        SCP_CmdResult aWrite = SenateTavernWrite.WriteOrQueue(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["data_root"] = iRoots.DataRoot,
             ["room"] = "tavern",
             ["msg_json"] = SCP_TavernWriter.Serialize(aDraft.Message),
             ["timeout"] = aTimeout.Length > 0 ? aTimeout : "30",
         });
+        if (SenateTavernWrite.IsQueued(aWrite))
+        {
+            // 自介已排隊：⛔ 不是失敗（重跑本步就是兩則自介），下一步照常走。
+            string aCmdId = Value(aWrite, "queued_cmd_id");
+            foreach (string l in aWrite.Lines) ioResult.Lines.Add("  │ " + l);
+            aSb.AppendLine("## verify（讀回的事實）");
+            aSb.AppendLine($"- 📥 **已排隊**（TASK-0372）：酒館 Server 不在（{Value(aWrite, "queued_because")}）⇒ 自介排進它的 queue，cmd_id `{aCmdId}`");
+            aSb.AppendLine("- 還沒有 seq —— Server 起來後的下一個心跳送出、照常發薪。⛔ **不要重跑本步**（重跑＝兩則自介）。");
+            aSb.AppendLine($"- brief 前置: `{aBriefPath}`（{aBriefLines} 行，mtime 晚於 locked_at）");
+            aSb.AppendLine("## next");
+            aSb.AppendLine($"1. **required** — 酒館 catchup：senate cmd morning-catchup --arg persona={aPersona}");
+            aSb.AppendLine("   ⚠ 自介還在排隊，catchup 裡暫時看不到它 —— 那不代表沒排進去。");
+            aSb.AppendLine("2. 之後照 brief §9 的今日動作清單走。");
+            SCP_CmdPayload.Write(aPath, aSb.ToString());
+            ioResult.Lines.Add("📥 自介已排隊（酒館 Server 不在，起來後送出；還沒有 seq）。⛔ 不要重跑本步。");
+            ioResult.AddValue("queued", "1");
+            ioResult.AddValue("queued_cmd_id", aCmdId);
+            ioResult.AddValue("post_room", "tavern");
+            return aPath;
+        }
         string aSeq = Value(aWrite, "seq");
         string aMsgPath = Value(aWrite, "path");
         string aFailure = Value(aWrite, "delegate_failure");

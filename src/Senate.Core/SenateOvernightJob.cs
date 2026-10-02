@@ -202,13 +202,16 @@ public static class SenateOvernightJob
         aMsg.Set("body", SCP_JsonData.NewString(aBody));
         aMsg.Set("meta", aMeta);
 
-        SCP_CmdResult aPost = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>
+        // 本工作跑在 **main** 那顆 Server、酒館是**另一顆** ⇒ 酒館不在時跟 CLI 一樣排進它的 queue（TASK-0372）。
+        SCP_CmdResult aPost = SenateTavernWrite.WriteOrQueue(new Dictionary<string, string>
         {
             ["data_root"] = iDataRoot,
             ["room"] = "tavern",
             ["msg_json"] = SCP_JsonWriter.Write(aMsg),
         });
-        if (aPost.Ok)
+        if (SenateTavernWrite.IsQueued(aPost))
+            Say($"公告已排隊：酒館 Server 不在（cmd_id {SenateTavernWrite.Value(aPost, "queued_cmd_id")}），起來後送出 —— ⛔ 不要補貼");
+        else if (aPost.Ok)
         {
             string aSeq = ""; foreach (var kv in aPost.Values) if (kv.Key == "seq") aSeq = kv.Value;
             Say($"公告已貼：tavern seq {aSeq}");

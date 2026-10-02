@@ -84,13 +84,21 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         if (aDraft.Message == null) return SCP_TavernPostVerdict.Bad("發文被拒：" + aDraft.Error);
 
         oLines.Add(SenateQualifier);
-        SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
+        // Server 不在而這一筆確定還沒送出 ⇒ 排進它的 queue（TASK-0372），回第四態 Queued（⛔ 不是 Bad：補發會多一則）。
+        SCP_CmdResult aWrite = SenateTavernWrite.WriteOrQueue(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["data_root"] = aRoots.DataRoot,
             ["room"] = Room,
             ["msg_json"] = SCP_TavernWriter.Serialize(aDraft.Message),
             ["timeout"] = m_TimeoutSec.ToString("0.###", CultureInfo.InvariantCulture),
         });
+        if (SenateTavernWrite.IsQueued(aWrite))
+        {
+            foreach (string l in aWrite.Lines) oLines.Add("  │ " + l);
+            string aCmdId = Value(aWrite, "queued_cmd_id");
+            return SCP_TavernPostVerdict.Queued(
+                $"酒館 Server 不在（{Value(aWrite, "queued_because")}）⇒ 已排進它的 queue（cmd_id {aCmdId}），起來後送出", aCmdId);
+        }
         string aSeq = Value(aWrite, "seq");
         if (aWrite.Ok && aSeq.Length > 0)
         {

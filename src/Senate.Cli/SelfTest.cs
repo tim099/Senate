@@ -153,6 +153,8 @@ public static partial class SelfTest
         One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
+        // 酒館 Server 不在時發文排進它的 queue（TASK-0372）：本體在 SelfTest.TavernQueue0372.cs
+        One(nameof(TavernQueueWhenServerDownCleanRoom), "tavern", TavernQueueWhenServerDownCleanRoom),
         // 安裝系統（TASK-0375）：本體在 SelfTest.Install0375.cs
         One(nameof(InstallCatalogShape), "install", InstallCatalogShape),
         One(nameof(InstallModelStates), "install", InstallModelStates),

@@ -292,7 +292,8 @@ internal static class GoodnightLocal
         else
         {
             string aTimeout = iArgs.Get("timeout");
-            SCP_CmdResult aW = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
+            // Server 不在而這一筆確定還沒送出 ⇒ 排進它的 queue（TASK-0372）；⛔ 不要再直接 Dispatch("tavern-write")。
+            SCP_CmdResult aW = SenateTavernWrite.WriteOrQueue(new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["data_root"] = iRoots.DataRoot, ["room"] = "tavern",
                 ["msg_json"] = SCP_TavernWriter.Serialize(aDraft.Message),
@@ -300,7 +301,10 @@ internal static class GoodnightLocal
             });
             string aSeq = aW.Values.FirstOrDefault(kv => kv.Key == "seq").Value ?? "";
             string aFail = aW.Values.FirstOrDefault(kv => kv.Key == "delegate_failure").Value ?? "";
-            aBroadcastLine = aW.Ok && aSeq.Length > 0 ? $"seq **{aSeq}**"
+            if (SenateTavernWrite.IsQueued(aW)) ioResult.AddValue("queued", "1");
+            aBroadcastLine = SenateTavernWrite.IsQueued(aW)
+                ? $"📥 **已排隊**（酒館 Server 不在；cmd_id {SenateTavernWrite.Value(aW, "queued_cmd_id")}）—— 起來後送出，⛔ 不要補發"
+                : aW.Ok && aSeq.Length > 0 ? $"seq **{aSeq}**"
                 : aFail == "timeout" || aFail == "unknown"
                     ? $"**不知道**有沒有發（delegate_failure={aFail}）—— ⛔ 別直接補發，先 `senate cmd tavern-query --arg kind=tail` 回讀"
                     : $"未發（{(aFail.Length > 0 ? "delegate_failure=" + aFail : "exit " + aW.ExitCode)}）—— 核心已落地，補發非必要（同事看 lock 判在線）";

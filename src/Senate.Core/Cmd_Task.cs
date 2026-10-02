@@ -337,7 +337,7 @@ public sealed class Cmd_Task : SCP_Cmd
             ioReport.AppendLine("- ⚠ **酒館通知沒發出去**（本宿主沒有發文閘）—— 相關的人**還不知道這件事**，要自己去講一聲。");
             return;
         }
-        int aSent = 0, aFailed = 0;
+        int aSent = 0, aFailed = 0, aQueued = 0;
         foreach (Dictionary<string, string> n in aNotices)
         {
             var aMeta = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -355,16 +355,26 @@ public sealed class Cmd_Task : SCP_Cmd
                 ioReport.AppendLine($"- 📣 酒館通知已發：seq **{aV.Seq}**（{aMeta["kind"]}）");
                 continue;
             }
+            if (aV.Outcome == SCP_TavernPostOutcome.Queued)
+            {
+                // 已排隊（TASK-0372）：酒館 Server 起來後送出 ⇒ ⛔ 不算沒發、不要補發。
+                aQueued++;
+                ioResult.Lines.Add($"📥 酒館通知已排隊（{aMeta["task"]} {aMeta["kind"]}）—— Server 起來後送出，還沒有 seq");
+                ioReport.AppendLine($"- 📥 酒館通知**已排隊**（{aMeta["kind"]}）：{aV.Detail} —— ⛔ 不要補發");
+                continue;
+            }
             aFailed++;
-            string aWhy = aV.Outcome == SCP_TavernPostOutcome.Unresolved
-                ? $"**結果不明**（{aV.Detail}）—— ⛔ 別補發，先回讀：{aV.RecheckHint}"
-                : $"**確定沒發**（{aV.Detail}）";
+            // ⛔ 逐態寫明：認不得的判定當成「不知道」，不准落進「確定沒發」（那會叫人補發）。
+            string aWhy = aV.Outcome == SCP_TavernPostOutcome.NotPosted
+                ? $"**確定沒發**（{aV.Detail}）"
+                : $"**結果不明**（{aV.Detail}）—— ⛔ 別補發，先回讀：{aV.RecheckHint}";
             ioResult.Lines.Add($"⚠ 酒館通知 {aWhy}（單子已寫好）");
             foreach (string l in aLines) ioResult.Lines.Add("  │ " + l);
             ioReport.AppendLine($"- ⚠ **酒館通知沒發成**：{aWhy} —— 單子已經寫好了；相關的人可能**還不知道這件事**。");
         }
         ioResult.AddValue("notify_sent", aSent.ToString(CultureInfo.InvariantCulture));
         if (aFailed > 0) ioResult.AddValue("notify_failed", aFailed.ToString(CultureInfo.InvariantCulture));
+        if (aQueued > 0) ioResult.AddValue("notify_queued", aQueued.ToString(CultureInfo.InvariantCulture));
     }
 
     // ===========================================================

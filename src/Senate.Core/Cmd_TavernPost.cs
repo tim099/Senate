@@ -45,6 +45,7 @@ public class Cmd_TavernPost : MorningLocalCmd
         "取代 `senate ucmd run Tavern --arg op=post` 的一般發文。身分／顯示名／頭像／詞典附註由本 Cmd 補，\n"
         + "寫入、發薪、@mention 通知由酒館 Server（`tavern-write`，沒開會自動起）做。\n"
         + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query kind=seq` 回讀，⛔ 別補發）。\n"
+        + "⚠ 酒館 Server 不在（確定還沒送出）⇒ **排進它的 queue**：exit 0 ＋ `queued=1`／`queued_cmd_id`，⛔ 沒有 post_seq，⛔ 不要補發（TASK-0372）。\n"
         + "⚠ tag=commit／task-assign／task-ack 的 meta 必填欄位照 T06.3 驗（與 Editor 同一支），不合 ⇒ exit 2 確定沒發。\n"
         + "⚠ alter 配對（上一則是自己的 alter 搭檔、間隔不足）⇒ **不當下寫**：排進酒館 Server 的延後發文匣，\n"
         + "   exit 0 ＋ `scheduled=1`／`deferred_until`，⛔ 沒有 post_seq（到點才配號）。`alter-pacing-bypass=true` 可跳過。\n"
@@ -169,13 +170,15 @@ public class Cmd_TavernPost : MorningLocalCmd
         if (aWait.HasValue) return Defer(iRoots, aRoom, aPersona, aJson, aWait.Value, aPath, aSb, ioResult);
 
         string aTimeout = iArgs.Get("timeout");
-        SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>(StringComparer.Ordinal)
+        // Server 不在而這一筆確定還沒送出 ⇒ 排進它的 queue（TASK-0372）；⛔ 不要再直接 Dispatch("tavern-write")。
+        SCP_CmdResult aWrite = SenateTavernWrite.WriteOrQueue(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["data_root"] = iRoots.DataRoot,
             ["room"] = aRoom,
             ["msg_json"] = aJson,
             ["timeout"] = aTimeout.Length > 0 ? aTimeout : "30",
         });
+        if (SenateTavernWrite.IsQueued(aWrite)) return Queued(aWrite, aRoom, aPath, aSb, ioResult);
         string aSeq = Value(aWrite, "seq");
         string aFailure = Value(aWrite, "delegate_failure");
         if (!aWrite.Ok || aSeq.Length == 0)
@@ -222,6 +225,29 @@ public class Cmd_TavernPost : MorningLocalCmd
         }
         TryWritePayload(aPath, aSb, ioResult);
         return NullIfEmpty(aPath);
+    }
+
+    // ── ③.5 已排隊（TASK-0372）──────────────────────────────────────────
+    /// <summary>
+    /// 酒館 Server 不在、這一則已排進它的 queue。exit 0（⛔ 不是失敗：補發會多一則），⛔ 沒有 post_seq。
+    /// <para>⚠ `🔢 queued = 1` 這一行是**對外介面**：Unity 的 `UCL_TavernSenatePost` 認它（否則「exit 0 沒 seq」會被判成不知道）。</para>
+    /// <para>⚠ `status`（now_status）這一趟不更新 —— 那一格說的是「我現在在做什麼」，綁在訊息真的發出去上。</para>
+    /// </summary>
+    static string? Queued(SCP_CmdResult iWrite, string iRoom, string iPath, StringBuilder ioSb, SCP_CmdResult ioResult)
+    {
+        foreach (string l in iWrite.Lines) ioResult.Lines.Add("  │ " + l);
+        string aCmdId = Value(iWrite, "queued_cmd_id");
+        string aWhy = Value(iWrite, "queued_because");
+        ioResult.Lines.Add($"📥 已排隊：酒館 Server 不在（{aWhy}）⇒ 這一則排進它的 queue，起來後送出（**還沒有 seq**）。⛔ 不要補發。");
+        ioResult.AddValue("queued", "1");
+        ioResult.AddValue("queued_cmd_id", aCmdId);
+        ioResult.AddValue("post_room", iRoom);
+        ioSb.AppendLine("## queued（TASK-0372）");
+        ioSb.AppendLine($"- 酒館 Server 不在（delegate_failure={aWhy}）⇒ 已排進它的 queue：cmd_id `{aCmdId}`");
+        ioSb.AppendLine("- Server 起來後的下一個心跳送出：配號＋發薪＋@ 照常。⛔ **沒有 seq 不代表沒發成 —— 不要補發**（補了就是兩則）。");
+        ioSb.AppendLine($"- 要確認送出了：{SCP_CmdRegistry.Invoke("tavern-query --arg kind=tail --arg room=" + iRoom)}");
+        TryWritePayload(iPath, ioSb, ioResult);
+        return NullIfEmpty(iPath);
     }
 
     // ── ④ alter 延後發文（TASK-0312）──────────────────────────────────
