@@ -121,6 +121,7 @@ public static partial class SelfTest
         One(nameof(BookChapterArcCleanRoom), "book", BookChapterArcCleanRoom),
 
         One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
+        One(nameof(LibraryConfiguredRoots), "library", LibraryConfiguredRoots),
 
         One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
         One(nameof(BuildGuardThreeStates), "server", BuildGuardThreeStates),
