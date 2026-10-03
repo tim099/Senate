@@ -358,7 +358,7 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
         SCP_CmdArgSpec? aSpec = SCP_CmdRegistry.Find("kb")?.ArgSpecs.FirstOrDefault(a => a.Name == "mode");
         var aList = aSpec == null ? new List<string>() : aSpec.Choices.ToList();
         if (!iForEval) aList.Remove("compare");   // compare 只給評估：一次比三種排序
-        if (aList.Count == 0) aList.Add("dense");
+        if (aList.Count == 0) aList.Add("hybrid");
         if (aSpec != null && aSpec.Default.Length > 0 && aList.Remove(aSpec.Default)) aList.Insert(0, aSpec.Default);
         return aList;
     }

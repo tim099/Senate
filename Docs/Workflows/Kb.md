@@ -23,7 +23,7 @@ senate cmd kb --arg op=reindex --arg target=all
 - ⚠ **輸入形狀是一句話，不是關鍵字** —— 語意檢索。關鍵字查失敗的樣子跟「這條記憶不存在」一模一樣。
 - `search` 預設會先把過期的 target 重建（跟舊版同一個預設）；`auto_reindex=0` 照現有索引查。
 - `format=json` 的欄位對齊舊版：`score／target／id／file／rel／line／preview`（多一個 `heading`：這一塊在哪一節）。
-- 排序方式 `mode=dense`（預設）｜`hybrid`｜`rerank`，另有 `decay=1`（時間衰減）；讀數與取捨見 §6.1。
+- 排序方式 `mode=hybrid`（**預設**，Tim 2026-10-03 拍板）｜`dense`｜`rerank`，另有 `decay=1`（時間衰減，**預設關**）；讀數與取捨見 §6.1。
 - 預設 target：`fragments,alaya,coredocs,docs,work_memory`。`all` 不含逐 persona 展開的 `frag_<名>`（它們跟 fragments 收同一批檔）。
 
 ## 2. 常駐嵌入程序
@@ -61,8 +61,8 @@ senate cmd kb --arg op=reindex --arg target=all
 ## 6. 評估
 
 ```bash
-senate cmd kb --arg op=eval                       # dense
-senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse
+senate cmd kb --arg op=eval                       # hybrid（預設）
+senate cmd kb --arg op=eval --arg mode=dense      # 純 dense
 senate cmd kb --arg op=eval --arg mode=rerank     # hybrid 取前 30 → bge-reranker-v2-m3 重排
 senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰減／衰減」，一張表比完
 ```
@@ -78,11 +78,12 @@ senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰�
 
 | 模式 | 做法 | 要什麼 |
 |---|---|---|
-| `dense`（預設） | BGE-M3 的 dense 內積（cosine） | 嵌入模型 |
-| `hybrid` | dense ＋ 0.3×sparse（BGE-M3 lexical） | 同上（sparse 本來就存在索引裡） |
+| `dense` | BGE-M3 的 dense 內積（cosine） | 嵌入模型 |
+| `hybrid`（**預設**） | dense ＋ 0.3×sparse（BGE-M3 lexical） | 同上（sparse 本來就存在索引裡） |
 | `rerank` | hybrid 取前 30，交給 `bge-reranker-v2-m3` 重排；最後順序＝重排分 | 另需安裝項目 `model-bge-reranker-v2-m3`；缺了走「缺相依」（exit 3） |
 
-- ⚠ **分數尺度不同**：dense／hybrid 是內積（約 0.4–0.9），rerank 是 0..1 的重排分（很開：相關的 0.99、不相關的 0.01）。**不能跨排序比大小**；ucl-memory 的分數帶（`>0.58` 之類）只對 dense 成立。
+- ⚠ **分數尺度不同**：dense／hybrid 是內積，hybrid 比 dense 高一截；rerank 是 0..1 的重排分（很開：相關的 0.99、不相關的 0.01）。**不能跨排序比大小**。
+  ucl-memory 的分數帶**已照 hybrid 重量**（真命中 ≥0.72／灰帶 0.58–0.72／無關 ≤0.58；量法與重疊的提醒在 Memory_Common_Principles §4）；`mode=rerank` 不適用那張表。
 - 重排模型第一次 `/rerank` 才載入（多佔約 1GB 顯存）；舊版常駐程序（沒有 `/rerank`）會被自動關掉重起。重排不是用 FlagReranker：它呼叫 `tokenizer.prepare_for_model`，新版 transformers 已經沒有，改直接載序列分類模型。
 - **時間衰減**（`decay=1`）：分數 −= `decay_weight`（預設 0.05）×（1 − 2^(−年齡天數／半衰期)），年齡取來源檔 mtime。
   ⛔ **只對 `kb_targets.json` 設了 `half_life_days` 的 target 生效**（目前：fragments、work_memory、逐 persona 的 frag_*，各 90 天）；文件類沒設 ⇒ 不衰減。
@@ -118,5 +119,5 @@ senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰�
 
 ## 8. 還沒做的
 
-- **預設排序的拍板**（dense → hybrid 或 rerank）：讀數在 §6.1；改預設要連帶重量 ucl-memory 的分數帶，且 rerank 要每台機器都裝重排模型。
-- 衰減是否預設開：題庫量不出好處，目前預設關。
+- 預設排序 2026-10-03 拍板為 hybrid（不必額外安裝、速度同 dense、MRR +0.056）；rerank 品質更高（MRR 0.921）但每台機器要裝重排模型，保留為 opt-in。
+- 時間衰減預設不開（題庫量不出好處；Tim 2026-10-03 確認）。selftest 釘住這兩個預設。
