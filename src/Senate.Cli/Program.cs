@@ -1941,6 +1941,9 @@ public static class Program
         if (iError != null) Console.Error.WriteLine($"✗ {iError}");
         Console.WriteLine("""
             senate <command>
+              senate cmd help     列出所有支援的 Cmd 指令（含用途與執行位置）
+              senate cmd help <name>  查看單支指令的參數說明與範例
+
               （不給指令 ＝ doctor；**從檔案總管雙擊 ＝ 直接開 GUI 視窗**）
 
               --version           印這顆執行檔的 build id（publish 時塞入的 git SHA＋時間；`dotnet run` 印 unversioned）

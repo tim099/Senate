@@ -1,11 +1,13 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-10-02 (`ui --set` 對滑桿驗數字＋夾範圍、算一次「編輯完成」；TASK-0377) | 2026-09-29 (server 節補「啟動 senate.exe 時拉起常駐 Server」設定與 ServerAdminPage 定時刷新；TASK-0329) | 2026-09-16 (旗標紀律補「取值旗標的值被寫成另一個旗標／沒有值 ⇒ exit 2」；`ui` 逾時的兩種成因分開印；TASK-0229／TASK-0230) | 2026-09-09 (新增「旗標紀律：未宣告的旗標 ⇒ exit 2」一節；exit 2 的語意補上它；TASK-0125)
+last_updated: 2026-10-03
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
 # ⌨ CLI 參考
+
+查詢指令：`senate --help` 最上方會提示 `senate cmd help`，可列出所有支援的 Cmd 指令、用途與執行位置；`senate cmd help <name>` 查看單支指令的參數說明與範例。頂層操作與旗標則列在 `senate --help` 本文中。
 
 執行方式（三種等價）：
 
