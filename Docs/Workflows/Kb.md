@@ -88,15 +88,15 @@ senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰�
   ⛔ **只對 `kb_targets.json` 設了 `half_life_days` 的 target 生效**（目前：fragments、work_memory、逐 persona 的 frag_*，各 90 天）；文件類沒設 ⇒ 不衰減。
   舊的 `knowledge_base.py` 讀同一份檔、只認它要的欄位，多一個 `half_life_days` 無害。
 
-**讀數（2026-10-03，Bar，36 題可算；fragments 24／coredocs 6／work_memory 6；dense 預設）**
+**讀數（2026-10-03，Bar，42 題可算；fragments 24／coredocs 12／work_memory 6；題庫共 53 題，其餘 11 題預期檔不在 Bar 被跳過）**
 
 | 排序 | recall@5 | MRR@10 | 查詢中位數 |
 |---|---|---|---|
-| dense | 33／36 | 0.736 | 102 ms |
-| hybrid | 34／36 | 0.802 | 109 ms |
-| rerank | 34／36 | **0.907** | 346 ms |
+| dense | 39／42 | 0.774 | 101 ms |
+| hybrid | 40／42 | 0.830 | 108 ms |
+| rerank | 40／42 | **0.921** | 341 ms |
 
-- 衰減（權重 0.05）：dense 0.736→0.771、hybrid 0.802→0.793、rerank 不變；recall 都沒退步。權重 0.15：dense →0.789、hybrid recall 35／36 但 MRR 0.792、rerank 不變。
+- 衰減（權重 0.05）：dense 0.774→0.804、hybrid 0.830→0.822、rerank 不變；recall 都沒退步。（36 題時量過權重 0.15：dense MRR 0.789、hybrid recall 35／36 但 MRR 0.792、rerank 不變。）
   **題庫沒有「新舊衝突」的題，所以量不出衰減的好處，只量得出它沒有害**。
 - 已知難題 `core-05`（中文查詢、英文文件）在**所有排序都不在前 10**；`core-04` 只有 hybrid（第 5）與 rerank（第 1）救得回；rerank 反而丟了 `core-06`。
 - ⚠ 題庫的 `mem-01～15` 是 kotoko 自己的碎片當「回憶測試」（第一人稱口吻、不抄標題用字）；在 Bar 以外的專案這些題的預期檔不在 ⇒ 會被跳過。
