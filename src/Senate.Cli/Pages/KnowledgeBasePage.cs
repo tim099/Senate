@@ -29,6 +29,8 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
     public const string ModeId = "kb/sel/mode";
     public const string QueryId = "kb/query";
     public const string SparseId = "kb/sparse";
+    public const string DecayId = "kb/toggle/decay";
+    public const string EvalModeId = "kb/sel/evalmode";
 
     const string DefaultTargetValue = "(預設)";
     const string AllTargetValue = "all";
@@ -325,20 +327,22 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
             if (m_Status != null) foreach (Row r in m_Status.Rows) aTargets.Add(new SCP_GuiOption(r.Name));
             aTargets.Add(new SCP_GuiOption(AllTargetValue, "all（跨全部 target）"));
             string aTarget = g.Dropdown("範圍", aTargets, DefaultTargetValue, TargetId);
-            List<string> aModes = ModeChoices();
+            List<string> aModes = ModeChoices(false);
             string aMode = g.Dropdown("排序方式", aModes, aModes[0], ModeId);
-            if (aMode == "hybrid") g.TextField("sparse 權重（hybrid 才用）", "0.3", SparseId);
-            g.Note("輸入是一句話不是關鍵字（語意檢索）。hybrid（dense＋sparse）目前只給評估用，預設排序依 TASK-0382 拍板。");
+            if (aMode == "hybrid" || aMode == "rerank") g.TextField("sparse 權重（hybrid／rerank 的候選池才用）", "0.3", SparseId);
+            bool aDecay = g.Toggle("時間衰減（只對碎片、工作記憶；文件類不衰減）", false, DecayId);
+            g.Note("輸入是一句話不是關鍵字（語意檢索）。rerank 的分數是 0..1 的重排分，跟 dense／hybrid 的內積不同尺度，不能跨排序比大小。"
+                 + "第一次用 rerank 要載入重排模型；缺重排模型會走「缺相依」。預設排序依 TASK-0382 的讀數拍板。");
             string aQuery = g.TextField("要找的事（一句話）", "", QueryId);
             if (!Busy && aQuery.Trim().Length > 0 && g.Button("檢索", "kb/btn/search"))
             {
                 var a = new Dictionary<string, string>(iBase)
                 {
                     ["op"] = "search", ["query"] = aQuery.Trim(), ["topk"] = TopK.ToString(CultureInfo.InvariantCulture),
-                    ["mode"] = aMode, ["format"] = "json",
+                    ["mode"] = aMode, ["format"] = "json", ["decay"] = aDecay ? "1" : "0",
                 };
                 if (aTarget != DefaultTargetValue) a["target"] = aTarget;
-                if (aMode == "hybrid") a["sparse_weight"] = g.FieldValue(SparseId, "0.3");
+                if (aMode == "hybrid" || aMode == "rerank") a["sparse_weight"] = g.FieldValue(SparseId, "0.3");
                 Start("search", "檢索", a);
             }
             DrawHits(g);
@@ -346,10 +350,11 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
     }
 
     /// <summary>排序方式的選項**讀 Cmd 宣告的清單**（TASK-0382 加了新的排序，頁面不必跟著改）；第一個是 Cmd 的預設。</summary>
-    static List<string> ModeChoices()
+    static List<string> ModeChoices(bool iForEval)
     {
         SCP_CmdArgSpec? aSpec = SCP_CmdRegistry.Find("kb")?.ArgSpecs.FirstOrDefault(a => a.Name == "mode");
         var aList = aSpec == null ? new List<string>() : aSpec.Choices.ToList();
+        if (!iForEval) aList.Remove("compare");   // compare 只給評估：一次比三種排序
         if (aList.Count == 0) aList.Add("dense");
         if (aSpec != null && aSpec.Default.Length > 0 && aList.Remove(aSpec.Default)) aList.Insert(0, aSpec.Default);
         return aList;
@@ -396,13 +401,16 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
         using (var aFold = g.Fold("評估題庫（recall@5／MRR）", "kb/eval", false))
         {
             if (!aFold.Open) return;
-            g.Note("拿 SenateData/config/kb_eval.json 的題目逐題檢索，算 recall@5 與 MRR@10（排序方式用上面「檢索」選的那個）。"
-                 + "評估前會先把用到的 target 重建到最新，所以可能要等好幾分鐘。這是 TASK-0382 比較排序的量尺。");
+            g.Note("拿 SenateData/config/kb_eval.json 的題目逐題檢索，算 recall@5 與 MRR@10。本專案答不出來的題會跳過、另外列出。"
+                 + "評估前會先把用到的 target 重建到最新，所以可能要等好幾分鐘。這是 TASK-0382 比較排序的量尺。"
+                 + "選 compare ＝ dense／hybrid／rerank 各跑一遍（各自帶與不帶衰減），一張表比完，另列已知難題 core-05 逐排序的名次。");
+            List<string> aEvalModes = ModeChoices(true);
+            string aMode = g.Dropdown("評估的排序方式", aEvalModes, aEvalModes[0], EvalModeId);
             if (!Busy && g.Button("跑評估", "kb/btn/eval"))
             {
-                string aMode = g.FieldValue(ModeId + "/value", ModeChoices()[0]);
                 var a = new Dictionary<string, string>(iBase) { ["op"] = "eval", ["mode"] = aMode };
-                if (aMode == "hybrid") a["sparse_weight"] = g.FieldValue(SparseId, "0.3");
+                if (aMode != "dense" && aMode != "compare") a["sparse_weight"] = g.FieldValue(SparseId, "0.3");
+                if (g.ToggleValue(DecayId)) a["decay"] = "1";
                 Start("eval", $"評估（{aMode}）", a);
             }
             if (m_EvalLines != null) foreach (string l in m_EvalLines) g.Label(l);

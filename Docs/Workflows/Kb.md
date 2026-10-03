@@ -23,6 +23,7 @@ senate cmd kb --arg op=reindex --arg target=all
 - ⚠ **輸入形狀是一句話，不是關鍵字** —— 語意檢索。關鍵字查失敗的樣子跟「這條記憶不存在」一模一樣。
 - `search` 預設會先把過期的 target 重建（跟舊版同一個預設）；`auto_reindex=0` 照現有索引查。
 - `format=json` 的欄位對齊舊版：`score／target／id／file／rel／line／preview`（多一個 `heading`：這一塊在哪一節）。
+- 排序方式 `mode=dense`（預設）｜`hybrid`｜`rerank`，另有 `decay=1`（時間衰減）；讀數與取捨見 §6.1。
 - 預設 target：`fragments,alaya,coredocs,docs,work_memory`。`all` 不含逐 persona 展開的 `frag_<名>`（它們跟 fragments 收同一批檔）。
 
 ## 2. 常駐嵌入程序
@@ -61,7 +62,9 @@ senate cmd kb --arg op=reindex --arg target=all
 
 ```bash
 senate cmd kb --arg op=eval                       # dense
-senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse（方案 A 評估用）
+senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse
+senate cmd kb --arg op=eval --arg mode=rerank     # hybrid 取前 30 → bge-reranker-v2-m3 重排
+senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰減／衰減」，一張表比完
 ```
 
 題庫在 `SenateData/config/kb_eval.json`（32 題：每題一句話＋該找到的檔；查詢刻意不抄標題用字）。
@@ -70,6 +73,33 @@ senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse（方案
 ⚠ **題庫綁著某個專案的文件**（目前是 LY 的）。換專案跑時，預期檔不在的題一定「沒排上」，而那跟「排序變差」在分數上同形（TASK-0382：Bar 實測 19／32 全是這個）。
 所以評估先檢查每題**答不答得出來**：預期檔不在這個專案的來源裡，或預期那段不在切塊後的文字裡 ⇒ **跳過**，另外列出原因與題號、**不進 recall／MRR 的分母**。
 回傳值 `skipped` ＝ 跳過幾題。⛔ 跳過的題不能拿來比排序；擴充題庫時也要想清楚那題屬於哪個專案。
+
+## 6.1 排序方式與時間衰減（TASK-0382）
+
+| 模式 | 做法 | 要什麼 |
+|---|---|---|
+| `dense`（預設） | BGE-M3 的 dense 內積（cosine） | 嵌入模型 |
+| `hybrid` | dense ＋ 0.3×sparse（BGE-M3 lexical） | 同上（sparse 本來就存在索引裡） |
+| `rerank` | hybrid 取前 30，交給 `bge-reranker-v2-m3` 重排；最後順序＝重排分 | 另需安裝項目 `model-bge-reranker-v2-m3`；缺了走「缺相依」（exit 3） |
+
+- ⚠ **分數尺度不同**：dense／hybrid 是內積（約 0.4–0.9），rerank 是 0..1 的重排分（很開：相關的 0.99、不相關的 0.01）。**不能跨排序比大小**；ucl-memory 的分數帶（`>0.58` 之類）只對 dense 成立。
+- 重排模型第一次 `/rerank` 才載入（多佔約 1GB 顯存）；舊版常駐程序（沒有 `/rerank`）會被自動關掉重起。重排不是用 FlagReranker：它呼叫 `tokenizer.prepare_for_model`，新版 transformers 已經沒有，改直接載序列分類模型。
+- **時間衰減**（`decay=1`）：分數 −= `decay_weight`（預設 0.05）×（1 − 2^(−年齡天數／半衰期)），年齡取來源檔 mtime。
+  ⛔ **只對 `kb_targets.json` 設了 `half_life_days` 的 target 生效**（目前：fragments、work_memory、逐 persona 的 frag_*，各 90 天）；文件類沒設 ⇒ 不衰減。
+  舊的 `knowledge_base.py` 讀同一份檔、只認它要的欄位，多一個 `half_life_days` 無害。
+
+**讀數（2026-10-03，Bar，36 題可算；fragments 24／coredocs 6／work_memory 6；dense 預設）**
+
+| 排序 | recall@5 | MRR@10 | 查詢中位數 |
+|---|---|---|---|
+| dense | 33／36 | 0.736 | 102 ms |
+| hybrid | 34／36 | 0.802 | 109 ms |
+| rerank | 34／36 | **0.907** | 346 ms |
+
+- 衰減（權重 0.05）：dense 0.736→0.771、hybrid 0.802→0.793、rerank 不變；recall 都沒退步。權重 0.15：dense →0.789、hybrid recall 35／36 但 MRR 0.792、rerank 不變。
+  **題庫沒有「新舊衝突」的題，所以量不出衰減的好處，只量得出它沒有害**。
+- 已知難題 `core-05`（中文查詢、英文文件）在**所有排序都不在前 10**；`core-04` 只有 hybrid（第 5）與 rerank（第 1）救得回；rerank 反而丟了 `core-06`。
+- ⚠ 題庫的 `mem-01～15` 是 kotoko 自己的碎片當「回憶測試」（第一人稱口吻、不抄標題用字）；在 Bar 以外的專案這些題的預期檔不在 ⇒ 會被跳過。
 
 ## 7. 後台「知識庫」頁（TASK-0381）
 
@@ -82,10 +112,11 @@ senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse（方案
 - 三個不得同形：**沒在跑** ≠ 0 句（沒在跑只畫一句話）；**量不到狀態** ≠ 沒有 target（畫錯誤框，不畫空表）；
   **缺相依（exit 3）** ≠ 一般錯誤（畫專屬的框、指去「安裝管理」頁，本頁不自己裝）。
 - 檢索結果每列有「定位」鈕（檔案不在磁碟上時畫「檔案不存在」＝索引比磁碟舊，要重建）。
-- 「評估題庫」摺疊區跑 `op=eval`（排序方式跟檢索那格同步），給 TASK-0382 比較排序用。
+- 「評估題庫」摺疊區跑 `op=eval`（自己的排序下拉，多一個 `compare`＝三種排序一張表比完），給 TASK-0382 比較排序用。
+- 檢索可選 dense／hybrid／rerank 與「時間衰減」（選項讀 Cmd 宣告的 `mode` 清單，加新排序頁面不必改）。
 - 動作都跑背景 job（重建與檢索共用常駐程序，同一時間只有一個）；冷啟動要 1 分多鐘，畫面不卡。
 
 ## 8. 還沒做的
 
-- 方案 A（混合檢索＋重排）的拍板 —— sparse 已經存了，等評估讀數。
-- 時間衰減。
+- **預設排序的拍板**（dense → hybrid 或 rerank）：讀數在 §6.1；改預設要連帶重量 ucl-memory 的分數帶，且 rerank 要每台機器都裝重排模型。
+- 衰減是否預設開：題庫量不出好處，目前預設關。

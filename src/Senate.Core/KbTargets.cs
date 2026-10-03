@@ -12,7 +12,8 @@ using System.Text.RegularExpressions;
 
 namespace Senate.Core;
 
-public sealed record KbTarget(string Name, string Desc, string Kind, IReadOnlyList<string> Globs, bool ExcludeFromAll);
+/// <param name="HalfLifeDays">時間衰減的半衰期（天）；0 ＝ 不衰減。只給會過期的 target（碎片、工作記憶）設，文件類不設（TASK-0382）。</param>
+public sealed record KbTarget(string Name, string Desc, string Kind, IReadOnlyList<string> Globs, bool ExcludeFromAll, double HalfLifeDays = 0);
 
 /// <summary>一個 target 解析出來的來源檔（`Bases` 給「相對路徑」用：塊 id 不用裸檔名，同名檔才不會撞）。</summary>
 public sealed record KbSources(KbTarget Target, List<string> Files, List<string> Bases);
@@ -42,7 +43,8 @@ public static class KbTargets
             { oError = "目標清單缺 targets 區塊：" + aPath; return null; }
             foreach (JsonProperty p in aTargets.EnumerateObject())
                 d[p.Name] = new KbTarget(p.Name, Str(p.Value, "desc"), Str(p.Value, "kind", "markdown"), Arr(p.Value, "globs"),
-                                         p.Value.TryGetProperty("exclude_from_all", out var x) && x.ValueKind == JsonValueKind.True);
+                                         p.Value.TryGetProperty("exclude_from_all", out var x) && x.ValueKind == JsonValueKind.True,
+                                         Num(p.Value, "half_life_days"));
             if (aDoc.RootElement.TryGetProperty("expand", out JsonElement aExpand) && aExpand.ValueKind == JsonValueKind.Array)
                 foreach (JsonElement spec in aExpand.EnumerateArray())
                     foreach (KbTarget t in Expand(spec, iRoots))
@@ -64,7 +66,8 @@ public static class KbTargets
             if (k < 0 || k >= aParts.Length) continue;
             string aOwner = aParts[k];
             yield return new KbTarget(aNameTpl.Replace("{name}", aOwner), aDescTpl.Replace("{name}", aOwner),
-                                      Str(iSpec, "kind", "markdown"), new[] { aGlobTpl.Replace("{name}", aOwner) }, ExcludeFromAll: true);
+                                      Str(iSpec, "kind", "markdown"), new[] { aGlobTpl.Replace("{name}", aOwner) }, ExcludeFromAll: true,
+                                      HalfLifeDays: Num(iSpec, "half_life_days"));
         }
     }
 
@@ -167,6 +170,9 @@ public static class KbTargets
 
     static IEnumerable<string> SafeDirs(string d) { try { return Directory.GetDirectories(d); } catch { return Array.Empty<string>(); } }
     static IEnumerable<string> SafeFiles(string d) { try { return Directory.GetFiles(d); } catch { return Array.Empty<string>(); } }
+
+    static double Num(JsonElement e, string k)
+        => e.TryGetProperty(k, out JsonElement x) && x.ValueKind == JsonValueKind.Number && x.TryGetDouble(out double d) && d > 0 ? d : 0;
 
     static string Str(JsonElement e, string k, string iDefault = "")
         => e.TryGetProperty(k, out JsonElement x) && x.ValueKind == JsonValueKind.String ? x.GetString() ?? iDefault : iDefault;

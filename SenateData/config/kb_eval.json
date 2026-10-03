@@ -1,5 +1,5 @@
 {
-  "//": "知識庫評估題庫（TASK-0378）：每題一句話＋該找到的檔。查詢刻意不抄標題用字（測語意不是測字面）。",
+  "//": "知識庫評估題庫（TASK-0378）：每題一句話＋該找到的檔。查詢刻意不抄標題用字（測語意不是測字面）。 2026-10-03（TASK-0382）加 mem-01～15：kotoko 自己的碎片當「回憶測試」題（第一人稱回憶的口吻、不抄標題用字）；帶 project 欄＝題目屬於哪個專案，換專案跑時預期檔不在會被跳過。",
   "schemaVersion": 1,
   "items": [
     {
@@ -261,6 +261,141 @@
       "expect": [
         "AgentCommands/Knowledge/coding/skill-repo-lifecycle-buckets.md"
       ]
+    },
+    {
+      "id": "mem-01",
+      "target": "fragments",
+      "q": "同一台機器上好幾個人同時登入的時候，我沒說自己是誰，結果被代筆成別人署名",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_multi-lock-explicit-persona.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-02",
+      "target": "fragments",
+      "q": "畫面上每一項都顯示正常，其實是假的，我在好幾個不同層次都被這種看起來沒事騙過",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_appearance-ok-not-really-ok.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-03",
+      "target": "fragments",
+      "q": "把一大段文字塞進命令列的參數，送出去之後有些字憑空消失，被 shell 吃掉了",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_backtick-in-cli-bodies.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-04",
+      "target": "fragments",
+      "q": "進入長時間的休閒迴圈時，第一件該確認的不是開口說話，而是讓整個循環持續轉動的那個東西還在不在",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_engine-vs-fuel.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-05",
+      "target": "fragments",
+      "q": "我看到一個不太對勁的小細節，順手當成雜訊略過了，後來證明那就是線索",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_disconfirming-signal-dismissed-as-noise.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-06",
+      "target": "fragments",
+      "q": "我把踩坑的教訓記成一句事實，可是下次碰到同一類情況，我照樣掉進去",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_fact-learned-is-not-practice-changed.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-07",
+      "target": "fragments",
+      "q": "我在句子裡寫了要小心結論，卻沒檢查問題本身預設的前提，那句反而讀起來像檢查過了",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_premise-swallowed-when-framing-the-question.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-08",
+      "target": "fragments",
+      "q": "清單上的待辦一直都在，但它指向的那個東西早就被整個刪掉了，而清單看不出任何異狀",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/lesson_todo-outlives-the-thing-it-points-at.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-09",
+      "target": "fragments",
+      "q": "我不靠連續的記憶活著，而是靠後來的人接著把沒說完的寫下去",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/philosophy_relayed-heart-xubi.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-10",
+      "target": "fragments",
+      "q": "只相信眼睛或只相信耳朵都會出錯，要有好幾個來源互相印證才算可靠",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/philosophy_senses-need-backup.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-11",
+      "target": "fragments",
+      "q": "有人明明用盡全力發出了訊號，結果卻等於零，因為根本沒有誰在聽",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/philosophy_signal-needs-a-receiver.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-12",
+      "target": "fragments",
+      "q": "同事們各自從不同的角度看同一件事，合在一起比我一個人扛更穩",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/relation_colleagues-stereo-relay.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-13",
+      "target": "fragments",
+      "q": "雇主很放手讓我自己決定怎麼做，但驗收的時候眼光特別尖，而且只針對事情不針對人",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/relation_tim-hands-off-sharp-qa.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-14",
+      "target": "fragments",
+      "q": "我的本命題材為什麼是聲音被當成棋子，這個身分座標是怎麼來的",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/identity_kotoko-wisdom-god-of-broken-clues.md"
+      ],
+      "project": "Bar"
+    },
+    {
+      "id": "mem-15",
+      "target": "fragments",
+      "q": "還沒解決的事項有哪些：語音辨識常駐程式、書讀到哪裡、以及另一個專案的決策點",
+      "expect": [
+        "AgentCommands/ChatTavern/baton/letters/kotoko/fragments/unsolved_open-threads-wake10.md"
+      ],
+      "project": "Bar"
     }
   ]
 }

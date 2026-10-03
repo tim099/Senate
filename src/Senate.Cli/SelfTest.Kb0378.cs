@@ -193,4 +193,41 @@ public static partial class SelfTest
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
         finally { try { Directory.Delete(aTmp, true); } catch { } }
     }
+
+    // TASK-0382：時間衰減只扣「會過期的」、扣得有上限、且不碰沒設半衰期的 target；排序方式的選項由 Cmd 宣告。
+    static CheckRow KbDecayAndModes()
+    {
+        const string aName = "知識庫・衰減：剛改過不扣／半衰期扣一半／趨近上限不超過／沒設半衰期不扣；mode 含 rerank（TASK-0382）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_kbdecay_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aFails = new List<string>();
+            double w = 0.05, hl = 90;
+            if (Senate.Core.Cmd_Kb.DecayPenalty(0, hl, w) != 0) aFails.Add("剛改過卻被扣分");
+            double aHalf = Senate.Core.Cmd_Kb.DecayPenalty(hl, hl, w);
+            if (Math.Abs(aHalf - w / 2) > 1e-9) aFails.Add($"一個半衰期應扣一半（{w / 2}），得 {aHalf}");
+            double aOld = Senate.Core.Cmd_Kb.DecayPenalty(100000, hl, w);
+            if (aOld > w || aOld < w * 0.99) aFails.Add($"很久沒動應趨近上限 {w}、不超過，得 {aOld}");
+            if (Senate.Core.Cmd_Kb.DecayPenalty(500, 0, w) != 0) aFails.Add("🔴 沒設半衰期（文件類）卻被扣分");
+            if (Senate.Core.Cmd_Kb.DecayPenalty(-5, hl, w) != 0) aFails.Add("未來時間（時鐘偏移）不該被扣");
+
+            // 半衰期從 kb_targets.json 讀：設了的有、沒設的是 0（文件類不衰減）
+            Directory.CreateDirectory(Path.Combine(aTmp, "Tools~", "AgentCommands"));
+            File.WriteAllText(Path.Combine(aTmp, "Tools~", "AgentCommands", KbTargets.FileName),
+                "{\"targets\":{\"frag\":{\"kind\":\"markdown\",\"globs\":[\"x/*.md\"],\"half_life_days\":90},\"doc\":{\"kind\":\"markdown\",\"globs\":[\"y/*.md\"]}}}");
+            var aTargets = KbTargets.Load(new KbRoots { ProjectRoot = aTmp, DataRoot = aTmp, CoreRoot = aTmp }, out string? aErr);
+            if (aTargets == null) aFails.Add("讀不了 targets：" + aErr);
+            else
+            {
+                if (aTargets["frag"].HalfLifeDays != 90) aFails.Add("碎片的半衰期沒讀進來");
+                if (aTargets["doc"].HalfLifeDays != 0) aFails.Add("🔴 沒設半衰期的 target 不是 0");
+            }
+
+            var aMode = SCP.Core.Cmd.SCP_CmdRegistry.Find("kb")?.ArgSpecs.FirstOrDefault(a => a.Name == "mode");
+            if (aMode == null || !aMode.Choices.Contains("rerank") || !aMode.Choices.Contains("compare")) aFails.Add("kb 的 mode 少了 rerank／compare");
+            return new CheckRow(aName, aFails.Count == 0 ? "公式與設定逐格對上" : string.Join("；", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch { } }
+    }
 }
