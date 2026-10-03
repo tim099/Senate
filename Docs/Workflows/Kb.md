@@ -1,8 +1,8 @@
 ---
 title: 知識庫（Senate 版）—— 語意檢索、常駐嵌入程序、索引與評估
-description: senate cmd kb 怎麼用：status／reindex／search／eval／sidecar；常駐嵌入程序怎麼起、怎麼停；切塊規則；索引放哪、怎麼判過期；評估題庫怎麼量新舊版；缺套件時走安裝系統問使用者
+description: senate cmd kb 怎麼用：status／reindex／search／eval／sidecar；後台「知識庫」頁；常駐嵌入程序怎麼起、怎麼停；切塊規則；索引放哪、怎麼判過期；評估題庫怎麼量新舊版；缺套件時走安裝系統問使用者
 cmds: [kb]
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 target_audience: [AI_Agent, Tools_Maintainer]
 ---
 
@@ -67,8 +67,21 @@ senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse（方案
 題庫在 `SenateData/config/kb_eval.json`（32 題：每題一句話＋該找到的檔；查詢刻意不抄標題用字）。
 算 recall@5 與 MRR@10，逐 target 列。⚠ 評估前會把用到的 target 重建到最新 —— 拿過期索引評出來的分數不是檢索品質。
 
-## 7. 還沒做的
+## 7. 後台「知識庫」頁（TASK-0381）
 
-- Senate 知識庫後台頁（Unity 那頁搬過來）。
+`senate ui --page kb`（或後台首頁 ▸ 設定 ▸ 知識庫）。Unity 的 `UCL_KnowledgeBaseAdminPage` 已於 2026-10-03 廢棄，功能搬到這裡。
+
+- 頁面**不自己算任何東西**：狀態、重建、檢索、評估、常駐程序的起停全走 `senate cmd kb`（同一套實作）。
+  狀態與檢索讀 `format=json`（`status` 的 JSON：`sidecar{running,pid,device,loaded_ms,served}`＋每個 target 的 `state／files／chunks／built_at／detail`；
+  `state` ＝ `fresh` 最新｜`stale` 落後磁碟或規則換了｜`unbuilt` 還沒建｜`unknown` 不認得）。
+- 各 target 一列，各有「建立／重建」鈕；另有「重建全部」。檢索可選範圍（預設／單一 target／all）與排序方式（dense／hybrid）。
+- 三個不得同形：**沒在跑** ≠ 0 句（沒在跑只畫一句話）；**量不到狀態** ≠ 沒有 target（畫錯誤框，不畫空表）；
+  **缺相依（exit 3）** ≠ 一般錯誤（畫專屬的框、指去「安裝管理」頁，本頁不自己裝）。
+- 檢索結果每列有「定位」鈕（檔案不在磁碟上時畫「檔案不存在」＝索引比磁碟舊，要重建）。
+- 「評估題庫」摺疊區跑 `op=eval`（排序方式跟檢索那格同步），給 TASK-0382 比較排序用。
+- 動作都跑背景 job（重建與檢索共用常駐程序，同一時間只有一個）；冷啟動要 1 分多鐘，畫面不卡。
+
+## 8. 還沒做的
+
 - 方案 A（混合檢索＋重排）的拍板 —— sparse 已經存了，等評估讀數。
 - 時間衰減。

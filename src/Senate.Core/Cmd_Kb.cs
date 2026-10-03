@@ -36,7 +36,7 @@ public sealed class Cmd_Kb : SCP_Cmd
         new SCP_CmdArgSpec("mode", "search／eval：dense（預設）｜hybrid（dense＋sparse，方案 A 評估用）", iDefault: "dense",
                            iChoices: new[] { "dense", "hybrid" }),
         new SCP_CmdArgSpec("sparse_weight", "hybrid 時 sparse 的權重（預設 0.3）", iDefault: "0.3"),
-        new SCP_CmdArgSpec("format", "search：text（預設）｜json", iDefault: "text", iChoices: new[] { "text", "json" }),
+        new SCP_CmdArgSpec("format", "status／search：text（預設）｜json（後台頁讀這個）", iDefault: "text", iChoices: new[] { "text", "json" }),
         new SCP_CmdArgSpec("auto_reindex", "search：過期的 target 先重建（預設 1；0＝照現有索引查）", iDefault: "1"),
         new SCP_CmdArgSpec("dry_run", "reindex：=1 只切塊、印統計（塊數、太短的、去重丟掉的、最長），不嵌入不寫檔"),
         new SCP_CmdArgSpec("action", "sidecar：status（預設）｜start｜stop", iDefault: "status", iChoices: new[] { "status", "start", "stop" }),
@@ -118,25 +118,42 @@ public sealed class Cmd_Kb : SCP_Cmd
         string aArg = iArgs.Get("target");
         List<string> aNames = aArg.Length == 0 ? c.All.Keys.ToList() : KbTargets.Parse(aArg, c.All);
         KbSidecar.Health? h = c.Car.Probe();
+        bool aJson = iArgs.Get("format") == "json";
+        string aIndexDir = Path.Combine(c.Roots.DataRoot, KbIndex.DirName).Replace('\\', '/');
         r.Lines.Add("# 🧠 知識庫（Senate 版）");
         r.Lines.Add("· 常駐嵌入程序：" + (h == null ? "沒在跑（第一次檢索時會自己拉起）" : $"在跑（pid {h.Pid}，{h.Device}，載入花了 {h.LoadedMs / 1000.0:0.0} 秒，已嵌 {h.Served} 句）"));
-        r.Lines.Add("· 索引位置：" + Path.Combine(c.Roots.DataRoot, KbIndex.DirName).Replace('\\', '/'));
+        r.Lines.Add("· 索引位置：" + aIndexDir);
         r.Lines.Add("");
         int aStaleN = 0, aMissingN = 0;
+        // 後台頁（`format=json`）與文字輸出讀**同一圈**：每個 target 一列 state／files／chunks／built_at／detail。
+        // state：fresh 最新｜stale 落後磁碟或規則換了｜unbuilt 還沒建索引｜unknown 不認得的 target。
+        var aRows = new List<object>();
         foreach (string n in aNames)
         {
-            if (!c.All.TryGetValue(n, out KbTarget? t)) { r.Lines.Add($"- ✗ {n}：不認得的 target"); continue; }
+            if (!c.All.TryGetValue(n, out KbTarget? t)) { r.Lines.Add($"- ✗ {n}：不認得的 target"); aRows.Add(new { name = n, state = "unknown", files = 0, chunks = 0, built_at = "", detail = "不認得的 target" }); continue; }
             KbSources s = KbTargets.Resolve(t, c.Roots);
             KbIndex? ix = KbIndex.Load(c.Roots.DataRoot, n, out string aWhy);
-            if (ix == null) { aMissingN++; r.Lines.Add($"- ・{n}：{s.Files.Count} 檔，索引{aWhy}"); continue; }
+            if (ix == null) { aMissingN++; r.Lines.Add($"- ・{n}：{s.Files.Count} 檔，索引{aWhy}"); aRows.Add(new { name = n, state = "unbuilt", files = s.Files.Count, chunks = 0, built_at = "", detail = "索引" + aWhy }); continue; }
             KbStale st = ix.StaleAgainst(s);
             bool aRules = ix.Meta.Chunker != KbChunker.Version || ix.Meta.Model != KbIndex.Model;
             if (st.Any || aRules) aStaleN++;
-            r.Lines.Add($"- {(st.Any || aRules ? "◐" : "✓")} {n}：{s.Files.Count} 檔／{ix.Meta.Chunks.Count} 塊（去重丟 {ix.Meta.DroppedDuplicates}）　建於 {ix.Meta.BuiltAt}　{(aRules ? "⚠ 切塊規則或模型換了，要整份重建" : st.ToString())}");
+            string aDetail = aRules ? "切塊規則或模型換了，要整份重建" : st.ToString();
+            r.Lines.Add($"- {(st.Any || aRules ? "◐" : "✓")} {n}：{s.Files.Count} 檔／{ix.Meta.Chunks.Count} 塊（去重丟 {ix.Meta.DroppedDuplicates}）　建於 {ix.Meta.BuiltAt}　{(aRules ? "⚠ " + aDetail : aDetail)}");
+            aRows.Add(new { name = n, state = st.Any || aRules ? "stale" : "fresh", files = s.Files.Count, chunks = ix.Meta.Chunks.Count, built_at = ix.Meta.BuiltAt, detail = aDetail });
         }
         r.AddValue("stale_targets", aStaleN.ToString(CultureInfo.InvariantCulture));
         r.AddValue("unbuilt_targets", aMissingN.ToString(CultureInfo.InvariantCulture));
         r.AddValue("sidecar", h == null ? "stopped" : "running");
+        if (aJson)
+        {
+            r.Lines.Clear();
+            r.Lines.Add(JsonSerializer.Serialize(new
+            {
+                ok = true, index_dir = aIndexDir,
+                sidecar = new { running = h != null, pid = h?.Pid ?? 0, device = h?.Device ?? "", loaded_ms = h?.LoadedMs ?? 0, served = h?.Served ?? 0 },
+                targets = aRows,
+            }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+        }
         return r;
     }
 

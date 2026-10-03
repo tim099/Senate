@@ -172,6 +172,7 @@ public static partial class SelfTest
         One(nameof(KbChunkerRules), "kb", KbChunkerRules),
         One(nameof(KbIndexRoundTrip), "kb", KbIndexRoundTrip),
         One(nameof(KbGlobRules), "kb", KbGlobRules),
+        One(nameof(KbPageStatusContract), "kb", KbPageStatusContract),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),

@@ -138,4 +138,32 @@ public static partial class SelfTest
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
         finally { try { Directory.Delete(aTmp, true); } catch { } }
     }
+
+    // TASK-0381：後台頁讀 `kb op=status format=json`。這一格釘住兩件事：
+    //   ① 真實形狀（常駐程序沒在跑）解得出來，且「沒在跑」是 Running=false，不是 0 句／空表；
+    //   ② 🔴 反向對照：壞掉的輸出回 null＋錯誤，而不是「空的 target 清單」（量不到 ≠ 沒有）。
+    static CheckRow KbPageStatusContract()
+    {
+        const string aName = "知識庫頁・狀態 JSON：沒在跑讀成 Running=false／🔴 壞輸出回錯誤而不是空表（TASK-0381）";
+        try
+        {
+            var aFails = new List<string>();
+            const string aReal = "{\"ok\":true,\"index_dir\":\"D:/x/_kb\",\"sidecar\":{\"running\":false,\"pid\":0,\"device\":\"\",\"loaded_ms\":0,\"served\":0},"
+                + "\"targets\":[{\"name\":\"docs\",\"state\":\"unbuilt\",\"files\":146,\"chunks\":0,\"built_at\":\"\",\"detail\":\"索引還沒建過\"},"
+                + "{\"name\":\"alaya\",\"state\":\"fresh\",\"files\":1,\"chunks\":1,\"built_at\":\"2026-10-03T02:33:05Z\",\"detail\":\"最新\"}]}";
+            var s = Senate.Cli.Pages.KnowledgeBasePage.ParseStatus("· data_root 沒給 ⇒ x\n" + aReal + "\n🔢 sidecar = stopped", out string? e1);
+            if (s == null) aFails.Add("真實形狀解不出來：" + e1);
+            else
+            {
+                if (s.Running) aFails.Add("沒在跑被讀成在跑");
+                if (s.Rows.Count != 2 || s.Rows[0].State != "unbuilt" || s.Rows[1].Chunks != 1) aFails.Add("列沒對上");
+            }
+            var bad = Senate.Cli.Pages.KnowledgeBasePage.ParseStatus("{\"ok\":true,\"sidecar\":{}", out string? e2);
+            if (bad != null || string.IsNullOrEmpty(e2)) aFails.Add("🔴 壞輸出沒回錯誤");
+            var none = Senate.Cli.Pages.KnowledgeBasePage.ParseStatus("沒有 json 的一行", out string? e3);
+            if (none != null || string.IsNullOrEmpty(e3)) aFails.Add("🔴 沒有 JSON 沒回錯誤");
+            return new CheckRow(aName, aFails.Count == 0 ? "三格逐格對上" : string.Join("；", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+    }
 }
