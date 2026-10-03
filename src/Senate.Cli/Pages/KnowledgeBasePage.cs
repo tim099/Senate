@@ -325,7 +325,8 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
             if (m_Status != null) foreach (Row r in m_Status.Rows) aTargets.Add(new SCP_GuiOption(r.Name));
             aTargets.Add(new SCP_GuiOption(AllTargetValue, "all（跨全部 target）"));
             string aTarget = g.Dropdown("範圍", aTargets, DefaultTargetValue, TargetId);
-            string aMode = g.Dropdown("排序方式", new List<string> { "dense", "hybrid" }, "dense", ModeId);
+            List<string> aModes = ModeChoices();
+            string aMode = g.Dropdown("排序方式", aModes, aModes[0], ModeId);
             if (aMode == "hybrid") g.TextField("sparse 權重（hybrid 才用）", "0.3", SparseId);
             g.Note("輸入是一句話不是關鍵字（語意檢索）。hybrid（dense＋sparse）目前只給評估用，預設排序依 TASK-0382 拍板。");
             string aQuery = g.TextField("要找的事（一句話）", "", QueryId);
@@ -342,6 +343,16 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
             }
             DrawHits(g);
         }
+    }
+
+    /// <summary>排序方式的選項**讀 Cmd 宣告的清單**（TASK-0382 加了新的排序，頁面不必跟著改）；第一個是 Cmd 的預設。</summary>
+    static List<string> ModeChoices()
+    {
+        SCP_CmdArgSpec? aSpec = SCP_CmdRegistry.Find("kb")?.ArgSpecs.FirstOrDefault(a => a.Name == "mode");
+        var aList = aSpec == null ? new List<string>() : aSpec.Choices.ToList();
+        if (aList.Count == 0) aList.Add("dense");
+        if (aSpec != null && aSpec.Default.Length > 0 && aList.Remove(aSpec.Default)) aList.Insert(0, aSpec.Default);
+        return aList;
     }
 
     void DrawHits(SCP_Ui g)
@@ -392,7 +403,7 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
                  + "評估前會先把用到的 target 重建到最新，所以可能要等好幾分鐘。這是 TASK-0382 比較排序的量尺。");
             if (!Busy && g.Button("跑評估", "kb/btn/eval"))
             {
-                string aMode = g.FieldValue(ModeId + "/value", "dense");
+                string aMode = g.FieldValue(ModeId + "/value", ModeChoices()[0]);
                 var a = new Dictionary<string, string>(iBase) { ["op"] = "eval", ["mode"] = aMode };
                 if (aMode == "hybrid") a["sparse_weight"] = g.FieldValue(SparseId, "0.3");
                 Start("eval", $"評估（{aMode}）", a);
