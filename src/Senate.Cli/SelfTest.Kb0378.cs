@@ -166,4 +166,31 @@ public static partial class SelfTest
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
     }
+
+    // TASK-0382：評估題庫綁著某個專案的文件 —— 換專案跑，預期檔不在的題「沒排上」跟「排序變差」同形。
+    // 這一格釘住：預期檔不在／預期那段不在 ⇒ 說得出原因（跳過）；檔在且那段在 ⇒ null（要算分）。
+    static CheckRow KbEvalAnswerable()
+    {
+        const string aName = "知識庫・評估：預期檔／預期那段不在本專案 ⇒ 跳過不進分母；都在 ⇒ 照算（TASK-0382）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_kbeval_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aFails = new List<string>();
+            Directory.CreateDirectory(Path.Combine(aTmp, "Docs"));
+            File.WriteAllText(Path.Combine(aTmp, "Docs", "a.md"), "# 標題\n\n這裡有一段正文，長度夠長不會被併掉，而且包含獨特的句子甲乙丙。\n");
+            File.WriteAllText(Path.Combine(aTmp, "Docs", "l.jsonl"), "{\"title\":\"教訓\",\"body\":\"驗流程用測試殼這一句\"}\n");
+            var aRoots = new KbRoots { ProjectRoot = aTmp, DataRoot = aTmp, CoreRoot = aTmp };
+            var aMd = KbTargets.Resolve(new KbTarget("m", "", "markdown", new[] { "Docs/*.md" }, false), aRoots);
+            var aJl = KbTargets.Resolve(new KbTarget("j", "", "jsonl", new[] { "Docs/*.jsonl" }, false), aRoots);
+
+            if (Senate.Core.Cmd_Kb.EvalUnanswerable(aMd, new[] { "docs/a.md" }, null) != null) aFails.Add("檔在卻被跳過");
+            if (Senate.Core.Cmd_Kb.EvalUnanswerable(aMd, new[] { "docs/不存在.md" }, null) == null) aFails.Add("🔴 預期檔不在卻沒跳過（會被當成『沒排上』）");
+            if (Senate.Core.Cmd_Kb.EvalUnanswerable(aMd, new[] { "docs/a.md" }, "獨特的句子甲乙丙") != null) aFails.Add("預期那段在卻被跳過");
+            if (Senate.Core.Cmd_Kb.EvalUnanswerable(aMd, new[] { "docs/a.md" }, "這句話不在任何地方") == null) aFails.Add("🔴 預期那段不在卻沒跳過");
+            if (Senate.Core.Cmd_Kb.EvalUnanswerable(aJl, new[] { "docs/l.jsonl" }, "驗流程用測試殼") != null) aFails.Add("jsonl 的預期那段在卻被跳過");
+            return new CheckRow(aName, aFails.Count == 0 ? "五格逐格對上" : string.Join("；", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch { } }
+    }
 }

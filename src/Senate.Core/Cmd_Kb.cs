@@ -298,11 +298,19 @@ public sealed class Cmd_Kb : SCP_Cmd
         if (aNotReady != null) return aNotReady;
 
         var aRows = new List<(string Id, string Target, int? Rank, long Ms)>();
+        // 🔴 本專案答不出來的題（預期檔／預期那段不在這個專案的來源裡）**不進分母**，另外列：
+        //    題庫綁著某個專案的文件，換專案跑時那些題一定「沒排上」—— 而那跟「排序變差」在分數上同形（TASK-0382，Bar 實測 19／32）。
+        var aSkipped = new List<(string Id, string Target, string Why)>();
+        var aSources = new Dictionary<string, KbSources>();
         foreach (JsonElement it in d.RootElement.GetProperty("items").EnumerateArray())
         {
             string id = it.GetProperty("id").GetString()!, tgt = it.GetProperty("target").GetString()!, q = it.GetProperty("q").GetString()!;
             var aExpect = it.GetProperty("expect").EnumerateArray().Select(x => x.GetString()!.Replace('\\', '/').ToLowerInvariant()).ToList();
             string? aText = it.TryGetProperty("expect_text", out var et) ? et.GetString() : null;
+            if (!c.All.TryGetValue(tgt, out KbTarget? aTgt)) { aSkipped.Add((id, tgt, $"題庫的 target '{tgt}' 這份設定裡沒有")); continue; }
+            if (!aSources.TryGetValue(tgt, out KbSources? aSrc)) aSources[tgt] = aSrc = KbTargets.Resolve(aTgt, c.Roots);
+            string? aWhy = EvalUnanswerable(aSrc, aExpect, aText);
+            if (aWhy != null) { aSkipped.Add((id, tgt, aWhy)); Console.Error.WriteLine($"  {id}　跳過：{aWhy}"); continue; }
             SearchOutcome? o = DoSearch(c, new List<string> { tgt }, q, 10, aHybrid, aSw, true, out SCP_CmdResult? aFail);
             if (o == null) return aFail!;
             int? aRank = null;
@@ -317,7 +325,13 @@ public sealed class Cmd_Kb : SCP_Cmd
             Console.Error.WriteLine($"  {id}　rank={(aRank?.ToString() ?? "—")}　{o.QueryMs} ms");
         }
         var r = new SCP_CmdResult();
-        r.Lines.Add($"# 📏 知識庫評估（{(aHybrid ? $"hybrid，sparse×{aSw}" : "dense")}，{aRows.Count} 題）");
+        r.Lines.Add($"# 📏 知識庫評估（{(aHybrid ? $"hybrid，sparse×{aSw}" : "dense")}，算分 {aRows.Count} 題" + (aSkipped.Count > 0 ? $"，跳過 {aSkipped.Count} 題" : "") + "）");
+        if (aSkipped.Count > 0)
+        {
+            r.Lines.Add($"⚠ **跳過 {aSkipped.Count} 題（本專案答不出來，不進下面的分母）**：題庫綁著別的專案的文件時，這些題在這裡一定沒排上，不是排序的問題。");
+            foreach (var g in aSkipped.GroupBy(x => x.Why))
+                r.Lines.Add($"  · {g.Key}：{string.Join("、", g.Select(x => x.Id))}");
+        }
         foreach (var g in aRows.GroupBy(x => x.Target))
             r.Lines.Add($"- {g.Key}：recall@5 {g.Count(x => x.Rank is <= 5)}／{g.Count()}　MRR@10 {g.Sum(x => x.Rank is int k ? 1.0 / k : 0) / g.Count():0.000}");
         int aOk5 = aRows.Count(x => x.Rank is <= 5);
@@ -326,7 +340,31 @@ public sealed class Cmd_Kb : SCP_Cmd
         r.Lines.Add("未命中（前 10 沒有）：" + string.Join("、", aRows.Where(x => x.Rank == null).Select(x => x.Id)));
         r.AddValue("recall_at_5", $"{aOk5}/{aRows.Count}");
         r.AddValue("mrr_at_10", aMrr.ToString("0.000", CultureInfo.InvariantCulture));
+        r.AddValue("skipped", aSkipped.Count.ToString(CultureInfo.InvariantCulture));
         return r;
+    }
+
+    /// <summary>
+    /// 這題在目前專案裡**有沒有可能答對**：回 null ＝ 有；否則回原因（會被跳過、不進 recall／MRR 的分母）。
+    /// <para>判準跟命中判定同一把：預期檔用「檔尾比對」（同 Eval 的 EndsWith），預期那段用**切塊後的 Text** 找
+    /// （⛔ 不是檔案原文 —— jsonl 的跳脫字元、標題路徑都會讓原文比對說謊）。</para>
+    /// </summary>
+    public static string? EvalUnanswerable(KbSources iSrc, IReadOnlyList<string> iExpectNorm, string? iText)
+    {
+        var aFiles = iSrc.Files.Where(f =>
+        {
+            string n = f.Replace('\\', '/').ToLowerInvariant();
+            return iExpectNorm.Any(e => n.EndsWith(e, StringComparison.Ordinal));
+        }).ToList();
+        if (aFiles.Count == 0) return "預期檔不在本專案這個 target 的來源裡";
+        if (iText == null) return null;
+        foreach (string f in aFiles)
+        {
+            string aBody;
+            try { aBody = File.ReadAllText(f); } catch (IOException) { continue; }
+            if (KbChunker.Chunk(iSrc.Target.Kind, f, aBody).Any(ch => ch.Text.Contains(iText, StringComparison.Ordinal))) return null;
+        }
+        return "預期檔在，但沒有預期的那一段";
     }
 
     static long Median(IEnumerable<long> xs) { var a = xs.OrderBy(x => x).ToList(); return a.Count == 0 ? 0 : a[a.Count / 2]; }

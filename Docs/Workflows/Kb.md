@@ -67,6 +67,10 @@ senate cmd kb --arg op=eval --arg mode=hybrid     # dense＋0.3×sparse（方案
 題庫在 `SenateData/config/kb_eval.json`（32 題：每題一句話＋該找到的檔；查詢刻意不抄標題用字）。
 算 recall@5 與 MRR@10，逐 target 列。⚠ 評估前會把用到的 target 重建到最新 —— 拿過期索引評出來的分數不是檢索品質。
 
+⚠ **題庫綁著某個專案的文件**（目前是 LY 的）。換專案跑時，預期檔不在的題一定「沒排上」，而那跟「排序變差」在分數上同形（TASK-0382：Bar 實測 19／32 全是這個）。
+所以評估先檢查每題**答不答得出來**：預期檔不在這個專案的來源裡，或預期那段不在切塊後的文字裡 ⇒ **跳過**，另外列出原因與題號、**不進 recall／MRR 的分母**。
+回傳值 `skipped` ＝ 跳過幾題。⛔ 跳過的題不能拿來比排序；擴充題庫時也要想清楚那題屬於哪個專案。
+
 ## 7. 後台「知識庫」頁（TASK-0381）
 
 `senate ui --page kb`（或後台首頁 ▸ 設定 ▸ 知識庫）。Unity 的 `UCL_KnowledgeBaseAdminPage` 已於 2026-10-03 廢棄，功能搬到這裡。
