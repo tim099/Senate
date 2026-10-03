@@ -217,6 +217,9 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui g)
     {
         if (!Busy && g.Button("重新量狀態", "kb/btn/reload")) m_StatusStale = true;
+        // 嵌入模型／重排模型／套件都在安裝管理頁裝；知識庫頁不自己裝（同一套實作，只有一個地方動手）。
+        // 工作中也給按：換頁不會中斷背景 job（job 在本頁物件上，返回後照樣收尾）。
+        if (g.Button("安裝管理", "kb/btn/top-install")) Controller?.Push(new InstallPage(m_Model));
     }
 
     protected override void DrawContent(SCP_Ui g)
