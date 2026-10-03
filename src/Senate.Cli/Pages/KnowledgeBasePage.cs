@@ -57,7 +57,7 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
 
     public override string Key => PageKey;
     public override string Title => "知識庫";
-    public override string? MenuGroup => "設定";
+    public override string? MenuGroup => "工具";
 
     public override void OnPush()
     {
@@ -366,27 +366,24 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
             g.Note("查了，0 命中（有索引但沒有語意相近的片段；若上面有 [注意]，是那個 target 沒查到）。");
             return;
         }
-        using (g.Table("定位", "#", "分數", "target", "檔案", "段落", "預覽"))
+        // 一筆一張卡，不用表格：路徑與預覽都是長字串，表格的欄寬在窄視窗只會把每一欄裁成幾個字（Tim 2026-10-03 截圖）。
+        for (int i = 0; i < m_Hits.Count; i++)
         {
-            for (int i = 0; i < m_Hits.Count; i++)
+            Hit h = m_Hits[i];
+            string aFile = h.File.Replace('/', Path.DirectorySeparatorChar);
+            bool aExists = File.Exists(aFile);
+            using (g.Box($"#{i + 1}　{h.Score.ToString("0.0000", CultureInfo.InvariantCulture)}　{h.Target}", $"kb/hit/{i}"))
             {
-                Hit h = m_Hits[i];
-                string aFile = h.File.Replace('/', Path.DirectorySeparatorChar);
-                bool aExists = File.Exists(aFile);
-                using (g.TableRowScope())
+                using (g.Row())
                 {
                     if (aExists && SCP_GuiHost.RevealInFileManager != null)
                     {
                         if (g.Button("定位", $"kb/hit/{i}/reveal")) m_Message = SCP_GuiHost.RevealInFileManager(aFile);
                     }
-                    else g.TableCell(aExists ? "—" : "檔案不存在");
-                    g.TableCell((i + 1).ToString(CultureInfo.InvariantCulture));
-                    g.TableCell(h.Score.ToString("0.0000", CultureInfo.InvariantCulture));
-                    g.TableCell(h.Target);
-                    g.TableCell(h.Rel + (h.Line > 0 ? ":" + h.Line.ToString(CultureInfo.InvariantCulture) : ""));
-                    g.TableCell(h.Heading);
-                    g.TableCell(h.Preview);
+                    g.Label(h.Rel + (h.Line > 0 ? ":" + h.Line.ToString(CultureInfo.InvariantCulture) : "") + (aExists ? "" : "　（檔案不存在）"));
                 }
+                if (h.Heading.Length > 0 && !h.Preview.StartsWith(h.Heading, StringComparison.Ordinal)) g.Note(h.Heading);   // 預覽本來就以標題路徑開頭，不重複印
+                g.Paragraph(h.Preview);
             }
         }
         // 檔案不存在 ＝ 索引比磁碟舊（檔被改名／刪了）：要說出來，否則會被當成「定位鈕壞了」。

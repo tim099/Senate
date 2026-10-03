@@ -34,7 +34,7 @@ public sealed class AutoCommitPage : SCP_GuiToolPage
     public override string Title => "自動 Commit";
 
     /// <summary>跟 Submodule 狀態頁同一組 —— 它們都在回答「這些 repo 現在什麼狀態、要不要動手」。</summary>
-    public override string? MenuGroup => "診斷";
+    public override string? MenuGroup => "工具";
 
     // ── session 裡的內部狀態（跨 process 活得下來）───────────────────
     const string StampId = "autocommit/stamp";

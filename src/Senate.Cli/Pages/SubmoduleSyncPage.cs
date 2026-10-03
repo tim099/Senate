@@ -76,7 +76,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     public override string Title => "Submodule 狀態";
 
     /// <summary>列進入口頁的「診斷」組（跟 Doctor 同一組 —— 它們回答的都是「現在是什麼狀態」）。</summary>
-    public override string? MenuGroup => "診斷";
+    public override string? MenuGroup => "工具";
 
     /// <summary>「回到自動」那個選項的 value。空字串當不了 value —— 下拉會顯示「(未選)」，
     /// 而「沒選」跟「我要自動」是兩件事。</summary>

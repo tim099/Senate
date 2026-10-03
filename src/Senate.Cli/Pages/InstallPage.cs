@@ -34,7 +34,7 @@ public sealed class InstallPage : SCP_GuiToolPage
     public override string Key => PageKey;
     public const string PageKey = "install";
     public override string Title => "安裝管理";
-    public override string? MenuGroup => "設定";
+    public override string? MenuGroup => "工具";
 
     public override void OnPush() { base.OnPush(); Reload(); }
 
