@@ -1,8 +1,10 @@
-// 區塊職責：TASK-0369（積壓超過回捲上限 ⇒ 游標永久卡死）的自我對拍。
-// 物理意義：三格各驗一個「錯了也不會叫」的地方：
-//           ① 出口：skip_backlog 時交**最新**那批、水位推到最新、跳過的段落有點名（至少幾則、從哪一則之前）。
-//           ② 不變：積壓在上限內時，帶不帶 skip 結果逐筆相同（由舊到新）、跳過標記為 false。
-//           🔴 ③ 反向：不帶 skip 時照舊拒推（NewestTs＝null、Truncated＝true）、游標一格不動。
+// 區塊職責：酒館游標「積壓超過回捲上限」的自我對拍（TASK-0369 → TASK-0407 改成自動）＋回捲上限設定。
+// 物理意義：每一格驗一個「錯了也不會叫」的地方：
+//           ① 自動：不帶任何參數，積壓超過上限時，上限內照常由舊到新交付（窗口第一則起）、游標往前、更舊的那段不讀並**點名**（至少幾則、哪一則之前）。
+//           ② 只發生一次：游標進到窗口裡之後，下一趟照常往前讀，不再報跳過。
+//           🔴 ③ 反向：積壓在上限內 ⇒ 一則都不跳；**剛好**落在上限邊緣（更舊那端沒有比游標新的）⇒ 也一則都不跳。
+//           ④ 上限讀設定：設了就用、沒設用預設並明說「用預設值」、不合法照預設跑並說出原因（⛔ 不夾值）。
+//           ⑤ 設定讀寫：存檔擋不合法且零寫入、預設值不寫進檔、其他鍵保留、讀回比對。
 // 數值影響：在 temp 目錄造 BACKLOG_SCAN_CAP＋100 則訊息（走沒有索引的退化路徑），跑完刪；⛔ 不碰真實資料根。
 #nullable enable
 using SCP.Core.Tavern;
@@ -13,11 +15,12 @@ public static partial class SelfTest
 {
     static CheckRow TavernBacklogSkipCleanRoom()
     {
-        const string aName = "酒館游標：積壓超過回捲上限 ⇒ skip_backlog 推到最新並點名跳過段／上限內行為不變／不帶照舊拒推（淨室）";
+        const string aName = "酒館游標：積壓超過回捲上限 ⇒ 自動：上限內照讀、更舊的不讀並點名／只跳一次／上限內與剛好邊緣不跳／上限讀設定（淨室，TASK-0407）";
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_cursor_" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
-            int aTotal = SCP_TavernCursor.BACKLOG_SCAN_CAP + 100;
+            int aCapDefault = SCP_TavernCursor.BACKLOG_SCAN_CAP;
+            int aTotal = aCapDefault + 100;
             string aDir = Path.Combine(aTmp, "ChatTavern", "rooms", "tavern", "messages", "2026-01-01");
             Directory.CreateDirectory(aDir);
             var aBase = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -28,40 +31,113 @@ public static partial class SelfTest
             const string aWho = "reader";
             const int aLimit = SCP_TavernCursor.SCAN_LIMIT;
 
-            // 🔴 ③ 游標在第 1 則 ⇒ 積壓 aTotal-1 則（超過上限）。不帶 skip ⇒ 拒推，且游標不動。
+            // ① 游標在第 1 則 ⇒ 積壓 aTotal-1 則（超過上限）。窗口＝最新 aCapDefault 則＝seq 101..aTotal。
             SCP_TavernCursor.WriteCursor(aTmp, aWho, Ts(1));
-            SCP_TavernCursor.ReadUnread(aTmp, aWho, "tavern", out string? aN0, out bool aT0);
-            var aB0 = SCP_TavernCatchup.Build(aTmp, aTmp, aWho, "tavern", 1, true, false, 1);
-            var (_, aAdv0) = SCP_TavernCatchup.AdvanceAfterWrite(aTmp, aWho, aB0, true);
-            bool aRefuse = aN0 == null && aT0 && aAdv0 == null && SCP_TavernCursor.ReadCursor(aTmp, aWho) == Ts(1);
-
-            // ① 帶 skip ⇒ 交最新 SCAN_LIMIT 則、水位＝最後一則、跳過段點名
-            var aGot = SCP_TavernCursor.ReadUnread(aTmp, aWho, "tavern", true, out string? aN1, out bool aT1,
-                                                   out SCP_TavernBacklogSkip aSkip);
-            int aFirstKept = aTotal - aLimit + 1;
-            bool aExit = aGot.Count == aLimit && aGot[0].Seq == aFirstKept && aN1 == Ts(aTotal) && !aT1
+            var aGot = SCP_TavernCursor.ReadUnread(aTmp, aWho, "tavern", aCapDefault, out string? aN1, out bool aT1, out SCP_TavernBacklogSkip aSkip);
+            int aFirstKept = aTotal - aCapDefault + 1;   // 101
+            bool aAuto = aGot.Count == aLimit && aGot[0].Seq == aFirstKept && aGot[aLimit - 1].Seq == aFirstKept + aLimit - 1   // 窗口第一則起、由舊到新
+                         && aN1 == Ts(aFirstKept + aLimit - 1) && aT1                                                           // 水位＝這批最後一則；還有更多
                          && aSkip.Applied && aSkip.FirstKeptSeq == aFirstKept && aSkip.FromCursorTs == Ts(1)
-                         && aSkip.SkippedInWindowAtLeast == SCP_TavernCursor.BACKLOG_SCAN_CAP - aLimit;
-            // ① 端到端：Build＋AdvanceAfterWrite 真的把游標推到最新（讀回），簡報裡有點名那一段
-            var aB1 = SCP_TavernCatchup.Build(aTmp, aTmp, aWho, "tavern", 1, true, false, 1, true);
+                         && aSkip.SkippedAtLeast == aLimit;                                                                     // 窗口外探到的 60 則（更舊的沒數到）
+
+            // ① 端到端：不帶任何參數的 Build＋AdvanceAfterWrite 真的把游標推到那批的最後一則（讀回），簡報裡點名跳過的那段與回捲上限
+            var aB1 = SCP_TavernCatchup.Build(aTmp, aTmp, aWho, "tavern", 1, true, false, 1);
             var (aLine1, aAdv1) = SCP_TavernCatchup.AdvanceAfterWrite(aTmp, aWho, aB1, true);
-            bool aEndToEnd = aAdv1 == Ts(aTotal) && SCP_TavernCursor.ReadCursor(aTmp, aWho) == Ts(aTotal)
-                             && aB1.Body.Contains("seq " + aFirstKept + " 之前") && aLine1.Contains("跳過了");
+            bool aEndToEnd = aAdv1 == Ts(aFirstKept + aLimit - 1) && SCP_TavernCursor.ReadCursor(aTmp, aWho) == Ts(aFirstKept + aLimit - 1)
+                             && aB1.Body.Contains("seq " + aFirstKept + " 之前") && aLine1.Contains("跳過了")
+                             && aB1.Body.Contains("**" + aCapDefault + "** 則（用預設值");
 
-            // ② 上限內：游標在倒數第 100 則前 ⇒ 100 則未讀。帶不帶 skip 逐筆相同（由舊到新），且沒有跳
-            string aCur2 = Ts(aTotal - 100);
-            SCP_TavernCursor.WriteCursor(aTmp, aWho + "2", aCur2);
-            var aPlain = SCP_TavernCursor.ReadUnread(aTmp, aWho + "2", "tavern", out string? aN2, out bool aT2);
-            var aWith = SCP_TavernCursor.ReadUnread(aTmp, aWho + "2", "tavern", true, out string? aN3, out bool aT3,
-                                                    out SCP_TavernBacklogSkip aSkip2);
-            bool aSame = aPlain.Count == aWith.Count && aN2 == aN3 && aT2 == aT3 && !aSkip2.Applied
-                         && aPlain.Count == aLimit && aPlain[0].Seq == aTotal - 99;
-            for (int i = 0; aSame && i < aPlain.Count; i++) aSame = aPlain[i].Seq == aWith[i].Seq;
+            // ② 只跳一次：游標現在在窗口裡 ⇒ 下一趟照常往前讀（161..220），不再報跳過
+            var aNext = SCP_TavernCursor.ReadUnread(aTmp, aWho, "tavern", aCapDefault, out string? aN2, out bool aT2, out SCP_TavernBacklogSkip aSkip2);
+            bool aOnce = !aSkip2.Applied && aNext.Count == aLimit && aNext[0].Seq == aFirstKept + aLimit && aT2 && aN2 == Ts(aFirstKept + 2 * aLimit - 1);
 
-            bool aOk = aRefuse && aExit && aEndToEnd && aSame;
+            // 🔴 ③ 反向：積壓在上限內（100 則）⇒ 一則都不跳，由舊到新
+            SCP_TavernCursor.WriteCursor(aTmp, aWho + "2", Ts(aTotal - 100));
+            var aIn = SCP_TavernCursor.ReadUnread(aTmp, aWho + "2", "tavern", aCapDefault, out string? aN3, out bool aT3, out SCP_TavernBacklogSkip aSkip3);
+            bool aWithin = !aSkip3.Applied && aIn.Count == aLimit && aIn[0].Seq == aTotal - 99 && aT3 && aN3 == Ts(aTotal - 100 + aLimit);
+            // 🔴 ③ 剛好在邊緣：游標＝窗口前一則（ts 相等不算未讀）⇒ 未讀剛好 aCapDefault 則、窗口外沒有比游標新的 ⇒ 不跳
+            SCP_TavernCursor.WriteCursor(aTmp, aWho + "3", Ts(aTotal - aCapDefault));
+            var aEdge = SCP_TavernCursor.ReadUnread(aTmp, aWho + "3", "tavern", aCapDefault, out _, out _, out SCP_TavernBacklogSkip aSkip4);
+            bool aEdgeOk = !aSkip4.Applied && aEdge.Count == aLimit && aEdge[0].Seq == aFirstKept;
+
+            // ④ 上限讀設定：寫 500 ⇒ 窗口＝seq 3601..4100、簡報說「設定檔」；寫不合法值 ⇒ 照預設 4000 並說出原因（不夾值）
+            SCP_TavernCursor.WriteCursor(aTmp, aWho + "4", Ts(1));
+            Directory.CreateDirectory(Path.Combine(aTmp, "ChatTavern"));
+            File.WriteAllText(SCP_TavernRenderSettings.PathOf(aTmp), "{\"backlog_scan_cap\": 500}");
+            var aB4 = SCP_TavernCatchup.Build(aTmp, aTmp, aWho + "4", "tavern", 1, true, false, 1);
+            int aFirst500 = aTotal - 500 + 1;   // 3601
+            bool aCapFromFile = aB4.Skip.Applied && aB4.Skip.FirstKeptSeq == aFirst500 && aB4.Body.Contains("**500** 則（設定檔");
+            SCP_TavernCursor.WriteCursor(aTmp, aWho + "5", Ts(1));
+            File.WriteAllText(SCP_TavernRenderSettings.PathOf(aTmp), "{\"backlog_scan_cap\": 50}");
+            var aB5 = SCP_TavernCatchup.Build(aTmp, aTmp, aWho + "5", "tavern", 1, true, false, 1);
+            bool aBadFallsBack = aB5.Skip.Applied && aB5.Skip.FirstKeptSeq == aFirstKept   // 照預設 4000，不是夾成 200
+                                 && aB5.Body.Contains("**" + aCapDefault + "** 則（用預設值") && aB5.Body.Contains("回捲上限不合法");
+
+            // ⑤ 舊參數：skip_backlog 還能帶、沒有作用（結果與不帶相同），簡報說一句
+            SCP_TavernCursor.WriteCursor(aTmp, aWho + "6", Ts(1));
+            File.Delete(SCP_TavernRenderSettings.PathOf(aTmp));
+            var aB6 = SCP_TavernCatchup.Build(aTmp, aTmp, aWho + "6", "tavern", 1, true, false, 1, true);
+            bool aLegacy = aB6.Skip.Applied && aB6.Skip.FirstKeptSeq == aFirstKept && aB6.Body.Contains("skip_backlog` 已不需要");
+
+            bool aOk = aAuto && aEndToEnd && aOnce && aWithin && aEdgeOk && aCapFromFile && aBadFallsBack && aLegacy;
             return new CheckRow(aName,
-                $"🔴 不帶 skip⇒拒推且游標不動={aRefuse}／skip⇒交最新 {aGot.Count} 則、首則 seq {(aGot.Count > 0 ? aGot[0].Seq : 0)}（期望 {aFirstKept}）、"
-                + $"跳過至少 {aSkip.SkippedInWindowAtLeast}={aExit}／端到端推到最新且點名={aEndToEnd}／上限內帶不帶 skip 逐筆相同={aSame}",
+                $"自動（不帶參數）：首批從窗口第一則 seq {(aGot.Count > 0 ? aGot[0].Seq : 0)}（期望 {aFirstKept}）起、點名跳過至少 {aSkip.SkippedAtLeast}（期望 {aLimit}）={aAuto}"
+                + $"／端到端推進＋點名＋說「用預設值」={aEndToEnd}／只跳一次={aOnce}"
+                + $"／🔴 上限內不跳={aWithin}、剛好邊緣不跳={aEdgeOk}"
+                + $"／上限讀設定（500⇒窗口 {aFirst500} 起）={aCapFromFile}、🔴 不合法照預設不夾值={aBadFallsBack}／舊 skip_backlog 無作用且說明={aLegacy}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    /// <summary>回捲上限的設定讀寫（TASK-0407）：沒設過／設了／不合法三態不同形；存檔擋不合法且零寫入；預設值不落檔；其他鍵保留。</summary>
+    static CheckRow TavernBacklogCapSettings()
+    {
+        const string aName = "酒館設定：回捲上限 沒設過／設了／不合法 三態不同形、存檔擋不合法零寫入、預設值不落檔、其他鍵保留（淨室，TASK-0407）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_capset_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(aTmp, "ChatTavern"));
+            string aPath = SCP_TavernRenderSettings.PathOf(aTmp);
+            // 沒設過（檔不存在）⇒ 預設、IsDefault、無錯誤
+            var s0 = SCP_TavernRenderSettings.Read(aTmp, out bool aEx0, out string? aE0);
+            bool aUnset = !aEx0 && s0.BacklogCap == SCP_TavernRenderSettings.DefaultBacklogCap && s0.BacklogCapIsDefault && aE0 == null;
+            // 存預設值（檔不存在）⇒ 不寫 backlog_scan_cap 這個鍵
+            bool aW0 = SCP_TavernRenderSettings.Write(aTmp, s0, out _);
+            bool aDefaultNotPersisted = aW0 && !File.ReadAllText(aPath).Contains(SCP_TavernRenderSettings.KeyBacklogCap);
+            // 設 1000 ⇒ 讀回 1000、不是預設
+            var s1 = s0.Clone(); s1.BacklogCap = 1000;
+            bool aW1 = SCP_TavernRenderSettings.Write(aTmp, s1, out _);
+            var r1 = SCP_TavernRenderSettings.Read(aTmp, out _, out string? aE1);
+            bool aSet = aW1 && r1.BacklogCap == 1000 && !r1.BacklogCapIsDefault && aE1 == null;
+            // 🔴 不合法（太小／太大）⇒ 存檔擋下、檔位元組不變
+            string aBefore = File.ReadAllText(aPath);
+            var bad = r1.Clone(); bad.BacklogCap = 100;
+            var bad2 = r1.Clone(); bad2.BacklogCap = SCP_TavernRenderSettings.MaxBacklogCap + 1;
+            bool aRefuse = !SCP_TavernRenderSettings.Write(aTmp, bad, out string? aWe1) && !SCP_TavernRenderSettings.Write(aTmp, bad2, out _)
+                           && File.ReadAllText(aPath) == aBefore && (aWe1 ?? "").Contains("回捲上限");
+            // 其他鍵保留（人手加的）
+            File.WriteAllText(aPath, "{\"message_body_clip\":600,\"_人加的\":7,\"backlog_scan_cap\":1000}");
+            var r2 = SCP_TavernRenderSettings.Read(aTmp, out _, out _); r2.BacklogCap = 2000;
+            bool aKeep = SCP_TavernRenderSettings.Write(aTmp, r2, out _) && File.ReadAllText(aPath).Contains("_人加的");
+            // 🔴 讀到壞值（檔裡手寫 50 / 字串）⇒ 照預設、IsDefault、錯誤說出來；⛔ 不夾成 200
+            File.WriteAllText(aPath, "{\"backlog_scan_cap\": 50}");
+            var r3 = SCP_TavernRenderSettings.Read(aTmp, out _, out string? aE3);
+            File.WriteAllText(aPath, "{\"backlog_scan_cap\": \"很多\"}");
+            var r4 = SCP_TavernRenderSettings.Read(aTmp, out _, out string? aE4);
+            bool aBad = r3.BacklogCap == SCP_TavernRenderSettings.DefaultBacklogCap && r3.BacklogCapIsDefault && (aE3 ?? "").Contains("不合法")
+                        && r4.BacklogCap == SCP_TavernRenderSettings.DefaultBacklogCap && r4.BacklogCapIsDefault && (aE4 ?? "").Contains("不合法");
+            // 壞 JSON ⇒ 預設＋讀不了（跟「沒設過」分開說）；此時存檔不覆寫壞檔
+            File.WriteAllText(aPath, "{ 壞掉");
+            var r5 = SCP_TavernRenderSettings.Read(aTmp, out bool aEx5, out string? aE5);
+            bool aBroken = aEx5 && r5.BacklogCap == SCP_TavernRenderSettings.DefaultBacklogCap && aE5 != null
+                           && !SCP_TavernRenderSettings.Write(aTmp, r5, out _) && File.ReadAllText(aPath) == "{ 壞掉";
+
+            bool aOk = aUnset && aDefaultNotPersisted && aSet && aRefuse && aKeep && aBad && aBroken;
+            return new CheckRow(aName,
+                $"沒設過⇒預設={aUnset}／預設值不落檔={aDefaultNotPersisted}／設 1000 讀回={aSet}／🔴 不合法存檔擋且位元組不變={aRefuse}"
+                + $"／其他鍵保留={aKeep}／🔴 讀到壞值照預設不夾值={aBad}／壞 JSON 讀不了且不覆寫={aBroken}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
