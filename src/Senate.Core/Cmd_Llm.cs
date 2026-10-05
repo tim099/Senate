@@ -10,7 +10,7 @@
 //   · 顯存偵測失敗 ⇒ 門檻來源標 fallback，⛔ 不假裝是量到的。
 //   · 試跑撞到生成上限 ⇒ ok=false＋truncated（半句話不是回答）。
 // ⚠ exit code：0 成功；1 擋下（零變動）；2 用法錯；4 量不到（找不到 ollama／服務打不到）；5 動手了但沒成功。
-// ⚠ 酒保（UCL_BartenderMentionService）仍呼叫 llm_admin.py —— 那支 python 不隨 Unity 頁刪除。
+// ⚠ 酒保（TASK-0365）走本檔的 Chat，不再經過 llm_admin.py；那支 python 目前只剩 Unity 的 UCL_LLMModelAdminPage 在用。
 #nullable enable
 using System.Diagnostics;
 using System.Globalization;
@@ -489,31 +489,31 @@ public sealed class Cmd_Llm : SCP_Cmd
             : $"生成上限 {iNumPredict} token 用完 ⇒ 這段是被切斷的半句。thinking 模型常把推理寫進回答欄 ⇒ 看起來像回答，其實是它在自言自語。");
     }
 
-    static SCP_CmdResult Test(string iModel, SCP_CmdArgs iArgs, bool iJson)
+    /// <summary>
+    /// 對 ollama 問一句（HTTP API）。試跑與酒保回覆共用這一份：逾時、生成上限、思考段、截斷判定都在這裡。
+    /// <paramref name="iCancel"/> 沒給 ＝ 用行程內的「中斷」取消源（後台頁的中斷鈕）。
+    /// </summary>
+    public static TestResult Chat(string iModel, string iPrompt, string iSystem, bool iThink, int iNumPredict, int iKeepAlive, int iTimeoutSec,
+                                  CancellationToken? iCancel = null)
     {
-        string aPrompt = iArgs.Get("prompt"); if (aPrompt.Trim().Length == 0) aPrompt = DefaultPrompt;
-        string aSystem = iArgs.Get("system");
-        int aNum = Int(iArgs.Get("num_predict"), 120), aKeep = Int(iArgs.Get("keep_alive"), -1), aTimeout = Math.Max(1, Int(iArgs.Get("timeout"), 60));
-        bool aThink = iArgs.Get("think") == "1";
-
         var aMessages = new List<object>();
-        if (aSystem.Length > 0) aMessages.Add(new { role = "system", content = aSystem });
-        aMessages.Add(new { role = "user", content = aPrompt });
-        var aBody = new Dictionary<string, object> { ["model"] = iModel, ["stream"] = false, ["think"] = aThink, ["options"] = new { num_predict = aNum }, ["messages"] = aMessages };
-        if (aKeep >= 0) aBody["keep_alive"] = aKeep.ToString(CultureInfo.InvariantCulture) + "s";
+        if (iSystem.Length > 0) aMessages.Add(new { role = "system", content = iSystem });
+        aMessages.Add(new { role = "user", content = iPrompt });
+        var aBody = new Dictionary<string, object> { ["model"] = iModel, ["stream"] = false, ["think"] = iThink, ["options"] = new { num_predict = iNumPredict }, ["messages"] = aMessages };
+        if (iKeepAlive >= 0) aBody["keep_alive"] = iKeepAlive.ToString(CultureInfo.InvariantCulture) + "s";
 
         var sw = Stopwatch.StartNew();
-        CancellationToken aCancel = LlmOllama.CurrentToken;
+        CancellationToken aCancel = iCancel ?? LlmOllama.CurrentToken;
         TestResult t;
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(aTimeout) };
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(iTimeoutSec) };
             using var aContent = new StringContent(JsonSerializer.Serialize(aBody, s_Json), Encoding.UTF8, "application/json");
             using HttpResponseMessage resp = http.PostAsync(LlmOllama.ApiBase + "/api/chat", aContent, aCancel).GetAwaiter().GetResult();
             string aText = resp.Content.ReadAsStringAsync(aCancel).GetAwaiter().GetResult();
             double sec = Math.Round(sw.Elapsed.TotalSeconds, 1);
             if (!resp.IsSuccessStatusCode)
-                t = new TestResult(false, false, iModel, aPrompt, sec, 0, 0, "", "", "", $"HTTP {(int)resp.StatusCode}：{Tail(aText)}");
+                t = new TestResult(false, false, iModel, iPrompt, sec, 0, 0, "", "", "", $"HTTP {(int)resp.StatusCode}：{Tail(aText)}");
             else
             {
                 using JsonDocument d = JsonDocument.Parse(aText);
@@ -525,23 +525,34 @@ public sealed class Cmd_Llm : SCP_Cmd
                 string aOut = Str(m, "content"), aThinkText = Str(m, "thinking");
                 int n = (int)Num("eval_count");
                 double tps = Math.Round(n / Math.Max(Num("eval_duration") / 1e9, 1e-6), 1);
-                (bool trunc, string note) = JudgeTruncation(n, aNum, aOut, Str(root, "done_reason"));
+                (bool trunc, string note) = JudgeTruncation(n, iNumPredict, aOut, Str(root, "done_reason"));
                 // 回應沒說完成、或沒有 message ⇒ 不是一個回答；回答是空的也不算成功（空字串發進酒館比退罐頭更糟）。
                 string aErr = m.ValueKind != JsonValueKind.Object || !aDone ? "ollama 的回應不完整（沒有 done=true 或沒有 message）：" + Tail(aText)
                             : !trunc && aOut.Length == 0 ? "回答是空的" : "";
-                t = new TestResult(!trunc && aErr.Length == 0, trunc, iModel, aPrompt, sec, n, tps, aOut, aThinkText, note, aErr);
+                t = new TestResult(!trunc && aErr.Length == 0, trunc, iModel, iPrompt, sec, n, tps, aOut, aThinkText, note, aErr);
             }
         }
         catch (OperationCanceledException) when (aCancel.IsCancellationRequested)
         {
-            t = new TestResult(false, false, iModel, aPrompt, Math.Round(sw.Elapsed.TotalSeconds, 1), 0, 0, "", "", "",
+            t = new TestResult(false, false, iModel, iPrompt, Math.Round(sw.Elapsed.TotalSeconds, 1), 0, 0, "", "", "",
                 "已中斷（連線已關閉，ollama 會停止這次生成；模型還在顯存裡，要卸載按「從顯存卸載」）");
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)
         {
-            t = new TestResult(false, false, iModel, aPrompt, Math.Round(sw.Elapsed.TotalSeconds, 1), 0, 0, "", "", "",
-                $"連線失敗／逾時（{aTimeout} 秒）：{e.Message} ⇒ 逾時不代表它死了，thinking 模型可能還在想；用 op=ps 看它載在哪、op=stop 把它從顯存放掉。");
+            t = new TestResult(false, false, iModel, iPrompt, Math.Round(sw.Elapsed.TotalSeconds, 1), 0, 0, "", "", "",
+                $"連線失敗／逾時（{iTimeoutSec} 秒）：{e.Message} ⇒ 逾時不代表它死了，thinking 模型可能還在想；用 op=ps 看它載在哪、op=stop 把它從顯存放掉。");
         }
+        return t;
+    }
+
+    static SCP_CmdResult Test(string iModel, SCP_CmdArgs iArgs, bool iJson)
+    {
+        string aPrompt = iArgs.Get("prompt"); if (aPrompt.Trim().Length == 0) aPrompt = DefaultPrompt;
+        string aSystem = iArgs.Get("system");
+        int aNum = Int(iArgs.Get("num_predict"), 120), aKeep = Int(iArgs.Get("keep_alive"), -1), aTimeout = Math.Max(1, Int(iArgs.Get("timeout"), 60));
+        bool aThink = iArgs.Get("think") == "1";
+
+        TestResult t = Chat(iModel, aPrompt, aSystem, aThink, aNum, aKeep, aTimeout);
 
         var r = new SCP_CmdResult { ExitCode = t.ok ? 0 : 5 };
         string? aLogErr = AppendTestLog(iArgs.Get("data_root"), t, aSystem, out string aLogPath);

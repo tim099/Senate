@@ -283,6 +283,8 @@ public sealed class LlmModelPage : SCP_GuiToolPage
         bool aDirty = aNow != m_Saved;
         if (g.Button("存檔設定", "llm/btn/save-settings")) SaveSettings(aNow);
         g.Label(aDirty ? "（設定有未存的修改）" : "（設定與存檔相同）");
+        // 酒保用的就是這裡的模型（TASK-0365）—— 人設、罐頭句、開關在酒保頁
+        if (g.Button("酒保設定", "llm/btn/to-bartender")) Controller?.Push(new BartenderPage(m_Model));
     }
 
     protected override void DrawContent(SCP_Ui g)

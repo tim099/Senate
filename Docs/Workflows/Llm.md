@@ -9,7 +9,7 @@ target_audience: [AI_Agent, Tools_Maintainer]
 # AI 模型（ollama，TASK-0383）
 
 > 一句話：**模型是 ollama 的，我們只管兩件 ollama 沒有的事 —— 目錄（這個專案挑過哪幾顆、要多少顯存）與結構化輸出。**
-> 取代 Unity 的 `UCL_LLMModelAdminPage`。⚠ UCL_Core 的 `llm_admin.py` **不跟著退場**：酒保（`UCL_BartenderMentionService`）還在呼叫它。
+> 取代 Unity 的 `UCL_LLMModelAdminPage`。酒保（TASK-0365）用的也是這裡的 `Cmd_Llm.Chat` —— 頂欄「酒保設定」跳到酒保頁，見 [`Bartender`](Bartender.md)。
 
 ## 1. 常用
 

@@ -471,6 +471,9 @@ public static class ServerHost
                     // Outbound（TASK-0316 ③）同一顆：酒館寫入端就在這裡，送的是它剛寫下的東西
                     try { SenateDiscordOutboundJob.Tick(aEndpointDataRoot!, iOut, iErr); }
                     catch (Exception e) { iErr("⚠ Discord Outbound 這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
+                    // 酒保（TASK-0365）同一顆：被 @／[help] 時回一句；LLM 生成在背景執行緒，⛔ 不擋心跳。開關在酒保設定檔，每一輪讀。
+                    try { SenateBartenderJob.Tick(aEndpointDataRoot!, iOut, iErr); }
+                    catch (Exception e) { iErr("⚠ 酒保這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
                 aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);

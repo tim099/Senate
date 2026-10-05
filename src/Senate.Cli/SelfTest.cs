@@ -183,6 +183,11 @@ public static partial class SelfTest
         One(nameof(LlmPageArgsAndTestContract), "llm", LlmPageArgsAndTestContract),
         One(nameof(LlmCancelRunning), "llm", LlmCancelRunning),
         One(nameof(LlmPageSettings), "llm", LlmPageSettings),
+        // 酒保重做（TASK-0365）：本體在 SelfTest.Bartender0365.cs
+        One(nameof(BartenderMentionExtract), "bartender", BartenderMentionExtract),
+        One(nameof(BartenderAliasStore), "bartender", BartenderAliasStore),
+        One(nameof(BartenderProcessBatch), "bartender", BartenderProcessBatch),
+        One(nameof(BartenderSettingsStore), "bartender", BartenderSettingsStore),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
