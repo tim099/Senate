@@ -29,7 +29,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
         "終局就是這裡：這一格**必須**在單一 process 內，所以它不會被原生化回 CLI";
 
     public override string Example =>
-        SCP_CmdRegistry.Invoke("tavern-write --arg data_root=<資料根> --arg room=tavern --arg-file msg_json=<檔>");
+        SCP_CmdRegistry.Invoke("tavern-write --arg room=tavern --arg-file msg_json=<檔>");
 
     /// <summary>
     /// 酒館走**自己那一顆** Server（TASK-0244 的落點）。

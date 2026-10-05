@@ -1,7 +1,7 @@
 ---
 title: 券系統（Voucher）— 資料格式與規矩
 description: 券＝以 id 區分的貨幣，一種券一個檔，綁 persona、跨區共用、由 Server 單一寫入、不記歷史
-last_updated: 2026-09-18
+last_updated: 2026-10-05
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -90,7 +90,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ```bash
 senate cmd voucher --arg op=balance|list|usage|grant|consume|migrate \
-    --arg letters_root=<絕對路徑> --arg persona=<誰> --arg voucher=<券 id> \
+    --arg persona=<誰> --arg voucher=<券 id> \
     [--arg amount=<正整數>] [--arg region=<區>] [--arg expires_at=<ISO8601>] \
     [--arg source=<為什麼>] [--arg ref=<指回現場>]
 ```
@@ -188,8 +188,7 @@ Tim 2026-09-18 拍板（B 案）：酒館券是**另一本帳**（個人錢包�
 
 ```bash
 senate cmd bank --arg op=pay --arg account=<帳號> --arg wallet_persona=<錢包主人> \
-    --arg amount=<金額> --arg kind=<為什麼> --arg ref=<指回現場> --arg caller=<誰> \
-    --arg letters_root=<券住哪> --arg bank_root=<帳本根>
+    --arg amount=<金額> --arg kind=<為什麼> --arg ref=<指回現場> --arg caller=<誰>
 #   🔢 paid_voucher / paid_token / active_spend / wallet_after / balance
 ```
 

@@ -136,7 +136,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                 + "⛔ 不是「帳號不存在」",
                 $"  · 給的是：`{aRoot}`",
                 $"  · 銀行根的形狀是 `<資料根>/Bank`（底下有 `{SCP_BankAccounts.AccountsDirName}/` 與 `ledger/`）",
-                "  ⇒ 要換一棵樹請改 `--arg data_root=<資料根>`，⛔ 別手填 `bank_root`（TASK-0260）");
+                "  ⇒ 路徑跟著 Senate 後台設定走（CLI 自動帶入）；要換一棵樹請改後台設定");
 
         string aOp = iArgs.Get("op");
         switch (aOp)

@@ -33,7 +33,7 @@ public class Cmd_TaskWrite : ServerDelegateCmd
         + "   args_json＝該 op 的參數（JSON 物件，值一律字串），鍵照 `SCP_TaskOps.Known`。";
 
     public override string Example =>
-        SCP_CmdRegistry.Invoke("task-write --arg data_root=<資料根> --arg op=comment --arg persona=Template --arg-file args_json=<檔>");
+        SCP_CmdRegistry.Invoke("task-write --arg op=comment --arg persona=Template --arg-file args_json=<檔>");
 
     /// <summary>
     /// **固定一條 lane <c>task</c>** —— 所有寫入序列化在同一條分道上。

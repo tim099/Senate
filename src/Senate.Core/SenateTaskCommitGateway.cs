@@ -66,14 +66,14 @@ public sealed class SenateTaskCommitGateway : SCP_ITaskCommitGateway
         {
             return SCP_TaskAdvanceVerdict.Unknown(
                 e.GetType().Name + ": " + e.Message + "（例外發生在委派過程中 ⇒ 送出與否不明）",
-                SCP_CmdRegistry.Invoke("tasks --arg data_root=" + m_DataRoot + " --arg index=" + iIndex) + "   # 狀態有沒有動再決定補不補");
+                SCP_CmdRegistry.Invoke("tasks --arg index=" + iIndex) + "   # 狀態有沒有動再決定補不補");
         }
         foreach (string l in aR.Lines) if (l.Length > 0) oLines.Add("  " + l);
         foreach (string o in aR.Outputs) oLines.Add("  📄 回傳檔：" + o);
         if (aR.ExitCode == 7)
             return SCP_TaskAdvanceVerdict.Unknown(
                 "**沒等到任務寫入端的回執** —— 它可能已經推進了",
-                SCP_CmdRegistry.Invoke("tasks --arg data_root=" + m_DataRoot + " --arg index=" + iIndex)
+                SCP_CmdRegistry.Invoke("tasks --arg index=" + iIndex)
                 + "   # 看得到這顆 sha ⇒ **推了，別再補**");
         if (!aR.Ok)
             return SCP_TaskAdvanceVerdict.Bad($"任務寫入端回報沒有寫（exit {aR.ExitCode}）—— 原因見上面的輸出／回傳檔");

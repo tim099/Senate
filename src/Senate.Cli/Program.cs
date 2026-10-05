@@ -111,6 +111,8 @@ public static class Program
         //   沒掛這一行的症狀是**錯誤訊息教人打一個在這個宿主上不存在的指令**，
         //   而那不會編譯失敗、不會有人回報，只會讓照著訊息打的人以為自己打錯。
         SCP.Core.Cmd.SCP_CmdRegistry.InvocationHint = "senate cmd";
+        // 路徑參數由本宿主照後台設定補上、不收手給值（擋在 `CmdScp`）⇒ 登記給 help，讓它別教人手打（TASK-0391）。
+        foreach (string aRootArg in k_HostOnlyRootArgs) SCP.Core.Cmd.SCP_CmdRegistry.HostFilledArgs.Add(aRootArg);
 
         // 宿主能力③：文件根（TASK-0337）。文件住在指令所在那一邊 —— Senate 的 Cmd ⇒ `Docs/`，SCP_Core 的 ⇒ `SCP_Core/Docs~/`。
         // ⚠ 兩個根都錨在 **exe 所在的 repo**（RepoRoot 從 AppContext.BaseDirectory 往上找 .git），⛔ 不用 cwd ——
@@ -1722,6 +1724,44 @@ public static class Program
             aRawArgs["name"] = aPositionalName;
         }
 
+        SCP.Core.Cmd.SCP_Cmd? aCmd = SCP.Core.Cmd.SCP_CmdRegistry.Find(aName);
+        // ── 路徑參數不接受手給：一律照 Senate 後台設定（TASK-0260 bank_root、TASK-0391 其餘四格）──
+        // 🩸 手給的路徑有兩種失效，兩種都**不報錯、只給錯值**：
+        //   ① 相對路徑：本層用 CLI 的 cwd 判斷「存在」而放行，轉給 Server 後照 **Server 的 cwd** 解析
+        //     ⇒ 開到一本不存在的券簿，`voucher` 成功回 0（2026-10-02 LY：20 張限時券全數作廢，而券就在磁碟上）。
+        //   ② 絕對路徑也會指到另一棵（舊的）樹 ⇒ 讀數全對，只是屬於別的地方；
+        //     `bank_root` 少了 `/Bank` 時每個帳號都回「沒有開戶」，跟帳號真的不存在逐字同形。
+        // ⇒ 路徑只有一個來源：後台「路徑管理」那一格（下面 `FillRootArg` 補上並印出來）。要換樹就改設定。
+        // ⭐ 為什麼擋在**這一層**，而不是把它們從各 Cmd 的 ArgSpecs 移除：
+        //   `FillRootArg` 第一行就是 `if (… || !DeclaresArg(iCmd, iArgName)) return;`
+        //   ⇒ **移除宣告的同一個動作就關掉了宿主注入**，而 Cmd 內 `iArgs.Get(...)`
+        //     會當場丟例外（框架刻意不回空字串）。⇒「移除宣告」與「宿主仍注入」互斥。
+        //   ⚠ 而「使用者給的」與「宿主補的」**只有在這個位置分得開** —— 再往下一行，
+        //     `FillRootArg` 就把它們寫進同一個 dict，Bind 那層看到的是同一種東西。
+        // ⛔ 內部呼叫端不受影響：它們走 `SCP_CmdRegistry.Dispatch(name, dict)`，不經過本層。
+        // ⚠ `target_data_root` 不在名單：它不指定路徑，是呼叫端（Editor）宣告「我是哪一棵」，
+        //   由 `UnityTarget` 拿去跟設定檔的專案比對，比不到就擋。
+        if (aCmd != null)
+        {
+            var aGivenRoots = new List<string>();
+            foreach (string aRootArg in k_HostOnlyRootArgs)
+                if (aRawArgs.ContainsKey(aRootArg) && DeclaresArg(aCmd, aRootArg)) aGivenRoots.Add(aRootArg);
+            if (aGivenRoots.Count > 0)
+            {
+                Console.Error.WriteLine($"✗ 路徑參數不接受手給：{string.Join("、", aGivenRoots.ConvertAll(n => "`" + n + "`"))}"
+                                        + " —— 路徑一律照 Senate 後台設定（「路徑管理」頁）");
+                Console.Error.WriteLine("  ⇒ 拿掉它再跑：CLI 會補上設定檔那一格並印出來");
+                Console.Error.WriteLine("  ⇒ 要換一棵資料樹：改後台設定，⛔ 不在指令上給路徑");
+                Console.Error.WriteLine("  ⛔ 手給的路徑由 CLI 這邊解析、轉給 Server 後照 Server 那邊解析，"
+                                        + "兩邊不一定是同一棵 —— 錯的樣子是「查到 0」，不是報錯");
+                var aLegal = new List<string>();
+                foreach (SCP.Core.Cmd.SCP_CmdArgSpec aSpec in aCmd.ArgSpecs)
+                    if (Array.IndexOf(k_HostOnlyRootArgs, aSpec.Name) < 0) aLegal.Add(aSpec.Name);
+                Console.Error.WriteLine("  · 這支 Cmd 吃的是：" + string.Join(" , ", aLegal));
+                return 2;
+            }
+        }
+
         // 便利：letters_root 沒給就用設定檔那一格。**印出來**，不靜默注入 ——
         // 靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」。
         //
@@ -1735,7 +1775,6 @@ public static class Program
         //   ⇒ 改 stderr 兩邊都保住：**告示照印**（不靜默注入），**值的通道乾淨**。
         //   ⛔ 而 `🔢 k = v` 刻意**不搬** —— 那是全部 Cmd 共用的機器讀數通道，
         //     搬它要動每一個呼叫端；契約寫成「stdout ＝ 值 ＋ 不含大括號的 `🔢` 行」即可。
-        SCP.Core.Cmd.SCP_Cmd? aCmd = SCP.Core.Cmd.SCP_CmdRegistry.Find(aName);
         if (aCmd != null && !aRawArgs.ContainsKey("letters_root") && DeclaresArg(aCmd, "letters_root"))
         {
             string? aRoot = null;
@@ -1760,32 +1799,6 @@ public static class Program
         //   並把不唯一的理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
         // ⚠ 兩格用**同一支**（TASK-0209）：原本只有 data_root 一格，加 bank_root 時複製一份的話
         //   就是「同一段邏輯兩份」—— 而兩份會漂，漂掉時兩邊都不報錯。
-        // ── TASK-0260：`bank_root` 不接受手填 ─────────────────────────────
-        // 🩸 症狀（kiara 2026-09-21 實測，變因單一）：`--arg bank_root=<資料根>`（少了 `/Bank`）
-        //   ⇒ 每個帳號都回「帳號 X 沒有開戶 ⇒ 真要用它：先開戶」，而 `accounts/<id>.json`
-        //     **就在磁碟上**。⇒「路徑給錯」與「帳號真的不存在」在輸出上**逐字同形**，
-        //     而錯誤訊息還主動指反方向 —— 照它做會憑空多開一個帳戶，原帳戶好端端在旁邊。
-        // ⭐ 為什麼擋在**這一層**，而不是把它從 `Cmd_Bank.ArgSpecs` 移除（原單的字面）：
-        //   `FillRootArg` 第一行就是 `if (… || !DeclaresArg(iCmd, iArgName)) return;`
-        //   ⇒ **移除宣告的同一個動作就關掉了宿主注入**，而 Cmd 內 `iArgs.Get("bank_root")`
-        //     會當場丟例外（框架刻意不回空字串）。⇒「移除宣告」與「宿主仍注入」互斥。
-        //   ⚠ 而「使用者填的」與「宿主填的」**只有在這個位置分得開** —— 再往下一行，
-        //     `FillRootArg` 就把它們寫進同一個 dict，Bind 那層看到的是同一種東西。
-        // ⛔ 內部呼叫端不受影響：它們走 `SCP_CmdRegistry.Dispatch(name, dict)`，不經過本層。
-        if (aCmd != null && aRawArgs.ContainsKey("bank_root") && DeclaresArg(aCmd, "bank_root"))
-        {
-            Console.Error.WriteLine("✗ `bank_root` 不接受手填 —— 它是 `<資料根>/Bank` 的**推導值**"
-                                    + "（Tim 2026-09-17 拍板：不額外設定）");
-            Console.Error.WriteLine("  ⇒ 要指另一棵樹請改 `--arg data_root=<資料根>`，銀行根會跟著推導");
-            Console.Error.WriteLine("  ⛔ 手填錯值的失效樣子是「帳號沒有開戶」"
-                                    + "—— 跟帳號真的不存在**逐字同形**（TASK-0260）");
-            var aLegal = new List<string>();
-            foreach (SCP.Core.Cmd.SCP_CmdArgSpec aSpec in aCmd.ArgSpecs)
-                if (aSpec.Name != "bank_root") aLegal.Add(aSpec.Name);
-            Console.Error.WriteLine("  · 這支 Cmd 吃的是：" + string.Join(" , ", aLegal));
-            return 2;
-        }
-
         // TASK-0310：宿主替使用者補的根（data_root／bank_root）**不是使用者給的** ——
         //   它們在 Bind 之前就塞進原始參數，於是被算成「顯式」，沒被讀時亮成「給了而從來沒被讀」
         //   （`voucher op=usage` 修完轉發端之後還剩一個 data_root，使用者沒打）。
@@ -1912,6 +1925,9 @@ public static class Program
         }
         Console.Error.WriteLine($"· {iArgName} 沒給，而設定檔那一格解不出來：{aRes.Error}");
     }
+
+    /// <summary>只由宿主照後台設定補上、CLI 不收手給值的路徑參數（擋的理由見 `CmdScp` 裡那段）。</summary>
+    static readonly string[] k_HostOnlyRootArgs = { "data_root", "letters_root", "bank_root", "glossary_root", "project_root" };
 
     static bool DeclaresArg(SCP.Core.Cmd.SCP_Cmd iCmd, string iName)
     {

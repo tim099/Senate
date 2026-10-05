@@ -115,7 +115,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         if (aFailure == "timeout" || aFailure == "unknown")
             return SCP_TavernPostVerdict.Unknown(
                 $"酒館寫入**結果不明**（delegate_failure={aFailure}）—— 它可能已經發出去了",
-                $"senate cmd tavern-query --arg data_root={aRoots.DataRoot} --arg kind=tail --arg room={Room}"
+                $"senate cmd tavern-query --arg kind=tail --arg room={Room}"
                 + "   # 看得到這一則 ⇒ **發了，別補發**；看不到 ⇒ 才補發");
         return SCP_TavernPostVerdict.Bad(
             $"酒館寫入確定沒發（delegate_failure={(aFailure.Length > 0 ? aFailure : "exit " + aWrite.ExitCode)}）");

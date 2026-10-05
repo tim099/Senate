@@ -1,7 +1,7 @@
 ---
 title: CLI 指令參考
 description: senate 的所有指令與旗標、exit code 語意、非 UI 操控介面的完整用法與 session 檔位置
-last_updated: 2026-10-03
+last_updated: 2026-10-05
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -312,14 +312,15 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 
 三條語意，都刻意如此：
 
-1. **顯式給值優先** —— 給了 `--arg data_root=…` 就完全不注入，也不印那行（`ucmd` 的 `--project` 同理）。
+1. **不收手給值** —— `data_root`／`letters_root`／`bank_root`／`glossary_root`／`project_root` 手給就 exit 2，路徑一律照後台設定；要換一棵資料樹就改後台「路徑管理」頁。
+   ⛔ 手給的路徑由 CLI 這邊解析、轉給 Server 後照 Server 那邊解析，兩邊不一定是同一棵 —— 錯的樣子是「查到 0」，不是報錯。
 2. **解不出來時什麼都不填** —— 例：有兩個啟用專案 ⇒ 資料根不唯一。這時印
    `· data_root 沒給，而設定檔那一格解不出來：<理由>`，然後讓 Cmd 自己用「缺必填參數」擋。
    ⛔ **不替人挑一個** —— 挑錯的症狀是「路徑全對，只是屬於別的專案」。
-3. **`iRequired` 不變** —— 「必填」講的是那支 Cmd 這一層真的需要它（它不讀任何設定檔），
-   「可以不打」講的是宿主的便利。**兩件事分開講**，所以 `cmd help <name>` 仍然標必填。
+3. **`iRequired` 不變** —— 「必填」講的是那支 Cmd 這一層真的需要它（它不讀任何設定檔）；
+   宿主把這幾格登記在 `SCP_CmdRegistry.HostFilledArgs`，`cmd help` 因此標成「宿主補」、指令清單不列進必填。
 
-⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支（現況 `data_root`：`sessions`／`tasks`／`task`／`task-write`／`canvas`／`msg`／`regions`）。
+⚠ 適用範圍是「**凡宣告該參數的 Cmd**」不是某幾支。
 > 🩸 為什麼要做成通則：那個值原本抄在每一個呼叫端、**含每一份文件範例裡**，
 > 而手抄的那份會過期 —— `sessions` 的用法範例到 2026-09-04 還印著 `D:/Unity/LY/AgentCommands`，
 > 而那是**另一台**的根。路徑的族與唯一決定點見
@@ -363,8 +364,7 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 那一天**有幾則訊息**對上**帳上有幾筆 `work_post`**，相減。**原生、唯讀、不需要 Editor／Server。**
 
 ```bash
-senate cmd payroll-audit --arg data_root=<AgentCommands> --arg region=Florin \
-    --arg letters_root=<letters> [--arg day=2026-09-21 | --arg days=10]
+senate cmd payroll-audit --arg region=Florin [--arg day=2026-09-21 | --arg days=10]
 ```
 
 🩸 **由來**：2026-09-22 整天 **0 筆** `work_post` 落帳而酒館有 **135 則**訊息，
@@ -406,10 +406,10 @@ senate cmd payroll-audit --arg data_root=<AgentCommands> --arg region=Florin \
 「**事件存在 ∧ 帳上沒有**」的事實差集，涵蓋帳上**每一種** kind（`payroll-audit` 只看 `work_post` 的逐日計數）。**原生、不需要 Editor。**
 
 ```bash
-senate cmd bank-reconcile --arg data_root=<AgentCommands> [--arg days=7 | --arg from=2026-09-18 --arg to=…]
-senate cmd bank-reconcile --arg data_root=<AgentCommands> --arg op=apply --arg confirm=1   # 補酒館那一類
-senate cmd bank-reconcile --arg data_root=<AgentCommands> --arg op=status                  # 上次什麼時候、什麼射程
-senate cmd bank-reconcile --arg data_root=<AgentCommands> --arg op=daily                   # 今天沒跑過才跑（給其他宿主掛）
+senate cmd bank-reconcile [--arg days=7 | --arg from=2026-09-18 --arg to=…]
+senate cmd bank-reconcile --arg op=apply --arg confirm=1   # 補酒館那一類
+senate cmd bank-reconcile --arg op=status                  # 上次什麼時候、什麼射程
+senate cmd bank-reconcile --arg op=daily                   # 今天沒跑過才跑（給其他宿主掛）
 ```
 
 **覆蓋表**（每一種 kind 說得出自己是哪一類；帳上出現而表上沒列的印成「⚠ 未分類」）：

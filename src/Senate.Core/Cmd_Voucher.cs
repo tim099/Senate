@@ -83,6 +83,18 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         string aPersona = iArgs.Get("persona").Trim();
         if (aPersona.Length == 0) return SCP_CmdResult.Fail(2, "✗ 缺 `persona`");
 
+        // 根或 persona 夾不存在 ⇒ **問不到**，⛔ 不回「成功、0 張」（TASK-0391）。
+        // 🩸 相對路徑的根會照本程序（Server）的 cwd 解析，指到一棵沒有這個人的樹；
+        //   那時回 0 跟「他真的沒有券」逐字同形，呼叫端（畫布付款）會照著告訴使用者「你沒有券」。
+        // ⚠ persona 夾在、券簿檔還沒長出來 ⇒ 0 是合法的（還沒拿過券），那一態照舊走下去。
+        if (!System.IO.Path.IsPathRooted(aLetters.Value))
+            return SCP_CmdResult.Fail(2, $"✗ `letters_root` 不是絕對路徑：`{aLetters.Value}`"
+                                         + " —— 本程序會照自己的目錄解析它，指到哪一棵不一定 ⇒ 問不到");
+        string aPersonaDir = SCP_LettersPaths.PersonaDir(aLetters, aPersona);
+        if (!System.IO.Directory.Exists(aPersonaDir))
+            return SCP_CmdResult.Fail(2, $"✗ 找不到 `{aPersona}` 的信件夾：`{aPersonaDir}`"
+                                         + " ⇒ 不知道他有幾張券（⛔ 不是 0）");
+
         string aOp = iArgs.Get("op");
         if (aOp == "list") return OpList(aLetters, aPersona);
         if (aOp == "swap") return OpSwap(aLetters, aPersona, iArgs);
