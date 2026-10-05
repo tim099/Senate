@@ -1,7 +1,7 @@
 ---
 title: 配置與建置流程
 description: setup / build / check 三支腳本的職責邊界、**改完 code 先 build 再對 exe 驗**、出廠驗收四關（2026-09-07 起與 build 分離、可挑項目）、single-file 的真正判準（實測修正過一次）、產物與版控
-last_updated: 2026-09-15
+last_updated: 2026-10-05
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -41,6 +41,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 senate selftest --list          # 有哪些項目與群
 ./check.sh --only core          # selftest 只跑 core 群（實測 6.2s → 1.6s）
 ./check.sh --gates self --only watch
+./check.sh --gates self --all   # selftest 全跑（預設只跑「常駐＋新」；規則見 Cli_Reference › selftest）
 ./senate.exe <你要驗的那件事>
 ```
 
@@ -85,7 +86,8 @@ senate selftest --list          # 有哪些項目與群
 
 
 1. `senate doctor` —— 證明那顆 exe 起得來、路徑解析對、設定讀得到
-2. `senate selftest` —— 自我對拍（2026-09-15 讀數：**46 過／0 失敗／4 跳過**；⚠ 跳過的沒有讀數，不算通過）。
+2. `senate selftest` —— 自我對拍。⚠ **預設只跑「常駐＋新」，不是全部**（收尾那行印射程；`--all` 才全跑；
+   規則與新增測試的規矩見 [Cli_Reference › selftest](../API/Cli_Reference.md)）。⚠ 跳過的沒有讀數，不算通過。
    **失敗回 exit 1，會讓整個 build 判未過**
 3. `senate ui --screenshot build/build_check.png` —— **真的開一次窗**
 4. **Server round-trip**（TASK-0100）—— 起一顆臨時 Server（背景）。

@@ -1,7 +1,7 @@
 ---
 title: senate.local.json 規格
 description: 本機設定檔的欄位、schemaVersion 的處置、AgentCommands 資料根的解析規則、三態不得同形的驗證原則
-last_updated: 2026-10-02 (install 區塊：pythonEnvRoot／modelsRoot，TASK-0375)
+last_updated: 2026-10-05 (selftest.json：selftest 預設跑哪些，TASK-0397)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -130,6 +130,23 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 - 存檔值的語意是各頁欄位的**預設值**：session（這一輪動過的）＞ 存檔值 ＞ 硬預設。
 
 ---
+
+## 第三個本機檔：`SenateData/config/selftest.json`（selftest 預設跑哪些）
+
+人編輯的、不入版控。語意與新增測試的規矩見 [Cli_Reference › selftest](Cli_Reference.md)，**本節只放格式**。
+
+```json
+{
+  "_說明": "…（程式第一次播種時寫的）",
+  "enabled":  ["BankIdRules", "…"],
+  "disabled": ["LlmTableParse", "…"]
+}
+```
+
+- `enabled`＝常駐（預設會跑）；`disabled`＝預設不跑；兩邊都沒列的新項目會跑一次，通過就自動進 `disabled`。同一項兩邊都列 ⇒ `disabled` 贏。
+- key 是 `senate selftest --list` 印的**項目名**（比對大小寫不敏感）。
+- 其他欄位（含 `"_說明"`）寫回時**原樣保留**；檔案讀不懂 ⇒ exit 2，不退回預設、不覆蓋。
+- 三條編輯路徑同一份檔：`senate selftest --enable／--disable`、後台頁「對拍設定」、手改。
 
 ## 相關文件
 

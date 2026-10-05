@@ -15,6 +15,7 @@
 #   ./check.sh --gates doctor,self  只跑指定關（doctor / self / gui / server）
 #   ./check.sh --only watch         第②關（selftest）只跑命中的項目 —— 見 senate selftest --list
 #   ./check.sh --only real,book --gates self
+#   ./check.sh --gates self --all   selftest 全跑（預設只跑「常駐＋新」，見 Docs/API/Cli_Reference.md › selftest）
 #
 # ⛔ 本腳本**不 build**。它驗的是磁碟上那顆 —— 而「那顆是哪一顆」由第①關的
 #   doctor 首列（build stamp ＋ 對照 HEAD）自己講（TASK-0138）。
@@ -24,12 +25,14 @@ exe="$root/publish/senate.exe"
 
 gates="doctor,self,gui,server"
 only=""
+all_selftest=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --gates) gates="${2:-}"; shift 2 ;;
     --gates=*) gates="${1#*=}"; shift ;;
     --only) only="${2:-}"; shift 2 ;;
     --only=*) only="${1#*=}"; shift ;;
+    --all) all_selftest=1; shift ;;
     -h|--help) sed -n '1,30p' "$0"; exit 0 ;;
     # ⛔ 不認得的參數**擋下來**，不靜默忽略：打錯 `--gate` 少一個 s 而全跑，
     #   讀數會跟「我選對了」一模一樣。
@@ -59,7 +62,9 @@ fi
 if has_gate self; then
   echo '── 出廠驗收② selftest（對 exe，不是對 Debug DLL）──'
   set +e
-  if [ -n "$only" ]; then "$exe" selftest --only "$only"; else "$exe" selftest; fi
+  if [ -n "$only" ]; then "$exe" selftest --only "$only"
+  elif [ "$all_selftest" -eq 1 ]; then "$exe" selftest --all
+  else "$exe" selftest; fi
   selftest=$?
   set -e
 fi
@@ -155,6 +160,10 @@ echo
 #   🩸 同一隻 summit 2026-08-05 一天被咬四次。⇒ 標記符號一律用單引號或全角。
 echo "⇒ 關卡：doctor=$code／selftest=$selftest／gui=$gui／server=$server　（「-」＝**沒跑**，不是通過）"
 [ -n "$only" ] && echo "⚠ 第②關帶了 --only $only ⇒ selftest **不是全部項目**"
+# TASK-0397：selftest 預設只跑「常駐＋新」—— 沒帶 --only／--all 時也**不是全部**，而那一行 selftest=0 看不出來。
+if has_gate self && [ -z "$only" ] && [ "$all_selftest" -ne 1 ]; then
+  echo "⚠ 第②關是**預設集合**（常駐＋新），關閉的項目沒跑 ⇒ 要全跑：./check.sh --gates self --all"
+fi
 bad=0
 for v in "$code" "$selftest" "$gui" "$server"; do
   [ "$v" = "-" ] && continue
