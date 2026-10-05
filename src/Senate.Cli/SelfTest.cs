@@ -132,6 +132,7 @@ public static partial class SelfTest
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
+        One(nameof(BankRequestSourceNotInLedgerNotice), "bank", BankRequestSourceNotInLedgerNotice),
         One(nameof(DocEditCleanRoom), "freetime", DocEditCleanRoom),
         One(nameof(PayoutApprovalGuardCleanRoom), "bank", PayoutApprovalGuardCleanRoom),
         One(nameof(RegisteredMailCleanRoom), "letters", RegisteredMailCleanRoom),
@@ -6219,6 +6220,43 @@ public static partial class SelfTest
             return new CheckRow(aName,
                 $"開單={aPay && aXfer}／補薪預設 mint={aBackfillMint}／審批端讀得到={aSeen}"
                 + $"／🔴 缺理由擋={aNoReason}、自轉擋={aSelf}、零寫入={aZeroWrite}／撤單={aCancel}、撤後不在待審={aGone}、再撤擋={aTwice}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    /// <summary>
+    /// bank-request 的 `source_kind`／`source_ref` 只記在請款單上、核准端不讀（TASK-0396）。
+    /// 🩸 help 曾寫「核准後寫進帳本」而帳本一律是 payout_request＋單號 ⇒ 照填的人以為對帳認得，實際仍列在差集（安靜給錯）。
+    /// ⇒ 給了就當場說；不給就**不**說（反向對照：一個永遠亮的警示跟沒有警示一樣沒用）。
+    /// </summary>
+    static CheckRow BankRequestSourceNotInLedgerNotice()
+    {
+        const string aName = "bank-request：給了 source_kind／source_ref ⇒ 當場說「不進帳本」；沒給 ⇒ 不說（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_bankreq_note_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(aTmp);
+            var aCmd = new SCP_Cmd_BankRequest();
+            SCP_CmdResult Run(Dictionary<string, string> iRaw)
+            {
+                var (a, aErrs) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, iRaw);   // 走 Bind：打錯參數名當場炸，不是靜默取預設值
+                if (a == null) throw new InvalidOperationException(string.Join("；", aErrs));
+                return aCmd.Execute(a);
+            }
+            var aBase = new Dictionary<string, string>
+            {
+                ["data_root"] = aTmp, ["op"] = "request", ["persona"] = "probe", ["target_bank"] = "Myth", ["amount"] = "1", ["reason"] = "淨室",
+            };
+            var aGiven = new Dictionary<string, string>(aBase) { ["source_kind"] = "work_post", ["source_ref"] = "tavern#seq=1" };
+            var aKindOnly = new Dictionary<string, string>(aBase) { ["source_kind"] = "work_post" };
+            SCP_CmdResult rGiven = Run(aGiven), rKindOnly = Run(aKindOnly), rNone = Run(aBase);
+            static bool Says(SCP_CmdResult r) => string.Join("\n", r.Lines).Contains("不會進帳本");
+            bool aOkExit = rGiven.ExitCode == 0 && rKindOnly.ExitCode == 0 && rNone.ExitCode == 0;
+            bool aOk = aOkExit && Says(rGiven) && Says(rKindOnly) && !Says(rNone);
+            return new CheckRow(aName,
+                $"都成功開單={aOkExit}／兩個都給⇒說={Says(rGiven)}／只給 source_kind⇒說={Says(rKindOnly)}／🔴 都沒給⇒不說={!Says(rNone)}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
