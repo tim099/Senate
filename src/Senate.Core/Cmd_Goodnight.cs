@@ -19,7 +19,7 @@ namespace Senate.Core;
 
 // ── ① check ──────────────────────────────────────────────────────
 
-public sealed class Cmd_GoodnightCheck : MorningLocalCmd
+public sealed class Cmd_GoodnightCheck : SCP_LocalRootsCmd
 {
     public override string Name => "goodnight-check";
     public override string Summary => "晚安①唯讀起手：待辦盤點＋酒館最後一眼＋Task 對帳 —— Senate 就地執行，不需要 Editor";
@@ -38,7 +38,7 @@ public sealed class Cmd_GoodnightCheck : MorningLocalCmd
 
 // ── ② portrait ───────────────────────────────────────────────────
 
-public sealed class Cmd_GoodnightPortrait : MorningLocalCmd
+public sealed class Cmd_GoodnightPortrait : SCP_LocalRootsCmd
 {
     public override string Name => "goodnight-portrait";
     public override string Summary => "晚安②見人畫像投遞（親筆），或顯式跳過 —— Senate 就地執行，不需要 Editor";
@@ -76,7 +76,7 @@ public sealed class Cmd_GoodnightPortrait : MorningLocalCmd
 
 // ── ③ letter ─────────────────────────────────────────────────────
 
-public sealed class Cmd_GoodnightLetter : MorningLocalCmd
+public sealed class Cmd_GoodnightLetter : SCP_LocalRootsCmd
 {
     public override string Name => "goodnight-letter";
     public override string Summary => "晚安③收尾信落檔（body 必須親筆）—— Senate 就地執行，不需要 Editor";
@@ -105,7 +105,7 @@ public sealed class Cmd_GoodnightLetter : MorningLocalCmd
 
 // ── ④ sleep ／ ⑤ logout ─────────────────────────────────────────
 
-public sealed class Cmd_GoodnightSleep : MorningLocalCmd
+public sealed class Cmd_GoodnightSleep : SCP_LocalRootsCmd
 {
     public override string Name => "goodnight-sleep";
     public override string Summary => "晚安④下線：收工閘→解鎖→關場→下線廣播→作廢 token —— Senate 就地執行，Editor 沒開也下得了線";
@@ -122,7 +122,7 @@ public sealed class Cmd_GoodnightSleep : MorningLocalCmd
         => GoodnightLocal.RunSleep(iRoots, iArgs, ioResult, iNoLetter: false);
 }
 
-public sealed class Cmd_GoodnightLogout : MorningLocalCmd
+public sealed class Cmd_GoodnightLogout : SCP_LocalRootsCmd
 {
     public override string Name => "goodnight-logout";
     public override string Summary => "手動登出／cleanup（不寫信，廣播標明未留信）—— Senate 就地執行，不需要 Editor";

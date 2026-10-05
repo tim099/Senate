@@ -130,6 +130,12 @@ public static class Program
         ServerDelegateCmd.RepoRootProvider = () => aRepoRoot;
         SCP.Core.Cmd.SCP_Cmd_Library.RootsProvider = () =>
             SenateLibraryRoots.Resolve(SenateConfig.Load(SenateConfig.DefaultPath(aRepoRoot)));
+        // skill 指令（TASK-0406）：源是 SCP_Core 的 Skills~，安裝對象固定是 Senate 自己（Tim 2026-10-05「只要裝到 D:\Unity\Senate」）。
+        // ⚠ 同文件根：錨在 exe 所在的 repo，⛔ 不看 cwd —— 從 LY 跑 `senate cmd skill` 也讀同一棵、裝同一處。
+        // 本地 Cmd 殼（早安／晚安／酒館發文，TASK-0406 搬進 SCP_Core）要的宿主能力：選專案、詞典根、環境標記、酒館寫入、發文提示。
+        SCP.Core.Cmd.SCP_LocalRootsCmd.Host = new SenateLocalCmdHost();
+        SCP.Core.Cmd.SCP_Cmd_Skill.RootsProvider = () =>
+            new SCP.Core.Cmd.SCP_SkillRoots(Path.Combine(aRepoRoot, "SCP_Core", "Skills~"), aRepoRoot);
         UnityDelegateCmd.ConfigProvider = () =>
         {
             string aCfgPath = SenateConfig.DefaultPath(aRepoRoot);

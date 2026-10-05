@@ -27,7 +27,7 @@ using SCP.Core.Tavern;
 
 namespace Senate.Core;
 
-public class Cmd_TavernPost : MorningLocalCmd
+public class Cmd_TavernPost : SCP_LocalRootsCmd
 {
     public override string Name => "tavern-post";
 
@@ -383,12 +383,6 @@ public class Cmd_TavernPost : MorningLocalCmd
         ioResult.ExitCode = iExit;
         foreach (string l in iReason.Split('\n')) ioResult.Lines.Add((ioResult.Lines.Count > 0 && l.StartsWith("  ") ? "" : "⛔ ") + l);
         return NullIfEmpty(iPath);
-    }
-
-    static string Value(SCP_CmdResult iR, string iKey)
-    {
-        foreach (var kv in iR.Values) if (kv.Key == iKey) return kv.Value;
-        return "";
     }
 
     /// <summary>系統發言沒有回傳檔 ⇒ 空字串要回 null（宿主才不會印一行空的「📄 回傳檔」）。</summary>
