@@ -35,6 +35,21 @@ public sealed class LlmModelPage : SCP_GuiToolPage
     const string TimeoutId = "llm/test/timeout";
     const int HistoryCount = 5;
 
+    /// <summary>
+    /// 頁面設定值（顯存門檻與試跑參數）。**按頂欄「存檔設定」才寫檔，⛔ 不自動存**（Tim 2026-10-05）。
+    /// 存在 `SenateData/config/llm_page.json`（本機設定，不入版控 —— 同 Unity 頁存在 EditorPrefs 的性質）。
+    /// </summary>
+    internal sealed record Settings(string Basis, string ManualGb, bool FitOnly, string TestModel, string Prompt, string System,
+                                    bool Think, string NumPredict, string KeepAlive, string Timeout);
+
+    /// <summary>
+    /// 初始值（沒存過設定檔時用；Tim 2026-10-05 指定）：酒保情境的一句招呼＋人設，開思考段、上限給足 ——
+    /// 小模型在 thinking 段就吃掉上百 token，120 常常還沒想完就被截斷。⚠ 只是頁面的初值；CLI `op=test` 的預設照舊。
+    /// </summary>
+    internal static readonly Settings Defaults = new("free", "", true, "qwen3:0.6b", "跟剛進門的客人打個招呼", "你是傲嬌的貓娘", true, "4096", "120", "60");
+
+    public const string SettingsFileName = "llm_page.json";
+
     internal sealed record Model(string Id, string Size, string Processor);
     internal sealed record CatalogRow(string Id, string Params, double SizeGb, double VramGb, int Zh, bool Recommend, string Note, bool Installed, bool Exact, bool Fits);
     internal sealed record Vram(bool GpuOk, string GpuName, double TotalGb, double FreeGb, double UsedGb, string Error, double BudgetGb, string Source);
@@ -44,6 +59,8 @@ public sealed class LlmModelPage : SCP_GuiToolPage
     sealed record Done(string Kind, string Label, SCP_CmdResult R);
 
     readonly SenateModel m_Model;
+    Settings m_Saved = Defaults;    // 設定檔裡的值（＝欄位的初值；比對它判斷「有沒有未存的修改」）
+    string m_SettingsSource = "";   // 這份設定從哪來：設定檔／初始值（沒存過）／初始值（設定檔讀不了）
     StatusView? m_Status;
     string? m_StatusError;
     bool m_StatusStale = true;
@@ -68,6 +85,62 @@ public sealed class LlmModelPage : SCP_GuiToolPage
         base.OnPush();
         m_StatusStale = true;
         m_Armed = null;
+        m_Saved = LoadSettings(SettingsPath, out m_SettingsSource);
+    }
+
+    string SettingsPath => Path.Combine(SenatePaths.ConfigDir(m_Model.RepoRoot), SettingsFileName);
+
+    /// <summary>
+    /// 讀設定檔。沒有檔 ⇒ 初始值；讀不了 ⇒ 初始值，但 oSource 明講是「讀不了」（⛔ 不跟「沒存過」同形 ——
+    /// 前者按存檔會蓋掉一份壞檔，使用者要知道）。缺的欄位逐格補初始值（舊檔少一格不必整份作廢）。
+    /// </summary>
+    internal static Settings LoadSettings(string iPath, out string oSource)
+    {
+        if (!File.Exists(iPath)) { oSource = "初始值（還沒存過設定）"; return Defaults; }
+        try
+        {
+            using JsonDocument d = JsonDocument.Parse(File.ReadAllText(iPath));
+            JsonElement r = d.RootElement;
+            string Str(string k, string iDef) => r.TryGetProperty(k, out JsonElement x) && x.ValueKind == JsonValueKind.String ? x.GetString() ?? iDef : iDef;
+            bool Bool(string k, bool iDef) => r.TryGetProperty(k, out JsonElement x) && x.ValueKind is JsonValueKind.True or JsonValueKind.False ? x.GetBoolean() : iDef;
+            Settings z = Defaults;
+            oSource = "設定檔 " + iPath;
+            return new Settings(Str("vram_basis", z.Basis), Str("vram_manual_gb", z.ManualGb), Bool("fit_only", z.FitOnly), Str("test_model", z.TestModel),
+                                Str("prompt", z.Prompt), Str("system", z.System), Bool("think", z.Think), Str("num_predict", z.NumPredict),
+                                Str("keep_alive", z.KeepAlive), Str("timeout", z.Timeout));
+        }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            oSource = $"初始值（設定檔讀不了：{e.Message} —— 按存檔會覆蓋它）";
+            return Defaults;
+        }
+    }
+
+    internal static string SettingsJson(Settings s) => JsonSerializer.Serialize(new
+    {
+        vram_basis = s.Basis, vram_manual_gb = s.ManualGb, fit_only = s.FitOnly, test_model = s.TestModel,
+        prompt = s.Prompt, system = s.System, think = s.Think, num_predict = s.NumPredict, keep_alive = s.KeepAlive, timeout = s.Timeout,
+    }, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+
+    /// <summary>畫面上現在的值（沒碰過的欄位＝設定檔的值）。收合的區塊不建節點，所以一律用 FieldValue／ToggleValue 讀，不靠元件回傳。</summary>
+    internal static Settings Current(SCP_Ui g, Settings iSaved) => new(
+        g.FieldValue(BasisId + "/value", iSaved.Basis), g.FieldValue(ManualId, iSaved.ManualGb), g.ToggleValue(FitOnlyId, iSaved.FitOnly),
+        g.FieldValue(TestModelId + "/value", iSaved.TestModel), g.FieldValue(PromptId, iSaved.Prompt), g.FieldValue(SystemId, iSaved.System),
+        g.ToggleValue(ThinkId, iSaved.Think), g.FieldValue(NumPredictId, iSaved.NumPredict), g.FieldValue(KeepAliveId, iSaved.KeepAlive),
+        g.FieldValue(TimeoutId, iSaved.Timeout));
+
+    void SaveSettings(Settings iNow)
+    {
+        try
+        {
+            SCP.Core.Letters.SCP_CmdPayload.WriteAtomic(SettingsPath, SettingsJson(iNow) + "\n");
+            m_Saved = LoadSettings(SettingsPath, out m_SettingsSource);   // 讀回來才算數：畫面比對的是磁碟上的那份
+            m_Message = m_Saved == iNow ? "設定已存檔：" + SettingsPath : "[注意] 存檔後讀回來的值跟畫面不一樣 —— " + m_SettingsSource;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            m_Message = "[注意] 設定沒存成：" + e.Message;
+        }
     }
 
     // ── job ─────────────────────────────────────────────────────
@@ -193,10 +266,11 @@ public sealed class LlmModelPage : SCP_GuiToolPage
     /// 量狀態要帶的參數。⚠ 下拉選單的值存在 `&lt;key&gt;/value`，不是 key 本身 ——
     /// 讀錯那一格的話選「總量」會被安靜吃掉（永遠送 free）。selftest 有一格對拍。
     /// </summary>
-    internal static Dictionary<string, string> StatusArgs(SCP_Ui g)
+    internal static Dictionary<string, string> StatusArgs(SCP_Ui g, Settings iSaved)
     {
-        var a = new Dictionary<string, string> { ["op"] = "status", ["format"] = "json", ["vram_basis"] = g.FieldValue(BasisId + "/value", "free") };
-        string aManual = g.FieldValue(ManualId, "").Trim();
+        Settings c = Current(g, iSaved);
+        var a = new Dictionary<string, string> { ["op"] = "status", ["format"] = "json", ["vram_basis"] = c.Basis };
+        string aManual = c.ManualGb.Trim();
         if (aManual.Length > 0) a["vram_budget"] = aManual;
         return a;
     }
@@ -204,15 +278,21 @@ public sealed class LlmModelPage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui g)
     {
         if (!Busy && g.Button("重新量狀態", "llm/btn/reload")) m_StatusStale = true;
+        // 設定只在按這顆時寫檔（Tim 2026-10-05：要存檔鈕，⛔ 不自動存）
+        Settings aNow = Current(g, m_Saved);
+        bool aDirty = aNow != m_Saved;
+        if (g.Button("存檔設定", "llm/btn/save-settings")) SaveSettings(aNow);
+        g.Label(aDirty ? "（設定有未存的修改）" : "（設定與存檔相同）");
     }
 
     protected override void DrawContent(SCP_Ui g)
     {
         PumpJobs();
-        if (m_StatusStale && !Busy) Start("status", "量狀態", StatusArgs(g));
+        if (m_StatusStale && !Busy) Start("status", "量狀態", StatusArgs(g, m_Saved));
 
         g.Title("AI 模型（ollama）");
         g.Note("本地大語言模型（目前給酒保用）。本頁走 `senate cmd llm`（同一套實作）；模型由 ollama 持有，不走安裝管理頁。");
+        g.Note("頁面設定（顯存門檻、試跑參數）來源：" + m_SettingsSource + "　—— 改了要按頂欄「存檔設定」才會留著，不會自動存。");
         if (Busy)
         {
             g.Note($"執行中：{m_JobLabel}（下載可能要好幾分鐘；完成後自動更新）");
@@ -272,8 +352,8 @@ public sealed class LlmModelPage : SCP_GuiToolPage
             if (v.GpuOk) g.Label($"{v.GpuName}　總量 {v.TotalGb} GB／已用 {v.UsedGb} GB／可用 {v.FreeGb} GB");
             if (v.Error.Length > 0) g.Note("[注意] 顯存偵測：" + v.Error);
             if (v.Source == "fallback") g.Note("[注意] 這個門檻是保底值，不是量到的 —— 請在下面手動填寫。");
-            g.Dropdown("自動偵測時拿哪個數字當門檻", new List<SCP_GuiOption> { new("free", "可用量（扣掉其他程式已佔的）"), new("total", "總量（這張卡買得起哪顆）") }, "free", BasisId);
-            g.TextField("手動門檻（GB；空白＝自動偵測）", "", ManualId);
+            g.Dropdown("自動偵測時拿哪個數字當門檻", new List<SCP_GuiOption> { new("free", "可用量（扣掉其他程式已佔的）"), new("total", "總量（這張卡買得起哪顆）") }, m_Saved.Basis, BasisId);
+            g.TextField("手動門檻（GB；空白＝自動偵測）", m_Saved.ManualGb, ManualId);
             g.Note("門檻只決定目錄預設列不列這顆，不影響能不能下載、也不影響實際載入。顯存不夠時 ollama 不報錯，只會把層數丟給 CPU（慢一個數量級）。");
             if (!Busy && g.Button("套用並重新量", "llm/btn/vram-apply")) m_StatusStale = true;
         }
@@ -305,7 +385,7 @@ public sealed class LlmModelPage : SCP_GuiToolPage
         StatusView s = m_Status!;
         using (g.Box("模型目錄", "llm/catalog"))
         {
-            bool aFitOnly = g.Toggle($"只列放得下的（顯存約 ≤ {s.Vram.BudgetGb.ToString("0.##", CultureInfo.InvariantCulture)} GB）", true, FitOnlyId);
+            bool aFitOnly = g.Toggle($"只列放得下的（顯存約 ≤ {s.Vram.BudgetGb.ToString("0.##", CultureInfo.InvariantCulture)} GB）", m_Saved.FitOnly, FitOnlyId);
             bool aKnown = s.Installed != null;
             var aRows = s.Catalog.Where(c => !aFitOnly || c.Fits || c.Installed).ToList();
             using (g.Table("動作", "模型", "參數", "下載", "顯存約", "中文", "狀態", "說明"))
@@ -383,14 +463,16 @@ public sealed class LlmModelPage : SCP_GuiToolPage
             var aOptions = s.Installed.Select(m => new SCP_GuiOption(m.Id)).ToList();
             // 選過的那顆被移除了 ⇒ 換回清單第一顆（不然它會一直送一個不存在的模型，試跑回 404）
             string aPicked = g.FieldValue(TestModelId + "/value", "");
-            if (aPicked.Length > 0 && !s.Installed.Any(m => m.Id == aPicked)) g.SetField(TestModelId + "/value", s.Installed[0].Id);
-            string aModel = g.Dropdown("模型", aOptions, s.Installed[0].Id, TestModelId);
-            string aPrompt = g.TextField("問一句", Cmd_Llm.DefaultPrompt, PromptId);
-            string aSystem = g.TextArea("system prompt（例如酒保人設；空白＝不帶）", "", SystemId, 4);
-            bool aThink = g.Toggle("把思考段一起要回來（診斷 thinking 模型）", false, ThinkId);
-            string aNum = g.TextField("生成上限（token）", "120", NumPredictId);
-            string aKeep = g.TextField("用完幾秒後卸載（-1＝ollama 預設 5 分鐘）", "120", KeepAliveId);
-            string aTimeout = g.TextField("等待上限（秒）", "60", TimeoutId);
+            // 預設那顆沒裝 ⇒ 退回清單第一顆（⛔ 不送一個不存在的模型）
+            string aDefault = s.Installed.Any(m => m.Id == m_Saved.TestModel) ? m_Saved.TestModel : s.Installed[0].Id;
+            if (aPicked.Length > 0 && !s.Installed.Any(m => m.Id == aPicked)) g.SetField(TestModelId + "/value", aDefault);
+            string aModel = g.Dropdown("模型", aOptions, aDefault, TestModelId);
+            string aPrompt = g.TextField("問一句", m_Saved.Prompt, PromptId);
+            string aSystem = g.TextArea("system prompt（例如酒保人設；空白＝不帶）", m_Saved.System, SystemId, 4);
+            bool aThink = g.Toggle("把思考段一起要回來（診斷 thinking 模型）", m_Saved.Think, ThinkId);
+            string aNum = g.TextField("生成上限（token）", m_Saved.NumPredict, NumPredictId);
+            string aKeep = g.TextField("用完幾秒後卸載（-1＝ollama 預設 5 分鐘）", m_Saved.KeepAlive, KeepAliveId);
+            string aTimeout = g.TextField("等待上限（秒）", m_Saved.Timeout, TimeoutId);
             g.Note("第一次會把模型載進顯存（冷啟動可能幾十秒）。逾時不代表它死了 —— thinking 模型可能還在想；看上面「載入顯存中」，必要時卸載。");
             if (!Busy && g.Button("試跑", "llm/btn/test"))
             {

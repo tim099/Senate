@@ -125,6 +125,44 @@ public static partial class SelfTest
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
     }
 
+    static CheckRow LlmPageSettings()
+    {
+        const string aName = "AI 模型・頁面設定：沒存過＝初始值／存了讀得回來／舊檔缺欄位逐格補／壞檔不冒充「沒存過」／沒碰過的欄位用存檔值（TASK-0383）";
+        string aDir = Path.Combine(Path.GetTempPath(), "senate-selftest-llm-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var aFails = new List<string>();
+            Directory.CreateDirectory(aDir);
+            string aPath = Path.Combine(aDir, LlmModelPage.SettingsFileName);
+
+            if (LlmModelPage.LoadSettings(aPath, out string src0) != LlmModelPage.Defaults || !src0.Contains("還沒存過")) aFails.Add("沒有檔卻不是初始值");
+            if (LlmModelPage.Defaults.NumPredict != "4096" || !LlmModelPage.Defaults.Think || LlmModelPage.Defaults.TestModel != "qwen3:0.6b") aFails.Add("初始值跟 Tim 指定的不同");
+
+            var aMine = LlmModelPage.Defaults with { Basis = "total", Prompt = "改過的一句", Think = false, NumPredict = "256" };
+            File.WriteAllText(aPath, LlmModelPage.SettingsJson(aMine));
+            if (LlmModelPage.LoadSettings(aPath, out _) != aMine) aFails.Add("存了讀不回同一份");
+
+            File.WriteAllText(aPath, "{\"prompt\":\"只有這一格\"}");
+            var aPartial = LlmModelPage.LoadSettings(aPath, out _);
+            if (aPartial.Prompt != "只有這一格" || aPartial.NumPredict != LlmModelPage.Defaults.NumPredict) aFails.Add("舊檔缺欄位沒有逐格補初始值");
+
+            File.WriteAllText(aPath, "{壞掉");
+            var aBad = LlmModelPage.LoadSettings(aPath, out string srcBad);
+            if (aBad != LlmModelPage.Defaults || !srcBad.Contains("讀不了")) aFails.Add("🔴 壞檔被說成「沒存過」（按存檔會安靜蓋掉它）");
+
+            // 存了 total、使用者沒碰過下拉 ⇒ 送出去的要是 total（沒碰過的欄位讀存檔值，⛔ 不是寫死的 free）
+            var g = new SCP.Core.Gui.SCP_Ui();
+            if (LlmModelPage.StatusArgs(g, aMine)["vram_basis"] != "total") aFails.Add("🔴 存檔是 total，沒碰過下拉卻送 free");
+            if (LlmModelPage.Current(g, aMine) != aMine) aFails.Add("沒碰過任何欄位卻被判成有未存的修改");
+            g.SetField("llm/test/prompt", "又改了");
+            if (LlmModelPage.Current(g, aMine) == aMine) aFails.Add("改了欄位卻沒被判成有未存的修改");
+
+            return new CheckRow(aName, aFails.Count == 0 ? "五種情況逐格對上（temp 目錄）" : string.Join("；", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aDir, true); } catch (IOException) { } }
+    }
+
     static CheckRow LlmCancelRunning()
     {
         const string aName = "AI 模型・中斷：跑到一半的外部程式被殺掉並回「已中斷」（不是逾時、不是成功）；中斷之後下一個動作照常（TASK-0383）";
@@ -164,10 +202,10 @@ public static partial class SelfTest
             var aOpts = new List<SCP.Core.Gui.SCP_GuiOption> { new("free"), new("total") };
             g.SetField("llm/sel/basis/value", "total");
             string aShown = SCP.Core.Gui.SCP_GuiWidgets.Dropdown(g, "門檻", aOpts, "free", "llm/sel/basis");
-            string aSent = LlmModelPage.StatusArgs(g)["vram_basis"];
+            string aSent = LlmModelPage.StatusArgs(g, LlmModelPage.Defaults)["vram_basis"];
             if (aShown != "total" || aSent != "total") aFails.Add($"🔴 下拉顯示 {aShown}、送出 {aSent}（選了總量卻被吃掉）");
             g.SetField("llm/vram-manual", "6.5");
-            if (!LlmModelPage.StatusArgs(g).TryGetValue("vram_budget", out string? aMan) || aMan != "6.5") aFails.Add("手動門檻沒送出去");
+            if (!LlmModelPage.StatusArgs(g, LlmModelPage.Defaults).TryGetValue("vram_budget", out string? aMan) || aMan != "6.5") aFails.Add("手動門檻沒送出去");
 
             // ② 試跑結果 Cmd → 頁面：截斷、失敗、成功各一份
             Cmd_Llm.TestResult T(bool ok, bool tr, string err) => new(ok, tr, "qwen3:0.6b", "p", 1.2, 8, 30, tr ? "" : "您好", "想", "", err);
