@@ -175,6 +175,13 @@ public static partial class SelfTest
         One(nameof(KbPageStatusContract), "kb", KbPageStatusContract),
         One(nameof(KbEvalAnswerable), "kb", KbEvalAnswerable),
         One(nameof(KbDecayAndModes), "kb", KbDecayAndModes),
+        // AI 模型（ollama）頁搬到 Senate（TASK-0383）：本體在 SelfTest.Llm0383.cs
+        One(nameof(LlmTableParse), "llm", LlmTableParse),
+        One(nameof(LlmCatalogMatch), "llm", LlmCatalogMatch),
+        One(nameof(LlmTruncation), "llm", LlmTruncation),
+        One(nameof(LlmPageStatusContract), "llm", LlmPageStatusContract),
+        One(nameof(LlmPageArgsAndTestContract), "llm", LlmPageArgsAndTestContract),
+        One(nameof(LlmCancelRunning), "llm", LlmCancelRunning),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),

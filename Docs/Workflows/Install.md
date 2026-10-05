@@ -2,7 +2,7 @@
 title: 安裝系統 —— 模型與 Python 套件的安裝、解除安裝、安裝位置（含 skill 缺相依時的詢問流程）
 description: senate cmd install 與「安裝管理」頁怎麼用：相依清單怎麼加項目、五種狀態、Python 環境與模型位置怎麼選、兩道解除安裝的擋，以及 skill 缺相依時 agent 要先問使用者、同意後才用 CLI 安裝
 cmds: [install]
-last_updated: 2026-10-02
+last_updated: 2026-10-05
 target_audience: [AI_Agent, Tools_Maintainer]
 ---
 
@@ -126,6 +126,7 @@ senate cmd install --arg op=install --arg ids=<那幾個 id> --arg confirm=1
 
 ## 7. 不在這裡的
 
-- Unity 那三頁（影音管理、知識庫管理、AI 模型管理）之後廢棄、搬到 Senate 並依賴這套系統 —— **搬頁是另外的單**。
-- `media_admin.py` 的幾個特例（onnxruntime-gpu 的拆裝順序、faster-whisper 的 `--no-deps`）還沒收進清單；搬影音頁時一起處理。
-- ollama（LLM 模型）不是 pip 也不是 HF 模型 —— 要收的話是新增一種 kind。
+- 影音管理頁搬到 Senate 並依賴這套系統：TASK-0392（知識庫頁已搬，TASK-0381）。
+- `media_admin.py` 的幾個特例（onnxruntime-gpu 的拆裝順序、faster-whisper 的 `--no-deps`）還沒收進清單；TASK-0392 一起處理。
+- ⭐ **ollama 與它的模型不進這套系統**（Tim 2026-10-05 拍板）：模型由 ollama 服務持有，誰讀 `ollama list` 都是同一份；
+  由「AI 模型」頁與 `senate cmd llm` 自己管 —— 見 [`Llm`](Llm.md)。代價：skill 的 `requires_install` 管不到 ollama 模型。
