@@ -194,7 +194,12 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                 if (e.commit_shas.Count > 0) g.Label("commit：" + string.Join(" ", e.commit_shas));
                 if (e.memory_topic.Length > 0) g.Label("工作記憶：" + e.memory_topic);
                 string aPath = SCP_TaskIO.TaskPath(new SCP_DataRoot(m_DataRoot), e.index);
-                g.Note("單檔：" + aPath);
+                using (g.Row())
+                {
+                    // ⚠ 在檢視頁裡**編輯**單檔 ＝ 繞過 `cmd task` 的寫入端（不進時間線、不發通知）—— 那一頁的存檔有衝突閘，但閘不了這件事本身
+                    if (g.Button("開啟單檔", "tasks/btn/open-file/" + e.index)) MarkdownViewerPage.Open(g, Controller, m_Model, aPath);
+                    g.Note("單檔：" + aPath);
+                }
 
                 string aCriteria = SCP_TaskStore.ReadSection(aPath, "## 驗收標準");
                 int aDone = SCP_TaskStore.ListCheckedCriteria(aCriteria).Count, aOpenBox = SCP_TaskStore.ListUncheckedCriteria(aCriteria).Count;

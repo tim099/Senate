@@ -384,6 +384,22 @@ public sealed class GuiImGuiRenderer
                 break;
             }
 
+            case SCP_GuiNodeKind.TextField when iNode.Lines > 0 && !iNode.Masked:
+            {
+                // 多行（SCP_Ui.TextArea）：標籤自佔一行、編輯區吃滿剩餘寬度 —— 編輯整份檔時 LabelLeft 那 150px 是浪費。
+                string aVal = Fields.TryGetValue(iNode.Id, out string? s) ? s : iNode.Value;
+                if (iNode.Text.Length > 0) ImGui.TextUnformatted(T(iNode.Text));
+                float aW = iForcedWidth > 0f ? iForcedWidth : ImGui.GetContentRegionAvail().X;
+                float aH = iNode.Lines * ImGui.GetTextLineHeightWithSpacing() + ImGui.GetStyle().FramePadding.Y * 2f;
+                // ⚠ 緩衝上限要跟著內容長：單行那格的 4096 會把一份長文件**安靜地截斷**（ImGui 只是不讓你再打字，不報錯）。
+                //   UTF-8 位元組數 ≠ 字數（中文一字 3 位元組）⇒ 以位元組數為底再留一大段餘裕。
+                uint aMax = (uint)Math.Max(64 * 1024, System.Text.Encoding.UTF8.GetByteCount(aVal) * 2 + 16 * 1024);
+                if (ImGui.InputTextMultiline("##" + iNode.Id, ref aVal, aMax, new Vector2(aW, aH), ImGuiInputTextFlags.AllowTabInput))
+                    Fields[iNode.Id] = aVal;
+                if (ImGui.IsItemDeactivatedAfterEdit()) m_Committed.Add(iNode.Id);
+                break;
+            }
+
             case SCP_GuiNodeKind.TextField:
             {
                 string aVal = Fields.TryGetValue(iNode.Id, out string? s) ? s : iNode.Value;

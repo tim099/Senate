@@ -1,7 +1,7 @@
 ---
 title: UI 框架 — 中間層與四種驅動方式
 description: immediate-mode 撰寫 API → 節點樹 → renderer 的設計、id 產生規則（顯式 key 是契約）、事件慢一幀的語意、頁面要宿主的值一律問介面（不自存第二份）、非 UI 操控介面與 session 狀態
-last_updated: 2026-10-02 (Slider 數值滑桿＋「編輯完成」事件 SCP_GuiInput.Committed；TASK-0377)
+last_updated: 2026-10-05 (TextArea 多行輸入；第一個消費者 MarkdownViewerPage)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -298,6 +298,24 @@ ImGui renderer（`SliderFloat` ＋ `AlwaysClamp`）／可互動元件清單。
 | key 必填（逐字採用） | 自動 id —— 會漂，而這個值要進 session、要被 `--set` 指名 |
 
 ⚠ 小數格式是 C# 自訂格式（`0`／`0.##`／`0.00`），ImGui 那側由 `SCP_Ui.SliderDecimals` 換成 `%.Nf`。
+
+---
+
+## 多行輸入：`SCP_Ui.TextArea`
+
+```csharp
+string aText = g.TextArea("", aOriginal, "mdview/draft", iLines: 32);   // key 必填
+```
+
+| 判準 | 而不是 |
+|---|---|
+| 仍是 `TextField` 節點，多一格 `SCP_GuiNode.Lines`（0 ＝ 單行） | 新開一種節點 —— 每個消費端（兩個 renderer、`--list`、driver）都要補一格 switch，漏補的那個**安靜地不畫** |
+| ImGui 走 `InputTextMultiline`，寬度吃滿、緩衝上限隨內容長（≥ 64KB，UTF-8 位元組數 × 2） | 沿用單行那格的 4096 —— 長文件會被**安靜地截斷**（ImGui 只是不讓你再打字） |
+| 文字模式逐行印 `│ ` 前綴 | 擠進一個 `⟨…⟩` —— 換行打散版面，「最後一行是空的」與「沒有最後一行」同形 |
+| 值裡的換行一律 `\n`；寫回檔案的呼叫端自己還原行尾 | 假設呼叫端拿到的就是原檔行尾 |
+
+第一個消費者：`MarkdownViewerPage`（Markdown 檢視／編輯頁，存檔前有衝突閘、行尾與 BOM 照原檔）。
+⚠ CLI 的 `--set` 只能改**畫面上有的** id ⇒ 多行值要從 shell 帶換行（bash `$'…\n…'`）。
 
 ---
 
