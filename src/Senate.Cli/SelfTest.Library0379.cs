@@ -23,10 +23,9 @@ public static partial class SelfTest
             string aComics = Path.Combine(aRoot, "comics");
             foreach (string p in new[] { aProject, aData, aLetters, aComics,
                        Path.Combine(aLetters, "tester", "profile") }) Directory.CreateDirectory(p);
-            File.WriteAllText(Path.Combine(aProject, SCP_LibraryComics.ComicRootSnapshotFileName),
-                              "# local settings\ncomic_root=" + aComics + "\n");
             var aConfig = new SenateConfig();
-            aConfig.Projects.Add(new SenateProject { Root = aProject, AgentCommandsRoot = aData });
+            // TASK-0400：漫畫庫根是設定值（SCP_PathId.ComicRoot），不再是 .comic_root.local 快照
+            aConfig.Projects.Add(new SenateProject { Root = aProject, AgentCommandsRoot = aData, ComicRoot = aComics });
             aConfig.Awakening.LettersRoot = aLetters;
             SCP_Cmd_Library.RootsProvider = () => SenateLibraryRoots.Resolve(aConfig);
             var aFails = new List<string>();
@@ -62,9 +61,14 @@ public static partial class SelfTest
             aConfig.Projects.Add(new SenateProject { Root = aProject, AgentCommandsRoot = aData });
             Need(Run("paths").ExitCode == 3, "多個啟用專案未擋下");
             aConfig.Projects.RemoveAt(1);
-            File.Delete(Path.Combine(aProject, SCP_LibraryComics.ComicRootSnapshotFileName));
-            Need(Run("comics").ExitCode == 3 && Run("paths").ExitCode == 0, "漫畫設定錯誤隔離失敗");
-            aFiles--;
+            // 本格空白 ⇒ comics 擋下（exit 3）而 paths 不受影響；舊快照有值時要**說出來**，⛔ 不採用
+            aConfig.Projects[0].ComicRoot = "";
+            string aLegacy = Path.Combine(aProject, SCP_LibraryComics.ComicRootSnapshotFileName);
+            File.WriteAllText(aLegacy, "# local settings\ncomic_root=" + aComics + "\n");
+            SCP_CmdResult aBlank = Run("comics");
+            Need(aBlank.ExitCode == 3 && Run("paths").ExitCode == 0, "漫畫設定錯誤隔離失敗");
+            Need(string.Join("\n", aBlank.Lines).Contains("舊快照"), "本格空白而舊快照有值時沒有說出來");
+            File.Delete(aLegacy);
             SCP_Cmd_Library.RootsProvider = () => SenateLibraryRoots.Resolve(null);
             Need(Run("media_init", ("work_id", "other"), ("title", "Other")).ExitCode == 3, "缺設定未擋下");
             SCP_Cmd_Library.RootsProvider = null;

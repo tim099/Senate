@@ -71,6 +71,14 @@ public static class SenatePathBinding
                     ? SCP_PathStoredValue.Unavailable(aErr!)
                     : SCP_PathStoredValue.Of(aProj.GlossaryRoot);
             }
+            // 外部漫畫庫根（TASK-0400）：Project 那一格；空白是合法值（＝沒有外部漫畫庫）。
+            case SCP_PathId.ComicRoot:
+            {
+                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
+                return aProj == null
+                    ? SCP_PathStoredValue.Unavailable(aErr!)
+                    : SCP_PathStoredValue.Of(aProj.ComicRoot ?? "");
+            }
             // ⛔ `BankRoot` 2026-09-17 起是 **Derived**（`<資料根>/Bank`）⇒ 本檔**不再接它那一格**。
             //   哪天有人把它改回 Stored 而忘了這裡，下面的 default 會當場出聲，
             //   ⛔ 不會靜默回一個空字串（而空字串在頁面上長成「未設定」，那是另一個意思）。
@@ -105,11 +113,13 @@ public static class SenatePathBinding
             case SCP_PathId.ProjectRoot:
             case SCP_PathId.AgentCommandsRoot:
             case SCP_PathId.GlossaryRoot:
+            case SCP_PathId.ComicRoot:
             {
                 SenateProject? aProj = SingleProject(iConfig, out string? aErr);
                 if (aProj == null) { oError = aErr; return false; }
                 if (iId == SCP_PathId.ProjectRoot) aProj.Root = iValue;
                 else if (iId == SCP_PathId.AgentCommandsRoot) aProj.AgentCommandsRoot = iValue;
+                else if (iId == SCP_PathId.ComicRoot) aProj.ComicRoot = iValue;
                 else aProj.GlossaryRoot = iValue;
                 return true;
             }

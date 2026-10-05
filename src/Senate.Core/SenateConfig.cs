@@ -38,6 +38,11 @@ public sealed class SenateProject
     /// </summary>
     public string GlossaryRoot { get; set; } = "auto";
 
+    /// <summary>
+    /// 外部漫畫庫根（`SCP_PathId.ComicRoot`，TASK-0400）。空字串 ＝ 沒有外部漫畫庫；不支援 <c>"auto"</c>（沒有上游可推導）。
+    /// </summary>
+    public string ComicRoot { get; set; } = "";
+
     /// <summary>停用的專案仍留在清單裡（不是刪掉）—— 「我關掉它」與「我沒設定過它」是兩件事。</summary>
     public bool Enabled { get; set; } = true;
 
