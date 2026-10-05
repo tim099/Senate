@@ -77,10 +77,27 @@ public sealed class ReadingNotesPage : SCP_GuiToolPage
     public override string Title => "閱讀心得";
     public override string? MenuGroup => "閱讀";
 
+    /// <summary>
+    /// 帶著書名開頁（給漫畫庫頁「開啟閱讀心得頁」用，TASK-0402）。
+    /// <para>書名為空就只開頁、不搜尋 —— 空字串搜尋會把全庫撈出來。</para>
+    /// </summary>
+    public ReadingNotesPage(SenateModel iModel, string iTitle) : this(iModel)
+    {
+        m_PendingQuery = (iTitle ?? "").Trim();
+    }
+
+    string m_PendingQuery = "";
+
     public override void OnPush()
     {
         base.OnPush();
         Load();
+        if (m_PendingQuery.Length > 0 && m_LoadError == null)
+        {
+            m_Query = m_PendingQuery;
+            Search();
+        }
+        m_PendingQuery = "";
     }
 
     void Load()
@@ -141,12 +158,15 @@ public sealed class ReadingNotesPage : SCP_GuiToolPage
         if (aKind != m_Kind) { m_Kind = aKind; m_MediaLabel = ""; m_Reader = ""; }
         if (aMedias.Count == 0) { g.Note("（此媒材下沒有筆記）"); return; }
 
-        string aLabel = g.Dropdown("筆記", aLabels, aLabels.Contains(m_MediaLabel) ? m_MediaLabel : aLabels[0], MediaKey);
+        string aLabel = g.Dropdown("筆記", aLabels, aLabels.Contains(m_MediaLabel) ? m_MediaLabel : aLabels[0],
+                                MediaKey + "/" + aKind);   // 🩸 key 綁上游：Dropdown 的值存在 key/value，換 kind 後舊值不在新清單裡 ⇒ 標題寫「不在清單裡」而實際拿第 0 項
+        if (!aLabels.Contains(aLabel)) aLabel = aLabels[0];
         if (aLabel != m_MediaLabel) { m_MediaLabel = aLabel; m_Reader = ""; }
         SCP_MediaEntry aMedia = aMedias[Math.Max(0, aLabels.IndexOf(aLabel))];
 
         if (aMedia.Readers.Count == 0) { g.Note("（這個 media 還沒有任何 reader root —— 還沒有人讀過）"); return; }
-        string aReader = g.Dropdown("persona", aMedia.Readers, aMedia.Readers.Contains(m_Reader) ? m_Reader : aMedia.Readers[0], ReaderKey);
+        string aReader = g.Dropdown("persona", aMedia.Readers, aMedia.Readers.Contains(m_Reader) ? m_Reader : aMedia.Readers[0],
+                                  ReaderKey + "/" + aMedia.MediaId);   // 同上：key 綁上游（作品）
         m_Reader = aReader;
 
         bool aOpen = m_RecallMedia == aMedia.MediaId && m_RecallReader == aReader && m_RecallText.Length > 0;

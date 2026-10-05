@@ -161,6 +161,24 @@ public sealed class SenateModel : ISCP_GuiAppContext
     /// </summary>
     public SCP_PathResolution BankRoot => ResolvePath(SCP_PathId.BankRoot);
 
+    /// <summary>
+    /// 外部漫畫庫根（TASK-0402）。⚠ 走 <see cref="SenateLibraryRoots"/> 而不是直接 `ResolvePath(ComicRoot)`：
+    /// 「本格空白而舊快照有值」那句提示只在那裡生成，漫畫庫頁與 `library op=comics` 必須讀到同一句。
+    /// </summary>
+    public SCP_PathResolution ComicRoot
+    {
+        get
+        {
+            SenateConfig? aCfg;
+            try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(m_RepoRoot)); }
+            catch (InvalidDataException e) { return new SCP_PathResolution("", "設定檔讀不了", e.Message); }
+            if (aCfg == null)
+                return new SCP_PathResolution("", "沒有設定檔",
+                    $"還沒有 {Path.GetFileName(SenateConfig.DefaultPath(m_RepoRoot))} —— 先跑 `senate init`");
+            return SenateLibraryRoots.Resolve(aCfg).ComicRoot;
+        }
+    }
+
     /// <summary>解一格路徑 —— 上面那幾格共用的實作（多一格路徑不必再抄一次設定檔三態）。</summary>
     SCP_PathResolution ResolvePath(SCP_PathId iId)
     {
