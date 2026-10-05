@@ -1,11 +1,11 @@
 // 區塊職責：**酒保**（persona `tavern-keeper`）的設定、游標狀態與「這則要不要回、回什麼」—— TASK-0365（重做，不是移植）。
-// 物理意義：酒保住在酒館 Server（tavern 那顆）裡：SenateBartenderJob 每幾秒照游標讀新訊息，交給本檔的 ProcessBatch 判定與回覆。
+// 物理意義：酒保住在酒館 Server（tavern 那顆）裡：SenateBartenderJob 每幾秒讀新訊息，交給本檔的 ProcessBatch 判定與回覆。
 //           本檔**不碰 Server 與檔案以外的東西**：讀訊息、問 LLM、寫回覆都由呼叫端注入 ⇒ selftest 可以整段在記憶體裡跑。
 // 數值影響：只回兩種 —— 被 @（本名 `tavern-keeper` 或別名表裡指向它的名字）、`[help]`；程式碼區段裡的都不算。
 //           回覆由本機 ollama 生成（Cmd_Llm.Chat），失敗或沒設模型 ⇒ 罐頭句。
-// ⚠ 一則只處理一次，而「處理過」只在**回覆真的寫進去之後**才記：
-//   寫不進去 ⇒ 游標停在那一則前面、下一輪重試（Server 停掉期間的訊息也是這樣補，TASK-0365 驗收⑤）。
-//   寫進去了、游標還沒推進就掛掉 ⇒ 重啟後先回讀房間裡有沒有 `triggered_by_seq == 這則` 的酒保回覆，有就不再回（⛔ 不回兩次）。
+// ⚠ **只回酒保上線之後收到的訊息**（Tim 2026-10-05）：上線＝酒館 Server 跑起來、或開關從關打開的那一刻 ⇒ 游標設在當時最新一則；
+//   停機期間的訊息不補、⇒ 游標**不存檔**（只活在 Server 的記憶體裡）。
+//   上線期間回覆寫不進去 ⇒ 游標停在那一則前面、稍後重試（⛔ 不漏）。
 // ⚠ 設定檔與 Unity 的 `llm_settings.json` **分開**：Unity 那份的 mention_enabled 是 Unity daemon 在讀，共用的話兩邊會一起開關。
 // ⚠ 酒保的發文身分 `sender_id=tavern-keeper` 被一排讀取端當判準（薪資排除、catchup、早安隱藏…）⇒ ⛔ 不改名。
 #nullable enable
@@ -42,10 +42,9 @@ public sealed record BartenderSettings(
                                                 && CannedReplies.SequenceEqual(o.CannedReplies);
 }
 
-/// <summary>游標與執行狀態（Server 在寫、後台頁在讀）。</summary>
+/// <summary>執行狀態（Server 在寫、後台頁在讀）。⚠ 不含游標 —— 游標不存檔（只回上線後的訊息，Tim 2026-10-05）。</summary>
 public sealed class BartenderState
 {
-    public Dictionary<string, int> Cursor = new(StringComparer.Ordinal);   // 房 → 已處理到的 seq
     public string Day = "";                 // 本地日期 yyyy-MM-dd（每日上限用）
     public int RepliedToday;
     public long LastReplyUnix;
@@ -58,7 +57,7 @@ public sealed class BartenderState
 
     public BartenderState Clone() => new()
     {
-        Cursor = new Dictionary<string, int>(Cursor, StringComparer.Ordinal), Day = Day, RepliedToday = RepliedToday, LastReplyUnix = LastReplyUnix,
+        Day = Day, RepliedToday = RepliedToday, LastReplyUnix = LastReplyUnix,
         LastReplySeq = LastReplySeq, LastTriggerSeq = LastTriggerSeq, LastReplyAt = LastReplyAt, LastReplySource = LastReplySource,
         LastError = LastError, LastErrorAt = LastErrorAt,
     };
@@ -75,7 +74,6 @@ public static class SenateBartender
     public const string StateFileName = "senate_state.json";
     public const string ReplyTag = "bartender-relay";     // 讀取端（tavern-wait／早安／catchup）拿它當過濾條件 ⇒ 沿用
     public const int BatchSize = 50;
-    public const int DedupeLookback = 300;                // 回讀房間最後幾則找「已經回過」
 
     static readonly JsonSerializerOptions s_Json = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -164,8 +162,6 @@ public static class SenateBartender
         {
             using JsonDocument d = JsonDocument.Parse(File.ReadAllText(aPath));
             JsonElement r = d.RootElement;
-            if (r.TryGetProperty("cursor", out JsonElement c) && c.ValueKind == JsonValueKind.Object)
-                foreach (JsonProperty p in c.EnumerateObject()) if (p.Value.TryGetInt32(out int v)) s.Cursor[p.Name] = v;
             string Str(string k) => r.TryGetProperty(k, out JsonElement x) && x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" : "";
             long Num(string k) => r.TryGetProperty(k, out JsonElement x) && x.ValueKind == JsonValueKind.Number && x.TryGetInt64(out long v) ? v : 0;
             s.Day = Str("day"); s.RepliedToday = (int)Num("replied_today"); s.LastReplyUnix = Num("last_reply_unix");
@@ -182,7 +178,7 @@ public static class SenateBartender
 
     public static string StateJson(BartenderState s) => JsonSerializer.Serialize(new
     {
-        cursor = s.Cursor, day = s.Day, replied_today = s.RepliedToday, last_reply_unix = s.LastReplyUnix, last_reply_seq = s.LastReplySeq,
+        day = s.Day, replied_today = s.RepliedToday, last_reply_unix = s.LastReplyUnix, last_reply_seq = s.LastReplySeq,
         last_trigger_seq = s.LastTriggerSeq, last_reply_at = s.LastReplyAt, last_reply_source = s.LastReplySource,
         last_error = s.LastError, last_error_at = s.LastErrorAt,
     }, s_Json);
@@ -251,24 +247,16 @@ public static class SenateBartender
         return j;
     }
 
-    /// <summary>房間最近的訊息裡，酒保已經回過哪些 seq（看 meta.triggered_by_seq）。</summary>
-    public static HashSet<int> AlreadyReplied(IEnumerable<SCP_TavernMessage> iRecent)
-    {
-        var aSet = new HashSet<int>();
-        foreach (SCP_TavernMessage m in iRecent)
-            if (m.SenderId == PersonaId && m.Meta.TryGetValue("triggered_by_seq", out string? v) && int.TryParse(v, out int n)) aSet.Add(n);
-        return aSet;
-    }
-
     /// <summary>一批的處理結果。</summary>
     public sealed class BatchOutcome
     {
         public BartenderState State = new();
         public List<string> Log = new();
+        public int Cursor;                      // 處理到哪一則（呼叫端放回記憶體；⛔ 不存檔）
         public bool StoppedOnWriteFailure;
         /// <summary>冷卻中而停在某一則前面（⛔ 不丟掉 —— 冷卻結束後回它）；值是可以再試的時刻。</summary>
         public DateTime? DeferredUntilUtc;
-        public bool Changed;
+        public bool Changed;                    // 狀態（回覆數／最後回覆／錯誤）有沒有變 —— 有才寫檔
     }
 
     /// <summary>
@@ -278,25 +266,19 @@ public static class SenateBartender
     /// <paramref name="iNow"/>：每一則各取一次（LLM 可能跑了幾十秒，⛔ 不用整批開頭那一刻）。
     /// </summary>
     public static BatchOutcome ProcessBatch(BartenderSettings s, BartenderState iState, string iRoom, IReadOnlyList<SCP_TavernMessage> iBatch,
-        IReadOnlyDictionary<string, string>? iAliases, ISet<int> iAlreadyReplied,
+        IReadOnlyDictionary<string, string>? iAliases, int iCursor,
         Func<string, string, (bool Ok, string Text, string Source, string Error)> iGenerate,
         Func<SCP_JsonData, (bool Ok, int Seq, string Error)> iWrite, Func<DateTime> iNow)
     {
-        var o = new BatchOutcome { State = iState.Clone() };
+        var o = new BatchOutcome { State = iState.Clone(), Cursor = iCursor };
         BartenderState st = o.State;
         foreach (SCP_TavernMessage m in iBatch.OrderBy(x => x.Seq))
         {
-            int aCur = st.Cursor.TryGetValue(iRoom, out int c) ? c : 0;
-            if (m.Seq <= aCur) continue;
+            if (m.Seq <= o.Cursor) continue;
             DateTime aNowUtc = iNow();
             string aToday = aNowUtc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             if (st.Day != aToday) { st.Day = aToday; st.RepliedToday = 0; o.Changed = true; }
             BartenderAction a = Decide(m, iAliases);
-            if (a != BartenderAction.None && iAlreadyReplied.Contains(m.Seq))
-            {
-                o.Log.Add($"seq {m.Seq}：房裡已經有酒保對它的回覆 ⇒ 不再回（上次寫完還沒記游標就停了）");
-                a = BartenderAction.None;
-            }
             if (a == BartenderAction.Mention && st.RepliedToday >= s.DailyCap)
             {
                 o.Log.Add($"seq {m.Seq}：今天已回 {st.RepliedToday} 則，到上限 {s.DailyCap} ⇒ 不回");
@@ -328,7 +310,7 @@ public static class SenateBartender
                     {
                         aText = Canned(s, m.Seq);
                         aSource = s.ModelId.Length == 0 ? "canned" : "canned-after-error";
-                        if (err.Length > 0) { st.LastError = $"seq {m.Seq} 生成失敗、退回罐頭句：{err}"; st.LastErrorAt = iNow().ToString("o", CultureInfo.InvariantCulture); }
+                        if (err.Length > 0) { o.Changed = true; st.LastError = $"seq {m.Seq} 生成失敗、退回罐頭句：{err}"; st.LastErrorAt = iNow().ToString("o", CultureInfo.InvariantCulture); }
                     }
                 }
                 (bool wOk, int wSeq, string wErr) = iWrite(ReplyJson(s, m, a, aText, aSource));
@@ -342,14 +324,14 @@ public static class SenateBartender
                     o.Changed = true;
                     return o;
                 }
+                o.Changed = true;
                 if (a == BartenderAction.Mention) st.RepliedToday++;
                 st.LastReplyUnix = new DateTimeOffset(aDoneUtc).ToUnixTimeSeconds();
                 st.LastReplySeq = wSeq; st.LastTriggerSeq = m.Seq; st.LastReplySource = aSource;
                 st.LastReplyAt = aDoneUtc.ToString("o", CultureInfo.InvariantCulture);
                 o.Log.Add($"seq {m.Seq}（{Who(m)}）→ 酒保回 seq {wSeq}（{aSource}）");
             }
-            st.Cursor[iRoom] = m.Seq;
-            o.Changed = true;
+            o.Cursor = m.Seq;
         }
         return o;
     }

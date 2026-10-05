@@ -23,7 +23,7 @@ public sealed class BartenderPage : SCP_GuiToolPage
     const string NoModel = "(不用模型，只回罐頭句)";
 
     sealed record Done(string Kind, SCP_CmdResult R);
-    internal sealed record StatusView(bool Ok, string SettingsError, string StateError, string AliasError, bool SettingsSaved, bool Enabled, int Cursor,
+    internal sealed record StatusView(bool Ok, string SettingsError, string StateError, string AliasError, bool SettingsSaved, bool Enabled,
                                       int RepliedToday, int LastReplySeq, int LastTriggerSeq, string LastReplyAt, string LastReplySource, string LastError, string LastErrorAt);
 
     readonly SenateModel m_Model;
@@ -112,7 +112,6 @@ public sealed class BartenderPage : SCP_GuiToolPage
             using JsonDocument d = JsonDocument.Parse(aJson);
             JsonElement r = d.RootElement;
             return new StatusView(B(r, "ok"), S(r, "settings_error"), S(r, "state_error"), S(r, "alias_error"), B(r, "settings_saved"), B(r, "enabled"),
-                r.TryGetProperty("cursor", out JsonElement c) && c.TryGetInt32(out int cv) ? cv : -1,
                 r.TryGetProperty("replied_today", out JsonElement rt) && rt.TryGetInt32(out int rv) ? rv : -1, I(r, "last_reply_seq"),
                 I(r, "last_trigger_seq"), S(r, "last_reply_at"), S(r, "last_reply_source"), S(r, "last_error"), S(r, "last_error_at"));
         }
@@ -278,7 +277,8 @@ public sealed class BartenderPage : SCP_GuiToolPage
             StatusView? s = m_Status;
             if (s == null) { g.Note(Busy ? "量狀態中…" : "（還沒量）"); return; }
             g.Label("設定：" + (s.SettingsSaved ? "已存過" : "還沒存過（用初始值；開關預設關）"));
-            g.Label("游標：tavern " + (s.StateError.Length > 0 ? "讀不了 —— " + s.StateError : s.Cursor >= 0 ? $"seq {s.Cursor}" : "還沒建立起點（酒館 Server 第一次跑時建立，歷史不回放）"));
+            g.Note("只回酒保上線（酒館 Server 起來、或開關打開）之後收到的訊息；之前的不回。");
+            if (s.StateError.Length > 0) g.Note("[注意] 狀態檔讀不了：" + s.StateError);
             g.Label(s.RepliedToday < 0 ? "今天回了幾則：讀不了（狀態檔有問題）" : $"今天回了 {s.RepliedToday} 則（@ 才算，[help] 不算）");
             if (s.LastReplySeq > 0) g.Label($"最後一次：seq {s.LastTriggerSeq} → 回 seq {s.LastReplySeq}（{s.LastReplySource}，{s.LastReplyAt}）");
             if (s.LastError.Length > 0) g.Note($"[注意] 最後一個錯誤：{s.LastError}（{s.LastErrorAt}）");
@@ -292,8 +292,7 @@ public sealed class BartenderPage : SCP_GuiToolPage
         using (g.Box("開關", "bartender/switch"))
         {
             g.Toggle("酒保開著（被 @／[help] 時回應）", m_Saved.Enabled, Id("enabled"));
-            g.Note("關著時游標照樣跟上最新一則 ⇒ 打開的那一刻不會回頭回一整串舊訊息。"
-                   + "⚠ Unity 的酒保 daemon 停掉訊息掃描之前，兩邊都開會回兩次。");
+            g.Note("打開的那一刻算上線：只回之後收到的訊息，之前的不回。");
             g.TextField("顯示名（發文時的 sender_name；身分 id 固定是 tavern-keeper）", m_Saved.DisplayName, Id("name"));
         }
     }

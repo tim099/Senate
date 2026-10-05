@@ -1,11 +1,11 @@
 // 區塊職責：酒保的常駐回應 —— 掛在酒館 Server（tavern 那顆）的服務迴圈上（TASK-0365）。
 // 物理意義：每 PollIntervalSec 秒看一次 tavern 房有沒有比游標新的訊息；有 ⇒ 丟背景執行緒交給 SenateBartender.ProcessBatch。
-//           LLM 生成可能要幾十秒 ⇒ ⛔ 不在服務迴圈上跑（否則卡住心跳與整個酒館的寫入）；同一時間只有一批在跑。
-// 數值影響：關著時游標照樣跟上最新一則（⇒ 打開的那一刻不會回頭回一整串舊訊息）；
-//           Server 停掉期間寫進來的訊息不受影響 —— 重啟後照游標補處理（驗收⑤）。
-//           第一次跑（還沒有游標）⇒ 從現在開始，歷史不回放。
+//           ⭐ **只回上線之後收到的**（Tim 2026-10-05）：Server 起來的第一輪、或開關從關打開的那一輪，游標設在當時最新一則；
+//             游標只活在記憶體裡（⛔ 不存檔），停機期間的訊息不補。
+//           ⭐ **整輪都在背景執行緒**（Tim 2026-10-05）：服務迴圈上只判「到時間了沒、上一輪跑完沒」；同一時間只有一輪在跑。
+// 數值影響：狀態檔（今天回了幾則／最後一次回覆／錯誤）只在回覆或出錯時寫 —— 不是每則訊息都寫。
 // ⚠ 這幾種情況**這一輪不動**並出聲（游標不推 ⇒ 之後補得回來）：
-//   狀態檔讀不了（⛔ 不把游標當成 0，那會把整個房間的歷史再回一遍）／別名表讀不了（⛔ 不然 `@酒保` 會被當成沒點名而跳過）／
+//   狀態檔讀不了（⛔ 不然每日上限會從 0 重算）／別名表讀不了（⛔ 不然 `@酒保` 會被當成沒點名而跳過）／
 //   游標後面那一則讀不到（檔被鎖住或壞掉 ⇒ 等它；連續 GapGiveUpRounds 輪都讀不到才跳過那一則，並大聲說）。
 // ⚠ 寫不進去 ⇒ 退避（3 秒起跳、每次加倍、最多 5 分鐘），⛔ 不每 3 秒重問一次 LLM。
 #nullable enable
@@ -26,48 +26,65 @@ public static class SenateBartenderJob
     static Task? s_Running;
     static int s_BackoffSec;
     static int s_GapSeq = -1, s_GapRounds;
-    static DateTime s_NextUtc = DateTime.MinValue;
+    static int? s_Cursor;           // 處理到哪一則；null ＝ 還沒上線（下一個開著的輪次設成當時最新一則）
+    static long s_NextTicks;        // 下一輪最早什麼時候（UTC ticks）；背景執行緒會把它往後推（退避／冷卻）⇒ Volatile 讀寫
     static bool? s_WasEnabled;
     static string s_LastWarn = "";
 
     public static bool IsRunning => s_Running is { IsCompleted: false };
 
+    /// <summary>
+    /// 服務迴圈每一圈呼叫一次。⭐ **這裡只做兩個判斷**（到時間了沒、上一輪跑完沒），其餘全部在背景執行緒 ——
+    /// 讀設定／狀態／訊息、問 LLM、寫回覆都不在 Server 迴圈上（Tim 2026-10-05：酒保不可以卡住酒館 Server）。
+    /// 用專用的長時間執行緒（LongRunning）：LLM 一次可能等上百秒，⛔ 不佔執行緒池（那會拖慢 Server 其他背景工作）。
+    /// </summary>
     public static void Tick(string iDataRoot, Action<string> iOut, Action<string> iErr)
     {
-        DateTime aNow = DateTime.UtcNow;
-        if (aNow < s_NextUtc || IsRunning) return;
-        s_NextUtc = aNow.AddSeconds(PollIntervalSec);
-
-        BartenderSettings s = SenateBartender.LoadSettings(iDataRoot, out string? aSetErr);
-        if (aSetErr != null) { WarnOnce(iErr, "酒保：設定檔讀不了 ⇒ 這一輪不動 —— " + aSetErr); return; }
-        if (s_WasEnabled != s.Enabled)
+        long aNow = DateTime.UtcNow.Ticks;
+        if (aNow < Volatile.Read(ref s_NextTicks) || IsRunning) return;
+        Volatile.Write(ref s_NextTicks, aNow + TimeSpan.FromSeconds(PollIntervalSec).Ticks);
+        s_Running = Task.Factory.StartNew(() =>
         {
-            iOut(s.Enabled ? $"· 酒保：開著（@{SenateBartender.PersonaId}／別名／[help]，每 {PollIntervalSec} 秒看一次 {SenateBartender.Room} 房）"
-                           : "· 酒保：關著（游標照樣跟上最新一則，打開時不回頭回舊訊息）");
-            s_WasEnabled = s.Enabled;
+            DateTime? aRetryAt = Round(iDataRoot, iOut, iErr);
+            if (aRetryAt.HasValue && aRetryAt.Value.Ticks > Volatile.Read(ref s_NextTicks)) Volatile.Write(ref s_NextTicks, aRetryAt.Value.Ticks);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+
+    /// <summary>一輪（背景執行緒）：讀設定與狀態、決定游標、有新訊息就處理一批。回「最早什麼時候再試」。</summary>
+    static DateTime? Round(string iDataRoot, Action<string> iOut, Action<string> iErr)
+    {
+        try
+        {
+            BartenderSettings s = SenateBartender.LoadSettings(iDataRoot, out string? aSetErr);
+            if (aSetErr != null) { WarnOnce(iErr, "酒保：設定檔讀不了 ⇒ 這一輪不動 —— " + aSetErr); return null; }
+            if (s_WasEnabled != s.Enabled)
+            {
+                iOut(s.Enabled ? $"· 酒保：開著（@{SenateBartender.PersonaId}／別名／[help]，每 {PollIntervalSec} 秒看一次 {SenateBartender.Room} 房）"
+                               : "· 酒保：關著（打開的那一刻算上線，只回之後的訊息）");
+                s_WasEnabled = s.Enabled;
+            }
+            if (!s.Enabled) { s_Cursor = null; return null; }     // 關著 ⇒ 下次打開算重新上線
+
+            BartenderState st = SenateBartender.LoadState(iDataRoot, out string? aStErr);
+            if (aStErr != null) { WarnOnce(iErr, "酒保：狀態檔讀不了 ⇒ 這一輪不動（⛔ 不然每日上限會從 0 重算）—— " + aStErr); return null; }
+
+            List<SCP_TavernMessage> aTail = SCP_TavernRead.Tail(iDataRoot, SenateBartender.Room, 1);
+            if (aTail.Count == 0) return null;
+            int aTop = aTail[0].Seq;
+            if (s_Cursor == null)
+            {
+                s_Cursor = aTop;
+                iOut($"· 酒保：上線，從 {SenateBartender.Room} seq {aTop} 之後開始回（之前的訊息不回）");
+                return null;
+            }
+            int aCur = s_Cursor.Value;
+            return aCur >= aTop ? null : RunBatch(iDataRoot, s, st, aCur, aTop, iOut, iErr);
         }
-
-        BartenderState st = SenateBartender.LoadState(iDataRoot, out string? aStErr);
-        if (aStErr != null) { WarnOnce(iErr, "酒保：狀態檔讀不了 ⇒ 這一輪不動（⛔ 不把游標當成 0）—— " + aStErr); return; }
-
-        List<SCP_TavernMessage> aTail = SCP_TavernRead.Tail(iDataRoot, SenateBartender.Room, 1);
-        if (aTail.Count == 0) return;
-        int aTop = aTail[0].Seq;
-        bool aHasCursor = st.Cursor.TryGetValue(SenateBartender.Room, out int aCur);
-        if (!aHasCursor || !s.Enabled)
+        catch (Exception e)
         {
-            if (aHasCursor && aCur >= aTop) return;
-            st.Cursor[SenateBartender.Room] = aTop;
-            SenateBartender.SaveState(iDataRoot, st);
-            if (!aHasCursor) iOut($"· 酒保：建立起點 {SenateBartender.Room} seq {aTop}（歷史不回放）");
-            return;
+            WarnOnce(iErr, $"酒保：這一輪炸了（{e.GetType().Name}：{e.Message}）—— 下一輪再試");
+            return null;
         }
-        if (aCur >= aTop) return;
-        s_Running = Task.Run(() =>
-        {
-            DateTime? aRetryAt = RunBatch(iDataRoot, s, st, aCur, aTop, iOut, iErr);
-            if (aRetryAt.HasValue && aRetryAt.Value > s_NextUtc) s_NextUtc = aRetryAt.Value;
-        });
     }
 
     /// <summary>處理一批；回「最早什麼時候再試」（null ＝ 照平常的節奏）。</summary>
@@ -88,19 +105,14 @@ public static class SenateBartenderJob
                 int aMissing = iCur + 1;
                 if (s_GapSeq != aMissing) { s_GapSeq = aMissing; s_GapRounds = 0; }
                 if (++s_GapRounds < GapGiveUpRounds) { WarnOnce(iErr, $"酒保：{SenateBartender.Room} seq {aMissing} 讀不到 ⇒ 等它（第 {s_GapRounds} 輪）"); return null; }
-                st.Cursor[SenateBartender.Room] = aMissing;
-                SenateBartender.SaveState(iDataRoot, st);
+                s_Cursor = aMissing;
                 iErr($"⚠ 酒保：{SenateBartender.Room} seq {aMissing} 連續 {GapGiveUpRounds} 輪都讀不到 ⇒ **跳過這一則**（如果它有 @ 酒保，這則不會被回）");
                 s_GapSeq = -1;
                 return null;
             }
             s_GapSeq = -1;
-            // 已經回過哪些：回覆一定在游標之後 ⇒ 掃游標到最新一則（精確），再加最後幾則保底
-            var aRecent = SCP_TavernRead.Range(iDataRoot, SenateBartender.Room, iCur + 1, iTop);
-            aRecent.AddRange(SCP_TavernRead.Tail(iDataRoot, SenateBartender.Room, SenateBartender.DedupeLookback));
-            HashSet<int> aReplied = SenateBartender.AlreadyReplied(aRecent);
 
-            SenateBartender.BatchOutcome o = SenateBartender.ProcessBatch(s, st, SenateBartender.Room, aBatch, aAliases, aReplied,
+            SenateBartender.BatchOutcome o = SenateBartender.ProcessBatch(s, st, SenateBartender.Room, aBatch, aAliases, iCur,
                 (sys, prompt) =>
                 {
                     Cmd_Llm.TestResult t = Cmd_Llm.Chat(s.ModelId, prompt, sys, s.Think, s.NumPredict, s.KeepAliveSeconds, s.TimeoutSeconds, CancellationToken.None);
@@ -117,6 +129,7 @@ public static class SenateBartenderJob
                             w.Ok ? "" : $"exit {w.ExitCode}：{string.Join(" ", w.Lines.Take(2))}");
                 },
                 () => DateTime.UtcNow);
+            if (s_Cursor == iCur) s_Cursor = o.Cursor;    // 期間被關掉又打開（s_Cursor 被重設）⇒ 不覆蓋
             if (o.Changed) SenateBartender.SaveState(iDataRoot, o.State);
             if (o.StoppedOnWriteFailure)
             {

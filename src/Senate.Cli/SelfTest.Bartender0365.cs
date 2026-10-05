@@ -2,8 +2,8 @@
 // 物理意義：五格各驗一個「錯了也不會叫」的地方：
 //           ① @ 判定：別名、全形 ＠、程式碼區段裡的不算（09-29 誤觸那種）、中文別名後面直接接字也算、本名照舊。
 //           ② 別名表：撞名／空白／含 @／指向不存在的人 存檔前擋；壞檔不被覆蓋；寫入端（Notify）真的把 @酒保 送進 tavern-keeper 的 inbox。
-//           ③ 回應流程：被 @ 回 LLM、[help] 回說明、自己的訊息不回、引用不回、已經回過的不再回、冷卻、模型失敗退罐頭。
-//           ④ 🔴 回覆寫不進去 ⇒ 游標不動，下一輪補回（驗收⑤）。
+//           ③ 回應流程：被 @ 回 LLM、[help] 回說明、自己的訊息不回、引用不回、游標（上線那一刻）之前的不回、冷卻、模型失敗退罐頭。
+//           ④ 🔴 上線期間回覆寫不進去 ⇒ 游標不動，下一輪補回。
 //           ⑤ 設定：沒存過＝初始值且開關關、存了讀得回、壞檔不冒充「沒存過」也不被覆蓋。
 // 數值影響：純記憶體＋temp 目錄；⛔ 不呼叫 ollama、不碰真實資料根與酒館。
 #nullable enable
@@ -102,7 +102,7 @@ public static partial class SelfTest
 
     static CheckRow BartenderProcessBatch()
     {
-        const string aName = "酒保・回應流程：@ 回 LLM／[help] 回說明／自己不回／引用不回／回過不再回／冷卻排隊不丟／失敗退罐頭／🔴 寫不進去游標不動（TASK-0365）";
+        const string aName = "酒保・回應流程：@ 回 LLM／[help] 回說明／自己不回／引用不回／游標之前的不回／冷卻排隊不丟／失敗退罐頭／🔴 寫不進去游標不動（TASK-0365）";
         try
         {
             var aFails = new List<string>();
@@ -114,7 +114,7 @@ public static partial class SelfTest
             (bool, int, string) Write(SCP_JsonData j) { written.Add(j); return (true, ++nextSeq, ""); }
             (bool, string, string, string) Gen(string sys, string prompt) => (true, "喵～歡迎光臨", "qwen3:0.6b", "");
 
-            var st = new BartenderState(); st.Cursor["tavern"] = 10;
+            var st = new BartenderState();
             var batch = new List<SCP_TavernMessage>
             {
                 BMsg(11, "kaguya", "大家早"),
@@ -122,10 +122,10 @@ public static partial class SelfTest
                 BMsg(13, "Tim", "誰會 [help]？"),
                 BMsg(14, "summit", "引用 `@酒保` 的說明"),
                 BMsg(15, "tavern-keeper", "@酒保 自己叫自己"),
-                BMsg(16, "kaguya", "@tavern-keeper 第二杯"),
+                BMsg(9, "kaguya", "@酒保 上線前的舊訊息"),
             };
-            SenateBartender.BatchOutcome o = SenateBartender.ProcessBatch(s, st, "tavern", batch, al, new HashSet<int> { 16 }, Gen, Write, () => now);
-            if (o.State.Cursor["tavern"] != 16) aFails.Add($"游標要推到 16 得 {o.State.Cursor["tavern"]}");
+            SenateBartender.BatchOutcome o = SenateBartender.ProcessBatch(s, st, "tavern", batch, al, 10, Gen, Write, () => now);
+            if (o.Cursor != 15) aFails.Add($"游標要推到 15 得 {o.Cursor}");
             if (written.Count != 2) aFails.Add($"要回 2 則（12 的 @、13 的 help）得 {written.Count}：{string.Join(" | ", written.Select(w => w["body"].AsString()))}");
             else
             {
@@ -139,39 +139,39 @@ public static partial class SelfTest
             // 冷卻：剛回過 ⇒ 停在那一則前面、冷卻結束再回（⛔ 不丟）
             var s2 = s with { CooldownSeconds = 30 };
             written.Clear();
-            var o2a = SenateBartender.ProcessBatch(s2, o.State, "tavern", new[] { BMsg(17, "kaguya", "@酒保 再來") }, al, new HashSet<int>(), Gen, Write, () => now.AddSeconds(5));
-            if (written.Count != 0 || o2a.State.Cursor["tavern"] != 16 || o2a.DeferredUntilUtc == null) aFails.Add("🔴 冷卻中卻回了、或把那一則丟掉了（游標推過去）、或沒說何時再試");
-            var o2 = SenateBartender.ProcessBatch(s2, o2a.State, "tavern", new[] { BMsg(17, "kaguya", "@酒保 再來") }, al, new HashSet<int>(), Gen, Write, () => now.AddSeconds(60));
-            if (written.Count != 1 || o2.State.Cursor["tavern"] != 17) aFails.Add("冷卻結束後沒有回那一則");
+            var o2a = SenateBartender.ProcessBatch(s2, o.State, "tavern", new[] { BMsg(17, "kaguya", "@酒保 再來") }, al, o.Cursor, Gen, Write, () => now.AddSeconds(5));
+            if (written.Count != 0 || o2a.Cursor != 15 || o2a.DeferredUntilUtc == null) aFails.Add("🔴 冷卻中卻回了、或把那一則丟掉了（游標推過去）、或沒說何時再試");
+            var o2 = SenateBartender.ProcessBatch(s2, o2a.State, "tavern", new[] { BMsg(17, "kaguya", "@酒保 再來") }, al, o2a.Cursor, Gen, Write, () => now.AddSeconds(60));
+            if (written.Count != 1 || o2.Cursor != 17) aFails.Add("冷卻結束後沒有回那一則");
 
             // 模型失敗 ⇒ 罐頭句（照 seq 輪），來源標 canned-after-error
             written.Clear();
-            var o3 = SenateBartender.ProcessBatch(s, o2.State, "tavern", new[] { BMsg(18, "kaguya", "@酒保 hi") }, al, new HashSet<int>(),
+            var o3 = SenateBartender.ProcessBatch(s, o2.State, "tavern", new[] { BMsg(18, "kaguya", "@酒保 hi") }, al, o2.Cursor,
                 (a, b) => (false, "", "qwen3:0.6b", "逾時"), Write, () => now.AddMinutes(5));
             if (written.Count != 1 || written[0]["body"].AsString() != SenateBartender.Canned(s, 18) || written[0]["meta"]["reply_source"].AsString() != "canned-after-error")
                 aFails.Add("模型失敗沒有退回罐頭句（或來源沒標）");
             if (!o3.State.LastError.Contains("逾時")) aFails.Add("模型失敗的原因沒記進狀態");
 
             // 🔴 寫不進去 ⇒ 游標停在那一則前面；下一輪寫得進去就補回
-            int aBefore = o3.State.Cursor["tavern"];
-            var o4 = SenateBartender.ProcessBatch(s, o3.State, "tavern", new[] { BMsg(19, "kaguya", "@酒保 Server 停了"), BMsg(20, "kaguya", "後面那則") }, al, new HashSet<int>(),
+            int aBefore = o3.Cursor;
+            var o4 = SenateBartender.ProcessBatch(s, o3.State, "tavern", new[] { BMsg(19, "kaguya", "@酒保 Server 停了"), BMsg(20, "kaguya", "後面那則") }, al, o3.Cursor,
                 Gen, j => (false, 0, "Server 沒開"), () => now.AddMinutes(10));
-            if (!o4.StoppedOnWriteFailure || o4.State.Cursor["tavern"] != aBefore) aFails.Add($"🔴 寫不進去卻推了游標（{aBefore} → {o4.State.Cursor["tavern"]}）—— 這則會永遠漏掉");
+            if (!o4.StoppedOnWriteFailure || o4.Cursor != aBefore) aFails.Add($"🔴 寫不進去卻推了游標（{aBefore} → {o4.Cursor}）—— 這則會永遠漏掉");
             written.Clear();
-            var o5 = SenateBartender.ProcessBatch(s, o4.State, "tavern", new[] { BMsg(19, "kaguya", "@酒保 Server 停了"), BMsg(20, "kaguya", "後面那則") }, al, new HashSet<int>(),
+            var o5 = SenateBartender.ProcessBatch(s, o4.State, "tavern", new[] { BMsg(19, "kaguya", "@酒保 Server 停了"), BMsg(20, "kaguya", "後面那則") }, al, o4.Cursor,
                 Gen, Write, () => now.AddMinutes(11));
-            if (written.Count != 1 || o5.State.Cursor["tavern"] != 20) aFails.Add("下一輪沒有把漏掉的那則補回");
+            if (written.Count != 1 || o5.Cursor != 20) aFails.Add("下一輪沒有把漏掉的那則補回");
 
             // 沒設模型 ⇒ 直接罐頭，不呼叫生成
             bool aCalled = false;
             written.Clear();
-            SenateBartender.ProcessBatch(s with { ModelId = "" }, o5.State, "tavern", new[] { BMsg(21, "kaguya", "@酒保") }, al, new HashSet<int>(),
+            SenateBartender.ProcessBatch(s with { ModelId = "" }, o5.State, "tavern", new[] { BMsg(21, "kaguya", "@酒保") }, al, o5.Cursor,
                 (a, b) => { aCalled = true; return (true, "x", "m", ""); }, Write, () => now.AddMinutes(20));
             if (aCalled || written.Count != 1 || written[0]["meta"]["reply_source"].AsString() != "canned") aFails.Add("沒設模型卻呼叫了生成，或來源不是 canned");
 
-            // 已經回過的判定看 meta.triggered_by_seq
-            var replied = SenateBartender.AlreadyReplied(new[] { BMsg(30, "tavern-keeper", "回你", "29"), BMsg(31, "kaguya", "x", "28") });
-            if (!replied.SetEquals(new[] { 29 })) aFails.Add("「已經回過」的判定不對（只能看酒保自己的訊息）");
+            // 純游標移動不寫狀態檔（游標不存檔）；只有回覆／錯誤才算變動
+            var o6 = SenateBartender.ProcessBatch(s, o5.State, "tavern", new[] { BMsg(22, "kaguya", "只是聊天") }, al, 21, Gen, Write, () => now.AddMinutes(30));
+            if (o6.Changed || o6.Cursor != 22) aFails.Add("沒有回覆的訊息也讓狀態變動（每則都寫檔）或游標沒推");
 
             return new CheckRow(aName, aFails.Count == 0 ? "8 段流程逐格對上（假 LLM、假寫入）" : string.Join("；", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
@@ -198,7 +198,7 @@ public static partial class SelfTest
             if (SenateBartender.TrySaveSettings(d, mine, out _)) aFails.Add("🔴 壞檔被安靜覆蓋了");
             File.WriteAllText(SenateBartender.StatePath(d), "{壞掉");
             SenateBartender.LoadState(d, out string? eSt);
-            if (eSt == null) aFails.Add("🔴 壞掉的狀態檔沒回錯誤（Job 會把游標當成 0、把整個房間再回一遍）");
+            if (eSt == null) aFails.Add("🔴 壞掉的狀態檔沒回錯誤（每日上限會從 0 重算）");
             return new CheckRow(aName, aFails.Count == 0 ? "初始值／存讀／擋兩種／壞檔三格，逐格對上（temp 目錄）" : string.Join("；", aFails),
                                 aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }

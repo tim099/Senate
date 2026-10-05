@@ -1,5 +1,5 @@
 // 區塊職責：`senate cmd bartender` —— 酒保（tavern-keeper）的狀態與試回（TASK-0365）。
-// 物理意義：真正回應的是酒館 Server 裡的 SenateBartenderJob；本支只**讀**它的設定與游標，以及在不發文的情況下試回一句。
+// 物理意義：真正回應的是酒館 Server 裡的 SenateBartenderJob；本支只**讀**它的設定與狀態，以及在不發文的情況下試回一句。
 //           「酒保」後台頁讀同一份（format=json）。
 // 數值影響：status 純讀；preview 會呼叫本機 ollama（跟真的回覆同一份 Chat），⛔ 不寫進酒館。
 // ⚠ exit code：0 成功；2 用法錯；4 量不到（設定檔／狀態檔讀不了）；5 試回生成失敗（附上會退回的罐頭句）。
@@ -16,12 +16,12 @@ public sealed class Cmd_Bartender : SCP_Cmd
 {
     public override string Name => "bartender";
 
-    public override string Summary => "酒保（tavern-keeper）：status 看開關／游標／最後一次回覆／別名；preview 不發文試回一句 —— 回應本身由酒館 Server 執行";
+    public override string Summary => "酒保（tavern-keeper）：status 看開關／今天回了幾則／最後一次回覆／別名；preview 不發文試回一句 —— 回應本身由酒館 Server 執行";
 
     public override string Details =>
         "酒保只回兩種：被 @（`@tavern-keeper` 或別名表裡指向它的名字，例如 `@酒保`）與 `[help]`；程式碼區段裡的不算。\n"
         + "設定在 `ChatTavern/bartender/" + SenateBartender.SettingsFileName + "`、別名在 `ChatTavern/" + SCP_TavernMentionAliases.FileName + "`，改它們走後台「酒保」頁。\n"
-        + "⚠ 開關預設關；Server 停掉期間的訊息，重啟後照游標補回（回覆前會先回讀，⛔ 不回兩次）。\n"
+        + "⚠ 開關預設關；只回上線之後收到的訊息（Server 起來或開關打開的那一刻起），停機期間的不補。\n"
         + "⚠ 查餘額不歸酒保：`senate cmd bank --arg op=balance --arg account=<帳號>`。";
 
     public override string Example => SCP_CmdRegistry.Invoke("bartender --arg op=preview --arg text=\"今天推薦什麼？\"");
@@ -52,17 +52,15 @@ public sealed class Cmd_Bartender : SCP_Cmd
         Dictionary<string, string> aAliases = SCP_TavernMentionAliases.Load(iData, out string? aAliasErr);
         List<string> aMine = aAliases.Where(kv => kv.Value == SenateBartender.PersonaId).Select(kv => kv.Key).OrderBy(x => x, StringComparer.Ordinal).ToList();
         bool aHasSettings = File.Exists(SenateBartender.SettingsPath(iData));
-        int aCursor = st.Cursor.TryGetValue(SenateBartender.Room, out int c) ? c : -1;
         var r = new SCP_CmdResult { ExitCode = iSetErr != null || aStErr != null ? 4 : 0 };
         r.AddValue("enabled", s.Enabled ? "1" : "0");
-        r.AddValue("cursor", aCursor >= 0 ? aCursor.ToString(CultureInfo.InvariantCulture) : "");   // 空 ＝ 還沒建立起點（⛔ 不是 0）
         if (iJson)
         {
             r.Lines.Add(JsonSerializer.Serialize(new
             {
                 ok = r.ExitCode == 0, settings_error = iSetErr ?? "", state_error = aStErr ?? "", alias_error = aAliasErr ?? "",
                 settings_saved = aHasSettings, settings_path = SenateBartender.SettingsPath(iData), aliases_path = SCP_TavernMentionAliases.PathOf(iData),
-                enabled = s.Enabled, cursor = aCursor,
+                enabled = s.Enabled,
                 // 狀態檔讀不了 ⇒ null（⛔ 不給 0：那是讀數，這裡沒有讀數）
                 replied_today = aStErr != null ? (int?)null : st.Day == DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ? st.RepliedToday : 0,
                 last_reply_seq = st.LastReplySeq, last_trigger_seq = st.LastTriggerSeq, last_reply_at = st.LastReplyAt, last_reply_source = st.LastReplySource,
@@ -77,7 +75,7 @@ public sealed class Cmd_Bartender : SCP_Cmd
         r.Lines.Add("· 認得的名字：@" + SenateBartender.PersonaId + (aMine.Count > 0 ? "、" + string.Join("、", aMine.Select(a => "@" + a)) : "") + "（全形 ＠ 也算）");
         if (aAliasErr != null) r.Lines.Add("  ⚠ 別名表讀不了（寫入端這時只認本名）：" + aAliasErr);
         if (aStErr != null) r.Lines.Add("⚠ 狀態檔讀不了：" + aStErr);
-        else r.Lines.Add($"· 游標：{SenateBartender.Room} " + (aCursor >= 0 ? $"seq {aCursor}" : "還沒建立起點（酒館 Server 第一次跑時建立）"));
+        r.Lines.Add("· 只回酒保上線（酒館 Server 起來、或開關打開）之後收到的訊息；之前的不回，也不記讀到哪一則");
         if (st.LastReplySeq > 0) r.Lines.Add($"· 最後一次回覆：seq {st.LastTriggerSeq} → 回 seq {st.LastReplySeq}（{st.LastReplySource}，{st.LastReplyAt}）");
         if (st.LastError.Length > 0) r.Lines.Add($"· 最後一個錯誤：{st.LastError}（{st.LastErrorAt}）");
         return r;
