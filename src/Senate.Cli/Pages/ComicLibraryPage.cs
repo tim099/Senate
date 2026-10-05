@@ -38,7 +38,7 @@ public sealed class ComicLibraryPage : SCP_GuiToolPage
     List<SCP_ExternalComicSeries> m_Series = new List<SCP_ExternalComicSeries>();
     List<string> m_Personas = new List<string>();
 
-    string m_SeriesLabel = "";
+    string m_SelectedSlug = "";
     string m_VolumeLabel = "";
     string m_Persona = "";
     /// <summary>非空 ＝ 正在預覽「初始化這個 slug」，等人按確認。</summary>
@@ -123,9 +123,23 @@ public sealed class ComicLibraryPage : SCP_GuiToolPage
 
         var aLabels = new List<string>();
         foreach (SCP_ExternalComicSeries s in m_Series) aLabels.Add($"{StatusMark(s.Status).Substring(0, 2)} {s.SeriesName}　({s.MediaId})");
-        string aLabel = g.Dropdown("挑選漫畫", aLabels, aLabels.Contains(m_SeriesLabel) ? m_SeriesLabel : aLabels[0], SeriesKey);
-        if (aLabel != m_SeriesLabel) { m_SeriesLabel = aLabel; m_VolumeLabel = ""; m_PendingInitSlug = ""; }
-        SCP_ExternalComicSeries aSeries = m_Series[Math.Max(0, aLabels.IndexOf(aLabel))];
+        int aSelectedIndex = m_Series.FindIndex(s => s.Slug == m_SelectedSlug);
+        if (aSelectedIndex < 0) aSelectedIndex = 0;
+        string aLabel = g.Dropdown("挑選漫畫", aLabels, aLabels[aSelectedIndex], SeriesKey);
+        int aIndex = aLabels.IndexOf(aLabel);
+        if (aIndex < 0)
+        {
+            aIndex = aSelectedIndex;
+            // 狀態標記屬於顯示值，初始化後會改變；把下拉快取同步成新標籤，避免停在「不在清單裡」。
+            g.SetField(SeriesKey + "/value", aLabels[aIndex]);
+        }
+        SCP_ExternalComicSeries aSeries = m_Series[aIndex];
+        if (aSeries.Slug != m_SelectedSlug)
+        {
+            m_SelectedSlug = aSeries.Slug;
+            m_VolumeLabel = "";
+            m_PendingInitSlug = "";
+        }
 
         g.Separator();
         g.Label($"{aSeries.SeriesName}　[{StatusMark(aSeries.Status)}]　`{aSeries.MediaId}`");
