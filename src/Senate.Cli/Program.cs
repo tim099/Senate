@@ -812,34 +812,86 @@ public static class Program
         var aModel = new SenateModel(iRepoRoot);
         var aStyle = StyleFrom(iArgs, aModel);   // 同 doctor：覆寫先套，再畫
 
-        // ── `--list`：只印有哪些項目，⛔ 一格都不跑 ────────────────────────────
-        if (HasFlag(iArgs, "--list"))
+        // ── 預設跑哪些：`SenateData/config/selftest.json`（TASK-0397；後台頁「對拍設定」編的是同一份）──
+        SelfTestConfig aCfg;
+        try
         {
-            var aCat = SelfTest.List(aModel.Projects);
-            var aUiL = new SCP_Ui();
-            aUiL.Title($"對拍項目（{aCat.Count} 筆）");
-            using (aUiL.Table("項目（--only 吃這個）", "群"))
-                foreach (var (k, g) in aCat) aUiL.TableRow(k, g);
-            Console.Write(SCP_GuiTextRenderer.Render(aUiL.Root, aStyle));
-            Console.WriteLine("⇒ 挑選：`--only <逗號分隔>`，比對**項目名或群**的子字串（大小寫不敏感）");
-            Console.WriteLine("   例：`--only watch`／`--only real,book`／`--only WatchWrite`");
+            aCfg = SelfTestConfig.Load(SelfTestConfig.PathFor(SenatePaths.ConfigDir(iRepoRoot)),
+                SelfTest.CatalogKeys(aModel.Projects), SelfTest.CoreKeys, out bool aSeeded);
+            if (aSeeded) Console.WriteLine($"· 第一次：已播種 {aCfg.Path}（常駐 {aCfg.Enabled.Count}／關閉 {aCfg.Disabled.Count}）");
+        }
+        catch (InvalidOperationException e) { Console.Error.WriteLine("✗ " + e.Message); return 2; }
+
+        // ── `--enable` / `--disable`：改設定，⛔ 不跑任何一格 ───────────────────
+        string aEnable = ArgValue(iArgs, "--enable") ?? "", aDisable = ArgValue(iArgs, "--disable") ?? "";
+        if (aEnable.Length > 0 || aDisable.Length > 0)
+        {
+            var aKeys = SelfTest.CatalogKeys(aModel.Projects);
+            var aBad = new List<string>();
+            List<string> Resolve(string iCsv)
+            {
+                var aOut = new List<string>();
+                foreach (string t in iCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    string? k = aKeys.FirstOrDefault(x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase));
+                    if (k == null) aBad.Add(t); else aOut.Add(k);
+                }
+                return aOut;
+            }
+            List<string> aOn = Resolve(aEnable), aOff = Resolve(aDisable);
+            // ⛔ 打錯的 key 不能被靜默略過 ⇒ 有任何一個不認得就整批不寫
+            if (aBad.Count > 0)
+            {
+                Console.Error.WriteLine($"✗ 不認得的項目：{string.Join("、", aBad)} —— 整批沒寫。有哪些：`senate selftest --list`（這裡要**完整項目名**）");
+                return 2;
+            }
+            foreach (string k in aOn) { aCfg.Disabled.Remove(k); aCfg.Enabled.Add(k); }
+            foreach (string k in aOff) { aCfg.Enabled.Remove(k); aCfg.Disabled.Add(k); }
+            aCfg.Save();
+            Console.WriteLine($"✓ 已寫 {aCfg.Path}：常駐 +{aOn.Count}／關閉 +{aOff.Count}　⇒ 現在常駐 {aCfg.Enabled.Count}／關閉 {aCfg.Disabled.Count}");
             return 0;
         }
 
-        // ── `--only`：**在呼叫之前**過濾 ⇒ 沒被選到的那一格根本不執行 ────────
+        // ── `--list`：只印有哪些項目與狀態，⛔ 一格都不跑 ──────────────────────
+        if (HasFlag(iArgs, "--list"))
+        {
+            var aCat = SelfTest.ListWithStatus(aModel.Projects, aCfg);
+            var aUiL = new SCP_Ui();
+            aUiL.Title($"對拍項目（{aCat.Count} 筆；預設跑 {aCat.Count(x => x.Status != SelfTestStatus.Closed)} 筆）");
+            using (aUiL.Table("項目（--only／--enable／--disable 吃這個）", "群", "狀態"))
+                foreach (var (k, g, s, imp) in aCat)
+                    aUiL.TableRow(k, g, s switch
+                    {
+                        SelfTestStatus.Standing => imp ? "常駐（important）" : "常駐",
+                        SelfTestStatus.New => "新（跑一次，過了自動關）",
+                        _ => "關閉",
+                    });
+            Console.Write(SCP_GuiTextRenderer.Render(aUiL.Root, aStyle));
+            Console.WriteLine("⇒ 挑選：`--only <逗號分隔>`，比對**項目名或群**的子字串（大小寫不敏感；點名的照跑，不看設定）");
+            Console.WriteLine("   例：`--only watch`／`--only real,book`／`--only WatchWrite`；`--all` 全部都跑");
+            Console.WriteLine($"⇒ 改預設：`--enable <完整項目名,…>`／`--disable <…>`，或後台頁「對拍設定」；設定檔 {aCfg.Path}");
+            return 0;
+        }
+
+        // ── `--only`／`--all`／預設：**在呼叫之前**過濾 ⇒ 沒被選到的那一格根本不執行 ────────
         // ⚠ 這一格的意義是省時間（Tim 2026-09-07：項目多了會影響效率 ⇒ 要能挑）；
         //   跑完再把行藏起來是省不到的。
         string aOnly = ArgValue(iArgs, "--only") ?? "";
-        int aSelected = SelfTest.CountSelected(aModel.Projects, aOnly);
+        bool aEverything = HasFlag(iArgs, "--all");
+        SelfTestPlan aPlan = SelfTest.Plan(aModel.Projects, aOnly, aEverything, aCfg);
+        int aSelected = aPlan.Selected;
         // 🩸 打錯篩選字的下場如果是「0 格、失敗 0」，那它看起來跟全過一模一樣 ——
         //   而那正是這支工具存在的理由的反面。⇒ 選不到就**擋下並印出有哪些**。
-        if (aOnly.Length > 0 && aSelected == 0)
+        if (aSelected == 0)
         {
-            Console.Error.WriteLine($"✗ `--only {aOnly}` 一格都沒選到 —— ⛔ 這不是「全部通過」");
+            Console.Error.WriteLine(aOnly.Length > 0
+                ? $"✗ `--only {aOnly}` 一格都沒選到 —— ⛔ 這不是「全部通過」"
+                : "✗ 預設集合是 0 格（設定把全部都關了）—— ⛔ 這不是「全部通過」");
             Console.Error.WriteLine("  有哪些項目：`senate selftest --list`");
             return 2;
         }
-        var aRows = SelfTest.Run(aModel.Projects, aOnly);
+        SelfTestRun aRun = SelfTest.Run(aModel.Projects, aOnly, aEverything, aCfg);
+        var aRows = aRun.Rows;
 
         // 剪貼簿 round-trip 是 **opt-in**（`--clipboard`）。
         // ⚠ 為什麼不進預設清單：它會**覆蓋使用者的剪貼簿**，而那是不可逆的
@@ -876,7 +928,12 @@ public static class Program
             + (aSkip > 0 ? "（跳過的項目沒有讀數，不算通過）" : "")
             + (aOnly.Length > 0
                ? $"　⚠ 射程：`--only {aOnly}` ⇒ 只跑了 {aSelected} 筆項目（**不是全部**）"
-               : ""));
+               : aEverything
+                   ? $"　射程：`--all` ⇒ 全部 {aSelected} 筆"
+                   : $"　⚠ 射程：預設集合 {aSelected} 筆（常駐 {aPlan.Standing}＋新 {aPlan.New}；關閉的 {aPlan.Total - aSelected} 筆**沒跑**，`--all` 才全跑）"));
+        // 測後關閉：新的測試跑過一次、通過 ⇒ 已寫進 config 的 disabled；要它常駐請改 config／後台頁，或登記時標 important。
+        foreach (string k in aRun.AutoClosed)
+            Console.WriteLine($"· 新測試 `{k}` 跑過一次且通過 ⇒ 已自動關閉（預設不再跑；要常駐：`--enable {k}`）");
         return aFail > 0 ? 1 : 0;
     }
 
@@ -1543,7 +1600,7 @@ public static class Program
         //   ⇒ 一個正在找用法的人撞到的是拒絕。⛔ 只加在 `cmd` 底下，不順手做成全域旗標
         //   （那要每支子命令各自處理它，而沒處理的那幾支會回一個看起來像壞掉的答案）。
         ["cmd"] = new[] { "--arg", "--arg-file", "--help" },
-        ["selftest"] = new[] { "--list", "--only", "--clipboard", "--width", "--scale", "--size" },
+        ["selftest"] = new[] { "--list", "--only", "--all", "--enable", "--disable", "--clipboard", "--width", "--scale", "--size" },
         // TASK-0276：不吃任何旗標。⚠ 仍要登記 —— 不在表上的子命令會被旗標閘先擋，
         //   而那個訊息讀起來像「設計上沒這個能力」，不像漏登記。
         ["pages-check"] = new string[0],

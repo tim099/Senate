@@ -49,19 +49,51 @@ public static partial class SelfTest
     // ⚠ `Group` 是**成本分類**不是主題分類：挑選的目的是「不要每次都付慢的那一份」，
     //   所以分群的判準是「這一格要不要碰真檔案」，而不是「它在講哪個功能」。
     // ===========================================================
-    sealed record Entry(string Key, string Group, Func<IEnumerable<CheckRow>> Run);
+    // `Important`：新增的測試預設是「跑一次、通過就自動關閉」（TASK-0397）；標了它就維持常駐（見 SelfTest.Config.cs）。
+    internal sealed record Entry(string Key, string Group, Func<IEnumerable<CheckRow>> Run, bool Important = false);
 
-    static Entry One(string iKey, string iGroup, Func<CheckRow> iRun)
-        => new Entry(iKey, iGroup, () => new[] { iRun() });
+    static Entry One(string iKey, string iGroup, Func<CheckRow> iRun, bool iImportant = false)
+        => new Entry(iKey, iGroup, () => new[] { iRun() }, iImportant);
 
-    static Entry Many(string iKey, string iGroup, Func<IEnumerable<CheckRow>> iRun)
-        => new Entry(iKey, iGroup, iRun);
+    static Entry Many(string iKey, string iGroup, Func<IEnumerable<CheckRow>> iRun, bool iImportant = false)
+        => new Entry(iKey, iGroup, iRun, iImportant);
+
+    /// <summary>
+    /// 常駐名單的**播種來源**（TASK-0397，Tim 2026-10-05 拍板 38 項）：只在 `config/selftest.json` 不存在時用一次，
+    /// 之後以 config 為準 —— ⛔ 不要拿這張表去判「現在哪些常駐」。判準：共用層、會安靜壞、改別處容易被連帶弄壞的。
+    /// </summary>
+    public static readonly string[] CoreKeys =
+    {
+        // 錢
+        nameof(BankLedgerConcurrentDebit), nameof(BankAccountCleanRoom), nameof(BankIdRules), nameof(PayoutApprovalGuardCleanRoom),
+        nameof(BankRequestRoundTrip), nameof(BankRequestSourceNotInLedgerNotice), nameof(VoucherDeadBatchRetention),
+        nameof(ReconcileLineUnmeasurableNotClean), nameof(JsonExtensionDataRoundTrip),
+        // 酒館寫入／發文判定
+        nameof(TavernWriteCleanRoom), nameof(TavernMsgIndexWriterMaintained), nameof(TavernPostVerdictThreeStates),
+        nameof(TavernMetaSchemaAndRouting), nameof(WriterGlossaryAttach),
+        // Server 委派／佇列
+        nameof(DelegateCarriesCmdExitCode), nameof(ServerResultRoundTrip), nameof(VanishedCmdIsUnknownNotSuccess),
+        nameof(QueueAppendSurvivesConcurrency), nameof(QueueCommitKeepsEntriesAppendedDuringBatch),
+        nameof(QueueForLaterWhenServerUnavailable), nameof(ServerBuildKnownClassification), nameof(BuildGuardThreeStates),
+        nameof(ForwardedExplicitArgs),
+        // 共用底層
+        nameof(PathsSingleSource), nameof(PathRegistryShape), nameof(AtomicFileDistinguishesCollisionFromOtherIo),
+        nameof(ConfigRoundTripKeepsUnknownKeys), nameof(MissingSemantics), nameof(WriterStability),
+        // 任務／信件寫入
+        nameof(TaskStoreCleanRoom), nameof(TaskOpsGatesCleanRoom), nameof(RegisteredMailCleanRoom),
+        nameof(KeysGateCleanRoom), nameof(PersonaProfileWriteCleanRoom), nameof(RelationshipStoreCleanRoom),
+        // 其他
+        nameof(ActivitySessionBehaviour), nameof(WatchIdentityGuard), nameof(InvokeValueThreeStates),
+        // 選取機制本身（它壞了＝該跑的測試安靜地沒跑）
+        nameof(SelfTestSelectionAndAutoClose),
+    };
 
     // ⚠ 這張表就是「有哪些項目」的唯一來源 —— `--list` 印它、`--only` 篩它、`Run` 跑它。
     //   三個消費端吃同一份，⛔ 不要在別處再抄一份清單。
     static List<Entry> Catalog(IReadOnlyList<ProjectReading> iProjects) => new()
     {
         One(nameof(MissingSemantics), "core", MissingSemantics),
+        One(nameof(SelfTestSelectionAndAutoClose), "core", SelfTestSelectionAndAutoClose, iImportant: true),
         One(nameof(WriterStability), "core", WriterStability),
         One(nameof(ConfigRoundTripKeepsUnknownKeys), "core", ConfigRoundTripKeepsUnknownKeys),
         One(nameof(PrefsThreeStates), "core", PrefsThreeStates),
@@ -226,39 +258,9 @@ public static partial class SelfTest
         One(nameof(InvokeRejectsUnknownStepKey), "invoke", InvokeRejectsUnknownStepKey),
     };
 
-    /// <summary>`--list` 用：回 (key, group) 清單。⛔ 不跑任何一格。</summary>
-    public static List<(string Key, string Group)> List(IReadOnlyList<ProjectReading> iProjects)
-    {
-        var aOut = new List<(string, string)>();
-        foreach (var e in Catalog(iProjects)) aOut.Add((e.Key, e.Group));
-        return aOut;
-    }
-
-    /// <summary>
-    /// 跑對拍。<paramref name="iOnly"/> 給了就**只跑**名稱或群命中的那幾格。
-    /// <para>⚠ 挑選是在**呼叫之前**過濾的（沒被選到的那一格根本不執行）——
-    /// 不是跑完再把行藏起來。⇒ 這一格的意義是省時間，藏起來省不到。</para>
-    /// <para>⛔ 篩到 0 格時**不回空清單當成功** —— 呼叫端要能分辨
-    /// 「全部通過」與「我一格都沒跑」，那兩件事在 `失敗 0` 上同形。</para>
-    /// </summary>
-    public static List<CheckRow> Run(IReadOnlyList<ProjectReading> iProjects, string iOnly = "")
-    {
-        var aRows = new List<CheckRow>();
-        foreach (var e in Catalog(iProjects))
-        {
-            if (!Matches(e, iOnly)) continue;
-            aRows.AddRange(e.Run());
-        }
-        return aRows;
-    }
-
-    /// <summary>幾筆會被 <paramref name="iOnly"/> 選中（給呼叫端分辨「0 格」與「全過」）。</summary>
-    public static int CountSelected(IReadOnlyList<ProjectReading> iProjects, string iOnly)
-    {
-        int n = 0;
-        foreach (var e in Catalog(iProjects)) if (Matches(e, iOnly)) ++n;
-        return n;
-    }
+    // 列出／選取／跑 —— 見 SelfTest.Config.cs（`ListWithStatus`／`Plan`／`Run`）。
+    // ⚠ 挑選是在**呼叫之前**過濾的（沒被選到的那一格根本不執行），不是跑完再把行藏起來；
+    // ⛔ 選到 0 格時呼叫端不得當成功 —— 「全部通過」與「我一格都沒跑」在 `失敗 0` 上同形。
 
     /// <summary>
     /// 命中判準：逗號分隔、**大小寫不敏感的子字串**，比對 key 與 group 兩者任一。
