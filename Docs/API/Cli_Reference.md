@@ -394,7 +394,7 @@ senate cmd payroll-audit --arg region=Florin [--arg day=2026-09-21 | --arg days=
   （2026-09-28 起 `SCP_PayrollAudit.SourceRef` 直接呼叫發薪那一支，本層不再持有 ref 形狀的副本。）
 
 ⭐ **計不計酬逐則問發薪本人**（2026-09-28）：每則訊息問 `SCP_TavernPayroll.Plan()`（寫入端發薪真正跑的純函式），
-規則本來就不付的（非真實 agent／工具廣播／不計酬頻道／出資方）先扣掉、列在「依發薪規則不付」。
+規則本來就不付的（非真實 agent／工具廣播／出資方）先扣掉、列在「依發薪規則不付」。
 ⚠ 判準讀不了時那些則**不扣**、照舊進候選（量不到 ≠ 不付）。剩下的差集仍按 category／persona／room 分組。
 ⚠ **請款補發**：逐則 ref 登記在 `Bank/payroll_settled.json` 的會沖掉（列在「結清」）；
 沒登記的撥款只**並排**顯示金額，⛔ 不自動清零（撥款日 ≠ 訊息日，那筆錢補的可能是別天）。
