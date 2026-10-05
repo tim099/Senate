@@ -121,12 +121,41 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
         // ⚠ 工具列先於 DrawContent 畫 ⇒ 這裡就要確保讀過檔，否則剛開頁那一輪「複製全文」「顯示 frontmatter」不會出現
         string aPath = iUi.FieldValue(PathId, "");
         if (!m_Loaded || aPath != m_LoadedPath) Load(aPath);
+        bool aEdit = IsEditing(iUi, aPath);
+
+        // 模式鈕放最前面（Tim 2026-10-05：編輯／存檔／回到檢視移到 TopBar）—— 長文件捲到底也按得到
+        if (m_Error == null)
+        {
+            if (!aEdit)
+            {
+                if (iUi.Button("編輯", "mdview/btn/edit")) EnterEdit(iUi, aPath);
+            }
+            else
+            {
+                string aText = iUi.FieldValue(DraftId, m_RawLf);
+                bool aDirty = aText.Replace("\r\n", "\n") != m_RawLf;
+                if (iUi.Button("存檔", "mdview/btn/save")) Save(iUi, aPath, aText);
+                if (iUi.Button(aDirty ? "放棄修改" : "回到檢視", "mdview/btn/discard")) Discard(iUi, aDirty);
+                iUi.Label(aDirty ? "（有未存的修改）" : "（與磁碟相同）");
+            }
+        }
+
         if (iUi.Button("重新讀取", "mdview/btn/reload")) { m_Loaded = false; m_Message = null; }
-        OpenFolderButton(iUi, aPath.Length > 0 ? Path.GetDirectoryName(aPath) : null, "mdview/btn/open-dir");
+        // 開啟檔案位置：給**檔案路徑**而不是資料夾 —— 宿主的 reveal 會在檔案總管裡選取那個檔（同「原始碼」鈕）
+        if (SCP_GuiHost.RevealInFileManager != null && iUi.Button("開啟檔案位置", "mdview/btn/reveal"))
+            m_Message = File.Exists(aPath) ? SCP_GuiHost.RevealInFileManager(aPath) : "檔案不存在，開不了位置：" + aPath;
         if (SCP_GuiHost.CopyToClipboard != null && m_Raw.Length > 0 && iUi.Button("複製全文", "mdview/btn/copy"))
             m_Message = SCP_GuiHost.CopyToClipboard(m_Raw);
-        if (m_Doc.Frontmatter != null) iUi.Toggle("顯示 frontmatter", false, FrontId);
+        if (!aEdit && m_Doc.Frontmatter != null) iUi.Toggle("顯示 frontmatter", false, FrontId);
     }
+
+    /// <summary>
+    /// 編輯模式成立嗎 —— 工具列與內容各問一次，**判準只寫在這裡**（兩份會漂開）。
+    /// ⚠ 要「草稿屬於這一份檔」才成立：路徑欄被外部改掉時，不這樣擋的話畫面會拿 A 的草稿配 B 的路徑，
+    ///   而按存檔就是把 A 的內容寫進 B。
+    /// </summary>
+    bool IsEditing(SCP_Ui g, string iPath)
+        => g.FieldValue(ModeId, "") == ModeEdit && m_Error == null && g.FieldValue(DraftPathId, "") == iPath;
 
     // ── 內容 ─────────────────────────────────────────────
 
@@ -134,9 +163,7 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
     {
         string aPath = g.FieldValue(PathId, "");
         if (!m_Loaded || aPath != m_LoadedPath) Load(aPath);
-        // ⚠ 編輯模式要「草稿屬於這一份檔」才成立：路徑欄被外部改掉（CLI --set）時，
-        //   不這樣擋的話畫面會拿 A 的草稿配 B 的路徑，而按存檔就是把 A 的內容寫進 B。
-        bool aEdit = g.FieldValue(ModeId, "") == ModeEdit && m_Error == null && g.FieldValue(DraftPathId, "") == aPath;
+        bool aEdit = IsEditing(g, aPath);
 
         if (aEdit) g.Label("檔案：" + aPath);   // 編輯中不給換路徑：草稿綁著這一份
         else g.TextField("檔案", aPath, PathId);
@@ -146,12 +173,8 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
         g.Label($"{m_Raw.Length.ToString(CultureInfo.InvariantCulture)} 字｜行尾 {(m_CrLf ? "CRLF" : "LF")}｜{(m_Bom ? "UTF-8 BOM" : "UTF-8")}｜{m_Doc.Blocks.Count} 個區塊");
         DrawHistoryRow(g, aEdit);
 
-        if (aEdit) DrawEditor(g, aPath);
-        else
-        {
-            if (g.Button("編輯", "mdview/btn/edit")) EnterEdit(g, aPath);
-            DrawViewer(g);
-        }
+        if (aEdit) DrawEditor(g);
+        else DrawViewer(g);
     }
 
     // ── 編輯模式 ─────────────────────────────────────────
@@ -179,16 +202,10 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
         m_Message = null;
     }
 
-    void DrawEditor(SCP_Ui g, string iPath)
+    /// <summary>編輯區本體。存檔／放棄／回到檢視三顆鈕在工具列（TopBarButtons）。</summary>
+    void DrawEditor(SCP_Ui g)
     {
         string aText = g.FieldValue(DraftId, m_RawLf);
-        bool aDirty = aText.Replace("\r\n", "\n") != m_RawLf;
-        using (g.Row())
-        {
-            if (g.Button("存檔", "mdview/btn/save")) Save(g, iPath, aText);
-            if (g.Button(aDirty ? "放棄修改" : "回到檢視", "mdview/btn/discard")) Discard(g, aDirty);
-            g.Label(aDirty ? "（有未存的修改）" : "（與磁碟相同）");
-        }
         if (g.FieldValue(DraftBaseId, "") != m_Hash)
             g.Note("[注意] 磁碟上的檔在你開始編輯之後被改過（可能是 agent／Server 寫的）—— 存檔前先「放棄修改」重開，或按兩次存檔覆寫");
         g.TextArea("", aText, DraftId, 32);
