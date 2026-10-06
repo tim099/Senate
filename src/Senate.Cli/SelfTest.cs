@@ -206,6 +206,7 @@ public static partial class SelfTest
         One(nameof(CmdTierRegistry), "cmd", CmdTierRegistry),
         One(nameof(CmdTierPointedTo), "cmd", CmdTierPointedTo),
         One(nameof(TavernWaitYieldsToBuild), "tavern", TavernWaitYieldsToBuild),
+        One(nameof(PersonaCreateCleanRoom), "morning", PersonaCreateCleanRoom),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
         // 工作記憶與密封信（TASK-0415）：本體在 SelfTest.WorkMemory0415.cs
