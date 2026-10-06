@@ -78,7 +78,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
 
     public override string Key => PageKey;
     public override string Title => "persona 管理";
-    public override string? MenuGroup => "酒館";
+    public override string? MenuGroup => "管理";
 
     public override void OnPush()
     {
