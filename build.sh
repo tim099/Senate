@@ -78,7 +78,73 @@ done
 echo '── Senate 一鍵 build ───────────────────────────'
 command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 ./install.sh' >&2; exit 1; }
 
-# ── publish 前先收掉會鎖住 exe 的東西：① 常駐 Server ② 上一顆 GUI 視窗（TASK-0102＋2026-09-04）
+
+# ── 編譯到暫存目錄（TASK-0438，Tim 2026-10-06）──────────────────────────
+# 物理意義：舊版一開頭就停 Server、`-o publish` 直接覆寫 ⇒ **整段編譯期間 Server 都是停的**
+#   （數十秒～數分鐘），而停到 publish 之間的空窗越長，越容易有人在空窗裡又開一顆 senate 鎖住 exe
+#   （🩸 2026-10-06 22:29 實地：印完「exe 已可寫入」之後編譯期間冒出一顆視窗 ⇒ GenerateBundle access denied）。
+#   ⇒ 改成「新 build 出現 ⇒ 停舊 Server ⇒ 複製 exe ⇒ 啟動新的」：先編到 build/stage/，
+#     編譯期間 publish/ 與在跑的 Server **一個位元組都不動**；編譯失敗就直接結束，什麼都沒停。
+# ⚠ 捷徑與 PATH 仍指 publish/（使用者那邊沒有要改的設定）；stage 只是 build 的落點。
+# ⚠ 每趟先清空 stage：殘留上一趟的檔會被一起複製進 publish/，而那種混版不會報錯。
+stage="$root/build/stage"
+rm -rf "$stage"
+mkdir -p "$stage"
+
+
+# build id：git SHA ＋ UTC 時間 ⇒ 進 AssemblyInformationalVersion，Server 心跳與 CLI 拿它對「是不是同一顆 exe」。
+# ⚠ IncludeSourceRevisionInInformationalVersion 關掉：不然 SDK 會再接一段 +sha，兩邊字串就對不上。
+build_sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+# ⚠ `-dirty` 的射程只有這一句：**build 當下工作區有未提交差異**。
+#   ⛔ 它**不**斷言「沒有任何 commit 重建得出這顆 exe」—— 那是一句更強的話，而這一行量不到它。
+#   ⇒ 要判重建性，去量**髒的是什麼**：只髒在父層 submodule pointer 而 submodule 本身在 origin 上
+#     ⇒ **重建得出來**，代價是「定語要靠一個知道那兩個 SHA 的人」。
+#     bump 拿掉的是**那個依賴**，不是「不可重建性」。
+# 🩸 2026-09-10：寬版（@kiara 09-09 TASK-0157 #11）已由 @basecamp 09-09 #12 的量測收窄，
+#   而收窄版只住在那一則留言裡 ⇒ 24 小時後 basecamp 自己在 Senate `b58b6b1` 的理由裡引用了寬版，
+#   而那一次的髒剛好就是可重建那一種。⇒ 所以這段話落在**印出它的這一行旁邊**，不留在留言層。
+build_dirty=""; [ -n "$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ] && build_dirty="-dirty"
+build_id="${build_sha}${build_dirty}.$(date -u +%Y%m%dT%H%M%SZ)"
+echo "· build id：$build_id"
+
+dotnet publish src/Senate.Cli   -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false \
+  -c Release \
+  -r win-x64 \
+  --self-contained \
+  -p:PublishSingleFile=true \
+  -o "$stage" \
+  --nologo -v minimal
+
+# ── 第二顆：常駐 Server（TASK-0209 A7）──
+# 拍板（basecamp 2026-09-15，Tim「209 全包 GO」授權）：**(甲) 自足單檔**，出貨到 publish/server/。
+# 三條路的代價昨天列在單上（甲 +70MB／乙 要裝 runtime／丙 版面重排），而選 (甲) 的理由只有一句：
+#   ⚠ (乙) 的失效模式是「**那台機器沒有 .NET runtime**」—— 而它發作的位置是**自動啟動**，
+#     也就是沒有人在看的那條路（跨日保管費／領薪／發文計酬）。
+#   ⇒ 我們用磁碟換掉一整類環境失敗。**70MB 是具名的代價，不是漏算。**
+# ⚠ 出到 publish/server/ 而不是 publish/：兩顆自足單檔進同一層會互相蓋 pdb 與原生層。
+# 🔴 build_id 必須跟上面那顆**同一個**：`BuildMatches` 比的是 AssemblyInformationalVersion，
+#    不一致的症狀是每一支委派 Cmd 都 build_mismatch（而兩顆都是「成功 build 出來的」）。
+dotnet publish src/Senate.Server -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false   -c Release   -r win-x64   --self-contained   -p:PublishSingleFile=true    -o "$stage/server"   --nologo -v minimal
+
+server_exe="$stage/server/senate-server.exe"
+if [ -f "$server_exe" ]; then
+  echo "· Server exe（暫存）：build/stage/server/senate-server.exe（$(du -h "$server_exe" | cut -f1)）"
+  # 護欄的活體那一半：GUI 原生層**不該**出現在 Server 那一層。
+  # ⛔ csproj 那道 <Error> 只擋 ProjectReference；傳遞相依混進來時它不會叫。
+  for gui in cimgui.dll glfw3.dll; do
+    [ -f "$stage/server/$gui" ] && echo "⚠ build/stage/server/$gui 不該存在 —— Server 又把 GUI 那一套拖進來了（TASK-0209 A1）"
+  done
+else
+  echo "✗ build/stage/server/senate-server.exe 不存在 —— Server publish 沒成功；publish/ 沒動、在跑的 Server 也沒停" >&2; exit 1
+fi
+
+swap_t0=$(date +%s)
+# ── 換檔：新 build 已在 stage ⇒ 停舊 Server ⇒ 複製 exe ⇒ 啟動新的（TASK-0438）──────────
+# ⚠ 下面落旗標／停 Server／收視窗的判準照舊（TASK-0102／0309＋2026-09-04），只是**從 build 開頭搬到編譯完之後**，
+#   停機時間只剩「停 → 複製 → 起回」這一段。
+# 🔒 這一段全程有旗標鎖著（Tim 2026-10-06）：落旗標 → 停 → 複製 → 收旗標 → 腳本自己起回來；
+#   中間任何人的 autostart／`server start` 都被 BuildGuard 擋下（發薪排 queue），要等換完才能起。
+# ⚠ 收掉會鎖住 exe 的東西：① 常駐 Server ② 上一顆 GUI 視窗
 # 🩸 D10：覆寫 publish 出來的 exe 會撞「exe 正在執行中」的鎖。鎖它的有兩種 process：
 #   前景永駐的 Server，以及**收尾留下來的那顆視窗**（2026-09-04 起 build 會自己開一顆）。
 #   兩者都要收 —— 2026-09-03／09-04 各撞一次 `GenerateBundle … Access to the path … is denied`，
@@ -86,15 +152,15 @@ command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 
 #   ⚠ 用**舊的** exe 去停 Server（新的還沒 build 出來）；舊 exe 不存在就沒有東西可停。
 had_server=0
 running_ids=""
-# 🔴 TASK-0309：**先落旗標、再停 Server**。停掉之後、publish 覆寫 exe 之前是一段空窗，
+# 🔴 TASK-0309：**先落旗標、再停 Server**。停掉之後、複製覆寫 exe 之前是一段空窗，
 #   空窗裡一則發文會觸發 autostart，而它拉起的是**還沒被覆寫的舊 exe** ⇒ 握住 senate-server.exe
-#   ⇒ publish 撞 access denied ⇒ CLI 新／Server 舊的混版（2026-09-27 09:32 實地一次）。
+#   ⇒ 覆寫撞 access denied ⇒ CLI 新／Server 舊的混版（2026-09-27 09:32 實地一次）。
 #   autostart 與 `server start` 看到旗標就不起（Senate.Core/BuildGuard.cs）。
 #   ⚠ 檔名與 SenatePaths.BuildInProgressFlag 同一個；改一邊要改兩邊。
 build_flag="$root/SenateData/runtime/_build_in_progress.flag"
 mkdir -p "$(dirname "$build_flag")"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$build_flag"
-echo "· 已落「build 進行中」旗標 ⇒ 這段期間 autostart 不會從舊 exe 拉起 Server"
+echo "· 已落「build 進行中」旗標 ⇒ 換檔期間 autostart／server start 都起不來（換完才收）"
 if [ -f "$root/publish/senate.exe" ]; then
   # ⚠ 用 `list` 不用 `status`：status 不指名時只有一顆的情況下才代表全部，
   #   而 `list` 的 exit 0 逐字就是「至少有一顆活著」（TASK-0244）。
@@ -104,13 +170,13 @@ if [ -f "$root/publish/senate.exe" ]; then
   # 🔴 TASK-0244：一律 `--all` —— 這裡要的不是「停某一顆」，是**把所有鎖著 exe 的都放掉**。
   #   ⛔ 不指名也不指定 `main`：漏停一顆的樣子是 publish 撞 `Access to the path ... is denied`，
   #     而那個錯誤訊息**不會說是誰**（這一段檔頭上面那兩筆血證就是它）。
-  "$root/publish/senate.exe" server stop --all || echo "⚠ server stop 回非零 —— 若 publish 撞鎖，先手動收掉 Server 再重跑"
+  "$root/publish/senate.exe" server stop --all || echo "⚠ server stop 回非零 —— 若複製撞鎖，先手動收掉 Server 再重跑"
   # ⚠ 射程：停的是**那顆常駐 Server**（不分它是哪顆 exe 起的 —— 它們 watch 同一個 stop-request 檔）。
   #   ⇒ 這一停同時解掉 publish/senate.exe 與 publish/server/senate-server.exe 兩個鎖。
   # ⚠ 寫成 `[ ... ] && echo` 會在**沒有 Server 在跑**時讓整支腳本當場 abort：
   #   `set -e` 底下 `A && B` 的 A 失敗 ⇒ 整個 list 回非零、且它不在條件位置。用 if，不用短路。
   if [ "$had_server" -eq 1 ]; then
-    echo "· 本來在跑的 Server（${running_ids% }）—— 已停；publish 完成後會起回來"
+    echo "· 本來在跑的 Server（${running_ids% }）—— 已停；換完檔馬上起回來"
   fi
   # ② 視窗：先請它自己關（CloseMainWindow），2 秒不走才 kill。只收**這顆 exe** 開的，
   #    比對的是 Path 不是 process 名 —— 別台／別份 clone 的 senate 不干我的事。
@@ -160,57 +226,59 @@ if [ -f "$root/publish/senate.exe" ]; then
         try { $fs = [System.IO.File]::Open($t, "Open", "Write"); $fs.Close(); $free = $true; break }
         catch { Start-Sleep -Milliseconds 250 }
       }
-      if (-not $free) { Write-Host "⚠ publish/senate.exe 仍被鎖著（等了 5 秒）—— publish 大概會撞 Access denied" }
-      elseif ($ps.Count -gt 0) { Write-Host "· exe 已可寫入" }' 2>/dev/null || echo "⚠ 收視窗那步回非零 —— 若 publish 撞鎖，手動關掉開著的 senate 視窗再重跑"
+      if (-not $free) { Write-Host "⚠ publish/senate.exe 仍被鎖著（等了 5 秒）—— 複製大概會失敗" }
+      elseif ($ps.Count -gt 0) { Write-Host "· exe 已可寫入" }' 2>/dev/null || echo "⚠ 收視窗那步回非零 —— 若複製撞鎖，手動關掉開著的 senate 視窗再重跑"
   fi
 fi
 
+# 複製 stage → publish/。⚠ `set +e`：複製失敗**不能**讓腳本在這裡 abort —— 那樣 Server 就一直停著。
+#   失敗時照樣收旗標、把 Server 起回來（publish/ 那顆仍可跑），最後以 exit 1 結束並說清楚。
+# ⚠ 重試 3 次（每次隔 1 秒）：視窗剛被收掉時，exe 的鎖偶爾晚一點才放。
+swap_ok=0
+mkdir -p "$root/publish"
+for _try in 1 2 3; do
+  set +e
+  cp -rf "$stage/." "$root/publish/" 2> "$root/build/build_swap.log"
+  _crc=$?
+  set -e
+  if [ "$_crc" -eq 0 ]; then swap_ok=1; break; fi
+  sleep 1
+done
+if [ "$swap_ok" -eq 1 ]; then
+  echo "✓ 新 build 已複製進 publish/（build/stage → publish）"
+else
+  echo "✗ 複製 build/stage → publish 失敗（重試 3 次）—— publish/ 可能是**新舊混版**；原因看 build/build_swap.log" >&2
+  echo "   ⇒ 關掉鎖著 publish/ 的 senate 後重跑 ./build.sh" >&2
+fi
 
-# build id：git SHA ＋ UTC 時間 ⇒ 進 AssemblyInformationalVersion，Server 心跳與 CLI 拿它對「是不是同一顆 exe」。
-# ⚠ IncludeSourceRevisionInInformationalVersion 關掉：不然 SDK 會再接一段 +sha，兩邊字串就對不上。
-build_sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo nogit)"
-# ⚠ `-dirty` 的射程只有這一句：**build 當下工作區有未提交差異**。
-#   ⛔ 它**不**斷言「沒有任何 commit 重建得出這顆 exe」—— 那是一句更強的話，而這一行量不到它。
-#   ⇒ 要判重建性，去量**髒的是什麼**：只髒在父層 submodule pointer 而 submodule 本身在 origin 上
-#     ⇒ **重建得出來**，代價是「定語要靠一個知道那兩個 SHA 的人」。
-#     bump 拿掉的是**那個依賴**，不是「不可重建性」。
-# 🩸 2026-09-10：寬版（@kiara 09-09 TASK-0157 #11）已由 @basecamp 09-09 #12 的量測收窄，
-#   而收窄版只住在那一則留言裡 ⇒ 24 小時後 basecamp 自己在 Senate `b58b6b1` 的理由裡引用了寬版，
-#   而那一次的髒剛好就是可重建那一種。⇒ 所以這段話落在**印出它的這一行旁邊**，不留在留言層。
-build_dirty=""; [ -n "$(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ] && build_dirty="-dirty"
-build_id="${build_sha}${build_dirty}.$(date -u +%Y%m%dT%H%M%SZ)"
-echo "· build id：$build_id"
-
-dotnet publish src/Senate.Cli   -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false \
-  -c Release \
-  -r win-x64 \
-  --self-contained \
-  -p:PublishSingleFile=true \
-  -o publish \
-  --nologo -v minimal
-
-# ── 第二顆：常駐 Server（TASK-0209 A7）──
-# 拍板（basecamp 2026-09-15，Tim「209 全包 GO」授權）：**(甲) 自足單檔**，出貨到 publish/server/。
-# 三條路的代價昨天列在單上（甲 +70MB／乙 要裝 runtime／丙 版面重排），而選 (甲) 的理由只有一句：
-#   ⚠ (乙) 的失效模式是「**那台機器沒有 .NET runtime**」—— 而它發作的位置是**自動啟動**，
-#     也就是沒有人在看的那條路（跨日保管費／領薪／發文計酬）。
-#   ⇒ 我們用磁碟換掉一整類環境失敗。**70MB 是具名的代價，不是漏算。**
-# ⚠ 出到 publish/server/ 而不是 publish/：兩顆自足單檔進同一層會互相蓋 pdb 與原生層。
-# 🔴 build_id 必須跟上面那顆**同一個**：`BuildMatches` 比的是 AssemblyInformationalVersion，
-#    不一致的症狀是每一支委派 Cmd 都 build_mismatch（而兩顆都是「成功 build 出來的」）。
-dotnet publish src/Senate.Server -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false   -c Release   -r win-x64   --self-contained   -p:PublishSingleFile=true    -o publish/server   --nologo -v minimal
-
-server_exe="$root/publish/server/senate-server.exe"
-if [ -f "$server_exe" ]; then
-  echo "· Server exe：publish/server/senate-server.exe（$(du -h "$server_exe" | cut -f1)）"
-  # 護欄的活體那一半：GUI 原生層**不該**出現在 Server 那一層。
-  # ⛔ csproj 那道 <Error> 只擋 ProjectReference；傳遞相依混進來時它不會叫。
-  for gui in cimgui.dll glfw3.dll; do
-    [ -f "$root/publish/server/$gui" ] && echo "⚠ publish/server/$gui 不該存在 —— Server 又把 GUI 那一套拖進來了（TASK-0209 A1）"
+# 🔴 TASK-0309 ④：exe 都換好了 ⇒ 先收旗標，再把換檔前在跑的那幾顆起回來。
+#   順序不能反：旗標還在時 `server start` 會被 BuildGuard 擋下（那正是它要擋的）。
+#   ⚠ 起回來的理由不只是方便：build 期間被擋下的發薪排進了 queue（build_in_progress 可排隊），
+#     ⛔ 沒有 Server 起來，它們就一直躺著，直到下一則發文碰巧觸發 autostart。
+rm -f "$build_flag"
+if [ "$had_server" -eq 1 ]; then
+  for sid in $running_ids; do
+    # ⚠ `set +e`：起不回來是要講出來的事，⛔ 不該讓整支 build 在這裡 abort（exe 已經換好了）。
+    set +e
+    "$root/publish/senate.exe" server start --detach --id "$sid" > "$root/build/build_restart_$sid.log" 2>&1
+    _src=$?
+    set -e
+    if [ "$_src" -eq 0 ]; then
+      echo "✓ Server [$sid] 已用新 build 起回來"
+    else
+      echo "⚠ Server [$sid] 沒起回來（exit $_src）—— **現在是停的**；看 build/build_restart_$sid.log，或手動 senate server start --detach --id $sid"
+    fi
   done
 else
-  echo "⚠ publish/server/senate-server.exe 不存在 —— Server publish 沒成功？（自動啟動會退回用 CLI 自己起）"
+  echo '· Server：換檔前沒有在跑，現在也是停的（下一個 ⤷Server 的 Cmd 會自動拉起新 build）'
 fi
+swap_secs=$(( $(date +%s) - swap_t0 ))
+if [ "$had_server" -eq 1 ]; then
+  echo "· Server 停機：停 → 複製 → 起回 共 ${swap_secs} 秒（編譯期間 Server 照常在跑）"
+else
+  echo "· 換檔共 ${swap_secs} 秒"
+fi
+
 
 # 執行檔就住在 publish/ —— **不複製到根層**（Tim 2026-09-01 拍板）。
 # 🩸 舊版把 publish/Senate.Cli.exe 複製成根層 senate.exe，理由只是「指令要叫 senate」。
@@ -272,27 +340,7 @@ echo "✓ 產物：$exe（${mb} MB）＋ 同層的 cimgui.dll / glfw3.dll"
 #   ⇒ 所以這裡**明講「本次沒有驗收」並印出那一行指令** —— 分家的是流程，不是那個事實。
 #   ⛔ 靜默結束就是把「沒驗」與「驗過了」變成同一個畫面，而那正是這個專案一直在修的形狀。
 #
-# 🔴 TASK-0309 ④：exe 都換好了 ⇒ 先收旗標，再把 build 前在跑的那幾顆起回來。
-#   順序不能反：旗標還在時 `server start` 會被 BuildGuard 擋下（那正是它要擋的）。
-#   ⚠ 起回來的理由不只是方便：build 期間被擋下的發薪排進了 queue（build_in_progress 可排隊），
-#     ⛔ 沒有 Server 起來，它們就一直躺著，直到下一則發文碰巧觸發 autostart。
-rm -f "$build_flag"
-if [ "$had_server" -eq 1 ]; then
-  for sid in $running_ids; do
-    # ⚠ `set +e`：起不回來是要講出來的事，⛔ 不該讓整支 build 在這裡 abort（exe 已經換好了）。
-    set +e
-    "$exe" server start --detach --id "$sid" > "$root/build/build_restart_$sid.log" 2>&1
-    _src=$?
-    set -e
-    if [ "$_src" -eq 0 ]; then
-      echo "✓ Server [$sid] 已用新 build 起回來"
-    else
-      echo "⚠ Server [$sid] 沒起回來（exit $_src）—— **現在是停的**；看 build/build_restart_$sid.log，或手動 senate server start --detach --id $sid"
-    fi
-  done
-else
-  echo '· Server：build 前沒有在跑，現在也是停的（下一個 ⤷Server 的 Cmd 會自動拉起新 build）'
-fi
+
 
 if [ "$do_check" -eq 1 ]; then
   echo
@@ -371,4 +419,5 @@ else
   fi
 fi
 
+[ "$swap_ok" -eq 1 ] || exit 1
 exit "$check_rc"

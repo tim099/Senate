@@ -12,7 +12,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 腳本 | 做什麼 |
 |---|---|
 | `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
-| `build.sh` | `dotnet publish` **兩次**（self-contained）：`publish/senate.exe` ＋ `publish/server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）→ 在根層放雙擊用的 `senate.lnk`。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
+| `build.sh` | `dotnet publish` **兩次**（self-contained）**到 `build/stage/`**：`senate.exe` ＋ `server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）。編譯期間 `publish/` 與在跑的 Server 都不動；編譯成功才 **落旗標 → 停舊 Server／收視窗 → 複製進 `publish/` → 收旗標 → 起回新 Server**，並印出停機秒數（TASK-0438）→ 在根層放雙擊用的 `senate.lnk`。編譯失敗 ⇒ 什麼都沒停。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
 | `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
 
 > ⛔ **build 只有一個入口。** install 不准自己另寫一條 `dotnet build`。
