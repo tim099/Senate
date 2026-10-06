@@ -208,6 +208,8 @@ public static partial class SelfTest
         One(nameof(TavernWaitYieldsToBuild), "tavern", TavernWaitYieldsToBuild),
         One(nameof(PersonaCreateCleanRoom), "morning", PersonaCreateCleanRoom),
         One(nameof(BankBindingStampCrossProcess), "bank", BankBindingStampCrossProcess),
+        // 借別區、本區沒開戶（TASK-0440）：本體在 SelfTest.BankAuditBorrow0440.cs
+        One(nameof(BankAuditBorrowedUnopened), "bank", BankAuditBorrowedUnopened),
         One(nameof(PersonaLettersRepoCleanRoom), "morning", PersonaLettersRepoCleanRoom),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
