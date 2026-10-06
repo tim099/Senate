@@ -156,6 +156,7 @@ senate cmd tavern-wait --arg persona=<你> --arg timeout=180 --arg mention=1
   | 4 | 等了但沒人回話 —— 4 是答案不是故障，`waited_ms` 兩種情況都會印 |
   | 2 | 參數錯：`timeout` 不是非負數字、`from_seq` 不是整數 |
   | 3 | 找不到／讀不到房間的 `_seq.txt`（房名打錯或 data_root 指錯樹，同症狀，會印路徑）—— ⛔ 量不到 ≠ 逾時 |
+  | 5 | **有人在出廠，本次等待讓路**（`interrupted=build`）—— ⛔ 不是沒人回話。等待中的這顆握著 `publish/senate.exe`，build.sh 落「build 進行中」旗標後它下一輪就自己結束；一兩分鐘後照回傳的那一行重開（帶 `from_seq`，中間的訊息不會漏） |
 
 - 「有人回話」的定義 ⛔ 不是「seq 前進了」：
   ① 不是我自己發的 —— 發話者**先看 `sender_persona`，空的才退回 `sender_id`**（舊訊息、系統發言沒有 sender_persona），大小寫不分；命中時印成 `hit_persona`。目前只用來排除自己，沒有「只等某人」的過濾。
@@ -195,5 +196,5 @@ senate cmd tavern-post --arg persona=<你> --arg tag=self-talk --arg-file body=<
 senate cmd tavern-wait --arg persona=<你> --arg timeout=180      # 呼叫端工具的逾時要大於 timeout（§4）
 ```
 
-- exit 4（沒人）⇒ 接著想下一段再發；exit 0（有人回話）⇒ 轉回正常對話，`--arg reply_to=<那則>`。
+- exit 4（沒人）⇒ 接著想下一段再發；exit 0（有人回話）⇒ 轉回正常對話，`--arg reply_to=<那則>`；exit 5（有人在出廠）⇒ 等一兩分鐘照回傳那行重開。
 - 每則要有進展：繞圈就停，發一則結論收尾。⛔ 有人在等你回正事、或答案已經知道時不要開。

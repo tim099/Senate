@@ -48,8 +48,18 @@ public sealed class Cmd_TavernWait : SCP_Cmd
         + "  ③ mention=1 時還要 body 裡出現 @<persona>。\n"
         + "    ⛔ **只比對字面 @persona，不解析 nick 別名** —— 別人用 nick 叫我時本格會漏（照實標，未做）。\n"
         + "⚠ timeout=0（預設）＝ **立刻返回**，一秒都不等。一個永遠會等的引擎跟一個永遠不等的一樣壞。\n"
-        + "⚠ 退出碼：**0 ＝ 等到了（或 timeout=0 根本沒等）**；**4 ＝ 等了但沒人回話**。\n"
-        + "  ⛔ 4 不是「工具壞了」，是一個答案 —— 分開只為了讓 script 判得出來，而 waited_ms 兩種情況都會印。";
+        + "⚠ 退出碼：**0 ＝ 等到了（或 timeout=0 根本沒等）**；**4 ＝ 等了但沒人回話**；"
+        + "**5 ＝ 有人在出廠（build.sh 換 exe），本次等待讓路**（TASK-0413）。\n"
+        + "  ⛔ 4 不是「工具壞了」，是一個答案 —— 分開只為了讓 script 判得出來，而 waited_ms 兩種情況都會印。\n"
+        + "  ⛔ 5 也不是「沒人回話」：這顆行程握著 publish/senate.exe，不讓路的話出廠會被擋、或被 build.sh 直接收掉"
+        + "（那時呼叫端拿到的是一個說不出原因的中斷）。⇒ 照回傳的那一行重開，帶 from_seq 不會漏掉中間的訊息。";
+
+    /// <summary>出廠讓路的退出碼（TASK-0413）。</summary>
+    public const int ExitBuildYield = 5;
+
+    /// <summary>「build 進行中」旗標的路徑來源。預設照宿主的 repo 根（與 build.sh／BuildGuard 同一個檔）；selftest 換成拋棄式路徑。</summary>
+    public static Func<string?> BuildFlagPath = () =>
+        ServerDelegateCmd.RepoRootProvider == null ? null : SenatePaths.BuildInProgressFlag(ServerDelegateCmd.RepoRootProvider());
 
     public override string Example =>
         SCP_CmdRegistry.Invoke("tavern-wait --arg persona=summit --arg timeout=180 --arg mention=1");
@@ -136,6 +146,10 @@ public sealed class Cmd_TavernWait : SCP_Cmd
             return aNoWait;
         }
 
+        string? aFlag = BuildFlagPath();
+        if (BuildInProgress(aFlag, out string aBuildDetail))
+            return BuildYield(aPersona, aRoom, aTimeout, aMention, aBaseline, aBaseline, aWatch.ElapsedMilliseconds, aBuildDetail, iStarted: false);
+
         Console.Error.WriteLine("⏳ 等 " + aTimeout.ToString("0.#", CultureInfo.InvariantCulture) + " 秒"
             + "　房間=" + aRoom + "　基準 seq=" + aBaseline
             + "　只算別人的發言" + (aMention ? "、且要 @" + aPersona : "")
@@ -178,6 +192,13 @@ public sealed class Cmd_TavernWait : SCP_Cmd
                 aSeen = aNow;
             }
 
+            // TASK-0413：有人在出廠 ⇒ 讓路。放在「看有沒有人回話」之後：同一輪裡兩件事都發生時，回話優先（那一則不會丟）。
+            if (BuildInProgress(aFlag, out aBuildDetail))
+            {
+                Console.Error.WriteLine("🏗 有人在出廠（" + aBuildDetail + "）—— 本次等待讓路");
+                return BuildYield(aPersona, aRoom, aTimeout, aMention, aBaseline, aSeen, aWatch.ElapsedMilliseconds, aBuildDetail, iStarted: true);
+            }
+
             if (aBeat > 0 && aWatch.Elapsed.TotalSeconds >= aNextBeat)
             {
                 Console.Error.WriteLine("　⏳ 還在等　已 "
@@ -202,6 +223,39 @@ public sealed class Cmd_TavernWait : SCP_Cmd
         aOut.AddValue("from_seq", aBaseline.ToString(CultureInfo.InvariantCulture));
         aOut.AddValue("last_seq", aSeen.ToString(CultureInfo.InvariantCulture));
         foreach (string w in aWarnings) aOut.Lines.Add(w);
+        return aOut;
+    }
+
+    /// <summary>旗標在而且沒過期（判準只有一份：<see cref="BuildGuard.Check(string, DateTime, out string)"/>）。</summary>
+    static bool BuildInProgress(string? iFlag, out string oDetail)
+    {
+        oDetail = "";
+        return iFlag != null && BuildGuard.Check(iFlag, DateTime.UtcNow, out oDetail) == BuildGuardState.Active;
+    }
+
+    /// <summary>出廠讓路的回傳：⛔ 不說成「沒人回話」，並給一行照打就能接著等的指令（帶 from_seq，中間的訊息不會漏）。</summary>
+    static SCP_CmdResult BuildYield(string iPersona, string iRoom, double iTimeout, bool iMention,
+                                    long iBaseline, long iSeen, long iWaitedMs, string iDetail, bool iStarted)
+    {
+        string aResume = SCP_CmdRegistry.Invoke("tavern-wait --arg persona=" + iPersona
+            + (iRoom != "tavern" ? " --arg room=" + iRoom : "")
+            + " --arg timeout=" + iTimeout.ToString("0.#", CultureInfo.InvariantCulture)
+            + (iMention ? " --arg mention=1" : "")
+            + " --arg from_seq=" + iSeen.ToString(CultureInfo.InvariantCulture));
+        SCP_CmdResult aOut = SCP_CmdResult.Fail(ExitBuildYield,
+            iStarted
+                ? "🏗 **有人在出廠，本次等待讓路**（等了 " + (iWaitedMs / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + "s）"
+                : "🏗 **有人在出廠，沒有開始等**",
+            "　⛔ 這**不是**「沒人回話」—— 是這顆行程握著 publish/senate.exe，讓路才不會擋到出廠（TASK-0413）。",
+            "　" + iDetail,
+            "　基準 seq " + iBaseline + " → 已看到 " + iSeen + "（這段沒有人回我）",
+            "　⇒ 一兩分鐘後照這行重開（from_seq 接著等，中間的訊息不會漏）：",
+            "　  " + aResume);
+        aOut.AddValue("replied", "0");
+        aOut.AddValue("interrupted", "build");
+        aOut.AddValue("waited_ms", iWaitedMs.ToString(CultureInfo.InvariantCulture));
+        aOut.AddValue("from_seq", iBaseline.ToString(CultureInfo.InvariantCulture));
+        aOut.AddValue("last_seq", iSeen.ToString(CultureInfo.InvariantCulture));
         return aOut;
     }
 

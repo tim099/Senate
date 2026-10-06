@@ -135,10 +135,25 @@ if [ -f "$root/publish/senate.exe" ]; then
         Write-Host ("· 收掉 " + $ps.Count + " 顆還開著的 senate（它們鎖著要被覆寫的檔）")
         # ⭐ **逐顆說出它是誰**：舊版只印顆數，於是「收掉 1 顆」可能是收掉使用者正開著在用的那顆，
         #    而畫面上看不出來。🩸 2026-09-11 實測關了 Tim 五次，每次畫面都只有那一行。
-        foreach ($p in $ps) { Write-Host ("    · pid=" + $p.Id + "  " + $p.Path) }
+        # TASK-0413：連**命令列**一起印 —— 握著 exe 的多半是某位 agent 的 `tavern-wait`，命令列裡有 `persona=`，
+        #   看得出被收掉的是誰（只印路徑的話，每一顆都長得一樣）。
+        foreach ($p in $ps) {
+          $cl = ""
+          try { $cl = (Get-CimInstance Win32_Process -Filter ("ProcessId=" + $p.Id)).CommandLine } catch { }
+          if ($cl -and $cl.Length -gt 160) { $cl = $cl.Substring(0, 160) + "…" }
+          Write-Host ("    · pid=" + $p.Id + "  " + $p.Path + "  " + $cl)
+        }
         foreach ($p in $ps) { try { $null = $p.CloseMainWindow() } catch { } }
-        foreach ($p in $ps) { try { $null = $p.WaitForExit(2000) } catch { } }
-        foreach ($p in $ps) { try { if (-not $p.HasExited) { $p.Kill(); $null = $p.WaitForExit(3000) } } catch { } }
+        # TASK-0413：寬限 5 秒（> tavern-wait 預設輪詢 2 秒）—— 旗標在 Server 停之前就落了，
+        #   正在等的 tavern-wait 下一輪看到它就會自己讓路（exit 5，明說「被出廠打斷」）；
+        #   ⛔ 2 秒不夠：它剛好在睡的那一輪會被直接 Kill，呼叫端拿到一個說不出原因的中斷。
+        foreach ($p in $ps) { try { $null = $p.WaitForExit(5000) } catch { } }
+        foreach ($p in $ps) {
+          try {
+            if ($p.HasExited) { Write-Host ("    · pid=" + $p.Id + " 自己結束了（讓路／視窗關閉）") }
+            else { $p.Kill(); $null = $p.WaitForExit(3000); Write-Host ("    ⚠ pid=" + $p.Id + " 寬限內沒結束 ⇒ 強制收掉（它的呼叫端會拿到一個非零結束）") }
+          } catch { }
+        }
       }
       $free = $false
       for ($i = 0; $i -lt 20; $i++) {
