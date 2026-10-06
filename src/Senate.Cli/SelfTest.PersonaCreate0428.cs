@@ -66,7 +66,7 @@ public static partial class SelfTest
     /// <summary>letters 變成 git repo（TASK-0428，Tim 選 (a)、remote 自己處理）—— 淨室：拋棄式父層 repo ＋ 本機 bare repo 當遠端。</summary>
     static CheckRow PersonaLettersRepoCleanRoom()
     {
-        const string aName = "persona letters repo：init 後 master、cmd/ 不進版控、.gitignore 基線 sha 對／接遠端只提交 .gitmodules＋指向（父層其他髒檔不跟著）／重跑不重複登記／origin 不同擋下（淨室，TASK-0428）";
+        const string aName = "persona letters repo：init 後 master、cmd/ 不進版控、.gitignore 基線 sha 對／接遠端只提交 .gitmodules＋指向（父層其他髒檔不跟著）／git 目錄收進父層 modules／重跑不重複登記／origin 不同擋下／舊 .gitignore 缺私密格 ⇒ 擋下零寫入（淨室，TASK-0428／0432）";
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_lrepo_" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
@@ -74,7 +74,7 @@ public static partial class SelfTest
             string aLetters = Path.Combine(aParent, "ChatTavern", "baton", "letters");
             var aLr = new SCP_LettersRoot(aLetters);
             Directory.CreateDirectory(Path.Combine(aLetters, "Template"));
-            string aBase = "### base\r\ncmd/\r\nsealed/\r\n";
+            string aBase = "### base\r\ncmd/\r\nsealed/\r\n/profile/_session.json\r\n";
             File.WriteAllText(Path.Combine(aLetters, "Template", ".gitignore"), aBase);
             File.WriteAllText(Path.Combine(aParent, "seed.txt"), "seed");
             SCP.Core.Git.SCP_Git.Run(aParent, "init");
@@ -108,13 +108,29 @@ public static partial class SelfTest
             string aLastFiles = SCP.Core.Git.SCP_Git.Run(aParent, "show", "--name-only", "--format=", "HEAD").StdOut;
             bool aOnlyMine = aAttach && aLastFiles.Contains(".gitmodules") && aLastFiles.Contains("letters/" + aP) && !aLastFiles.Contains("dirty.txt")
                              && SCP.Core.Git.SCP_Git.Run(aParent, "diff", "--cached", "--name-only").StdOut.Contains("dirty.txt");
+            bool aAbsorbed = aAttach && File.Exists(Path.Combine(d, ".git")) && !Directory.Exists(Path.Combine(d, ".git"))
+                             && Directory.Exists(Path.Combine(aParent, ".git", "modules", "ChatTavern", "baton", "letters", aP))
+                             && SCP.Core.Git.SCP_Git.Run(d, "rev-parse", "HEAD").Ok;
             bool aAgain = SCP_PersonaCreate.AttachLettersRemote(aLetters, aP, aBare, aLines, out _) && aLines.Exists(l => l.Contains("沒有重複登記"));
             bool aConflict = !SCP_PersonaCreate.AttachLettersRemote(aLetters, aP, aBare + "-other", aLines, out string e3) && e3.Contains("不覆蓋");
 
-            bool aOk = aInitOk && aInitAgain && aOnlyMine && aAgain && aConflict;
+            // 🔴 TASK-0432：舊 persona 自帶的 .gitignore 缺 sealed/ ⇒ 擋下，沒有 .git、也沒有任何提交
+            string aOld = "oldie";
+            string dOld = SCP_LettersPaths.PersonaDir(aLr, aOld);
+            Directory.CreateDirectory(Path.Combine(dOld, "sealed"));
+            File.WriteAllText(Path.Combine(dOld, "sealed", "secret.md"), "真隱私");
+            File.WriteAllText(Path.Combine(dOld, ".gitignore"), "/cmd/*\r\n/profile/_session.json\r\n");
+            bool aBlocked = !SCP_PersonaCreate.InitLettersRepo(aLetters, aOld, aLines, out string e4) && e4.Contains("sealed/")
+                            && !Directory.Exists(Path.Combine(dOld, ".git")) && !File.Exists(Path.Combine(dOld, ".git"));
+            File.AppendAllText(Path.Combine(dOld, ".gitignore"), "sealed/\r\n");
+            bool aPassAfterFix = SCP_PersonaCreate.InitLettersRepo(aLetters, aOld, aLines, out _)
+                                 && !SCP.Core.Git.SCP_Git.Run(dOld, "ls-files").StdOut.Contains("sealed/");
+
+            bool aOk = aInitOk && aInitAgain && aOnlyMine && aAbsorbed && aAgain && aConflict && aBlocked && aPassAfterFix;
             return new CheckRow(aName,
                 $"init（master、cmd/ 不追、基線 sha）={aInitOk}{(e1.Length > 0 ? "：" + e1 : "")}／重跑不重 init={aInitAgain}"
-                + $"／接遠端只提交 .gitmodules＋指向、dirty.txt 仍 staged 沒被帶走={aOnlyMine}{(e2.Length > 0 ? "：" + e2 : "")}／重跑不重複登記={aAgain}／origin 不同擋下={aConflict}",
+                + $"／接遠端只提交 .gitmodules＋指向、dirty.txt 仍 staged 沒被帶走={aOnlyMine}{(e2.Length > 0 ? "：" + e2 : "")}／.git 收進父層 modules={aAbsorbed}"
+                + $"／重跑不重複登記={aAgain}／origin 不同擋下={aConflict}／缺 sealed/ ⇒ 擋下且沒有 .git={aBlocked}／補上後通過且 sealed/ 沒進版控={aPassAfterFix}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
