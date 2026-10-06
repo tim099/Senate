@@ -202,6 +202,8 @@ public static partial class SelfTest
         // brief 可調參數＋回傳檔大檔提示＋結尾標記（TASK-0419）：本體在 SelfTest.BriefReadHint0419.cs
         One(nameof(BriefSettingsCleanRoom), "letters", BriefSettingsCleanRoom),
         One(nameof(ReadHintCleanRoom), "letters", ReadHintCleanRoom),
+        // 收尾信現地衝突（TASK-0418）：本體在 SelfTest.LocaleConflict0418.cs
+        One(nameof(LetterLocaleConflictCleanRoom), "letters", LetterLocaleConflictCleanRoom),
         // 指令外層／內層與分類（TASK-0427）：本體在 SelfTest.CmdTier0427.cs
         One(nameof(CmdTierRegistry), "cmd", CmdTierRegistry),
         One(nameof(CmdTierPointedTo), "cmd", CmdTierPointedTo),
