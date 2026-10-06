@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-09-29
+last_updated: 2026-10-06
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -27,6 +27,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 文件 | 用途 |
 |---|---|
 | [Setup_And_Build](Workflows/Setup_And_Build.md) | 一鍵配置與一鍵 build 的流程、⛔ **改完 code 先 build 再對 exe 驗**（Debug DLL 與 exe 是兩本帳）、出廠驗收三格、**single-file 的真正判準** |
+| [DeepSeek_Harness_Local_Deployment](Workflows/DeepSeek_Harness_Local_Deployment.md) | Windows 與 LY 換機部署的工具鏈、啟停與驗收流程，以及本次問題、解法和未驗備案。 |
+| [DeepSeek_Harness_Ollama_Integration](Workflows/DeepSeek_Harness_Ollama_Integration.md) | 將 LlmModelPage 管理的 Ollama 模型接入 DSH，包含設定、查驗、故障排查與 LY 換機驗收。 |
 | [SCP_Cmd_System](Workflows/SCP_Cmd_System.md) | `senate cmd`：SCP_Core 內建的指令系統（**沒有 queue、不需要 Unity**）、參數規格與四種 exit code、怎麼寫一支新 Cmd |
 | [AgentCmd_Dispatch](Workflows/AgentCmd_Dispatch.md) | `senate ucmd`：把 AgentCommand 派給目標 Unity 專案的 Editor、專案設定、判定語意、沒做的部分 |
 | [Bank](Workflows/Bank.md) | `senate cmd bank`：Server 單一寫入端、op 分類（查詢／消費 pay／後台管理／審批／結帳）、動錢必填 kind／ref／caller、pay 先扣券、transfer 守恆、approve 的 central／mint |
