@@ -63,6 +63,72 @@ public static partial class SelfTest
         }
     }
 
+    /// <summary>letters 變成 git repo（TASK-0428，Tim 選 (a)、remote 自己處理）—— 淨室：拋棄式父層 repo ＋ 本機 bare repo 當遠端。</summary>
+    static CheckRow PersonaLettersRepoCleanRoom()
+    {
+        const string aName = "persona letters repo：init 後 master、cmd/ 不進版控、.gitignore 基線 sha 對／接遠端只提交 .gitmodules＋指向（父層其他髒檔不跟著）／重跑不重複登記／origin 不同擋下（淨室，TASK-0428）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_lrepo_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aParent = Path.Combine(aTmp, "AgentCommands");
+            string aLetters = Path.Combine(aParent, "ChatTavern", "baton", "letters");
+            var aLr = new SCP_LettersRoot(aLetters);
+            Directory.CreateDirectory(Path.Combine(aLetters, "Template"));
+            string aBase = "### base\r\ncmd/\r\nsealed/\r\n";
+            File.WriteAllText(Path.Combine(aLetters, "Template", ".gitignore"), aBase);
+            File.WriteAllText(Path.Combine(aParent, "seed.txt"), "seed");
+            SCP.Core.Git.SCP_Git.Run(aParent, "init");
+            SCP.Core.Git.SCP_Git.Run(aParent, "add", "seed.txt");
+            SCP.Core.Git.SCP_Git.Run(aParent, "commit", "-m", "seed");
+            File.WriteAllText(Path.Combine(aParent, "dirty.txt"), "別人還沒提交的檔");
+            SCP.Core.Git.SCP_Git.Run(aParent, "add", "dirty.txt");   // ⚠ 刻意 stage：pathspec 提交不能把它帶走
+
+            string aP = "newbie";
+            Directory.CreateDirectory(SCP_LettersPaths.ProfileDir(aLr, aP));
+            File.WriteAllText(Path.Combine(SCP_LettersPaths.ProfileDir(aLr, aP), "layer_role.md"), "x\n");
+            Directory.CreateDirectory(Path.Combine(SCP_LettersPaths.PersonaDir(aLr, aP), "cmd"));
+            File.WriteAllText(Path.Combine(SCP_LettersPaths.PersonaDir(aLr, aP), "cmd", "persona_create.md"), "回傳檔");
+            string d = SCP_LettersPaths.PersonaDir(aLr, aP);
+
+            var aLines = new List<string>();
+            bool aInit = SCP_PersonaCreate.InitLettersRepo(aLetters, aP, aLines, out string e1);
+            string aTracked = SCP.Core.Git.SCP_Git.Run(d, "ls-files").StdOut;
+            string aBranch = SCP.Core.Git.SCP_Git.Run(d, "branch", "--show-current").StdOut.Trim();
+            string aIgnore = File.ReadAllText(Path.Combine(d, ".gitignore"));
+            string aShaLf;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                aShaLf = string.Concat(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(aBase.Replace("\r\n", "\n"))).Select(b => b.ToString("x2")));
+            bool aInitOk = aInit && aBranch == "master" && aTracked.Contains("profile/layer_role.md") && !aTracked.Contains("cmd/")
+                           && aIgnore.Contains("baseline_sha256: " + aShaLf) && aIgnore.Contains("BASELINE END");
+            bool aInitAgain = SCP_PersonaCreate.InitLettersRepo(aLetters, aP, aLines, out _) && aLines.Exists(l => l.Contains("已經是 git repo"));
+
+            string aBare = Path.Combine(aTmp, "remote_newbie.git");
+            SCP.Core.Git.SCP_Git.Run(aTmp, "init", "--bare", aBare);
+            bool aAttach = SCP_PersonaCreate.AttachLettersRemote(aLetters, aP, aBare, aLines, out string e2);
+            string aLastFiles = SCP.Core.Git.SCP_Git.Run(aParent, "show", "--name-only", "--format=", "HEAD").StdOut;
+            bool aOnlyMine = aAttach && aLastFiles.Contains(".gitmodules") && aLastFiles.Contains("letters/" + aP) && !aLastFiles.Contains("dirty.txt")
+                             && SCP.Core.Git.SCP_Git.Run(aParent, "diff", "--cached", "--name-only").StdOut.Contains("dirty.txt");
+            bool aAgain = SCP_PersonaCreate.AttachLettersRemote(aLetters, aP, aBare, aLines, out _) && aLines.Exists(l => l.Contains("沒有重複登記"));
+            bool aConflict = !SCP_PersonaCreate.AttachLettersRemote(aLetters, aP, aBare + "-other", aLines, out string e3) && e3.Contains("不覆蓋");
+
+            bool aOk = aInitOk && aInitAgain && aOnlyMine && aAgain && aConflict;
+            return new CheckRow(aName,
+                $"init（master、cmd/ 不追、基線 sha）={aInitOk}{(e1.Length > 0 ? "：" + e1 : "")}／重跑不重 init={aInitAgain}"
+                + $"／接遠端只提交 .gitmodules＋指向、dirty.txt 仍 staged 沒被帶走={aOnlyMine}{(e2.Length > 0 ? "：" + e2 : "")}／重跑不重複登記={aAgain}／origin 不同擋下={aConflict}",
+                aOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { ForceDelete(aTmp); } catch (Exception) { } }
+
+        // git 物件檔是唯讀 ⇒ Directory.Delete 會失敗；先拿掉唯讀再刪。
+        static void ForceDelete(string iDir)
+        {
+            if (!Directory.Exists(iDir)) return;
+            foreach (string f in Directory.GetFiles(iDir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
+            Directory.Delete(iDir, true);
+        }
+    }
+
     static CheckRow PersonaCreateCleanRoom()
     {
         const string aName = "persona-create／早安候選：候選排除在線與測試殼（反向：拿掉標記就出現）／規劃擋已存在與撞號／fork 血統與 hash／建出的人 Wake 提示補設定／登記 agent 不覆蓋（淨室，TASK-0428）";
