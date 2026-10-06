@@ -15,6 +15,54 @@ namespace Senate.Cli;
 
 public static partial class SelfTest
 {
+    /// <summary>
+    /// 帳號快取跨 process 失效（TASK-0428，erina 那一則沒領到薪）：別的 process 碰了綁定戳記 ⇒ 這邊下一次查詢重載。
+    /// 🔴 對照：只改綁定檔、不碰戳記 ⇒ 仍是舊答案（證明快取真的在，這一格不是空測）。
+    /// </summary>
+    static CheckRow BankBindingStampCrossProcess()
+    {
+        const string aName = "帳號快取跨 process 失效：直接改綁定檔仍是舊答案（快取在）／別的 process 碰戳記 ⇒ 下一次查詢讀到新綁定／寫入端換綁立刻生效（淨室，TASK-0428）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_stamp_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aData = Path.Combine(aTmp, "AgentCommands").Replace('\\', '/');
+            string aLetters = Path.Combine(aData, "ChatTavern", "baton", "letters").Replace('\\', '/');
+            var aLr = new SCP_LettersRoot(aLetters);
+            Directory.CreateDirectory(Path.Combine(aData, "AwakenInit"));
+            File.WriteAllText(SCP_PersonaCreate.RegistryMetaPath(aData), "{\"agent_banks\":{}}");
+            Directory.CreateDirectory(SCP_LettersPaths.ProfileDir(aLr, "newbie"));
+            string aBankDir = Path.Combine(SCP_LettersPaths.PersonaDir(aLr, "newbie"), "bank");
+            Directory.CreateDirectory(aBankDir);
+            string aBind = Path.Combine(aBankDir, "Ducat.md");
+            File.WriteAllText(aBind, "acc-a\n");
+            string R() => SCP.Core.Bank.SCP_BankAccountResolver.Resolve(aLetters, aData, "Ducat", "newbie").AccountId;
+
+            string r1 = R();
+            File.WriteAllText(aBind, "acc-b\n");                       // 別的 process 改了綁定，但沒碰戳記
+            string r2 = R();
+            string aStamp = SCP.Core.Bank.SCP_BankAccountResolver.StampPath(aData);
+            File.WriteAllText(aStamp, "other-process\n");               // 別的 process 碰了戳記（⛔ 不呼叫 Touch：那會順便清本 process 的快取）
+            File.SetLastWriteTimeUtc(aStamp, DateTime.UtcNow.AddSeconds(5));
+            string r3 = R();
+            bool aWrote = SCP_PersonaProfileWrite.WriteBankBinding(aLetters, aData, "newbie", "Ducat", "acc-c", "selftest", "TASK-0428", out _, out string aErr);
+            string r4 = R();
+
+            bool aCacheExists = r1 == "acc-a" && r2 == "acc-a";
+            bool aCross = r3 == "acc-b";
+            bool aWriter = aWrote && r4 == "acc-c";
+            return new CheckRow(aName,
+                $"首查 {r1}／🔴 只改綁定檔 {r2}（期望仍是 acc-a）={aCacheExists}／別的 process 碰戳記後 {r3}（期望 acc-b）={aCross}"
+                + $"／寫入端換綁後 {r4}（期望 acc-c）={aWriter}{(aErr.Length > 0 ? "：" + aErr : "")}",
+                aCacheExists && aCross && aWriter ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally
+        {
+            SCP.Core.Bank.SCP_BankAccountResolver.Invalidate();
+            try { Directory.Delete(aTmp, true); } catch (Exception) { }
+        }
+    }
+
     static CheckRow PersonaCreateCleanRoom()
     {
         const string aName = "persona-create／早安候選：候選排除在線與測試殼（反向：拿掉標記就出現）／規劃擋已存在與撞號／fork 血統與 hash／建出的人 Wake 提示補設定／登記 agent 不覆蓋（淨室，TASK-0428）";
