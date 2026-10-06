@@ -50,6 +50,20 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
     string m_Sel = "";
     string? m_Message;
 
+    // ── 快照：磁碟只在「進頁／重新讀取／換人／寫入成功」時讀 ─────────
+    // 🩸 2026-10-06 Tim 實測「開頁嚴重卡頓」：視窗每一幀都重畫，而原本每一幀都對 22 位各跑一次 GetRaw
+    //   （profile 每欄一檔＋wakes/ 計數＋lock＋longterm/）與顯示資料，選中的那位再多跑幾次（型號、信箱解析各自又讀一次）
+    //   ⇒ 一幀上百次檔案 IO。繪製只讀快照；外部改了磁碟要按「重新讀取」才看得到（頁首有說）。
+    sealed class Row { public string Persona = ""; public SCP_JsonData? Raw; public SCP_PersonaDisplayInfo Disp = null!; }
+    List<Row> m_Rows = new();
+    string m_DetailFor = "";
+    SCP_JsonData? m_SelRaw;
+    SCP_PersonaDisplayInfo? m_SelDisp;
+    SCP_AgentModelResolution? m_SelModel;
+    SCP_AgentEmailInfo? m_SelMail;
+    bool m_SelFixture;
+    string? m_SelWarn;
+
     /// <summary>
     /// 要不要把欄位倉重新對齊成**這一位現在的資料**。
     /// 🩸 2026-09-28（舊顯示資料頁）：欄位值會跨次保存，不對齊的話按「儲存」會把上一位的值寫到這一位身上。
@@ -80,6 +94,34 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
         m_Personas = Directory.Exists(m_LettersRoot) ? SCP_PersonaProfile.PoolNames(m_LettersRoot) : new List<string>();
         m_Personas.Sort(StringComparer.OrdinalIgnoreCase);
         if (m_Personas.Count > 0 && !m_Personas.Contains(m_Sel)) m_Sel = m_Personas[0];
+        m_Rows = new List<Row>(m_Personas.Count);
+        foreach (string p in m_Personas)
+            m_Rows.Add(new Row { Persona = p, Raw = SCP_PersonaProfile.GetRaw(m_LettersRoot, p, m_Region), Disp = SCP_PersonaDisplay.Get(m_LettersRoot, p) });
+        m_DetailFor = "";   // 選中那位的細節下次用到時重讀
+    }
+
+    /// <summary>
+    /// 寫入成功之後只重讀**這一位**（清單那一列＋細節）。
+    /// ⚠ 不整份重讀：GetRaw 每位約 0.1–0.3 秒（wakes/ 計數、longterm/ 解析隨信數成長），整份重讀＝每存一次卡一下。
+    /// </summary>
+    void RefreshSelected()
+    {
+        int i = m_Rows.FindIndex(r => r.Persona == m_Sel);
+        if (i >= 0) m_Rows[i] = new Row { Persona = m_Sel, Raw = SCP_PersonaProfile.GetRaw(m_LettersRoot, m_Sel, m_Region), Disp = SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel) };
+        m_DetailFor = "";
+    }
+
+    /// <summary>選中那一位的細節（只在換人或重讀後算一次）。</summary>
+    void EnsureDetail()
+    {
+        if (m_DetailFor == m_Sel) return;
+        m_DetailFor = m_Sel;
+        m_SelWarn = null;
+        m_SelRaw = SCP_PersonaProfile.GetRaw(m_LettersRoot, m_Sel, m_Region, w => m_SelWarn = "[警告] " + w);
+        m_SelDisp = SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel);
+        m_SelModel = SCP_AgentModelRegistry.Resolve(m_LettersRoot, m_Sel, m_Region);
+        m_SelMail = SCP_AgentEmail.Resolve(m_LettersRoot, m_Sel, m_Region, m_DataRoot);
+        m_SelFixture = SCP_PersonaProfile.IsTestFixture(m_LettersRoot, m_Sel);
     }
 
     protected override void TopBarButtons(SCP_Ui iUi)
@@ -105,10 +147,10 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
         iUi.SetField(PendingId, "");
         iUi.SetField(AvatarSrcId, "");
         if (m_Sel.Length == 0) return;
-        SCP_PersonaDisplayInfo aDisp = SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel);
-        iUi.SetField(ColorId, aDisp.ColorHex);
-        iUi.SetField(AvatarUrlId, aDisp.AvatarUrl);
-        SCP_JsonData? aRaw = SCP_PersonaProfile.GetRaw(m_LettersRoot, m_Sel, m_Region);
+        EnsureDetail();
+        iUi.SetField(ColorId, m_SelDisp!.ColorHex);
+        iUi.SetField(AvatarUrlId, m_SelDisp.AvatarUrl);
+        SCP_JsonData? aRaw = m_SelRaw;
         foreach (var (f, _) in s_ScalarFields) iUi.SetField(FieldId(f), Str(aRaw, f));
         iUi.SetField(CharacterId, Str(aRaw, "character"));
     }
@@ -117,6 +159,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
     {
         g.Title("【persona 管理】");
         g.Note("先在上方選一位 persona 再編輯。建立新 persona 不在這頁：senate cmd persona-create（說明：senate cmd doc --arg op=show --arg name=Persona_Create）。");
+        g.Note("畫面是進頁時讀的快照；在別處改過磁碟（指令、別的 agent）要按「重新讀取」。");
         if (string.IsNullOrEmpty(m_LettersRoot) || !Directory.Exists(m_LettersRoot))
         {
             g.Note($"[錯誤] 找不到信件夾根（{m_LettersRoot}）—— 到「路徑管理」頁設定");
@@ -126,12 +169,14 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
         if (m_Sel.Length == 0) { g.Note("（還沒有任何 persona）"); return; }
 
         string aAuthor = g.TextField("署名（寫入的審計記在誰名下）", "Tim", AuthorId).Trim();
-        SCP_JsonData? aRaw = SCP_PersonaProfile.GetRaw(m_LettersRoot, m_Sel, m_Region, w => m_Message = "[警告] " + w);
+        EnsureDetail();
+        if (m_SelWarn != null) g.Note(m_SelWarn);
+        SCP_JsonData? aRaw = m_SelRaw;
         if (aRaw == null) { g.Note($"[錯誤] 讀不到 {m_Sel} 的 profile/"); return; }
 
         DrawSummary(g, aRaw);
         g.Separator();
-        DrawDisplay(g, SCP_PersonaDisplay.Get(m_LettersRoot, m_Sel));
+        DrawDisplay(g, m_SelDisp!);
         g.Separator();
         DrawIdentity(g, aRaw, aAuthor);
         g.Separator();
@@ -143,8 +188,8 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
     {
         g.Label($"概況：{m_Sel}");
         bool aOnline = Str(iRaw, "status") == "online";
-        SCP_AgentModelResolution aModel = SCP_AgentModelRegistry.Resolve(m_LettersRoot, m_Sel, m_Region);
-        SCP_AgentEmailInfo aMail = SCP_AgentEmail.Resolve(m_LettersRoot, m_Sel, m_Region, m_DataRoot);
+        SCP_AgentModelResolution aModel = m_SelModel!;
+        SCP_AgentEmailInfo aMail = m_SelMail!;
         string aFork = Str(iRaw, "forked_from");
         using (g.Table("項目", "值"))
         {
@@ -155,7 +200,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
             g.TableRow("信箱", $"{aMail.Email}　〔{aMail.Source}〕");
             g.TableRow("fork", aFork.Length > 0 ? aFork + "（" + Str(iRaw, "forked_at") + "）" : "全新（不是 fork）");
             g.TableRow("建立", Or(Str(iRaw, "created_at"), "（沒記）"));
-            g.TableRow("測試殼", SCP_PersonaProfile.IsTestFixture(m_LettersRoot, m_Sel) ? "是（早安候選不列）" : "否");
+            g.TableRow("測試殼", m_SelFixture ? "是（早安候選不列）" : "否");
         }
     }
 
@@ -180,6 +225,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
             m_Message = SCP_PersonaDisplay.TrySetColor(m_LettersRoot, iInfo.Persona, aHex, out string? aErr)
                 ? (aHex.Length == 0 ? $"{iInfo.Persona} 的顏色已刪掉（回到沒設）" : $"{iInfo.Persona} 的顏色 ＝ {aHex.ToUpperInvariant()}")
                 : "[未寫入] " + aErr;
+            RefreshSelected();
         }
 
         // Discord 只收公開網址 ⇒ 本機的 avatar.png 給不了它（TASK-0320）
@@ -190,6 +236,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
             m_Message = SCP_PersonaDisplay.TrySetAvatarUrl(m_LettersRoot, iInfo.Persona, aUrl, out string? aErr)
                 ? (aUrl.Length == 0 ? $"{iInfo.Persona} 的頭像網址已刪掉（回到範本）" : $"{iInfo.Persona} 的頭像網址 ＝ {aUrl}")
                 : "[未寫入] " + aErr;
+            RefreshSelected();
         }
 
         g.TextField("換頭像：PNG／JPEG 圖檔的完整路徑", g.FieldValue(AvatarSrcId, ""), AvatarSrcId);
@@ -202,6 +249,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
                 m_Message = SCP_PersonaDisplay.TrySetAvatar(m_LettersRoot, iInfo.Persona, aSrc, true, out string? aErr)
                     ? $"{iInfo.Persona} 的頭像已換成 {aSrc}" : "[未寫入] " + aErr;
                 g.SetField(PendingId, "");
+                RefreshSelected();
             }
             if (g.Button("取消", "persona/btn/cancel_avatar")) g.SetField(PendingId, "");
         }
@@ -211,6 +259,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
             else
                 m_Message = SCP_PersonaDisplay.TrySetAvatar(m_LettersRoot, iInfo.Persona, aSrc, false, out string? aErr)
                     ? $"{iInfo.Persona} 的頭像已設成 {aSrc}" : "[未寫入] " + aErr;
+            RefreshSelected();
         }
     }
 
@@ -230,7 +279,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
             }
         }
 
-        bool aFixture = SCP_PersonaProfile.IsTestFixture(m_LettersRoot, m_Sel);
+        bool aFixture = m_SelFixture;
         if (g.Button(aFixture ? "取消測試殼標記" : "標成測試殼（早安候選不列）", "persona/btn/test_fixture"))
             m_Message = SaveScalar("test_fixture", aFixture ? "" : "1", iAuthor, false);
 
@@ -250,7 +299,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
         if (iValue.Trim().Length == 0)
         {
             aOk = SCP_PersonaProfileWrite.UnsetField(m_LettersRoot, m_DataRoot, m_Sel, iField, iAuthor, Reason, out bool aHad, out aWarn, out aErr);
-            if (aOk) { m_SyncFields = true; return $"{m_Sel} 的 {iField} " + (aHad ? "已刪掉" : "本來就沒有（沒有寫入）") + Tail(aWarn); }
+            if (aOk) { m_SyncFields = true; RefreshSelected(); return $"{m_Sel} 的 {iField} " + (aHad ? "已刪掉" : "本來就沒有（沒有寫入）") + Tail(aWarn); }
             return "[未寫入] " + aErr;
         }
         aOk = iOnlineActualAgent
@@ -258,6 +307,7 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
             : SCP_PersonaProfileWrite.SetField(m_LettersRoot, m_DataRoot, m_Sel, iField, iValue, iAuthor, Reason, out aWarn, out aErr);
         if (!aOk) return "[未寫入] " + aErr;
         m_SyncFields = true;
+        RefreshSelected();
         return $"{m_Sel} 的 {iField} 已儲存" + (iOnlineActualAgent ? "（在線 ⇒ lock 一起改）" : "") + Tail(aWarn);
     }
 
@@ -265,10 +315,11 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
     void DrawAll(SCP_Ui g)
     {
         g.Label($"全部（{m_Personas.Count}）");
-        foreach (string p in m_Personas)
+        foreach (Row aRow in m_Rows)
         {
-            SCP_PersonaDisplayInfo aInfo = SCP_PersonaDisplay.Get(m_LettersRoot, p);
-            SCP_JsonData? aRaw = SCP_PersonaProfile.GetRaw(m_LettersRoot, p, m_Region);
+            string p = aRow.Persona;
+            SCP_PersonaDisplayInfo aInfo = aRow.Disp;
+            SCP_JsonData? aRaw = aRow.Raw;
             string aFork = Str(aRaw, "forked_from");
             using (g.IdScope("row/" + p))
             using (g.Row())
