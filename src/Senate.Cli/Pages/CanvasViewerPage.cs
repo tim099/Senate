@@ -11,6 +11,7 @@
 // ⚠ 放大一律最近鄰（`SCP_CanvasPng` 整數複製）—— 視窗的貼圖是線性濾波，像素圖交給它放大會糊成一片，
 //   所以本頁先把圖放大到接近顯示尺寸再交出去，⛔ 不靠 ImageFit 放大。
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元 ⇒ 方框，TASK-0356）。
+// ⭐ TASK-0445：畫布尺寸跟著 snapshot 走（設定值 ∨ 已畫範圍），⛔ 不寫死 2048。
 #nullable enable
 using System.Globalization;
 using System.Threading.Tasks;
@@ -52,6 +53,7 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
     string m_DataRoot = "";
     string? m_Error;
     List<SCP_CanvasExhibit> m_Exhibits = new();
+    string m_SizeText = "";
     Task<Outcome>? m_Job;
     string m_JobLabel = "";
     DateTime m_JobStartUtc;
@@ -85,7 +87,9 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
         if (m_DataRoot.Length == 0 || !Directory.Exists(m_DataRoot))
         { m_Error = $"找不到 AgentCommands 資料根（{m_DataRoot}）—— 到「路徑管理」頁設定"; return; }
         var aPaths = new SCP_CanvasPaths(new SCP_DataRoot(m_DataRoot));
-        if (!SCP_CanvasExhibits.TryLoad(aPaths, out List<SCP_CanvasExhibit> aList, out string aErr))
+        SCP_CanvasSizeInfo aSize = SCP_CanvasSettings.Resolve(aPaths);
+        m_SizeText = aSize.Describe();
+        if (!SCP_CanvasExhibits.TryLoad(aPaths, aSize.Effective, out List<SCP_CanvasExhibit> aList, out string aErr))
         { m_Error = "展品讀不了：" + aErr; return; }
         m_Exhibits = aList;
     }
@@ -113,13 +117,14 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
         if (m_Error != null) g.Note("[注意] " + m_Error);
         if (m_Job != null) g.Note($"執行中：{m_JobLabel}（{(DateTime.UtcNow - m_JobStartUtc).TotalSeconds:0} 秒）");
         if (m_Message != null) g.Note(m_Message);
+        if (m_SizeText.Length > 0) g.Label("尺寸：" + m_SizeText);
         string aSnapInfo = g.FieldValue(SSnapInfo, "");
         if (aSnapInfo.Length > 0) g.Label(aSnapInfo);
 
         using (g.Row())
         {
             if (g.Button("已畫範圍", P + "btn/render-painted")) RunRender(g, "已畫範圍", RenderTarget.Painted, null);
-            if (g.Button("全景（2048×2048）", P + "btn/render-full")) RunRender(g, "全景", RenderTarget.Full, null);
+            if (g.Button("全景（整張畫布）", P + "btn/render-full")) RunRender(g, "全景", RenderTarget.Full, null);
         }
         DrawExhibits(g);
         DrawManual(g);
@@ -217,7 +222,9 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
 
         // 範圍參數先驗（同步）：打錯字要當場說，⛔ 不丟進背景再回一個看不懂的例外
         int aMx = 0, aMy = 0, aMw = 0, aMh = 0, aPad = 0, aFixedScale = 0;
-        if (iTarget == RenderTarget.Manual && !TryParseRegion(aRegionRaw, out aMx, out aMy, out aMw, out aMh, out string aWhy))
+        // 同步只驗**格式**（打錯字當場說）；夾進畫布要等背景拿到 snapshot 的實際尺寸
+        if (iTarget == RenderTarget.Manual
+            && !TryParseRegion(aRegionRaw, new SCP_CanvasSize(SCP_CanvasSpec.MaxSide, SCP_CanvasSpec.MaxSide), out aMx, out aMy, out aMw, out aMh, out string aWhy))
         { m_Message = "region 不合法：" + aWhy + " ⇒ 這次沒有動作"; return; }
         if (iTarget == RenderTarget.Exhibit && (!int.TryParse(aPadRaw.Length == 0 ? "0" : aPadRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out aPad) || aPad < 0))
         { m_Message = "pad 要是 ≥0 的整數：" + aPadRaw + " ⇒ 這次沒有動作"; return; }
@@ -228,28 +235,33 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
         {
             var aPaths = new SCP_CanvasPaths(aCanvasDir);
             SCP_CanvasSnapshot aSnap = SCP_CanvasBuffer.Build(aPaths);
-            int aPainted = CountPainted(aSnap.Mask);
+            SCP_CanvasSize aSize = aSnap.Size;
+            int aPainted = CountPainted(aSnap.Mask, aSize, 0, 0, aSize.Width, aSize.Height);
             string aSnapLine = $"畫布：事件檔 {aSnap.EventFiles}／快取 {aSnap.Path}"
                                + (aSnap.ReplayedEvents > 0 ? $"（replay {aSnap.ReplayedEvents}）" : "")
-                               + $"／已畫 {aPainted:N0} 格（{(aPainted * 100.0 / SCP_CanvasSpec.Area).ToString("0.####", CultureInfo.InvariantCulture)}%）";
+                               + $"／已畫 {aPainted:N0} 格（{(aPainted * 100.0 / aSize.Area).ToString("0.####", CultureInfo.InvariantCulture)}%）"
+                               + $"／{aSnap.SizeInfo.Describe()}";
             int x, y, w, h;
             switch (iTarget)
             {
-                case RenderTarget.Full: x = 0; y = 0; w = SCP_CanvasSpec.Width; h = SCP_CanvasSpec.Height; break;
-                case RenderTarget.Exhibit: SCP_CanvasExhibits.Padded(iExhibit!, aPad, out x, out y, out w, out h); break;
-                case RenderTarget.Manual: x = aMx; y = aMy; w = aMw; h = aMh; break;
+                case RenderTarget.Full: x = 0; y = 0; w = aSize.Width; h = aSize.Height; break;
+                case RenderTarget.Exhibit: SCP_CanvasExhibits.Padded(iExhibit!, aPad, aSize, out x, out y, out w, out h); break;
+                case RenderTarget.Manual:
+                    if (!TryParseRegion($"{aMx},{aMy},{aMw},{aMh}", aSize, out x, out y, out w, out h, out string aClipWhy))
+                        return new Outcome { Log = $"[{iLabel}] region 不合法：{aClipWhy}" };
+                    break;
                 default:
-                    if (!PaintedBounds(aSnap.Mask, out x, out y, out w, out h))
-                    { x = 0; y = 0; w = SCP_CanvasSpec.Width; h = SCP_CanvasSpec.Height; }
+                    if (!PaintedBounds(aSnap.Mask, aSize, out x, out y, out w, out h))
+                    { x = 0; y = 0; w = aSize.Width; h = aSize.Height; }
                     break;
             }
             int aScale = aFixedScale > 0 ? aFixedScale : AutoScale(w, h);
             byte[] aPng = aTransparent
-                ? SCP_CanvasPng.EncodeRgba(aSnap.Buffer, aSnap.Mask, x, y, w, h, SCP_CanvasSpec.Width, aScale, out _)
-                : SCP_CanvasPng.EncodeRgb(aSnap.Buffer, x, y, w, h, SCP_CanvasSpec.Width, aScale);
+                ? SCP_CanvasPng.EncodeRgba(aSnap.Buffer, aSnap.Mask, x, y, w, h, aSize.Width, aScale, out _)
+                : SCP_CanvasPng.EncodeRgb(aSnap.Buffer, x, y, w, h, aSize.Width, aScale);
             Directory.CreateDirectory(Path.GetDirectoryName(aOut)!);
             File.WriteAllBytes(aOut, aPng);
-            int aInside = CountPainted(aSnap.Mask, x, y, w, h);
+            int aInside = CountPainted(aSnap.Mask, aSize, x, y, w, h);
             var o = new Outcome();
             o.Fields[SViewPath] = aOut;
             o.Fields[SViewInfo] = $"{DateTime.Now:HH:mm:ss}　{iLabel}　region {x},{y},{w},{h}　×{aScale}（{w * aScale}×{h * aScale}px）"
@@ -270,13 +282,13 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
     }
 
     /// <summary>已畫格的外框（mask 非 0）。整張沒畫過回 false。</summary>
-    public static bool PaintedBounds(byte[] iMask, out int oX, out int oY, out int oW, out int oH)
+    public static bool PaintedBounds(byte[] iMask, SCP_CanvasSize iSize, out int oX, out int oY, out int oW, out int oH)
     {
         int x1 = int.MaxValue, y1 = int.MaxValue, x2 = -1, y2 = -1;
-        for (int y = 0; y < SCP_CanvasSpec.Height; y++)
+        for (int y = 0; y < iSize.Height; y++)
         {
-            int aRow = y * SCP_CanvasSpec.Width;
-            for (int x = 0; x < SCP_CanvasSpec.Width; x++)
+            int aRow = y * iSize.Width;
+            for (int x = 0; x < iSize.Width; x++)
             {
                 if (iMask[aRow + x] == 0) continue;
                 if (x < x1) x1 = x;
@@ -290,21 +302,19 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
         return true;
     }
 
-    static int CountPainted(byte[] iMask) => CountPainted(iMask, 0, 0, SCP_CanvasSpec.Width, SCP_CanvasSpec.Height);
-
-    static int CountPainted(byte[] iMask, int iX, int iY, int iW, int iH)
+    static int CountPainted(byte[] iMask, SCP_CanvasSize iSize, int iX, int iY, int iW, int iH)
     {
         int n = 0;
         for (int y = iY; y < iY + iH; y++)
         {
-            int aRow = y * SCP_CanvasSpec.Width;
+            int aRow = y * iSize.Width;
             for (int x = iX; x < iX + iW; x++) if (iMask[aRow + x] != 0) n++;
         }
         return n;
     }
 
     /// <summary>x,y,w,h → 夾進畫布的範圍。起點越界、寬高 ≤0 ⇒ false（⛔ 不替人挪到合法的地方）。</summary>
-    public static bool TryParseRegion(string iRaw, out int oX, out int oY, out int oW, out int oH, out string oWhy)
+    public static bool TryParseRegion(string iRaw, SCP_CanvasSize iSize, out int oX, out int oY, out int oW, out int oH, out string oWhy)
     {
         oX = oY = oW = oH = 0; oWhy = "";
         string[] aParts = (iRaw ?? "").Split(',');
@@ -314,10 +324,10 @@ public sealed class CanvasViewerPage : SCP_GuiToolPage
             if (!int.TryParse(aParts[i].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out v[i]))
             { oWhy = "第 " + (i + 1) + " 個不是整數：" + aParts[i]; return false; }
         if (v[2] <= 0 || v[3] <= 0) { oWhy = "w／h 要 >0"; return false; }
-        if (!SCP_CanvasSpec.InBounds(v[0], v[1])) { oWhy = $"起點 ({v[0]},{v[1]}) 在畫布外（0..{SCP_CanvasSpec.Width - 1}）"; return false; }
+        if (!iSize.InBounds(v[0], v[1])) { oWhy = $"起點 ({v[0]},{v[1]}) 在畫布 {iSize} 外"; return false; }
         oX = v[0]; oY = v[1];
-        oW = Math.Min(v[0] + v[2], SCP_CanvasSpec.Width) - v[0];
-        oH = Math.Min(v[1] + v[3], SCP_CanvasSpec.Height) - v[1];
+        oW = Math.Min(v[0] + v[2], iSize.Width) - v[0];
+        oH = Math.Min(v[1] + v[3], iSize.Height) - v[1];
         return true;
     }
 

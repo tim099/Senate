@@ -30,7 +30,7 @@ public static partial class SelfTest
                 + "{\"id\":\"b2\",\"persona\":\"basecamp\",\"title\":\"\",\"status\":\"done\",\"region\":{\"x\":200,\"y\":200,\"w\":2,\"h\":2}},"
                 + "{\"id\":\"c1\",\"persona\":\"summit\",\"title\":\"邊角\",\"status\":\"done\",\"region\":{\"x\":2040,\"y\":2040,\"w\":20,\"h\":20}}"
                 + "]}";
-            var aList = SCP_CanvasExhibits.FromClaims(SCP_JsonParser.Parse(aClaims)["claims"]);
+            var aList = SCP_CanvasExhibits.FromClaims(SCP_JsonParser.Parse(aClaims)["claims"], SCP_CanvasSize.Default);
             var aHeart = SCP_CanvasExhibits.Find(aList, "心");
             if (aList.Count != 4) aFails.Add($"🔴 展品 {aList.Count} 件（期望 4：心／claim:b1／claim:b2／邊角）");
             if (aHeart == null || aHeart.RegionText != "10,8,8,6" || aHeart.ClaimIds.Count != 2 || !aHeart.AnyActive)
@@ -63,17 +63,18 @@ public static partial class SelfTest
             if (rMiss.ExitCode != 2) aFails.Add($"🔴 反向對照：找不到的展品沒被擋（exit {rMiss.ExitCode}；會退回全景）");
 
             // ③ 頁面純函式
-            var aMask = new byte[SCP_CanvasSpec.Area];
-            bool aEmpty = !CanvasViewerPage.PaintedBounds(aMask, out _, out _, out _, out _);
-            aMask[5 * SCP_CanvasSpec.Width + 7] = 1;
-            aMask[9 * SCP_CanvasSpec.Width + 3] = 1;
-            bool aBox = CanvasViewerPage.PaintedBounds(aMask, out int bx, out int by, out int bw, out int bh) && bx == 3 && by == 5 && bw == 5 && bh == 5;
+            SCP_CanvasSize aDef = SCP_CanvasSize.Default;
+            var aMask = new byte[aDef.Area];
+            bool aEmpty = !CanvasViewerPage.PaintedBounds(aMask, aDef, out _, out _, out _, out _);
+            aMask[5 * aDef.Width + 7] = 1;
+            aMask[9 * aDef.Width + 3] = 1;
+            bool aBox = CanvasViewerPage.PaintedBounds(aMask, aDef, out int bx, out int by, out int bw, out int bh) && bx == 3 && by == 5 && bw == 5 && bh == 5;
             if (!aEmpty) aFails.Add("空白畫布回報有已畫外框");
             if (!aBox) aFails.Add($"🔴 已畫外框錯：{bx},{by},{bw},{bh}（期望 3,5,5,5）");
             int s16 = CanvasViewerPage.AutoScale(16, 16), s2048 = CanvasViewerPage.AutoScale(2048, 2048), s1 = CanvasViewerPage.AutoScale(1, 1);
             if (s16 != 32 || s2048 != 1 || s1 != CanvasViewerPage.MaxAutoScale) aFails.Add($"自動倍率 16→{s16}（32）／2048→{s2048}（1）／1→{s1}（上限）");
-            bool rClip = CanvasViewerPage.TryParseRegion("2000,2000,100,100", out _, out _, out int cw, out int ch, out _) && cw == 48 && ch == 48;
-            bool rOut = !CanvasViewerPage.TryParseRegion("3000,0,10,10", out _, out _, out _, out _, out _);
+            bool rClip = CanvasViewerPage.TryParseRegion("2000,2000,100,100", aDef, out _, out _, out int cw, out int ch, out _) && cw == 48 && ch == 48;
+            bool rOut = !CanvasViewerPage.TryParseRegion("3000,0,10,10", aDef, out _, out _, out _, out _, out _);
             if (!rClip) aFails.Add("region 超出畫布沒夾進來");
             if (!rOut) aFails.Add("🔴 起點在畫布外沒被擋");
 
