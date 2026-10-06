@@ -1,7 +1,7 @@
 ---
 title: SCP_CMD（`senate cmd`）—— 不依賴 Unity 的指令系統
 description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生；與 Unity 那套（senate ucmd）的分工
-last_updated: 2026-09-02
+last_updated: 2026-10-06
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -106,10 +106,28 @@ public sealed class SCP_Cmd_Example : SCP_Cmd
 回傳的三種東西**分開放**（沿用 run_cmd 的慣例，agent 已經在讀）：
 
 - `Lines`：人可讀的輸出
-- `Outputs`：產出檔路徑 → 印成 `📄 回傳檔：<路徑>`
+- `Outputs`：產出檔路徑 → 印成 `📄 回傳檔：<路徑>（N 行／K KB）`
 - `Values`：純量 → 印成 `🔢 key = value`
 
 > ⚠ 路徑與純量分開是有血證的：混在一起會讓 `seq` 這種數字被當成路徑去開。
+
+## 讀回傳檔：先看行數，大檔分段讀到第 N 行
+
+- 每個 `📄 回傳檔`（含早安的 `✓ brief：`）都帶 `（N 行／K KB）`。
+- 行數或大小超過門檻（預設 500 行或 20 KB，後台「早安 brief」頁可調）⇒ 多一行 `⚠ 大檔`：
+  **用你自己工具讀大檔的方法，分段讀到第 N 行**；任何一段被工具標成截斷，就縮小範圍補讀那一段。
+- 早安 brief（主檔與續讀檔）最後一行是 `🔚 本檔結束（共 N 行）`。讀到的最後一行該是它。
+  ⛔ 它只標結尾，**不證明中段讀到了** —— 有的工具截的是中段、頭尾都留著。
+
+各家一次讀得到多少、怎麼分段（TASK-0419 實測）：
+
+| Agent | 一次的上限 | 截斷形狀 | 分段讀法 |
+|---|---|---|---|
+| Claude Code `Read` | 約 25k token（預設最多 2000 行） | 砍尾巴，印 `PARTIAL view … lines 1-X of N` | `offset`／`limit` 逐段 |
+| Antigravity `view_file` | 800 行／45 KB | 砍尾巴 | `StartLine`／`EndLine` 逐段 |
+| Codex `exec_command` | 當次 `max_output_tokens`（預設 10000）＋外層預算 | **砍中段**，印 `N tokens truncated` | `Get-Content <檔> \| Select-Object -Skip <a> -First <b>` 逐段 |
+
+⇒ 共同判準：**讀到第 N 行，而且沒有任何一段被工具標成截斷**，才算讀完。
 
 ## 宿主要掛的那一行
 
@@ -137,17 +155,6 @@ SCP_CmdRegistry.InvocationHint = "senate cmd";
 `wake-brief` 的射程：**只含信件讀取層**。python `wake_brief.py` 還有見根／回憶／記憶維護狀態／
 見人／見書／今日動作清單，那些依賴信件庫以外的子系統，**沒有移植**
 ⇒ 兩份輸出不是同一份東西，不要拿其中一份當另一份的驗收。
-
-## 驗收讀數（2026-08-29，Template persona）
-
-- `senate cmd` ⇒ 2 支指令，`🔢 command_count = 2`
-- `senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=…` ⇒ exit 0、
-  `🔢 main_lines = 215`、`📄 回傳檔：…/wake_brief.md`
-- 產出與 python `awakening.py brief --persona Template` 的四個移植區塊**逐行相同**
-- `--arg wak=4`（打錯名）⇒ exit 2 ＋ `不認得的參數 'wak'（這支 Cmd 吃的是：…）`
-- 缺 `persona` ⇒ exit 2 ＋ `缺必填參數 'persona'`
-- `wake-brie`（打錯指令名）⇒ exit 2 ＋ `你是不是要打：wake-brief`
-- persona 不存在 ⇒ **exit 1**（跟用法錯分得出來），同時印信件夾根讓人分辨是哪一格錯
 
 ## 相關文件
 

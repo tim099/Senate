@@ -69,7 +69,7 @@ public sealed class SenateTaskCommitGateway : SCP_ITaskCommitGateway
                 SCP_CmdRegistry.Invoke("tasks --arg index=" + iIndex) + "   # 狀態有沒有動再決定補不補");
         }
         foreach (string l in aR.Lines) if (l.Length > 0) oLines.Add("  " + l);
-        foreach (string o in aR.Outputs) oLines.Add("  📄 回傳檔：" + o);
+        foreach (string o in aR.Outputs) oLines.AddRange(SCP_ReadHint.Lines("  📄 回傳檔：", o, m_DataRoot));
         if (aR.ExitCode == 7)
             return SCP_TaskAdvanceVerdict.Unknown(
                 "**沒等到任務寫入端的回執** —— 它可能已經推進了",

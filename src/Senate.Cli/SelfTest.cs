@@ -199,6 +199,9 @@ public static partial class SelfTest
         // inbox 預覽（TASK-0417）＋ tavern-query 區間參數（TASK-0422）：本體在 SelfTest.TavernReadFix0417.cs
         One(nameof(TavernInboxPreviewCleanRoom), "tavern", TavernInboxPreviewCleanRoom),
         One(nameof(TavernQuerySeqRangeCleanRoom), "tavern", TavernQuerySeqRangeCleanRoom),
+        // brief 可調參數＋回傳檔大檔提示＋結尾標記（TASK-0419）：本體在 SelfTest.BriefReadHint0419.cs
+        One(nameof(BriefSettingsCleanRoom), "letters", BriefSettingsCleanRoom),
+        One(nameof(ReadHintCleanRoom), "letters", ReadHintCleanRoom),
         One(nameof(TavernWaitYieldsToBuild), "tavern", TavernWaitYieldsToBuild),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),

@@ -436,16 +436,17 @@ class NoCtor   : B { }                                      // F = null
 
 ```csharp
 var aCatalog = new SCP_GuiPageCatalog();
-aCatalog.Register(HomePage.PageKey, () => new HomePage(aModel, aCatalog));
-aCatalog.Register(DoctorPage.PageKey, () => new DoctorPage(aModel));
+aCatalog.Register(HomePage.PageKey, () => new HomePage(aModel, aCatalog));   // 只有吃 catalog 本身的頁走顯式
+aCatalog.AutoRegister(iModel.PageAssemblies, iModel);   // src/Senate.Cli/Pages/SenatePages.cs
 SCP_GuiPage? aPage = aCatalog.Create("doctor");    // 認不得回 null
 ```
 
-⭐ **顯式登記，不反射掃 assembly**（UCL 那側是反射）。兩個理由：
+⭐ **自動收頁**：繼承 `SCP_GuiPage`、宣告 `public const string PageKey` 的非抽象類別都會被收進來，
+建構時遞宿主 context（ctor 只認「一個 context 參數」或「無參」兩種形狀）。新增一頁**不必到宿主補 `Register`**。
 
-1. 這裡的頁面建構要吃 model（沒有無參 ctor），`Activator.CreateInstance` 生不出來。
-2. 反射掃出來的清單會隨「哪些 assembly 剛好載入」而變，而那個差異**不會報錯** ——
-   症狀是「同一份程式在別台機器少了兩頁」。
+- assembly 清單由宿主傳進來（⛔ 不用 `AppDomain.GetAssemblies()` —— 「現在載了哪些」會隨執行路徑變，而且不報錯）。
+- 缺 `PageKey`、key 撞名、ctor 形狀不符、assembly 掃不全 ⇒ 進 `Diagnostics`，由入口頁畫出來。
+- 頁面建構子要便宜（目錄會建一次實例讀標題／分組）；讀數放 `OnPush`。
 
 | 判準 | 而不是 |
 |---|---|

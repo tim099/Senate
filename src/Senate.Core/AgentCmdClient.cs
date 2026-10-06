@@ -314,12 +314,12 @@ public static class AgentCmdClient
                         {
                             string aErrMsg = (string?)aVerdict["error"] ?? "(no error message)";
                             FailVerdict(iOut, iErr, $"  ✗ Cmd failed（Editor 已自動出隊）: {aErrMsg}");
-                            if (iPrintOutputs) PrintOutputs(aVerdict, iOut);   // blocked 也會先落 payload —— 出口清單在那個檔裡
+                            if (iPrintOutputs) PrintOutputs(aVerdict, iOut, iDataRoot);   // blocked 也會先落 payload —— 出口清單在那個檔裡
                             PrintErrorReport(iDataRoot, iCmdId, iOut);
                             return AgentCmdWaitResult.Failed;
                         }
                         iOut("  ✓ Cmd completed → Success（result 檔判定，非推論）");
-                        if (iPrintOutputs) PrintOutputs(aVerdict, iOut);
+                        if (iPrintOutputs) PrintOutputs(aVerdict, iOut, iDataRoot);
                         return AgentCmdWaitResult.Success;
                     }
                     // 🔴 不在 queue ＋ 沒有判定檔 ＝ **不知道**（TASK-0263）。
@@ -342,7 +342,7 @@ public static class AgentCmdClient
                 {
                     iOut($"  ✓ Repeatable cmd ran successfully (RunCount={(int?)aCmd["RunCount"] ?? 0})");
                     JsonObject? aVerdict2 = ReadCmdResult(iDataRoot, iCmdId);
-                    if (iPrintOutputs && aVerdict2 != null) PrintOutputs(aVerdict2, iOut);
+                    if (iPrintOutputs && aVerdict2 != null) PrintOutputs(aVerdict2, iOut, iDataRoot);
                     return AgentCmdWaitResult.Success;
                 }
                 if (aResult == "Failed")
@@ -594,12 +594,12 @@ public static class AgentCmdClient
     }
 
     /// <summary>印 result 檔的 outputs（回傳檔路徑）與 values（純量回報）—— 兩欄分開印，混了名字比事實大。</summary>
-    static void PrintOutputs(JsonObject iVerdict, Action<string> iOut)
+    static void PrintOutputs(JsonObject iVerdict, Action<string> iOut, string iDataRoot)
     {
         if (iVerdict["outputs"] is JsonArray aOuts)
             foreach (var o in aOuts)
                 if (o is JsonValue && (string?)o is { Length: > 0 } aPath)
-                    iOut($"  📄 回傳檔：{aPath}");
+                    foreach (string aLine in SCP.Core.Cmd.SCP_ReadHint.Lines("  📄 回傳檔：", aPath, iDataRoot)) iOut(aLine);   // 行數／大小＋大檔提示（TASK-0419）
         if (iVerdict["values"] is JsonArray aVals)
             foreach (var v in aVals)
                 if (v is JsonObject aKv && (string?)aKv["key"] is { Length: > 0 } aKey)

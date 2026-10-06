@@ -1902,7 +1902,14 @@ public static class Program
             else Console.Error.WriteLine(aLine);
         }
         // 產出檔與純量分開印 —— 混在一起會讓數字被當成路徑去開（run_cmd 那邊的血證）。
-        foreach (string aOutput in aResult.Outputs) Console.WriteLine($"📄 回傳檔：{aOutput}");
+        // 回傳檔帶行數／大小，大檔再提示分段讀到第 N 行（TASK-0419）—— 門檻跟著資料根的 brief_settings.json。
+        if (aResult.Outputs.Count > 0)
+        {
+            string? aHintRoot = HintDataRoot(iRepoRoot, aRawArgs);
+            foreach (string aOutput in aResult.Outputs)
+                foreach (string aLine in SCP.Core.Cmd.SCP_ReadHint.Lines("📄 回傳檔：", aOutput, aHintRoot))
+                    Console.WriteLine(aLine);
+        }
         foreach (KeyValuePair<string, string> aValue in aResult.Values)
             Console.WriteLine($"🔢 {aValue.Key} = {aValue.Value}");
 
@@ -1964,6 +1971,21 @@ public static class Program
     //   ⚠ 落點是 **stderr**：告示給人，stdout 給程式。
     // ⛔ 也不吞 Error：解不出來就什麼都不填，讓 Cmd 自己用「缺必填參數」擋，
     //   並把理由印在旁邊（替人挑一個的症狀是「路徑全對，只是屬於別的專案」）。
+    // 大檔提示的門檻住在資料根 ⇒ 這次 Cmd 吃了 data_root 就用它；沒吃就照設定檔解一次（解不出來 ⇒ null ＝ 預設門檻，不出聲 —— 只影響提示門檻）。
+    static string? HintDataRoot(string iRepoRoot, Dictionary<string, string> iArgs)
+    {
+        if (iArgs.TryGetValue("data_root", out string? aGiven) && !string.IsNullOrEmpty(aGiven)) return aGiven;
+        try
+        {
+            SenateConfig? aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot));
+            if (aCfg == null) return null;
+            SCP.Core.Paths.SCP_PathResolution aRes = SCP.Core.Paths.SCP_PathRegistry.Resolve(
+                SCP.Core.Paths.SCP_PathId.AgentCommandsRoot, iId => SenatePathBinding.StoredOf(aCfg, iId));
+            return aRes.Error == null && aRes.Value.Length > 0 ? aRes.Value : null;
+        }
+        catch (Exception) { return null; }
+    }
+
     static void FillRootArg(SCP.Core.Cmd.SCP_Cmd iCmd, Dictionary<string, string> ioArgs,
                             SenateConfig iCfg, string iArgName, SCP.Core.Paths.SCP_PathId iPathId,
                             Func<string>? iHostDefault = null)
