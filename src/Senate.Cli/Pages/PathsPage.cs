@@ -43,6 +43,29 @@ public sealed class PathsPage : SCP_GuiToolPage
 
     public override void OnPush() { base.OnPush(); Load(); }
 
+    protected override void TopBarButtons(SCP_Ui iUi)
+    {
+        base.TopBarButtons(iUi);
+
+        if (m_Draft != null)
+        {
+            if (iUi.Button(m_Dirty ? "💾 儲存" : "儲存（沒有改動）", "paths/save") && m_Dirty)
+            {
+                try
+                {
+                    m_Draft.Save(m_ConfigPath);
+                    m_Dirty = false;
+                    m_Message = "已寫回 " + m_ConfigPath;
+                    Load();     // 回讀 —— 印 ✓ 不算數
+                }
+                catch (Exception e) { m_Message = "✗ 寫回失敗：" + e.Message; }
+            }
+        }
+
+        if (iUi.Button("↩ 放棄改動並重新讀取", "paths/discard")) Load();
+        iUi.Note(m_Dirty ? "有未儲存的改動。" : "沒有改動。");
+        if (m_Message != null) iUi.Note(m_Message);
+    }
     void Load()
     {
         m_LoadError = null;
