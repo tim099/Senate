@@ -1,0 +1,5 @@
+{
+	"source": "Skills~/scp-reading-library",
+	"target": "claude",
+	"provenance": "scp_core"
+}

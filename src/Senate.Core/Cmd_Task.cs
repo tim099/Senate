@@ -35,7 +35,7 @@ public sealed class Cmd_Task : SCP_Cmd
         + "—— 寫入端是 Senate Server，**不需要 Unity Editor**；讀取走 `tasks`";
 
     public override string Details =>
-        "每個 op 的參數照 UCL `Cmd_Task`（2026-09-30 移植）；打錯參數名 ⇒ exit 2 並列出該 op 認得的鍵（⛔ 不靜默吃掉）。\n"
+        "打錯參數名 ⇒ exit 2 並列出該 op 認得的鍵（⛔ 不靜默吃掉）。\n"
         + "⚠ 結果四態：0 已寫（dry-run／冪等看 🔢 wrote）／1 閘擋下（零寫入）／6 確定沒寫（重跑安全）／7 **不知道**（⛔ 先回讀）。\n"
         + "⚠ 長內文（criteria／description／evidence／body／progress／why）一律 `--arg-file`。\n"
         + "⚠ claim 帶 `scope` ＝「我現在要動工」：先開 Coding 場（或綁到現有那一場），開不了就**不認領**。\n"
