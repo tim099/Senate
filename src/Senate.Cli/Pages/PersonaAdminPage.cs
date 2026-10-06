@@ -314,26 +314,20 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
     // ── 全部（總覽）──────────────────────────────────────────
     void DrawAll(SCP_Ui g)
     {
+        // ⛔ 這裡不畫頭像：每一張第一次畫都要解碼（12 張 10 MB ≈ 1.5 秒卡一下），只在選中那一位的「顯示資料」區才載（Tim 2026-10-06）。
         g.Label($"全部（{m_Personas.Count}）");
-        foreach (Row aRow in m_Rows)
-        {
-            string p = aRow.Persona;
-            SCP_PersonaDisplayInfo aInfo = aRow.Disp;
-            SCP_JsonData? aRaw = aRow.Raw;
-            string aFork = Str(aRaw, "forked_from");
-            using (g.IdScope("row/" + p))
-            using (g.Row())
+        using (g.Table("persona", "狀態", "wake", "帳號", "fork", "顏色", "頭像"))
+            foreach (Row aRow in m_Rows)
             {
-                g.Image(aInfo.AvatarPath, 40f, p);
-                using (g.Column())
-                {
-                    g.Label((Str(aRaw, "status") == "online" ? "[在線] " : "") + p);
-                    g.Note($"wake {aRaw?.GetInt("wake_count", 0) ?? 0}　｜　帳號 {Or(Str(aRaw, "agent"), "（沒綁）")}"
-                           + (aFork.Length > 0 ? "　｜　fork ← " + aFork : "")
-                           + "　｜　" + DescribeColor(aInfo) + "　｜　" + (aInfo.HasAvatar ? "有頭像" : "沒有頭像"));
-                }
+                SCP_JsonData? aRaw = aRow.Raw;
+                g.TableRow(aRow.Persona,
+                           Str(aRaw, "status") == "online" ? "在線" : "",
+                           (aRaw?.GetInt("wake_count", 0) ?? 0).ToString(),
+                           Or(Str(aRaw, "agent"), "（沒綁）"),
+                           Str(aRaw, "forked_from"),
+                           aRow.Disp.ColorInvalidRaw.Length > 0 ? "[壞掉]" : Or(aRow.Disp.ColorHex, "—"),
+                           aRow.Disp.HasAvatar ? "有" : "—");
             }
-        }
     }
 
     static string Str(SCP_JsonData? iRaw, string iKey) => iRaw != null && iRaw.TryGetString(iKey, out string v) ? v : "";
