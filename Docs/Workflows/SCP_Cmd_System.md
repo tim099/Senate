@@ -42,8 +42,10 @@ queue 的存在理由是「呼叫端與執行端是兩個 process」。CLI 直�
 ## 怎麼用
 
 ```bash
-senate cmd                       # 列出所有指令（等同 senate cmd help）
-senate cmd help wake-brief               # 單支的參數說明（TASK-0130 起吃位置參數）
+senate cmd                       # 依分類列出外層指令（等同 senate cmd help；內層由父指令的回傳指路）
+senate cmd help 酒館                     # 只列一類（＝ --arg category=酒館；內層縮排在父指令底下）
+senate cmd help --arg all=1              # 連內層全列
+senate cmd help wake-brief               # 單支的參數說明（內層也照印，並說出從哪支開始走）
 senate cmd wake-brief --help             # 同一件事的另一條路（`-h` 也通）
 senate cmd help --arg name=wake-brief    # 舊寫法，照舊有效
 senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/brief
@@ -93,6 +95,7 @@ senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/b
 public sealed class SCP_Cmd_Example : SCP_Cmd
 {
     public override string Name => "example";                 // ⚠ 這是契約：進了別人的腳本就不能隨便改
+    public override string Category => SCP_CmdCategory.System;  // 必填（外層）：help 依它分組；分類清單在 SCP_CmdCategory
     public override string Summary => "一句話說明";
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
@@ -102,6 +105,11 @@ public sealed class SCP_Cmd_Example : SCP_Cmd
         => SCP_CmdResult.Success("hello " + iArgs.Get("who")).AddValue("count", "1");
 }
 ```
+
+**外層與內層**：預設是外層（help 上看得到）。只有屬於某支指令子流程的那一步，才改填
+`public override string Parent => SCP_CmdRegistry.NameOf<父類別>();`（不填 `Category`，跟著父指令走）——
+例如 `morning-brief` 屬於 `morning-wake`。內層不出現在預設 help，靠父指令那條流程的回傳指路；
+冷門、管理用、Server 臨界區都**不是**內層的理由。自測會檢查：外層都有已知分類、每支內層都有程式碼指路到它。
 
 回傳的三種東西**分開放**（沿用 run_cmd 的慣例，agent 已經在讀）：
 

@@ -30,6 +30,7 @@ namespace Senate.Core;
 public class Cmd_TavernPost : SCP_LocalRootsCmd
 {
     public override string Name => "tavern-post";
+    public override string Category => SCP_CmdCategory.Tavern;
 
     /// <summary>
     /// true ＝ **系統發言**（`tavern-post-system`，TASK-0366）：身分由 `sender` 點名、沒有 persona ⇒ 不計酬、不做 alter 延遲、不更新 now_status、不落回傳檔。
@@ -398,6 +399,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
 public sealed class Cmd_TavernPostSystem : Cmd_TavernPost
 {
     public override string Name => "tavern-post-system";
+    public override string Category => SCP_CmdCategory.Tavern;
 
     public override string Summary => "酒館**系統**發言（沒有 persona：酒保廣播、後台頁打字）—— 不計酬；agent 自己說話走 tavern-post";
 

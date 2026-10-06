@@ -23,6 +23,7 @@ namespace Senate.Core;
 public sealed class Cmd_Voucher : ServerDelegateCmd
 {
     public override string Name => "voucher";
+    public override string Category => SCP_CmdCategory.Bank;
 
     public override string Summary =>
         "券：查／發／花／分區遷移 —— 由 Senate Server 執行（**單一寫入端**）"

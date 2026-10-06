@@ -22,6 +22,7 @@ namespace Senate.Core;
 public sealed class Cmd_UnityRecompile : UnityDelegateCmd
 {
     public override string Name => "unity-recompile";
+    public override string Category => SCP_CmdCategory.Task;
 
     public override string Summary => "Unity 重編譯：觸發＋**等到那一趟結束**再印讀數 —— 由 Unity Editor 執行";
 
@@ -152,6 +153,7 @@ public sealed class Cmd_UnityRecompile : UnityDelegateCmd
 public sealed class Cmd_UnityCompileStatus : SCP_Cmd
 {
     public override string Name => "unity-compile-status";
+    public override string Category => SCP_CmdCategory.Task;
 
     public override string Summary => "Unity 編譯現況：讀狀態檔＋ErrorLog 交叉對帳 —— **本地跑，不需要 Editor**";
 

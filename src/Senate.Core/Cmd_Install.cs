@@ -14,6 +14,7 @@ namespace Senate.Core;
 public sealed class Cmd_Install : SCP_Cmd
 {
     public override string Name => "install";
+    public override string Category => SCP_CmdCategory.System;
 
     public override string Summary => "安裝系統：模型與 Python 套件的狀態／相依檢查／安裝／解除安裝（不帶 confirm=1 只印計畫）";
 

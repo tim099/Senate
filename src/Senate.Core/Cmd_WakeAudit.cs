@@ -13,6 +13,7 @@ namespace Senate.Core;
 public sealed class Cmd_WakeAudit : UnityDelegateCmd
 {
     public override string Name => "wake-audit";
+    public override string Category => SCP_CmdCategory.Memory;
 
     public override string Summary => "早安對帳（全 persona，唯讀）—— 由 Unity Editor 執行";
 

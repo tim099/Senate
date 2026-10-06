@@ -15,6 +15,7 @@ namespace Senate.Core;
 public sealed class Cmd_Kb : SCP_Cmd
 {
     public override string Name => "kb";
+    public override string Category => SCP_CmdCategory.Memory;
 
     public override string Summary => "知識庫語意檢索（Senate 版）：status／reindex／search／eval／sidecar —— 模型常駐只載一次";
 

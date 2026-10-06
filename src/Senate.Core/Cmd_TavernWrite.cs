@@ -21,6 +21,7 @@ namespace Senate.Core;
 public class Cmd_TavernWrite : ServerDelegateCmd
 {
     public override string Name => "tavern-write";
+    public override string Category => SCP_CmdCategory.Tavern;
 
     public override string Summary =>
         "酒館訊息寫入臨界區（配號＋建檔＋_seq.txt）—— 由 Senate Server 執行；酒館訊息唯一的寫入端";

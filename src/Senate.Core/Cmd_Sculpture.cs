@@ -35,6 +35,7 @@ namespace Senate.Core;
 public sealed class Cmd_Sculpture : SCP_Cmd
 {
     public override string Name => "sculpture";
+    public override string Category => SCP_CmdCategory.Game;
 
     public override string Summary =>
         "3D 體積雕刻（box/carve/stamp2d/stampimg 落子收費 ⌈實際落地/100⌉；view/slice/stats/export/exhibit/render-profile 免費）—— **不需要 Unity Editor**";

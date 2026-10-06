@@ -15,6 +15,7 @@ namespace Senate.Core;
 public sealed class Cmd_Glossary : SCP_Cmd
 {
     public override string Name => "glossary";
+    public override string Category => SCP_CmdCategory.Reading;
 
     public override string Summary => "新詞辭典：register／lookup／detect／attach／list —— **不需要 Unity Editor**";
 

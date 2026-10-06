@@ -253,6 +253,7 @@ public static class LlmOllama
 public sealed class Cmd_Llm : SCP_Cmd
 {
     public override string Name => "llm";
+    public override string Category => SCP_CmdCategory.System;
 
     public override string Summary => "本地大語言模型（ollama）：狀態／目錄／安裝／解除安裝／顯存卸載／試跑（install／uninstall 不帶 confirm=1 只印計畫）";
 

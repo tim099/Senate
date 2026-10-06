@@ -21,6 +21,7 @@ namespace Senate.Core;
 public class Cmd_TaskWrite : ServerDelegateCmd
 {
     public override string Name => "task-write";
+    public override string Category => SCP_CmdCategory.Task;
 
     public override string Summary =>
         "任務單寫入臨界區（配號＋單檔讀改寫）—— 由 Senate Server 執行；任務單唯一的寫入端（內部通道，人請打 `task`）";

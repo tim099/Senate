@@ -18,6 +18,7 @@ namespace Senate.Core;
 public sealed class Cmd_Demurrage : ServerDelegateCmd
 {
     public override string Name => "demurrage";
+    public override string Category => SCP_CmdCategory.Bank;
 
     public override string Summary =>
         "跨日存款保管費：算帳單／真的扣／跟舊實作對拍 —— 由 Senate Server 執行（**單一寫入端**）";

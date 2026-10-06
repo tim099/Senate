@@ -15,6 +15,7 @@ namespace Senate.Core;
 public sealed class Cmd_Bartender : SCP_Cmd
 {
     public override string Name => "bartender";
+    public override string Category => SCP_CmdCategory.Tavern;
 
     public override string Summary => "酒保（tavern-keeper）：status 看開關／今天回了幾則／最後一次回覆／別名；preview 不發文試回一句 —— 回應本身由酒館 Server 執行";
 

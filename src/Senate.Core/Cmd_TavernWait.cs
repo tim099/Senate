@@ -31,6 +31,7 @@ namespace Senate.Core;
 public sealed class Cmd_TavernWait : SCP_Cmd
 {
     public override string Name => "tavern-wait";
+    public override string Category => SCP_CmdCategory.Tavern;
 
     public override string Summary =>
         "自由時間的對話流引擎：**擋住 turn** 等人回話，等到就提早返回、逾時就照實說 —— 本地跑，不需要 Editor";

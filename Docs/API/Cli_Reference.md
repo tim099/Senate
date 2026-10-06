@@ -308,8 +308,9 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 [`SCP_Cmd_System`](../Workflows/SCP_Cmd_System.md) —— 本節只列旗標與 exit code。
 
 ```bash
-./senate.exe cmd                                   # 列出所有指令（＝ cmd help）
-./senate.exe cmd help wake-brief                   # 單支的參數說明（TASK-0130 起吃位置參數）
+./senate.exe cmd                                   # 依分類列出外層指令（＝ cmd help）
+./senate.exe cmd help 酒館                          # 只列一類；`help --arg all=1` 連內層全列
+./senate.exe cmd help wake-brief                   # 單支的參數說明（內層也照印）
 ./senate.exe cmd wake-brief --help                 # 同一件事的另一條路（`-h` 也通）
 ./senate.exe cmd help --arg name=wake-brief        # 舊寫法，照舊有效
 ./senate.exe cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/brief

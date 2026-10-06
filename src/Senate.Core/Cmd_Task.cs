@@ -30,6 +30,7 @@ namespace Senate.Core;
 public sealed class Cmd_Task : SCP_Cmd
 {
     public override string Name => "task";
+    public override string Category => SCP_CmdCategory.Task;
 
     public override string Summary =>
         "任務單寫入（create／claim／assign／unassign／update／comment／check／link／resolve／commit／sweep／wrapup）"

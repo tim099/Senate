@@ -28,6 +28,7 @@ namespace Senate.Core;
 public sealed class Cmd_Bank : ServerDelegateCmd
 {
     public override string Name => "bank";
+    public override string Category => SCP_CmdCategory.Bank;
 
     // ⚠ 這兩段是**靜態字串**：它們在指令清單裡印出來，那時候還不知道要對哪一棵資料樹說話
     //   ⇒ ⛔ 不可以在這裡宣布誰是權威（同一顆 exe 服務多棵樹，有的切了有的沒切）。

@@ -21,6 +21,7 @@ namespace Senate.Core;
 public sealed class Cmd_Paths : SCP_Cmd
 {
     public override string Name => "paths";
+    public override string Category => SCP_CmdCategory.System;
 
     public override string Summary => "列出所有動態路徑（enum ＋ 解析值 ＋ 誰決定的）";
 

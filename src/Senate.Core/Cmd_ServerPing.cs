@@ -10,6 +10,7 @@ namespace Senate.Core;
 public sealed class Cmd_ServerPing : ServerDelegateCmd
 {
     public override string Name => "server-ping";
+    public override string Category => SCP_CmdCategory.System;
     public override string Summary => "Server 探針：回 Server 的 pid／build／thread（驗執行器通不通）—— 由 Senate Server 執行";
     public override string PortNote => "探針本身就是終局；它的用途是驗 0103 的協議，不會被原生化";
     public override string Example => SCP_CmdRegistry.Invoke("server-ping --arg echo=hi");
