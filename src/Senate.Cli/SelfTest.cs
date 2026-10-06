@@ -212,6 +212,8 @@ public static partial class SelfTest
         One(nameof(CanvasExhibitsCleanRoom), "canvas", CanvasExhibitsCleanRoom),
         // 畫布尺寸參數化（TASK-0445）：本體在 SelfTest.CanvasSize0445.cs
         One(nameof(CanvasSizeCleanRoom), "canvas", CanvasSizeCleanRoom),
+        // 畫布合併（TASK-0444）：本體在 SelfTest.CanvasMerge0444.cs
+        One(nameof(CanvasMergeCleanRoom), "canvas", CanvasMergeCleanRoom),
         One(nameof(PersonaCreateCleanRoom), "morning", PersonaCreateCleanRoom),
         One(nameof(BankBindingStampCrossProcess), "bank", BankBindingStampCrossProcess),
         // 借別區、本區沒開戶（TASK-0440）：本體在 SelfTest.BankAuditBorrow0440.cs
