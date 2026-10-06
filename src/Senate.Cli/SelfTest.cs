@@ -208,6 +208,8 @@ public static partial class SelfTest
         One(nameof(CmdTierRegistry), "cmd", CmdTierRegistry),
         One(nameof(CmdTierPointedTo), "cmd", CmdTierPointedTo),
         One(nameof(TavernWaitYieldsToBuild), "tavern", TavernWaitYieldsToBuild),
+        // 畫布觀測頁與 2D 展品（TASK-0443）：本體在 SelfTest.CanvasPage0443.cs
+        One(nameof(CanvasExhibitsCleanRoom), "canvas", CanvasExhibitsCleanRoom),
         One(nameof(PersonaCreateCleanRoom), "morning", PersonaCreateCleanRoom),
         One(nameof(BankBindingStampCrossProcess), "bank", BankBindingStampCrossProcess),
         // 借別區、本區沒開戶（TASK-0440）：本體在 SelfTest.BankAuditBorrow0440.cs
