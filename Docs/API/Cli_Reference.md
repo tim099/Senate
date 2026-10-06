@@ -32,10 +32,10 @@ $ senate ucmd status --totally-bogus-flag zzz
 
 **別的 client 有、這顆沒有的旗標會直接指出對應寫法**（照舊文件打的人最常撞這幾個）：
 
-| 打了這個 | 它屬於誰 | 這顆 exe 的寫法 |
-|---|---|---|
-| `--arg-stdin` | python `run_cmd.py` | `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）|
-| `--wait-reply` / `--wait-reply-from` | python `run_cmd.py` 的**阻塞等回覆** | 這顆沒有 client 端等待 ⇒ 走 `senate cmd tavern-wait --arg persona=<你>`（Unity 的 op=wait 已退場，TASK-0364）|
+| 打了這個 | 這顆 exe 的寫法 |
+|---|---|
+| `--arg-stdin` | `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）|
+| `--wait-reply` / `--wait-reply-from` | 這顆沒有 client 端等待 ⇒ 走 `senate cmd tavern-wait --arg persona=<你>` |
 
 > [!IMPORTANT]
 > 🩸 **為什麼是硬擋而不是印一行警告**：`HasFlag` / `ArgValue` 是「找得到就用」的掃描器 ——
@@ -515,11 +515,8 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 
 ### `ucmd run` / `ucmd status`
 
-把一筆 **AgentCommand** 派給目標 Unity 專案的 Editor（＝ UCL_Core `run_cmd.py` 的 C# 對應）。
-⚠ **2026-08-29 改名**：本指令原本叫 `cmd`，改成 `ucmd`（u＝Unity）；`cmd` 讓給上面那套。
-**舊動詞不保留別名** —— 一個要 Editor、一個不要，打錯時「不會動」比「做了另一件事」安全。
-存在的理由：**沒有 python 的環境（Codex）也要能派 Cmd**。機制、協議與邊界的完整說明
-在 [`AgentCmd_Dispatch`](../Workflows/AgentCmd_Dispatch.md) —— 本節只列旗標與 exit code。
+把一筆 **AgentCommand** 派給目標 Unity 專案的 Editor（u＝Unity；不需要 Editor 的指令走上面的 `cmd`）。
+機制、協議與邊界的完整說明在 [`AgentCmd_Dispatch`](../Workflows/AgentCmd_Dispatch.md) —— 本節只列旗標與 exit code。
 
 ```bash
 ./senate.exe ucmd run Task --persona summit --arg op=show --arg index=8
@@ -535,7 +532,7 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 | `--timeout <秒>` | 等待逾時（預設 120） |
 | `--no-wait` | 送出就返回（不等 Editor 執行完） |
 
-#### exit code（與 `run_cmd.py` 對齊）
+#### exit code
 
 | code | 意思 |
 |---|---|
@@ -544,7 +541,7 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 | 3 | 逾時 —— Editor 沒開或 Watcher 停用。⚠ 此時**回傳檔沒被更新**，別去讀上一輪的 |
 
 ⚠ 這是**派遣不是代跑**：目標專案的 Unity Editor 必須開著（`UCL_AgentCommandWatcher` 執行中），
-Senate 只負責 client 半邊。⚠ v1 與 `run_cmd.py` 的已知差距（刻意，不是壞掉）：
+Senate 只負責 client 半邊。⚠ 沒做的（刻意，不是壞掉）：
 無 schema 預檢與 type 別名（打錯 type 由 Editor 端擋並附 did-you-mean）、
 無 Tavern `wait-reply` 握手、`op=post` 成功後不提交 catch-up cursor。
 

@@ -1633,9 +1633,9 @@ public static class Program
     //   而三份 skill 教的是 `--arg-stdin`：**指路牌比它指的路活得更久。**
     static readonly Dictionary<string, string> ForeignFlagHints = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["--arg-stdin"] = "那是 python `run_cmd.py` 的旗標。這顆 exe 走 `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）",
-        ["--wait-reply"] = "那是 python `run_cmd.py` 的**阻塞等回覆**。這顆 exe 沒有 client 端等待 ⇒ 要等回覆走 `senate cmd tavern-wait --arg persona=<你>`（Unity 的 op=wait 已退場，TASK-0364）",
-        ["--wait-reply-from"] = "同 `--wait-reply`：走 `senate cmd tavern-wait --arg persona=<你>`（Unity 的 op=wait 已退場，TASK-0364）",
+        ["--arg-stdin"] = "這顆 exe 沒有這個旗標 —— 走 `--arg-file <k>=<檔路徑>`（長內文一律走檔案，不經過 shell）",
+        ["--wait-reply"] = "這顆 exe 沒有 client 端等待 ⇒ 要等回覆走 `senate cmd tavern-wait --arg persona=<你>`",
+        ["--wait-reply-from"] = "同 `--wait-reply`：走 `senate cmd tavern-wait --arg persona=<你>`",
     };
 
     // 全域旗標：**已宣告**但只在某支底下生效的那些。它們照舊走「出聲說沒生效」那條路
@@ -2091,7 +2091,7 @@ public static class Program
                 --only <path>     只處理某幾顆（可重複；指到不存在的會擋下）
                 --dry-run         只印打算做什麼，不動任何東西
                 ⚠ sync **不給預設對象** —— 必須 --root 或 --project（對錯的 repo 動手是最貴的錯）
-              ucmd run <CmdType>  派一筆 AgentCommand 給目標專案的 Unity Editor（= run_cmd.py 的 C# 版）
+              ucmd run <CmdType>  派一筆 AgentCommand 給目標專案的 Unity Editor
                                   ⚠ 2026-08-29 改名：這套 Unity 專用的從 `cmd` 改叫 `ucmd`，
                                      `cmd` 讓給不依賴 Unity 的 SCP_CMD（見上）
                 --project <name>  對哪個專案（senate.local.json projects[]；只有一個啟用時可省）
