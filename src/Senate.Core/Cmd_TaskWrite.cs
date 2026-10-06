@@ -43,6 +43,9 @@ public class Cmd_TaskWrite : ServerDelegateCmd
     /// </summary>
     protected override string Lane(SCP_CmdArgs iArgs) => TaskLane;
 
+    // TASK-0412：task 是共用佇列，不是作者；同步與不等待派遣共用此分類。
+    protected override bool IsPersonaLane(string iLane) => false;
+
     /// <summary>任務寫入唯一那條 lane。⚠ 必須是一層資料夾名（`ServerExecutor.Tick` 掃的是 `queues/*` 這一層）。</summary>
     public const string TaskLane = "task";
 

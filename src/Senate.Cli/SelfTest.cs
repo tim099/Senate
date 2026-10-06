@@ -154,6 +154,9 @@ public static partial class SelfTest
 
         One(nameof(LibraryJsonStyleFixture), "library", LibraryJsonStyleFixture),
         One(nameof(LibraryConfiguredRoots), "library", LibraryConfiguredRoots),
+        One(nameof(HostInjectedLetters0410), "cli", HostInjectedLetters0410),
+        One(nameof(ComicSourceDirectories0411), "library", ComicSourceDirectories0411),
+        One(nameof(TaskLaneIdentity0412), "server", TaskLaneIdentity0412),
 
         One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
         One(nameof(BuildGuardThreeStates), "server", BuildGuardThreeStates),

@@ -1,4 +1,4 @@
-﻿// 區塊職責：CLI 入口 —— `senate init` / `doctor` / `ui`。
+// 區塊職責：CLI 入口 —— `senate init` / `doctor` / `ui`。
 // 物理意義：**headless 優先**。這套後台的第一個實用價值是「Unity Editor 關著也能做事」，
 //           所以入口是命令列；ImGui 視窗是同一份頁面碼的第二個 renderer，不是唯一入口。
 // 數值影響：唯讀的指令不動任何檔（doctor / ui）；init 只在檔案**不存在**時建立，絕不覆寫。
@@ -1825,6 +1825,9 @@ public static class Program
             }
         }
 
+        // TASK-0410：必須在第一個宿主根注入之前記錄顯式鍵，包含 letters_root。
+        var aUserKeys = new List<string>(aRawArgs.Keys);
+
         // 便利：letters_root 沒給就用設定檔那一格。**印出來**，不靜默注入 ——
         // 靜默注入的症狀是「我明明沒指定，它卻讀了別人的信件庫」。
         //
@@ -1866,8 +1869,6 @@ public static class Program
         //   它們在 Bind 之前就塞進原始參數，於是被算成「顯式」，沒被讀時亮成「給了而從來沒被讀」
         //   （`voucher op=usage` 修完轉發端之後還剩一個 data_root，使用者沒打）。
         //   ⇒ 填之前記下使用者給了哪些鍵；填完有多出來的，就附上同一把名單鍵。本地 Bind 與轉發 payload 都吃它。
-        var aUserKeys = new List<string>(aRawArgs.Keys);
-
         if (aCmd != null)
         {
             SenateConfig? aCfg = null;

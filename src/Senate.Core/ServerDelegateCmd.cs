@@ -75,6 +75,9 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         return DefaultLane;
     }
 
+    /// <summary>queue 名稱是否代表身分。共用工作分道須覆寫，避免拿路由名稱宣告 persona。</summary>
+    protected virtual bool IsPersonaLane(string iLane) => iLane != DefaultLane;
+
     /// <summary>每一支委派 Cmd 都有的參數。子類別把自己的接在後面。</summary>
     protected static IEnumerable<SCP_CmdArgSpec> CommonSpecs()
     {
@@ -226,7 +229,7 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         //   `anonymous` 分道，而上面 EnsureIdle／下面 Wait 盯的是 `server` 分道 —— 兩邊各自誠實，合起來是
         //   「queue 空了 ⇒ 推論成功、無 result 檔」。Submit 的第二個參數是**分道**，一律傳 aLane；
         //   只有分道真的是 persona 時才讓它戳進 args。
-        bool aLaneIsPersona = aLane != DefaultLane;
+        bool aLaneIsPersona = IsPersonaLane(aLane);
         string aCmdId;
         try
         {
@@ -363,7 +366,7 @@ public abstract class ServerDelegateCmd : SCP_Cmd
         try
         {
             oCmdId = AgentCmdClient.Submit(aServerRoot, aLane, aCmd.Name, aSend, _ => { },
-                iInjectPersona: aLane != DefaultLane);
+                iInjectPersona: aCmd.IsPersonaLane(aLane));
         }
         catch (Exception e) { oDetail = "寫不進 queue：" + e.GetType().Name + ": " + e.Message; return false; }
         oDetail = $"已排進 `{SCP_ServerIds.Normalize(aCmd.ServerId)}` 的 queue（lane={aLane}）";
