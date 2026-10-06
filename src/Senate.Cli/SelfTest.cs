@@ -199,6 +199,9 @@ public static partial class SelfTest
         One(nameof(TavernWaitYieldsToBuild), "tavern", TavernWaitYieldsToBuild),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
+        // 工作記憶與密封信（TASK-0415）：本體在 SelfTest.WorkMemory0415.cs
+        One(nameof(WorkMemoryCleanRoom), "letters", WorkMemoryCleanRoom),
+        One(nameof(SealedLetterCleanRoom), "letters", SealedLetterCleanRoom),
         // skill 入口化（TASK-0406）：本體在 SelfTest.Skill0406.cs
         One(nameof(SkillEntryCleanRoom), "skills", SkillEntryCleanRoom),
         Many(nameof(RealSkillAntigravityParity), "skills", () => RealSkillAntigravityParity(iProjects)),

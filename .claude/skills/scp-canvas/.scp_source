@@ -1,0 +1,5 @@
+{
+	"source": "Skills~/scp-canvas",
+	"target": "claude",
+	"provenance": "scp_core"
+}

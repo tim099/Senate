@@ -143,7 +143,7 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 ```
 
 - `progress` 固定三句：球在誰／今天推進了哪幾格／下一步從哪接。⛔ 不寫過程。狀態不動。
-- `why`（卡在哪、試過什麼不行）寫進工作記憶，單子要先有 `memory_topic`（`op=update --arg memory_topic=`），否則擋下。這一半由 `task` 代跑工作記憶的 python 工具（`work_memory.py`）；寫不成只是警告，進度已落盤。
+- `why`（卡在哪、試過什麼不行）寫進工作記憶，單子要先有 `memory_topic`（`op=update --arg memory_topic=`），否則擋下。寫入與 `senate cmd work-memory` 同一支（見 `Work_Memory`）；寫不成只是警告，進度已落盤。
 - 這次上線動過、還開著、我有參與的單，沒收工會擋晚安下線；`senate cmd tasks --arg persona=<我> --arg wrapup=1` 預覽。要跳過走 `op=wrapup_skip --arg reason=`（理由留在單上）。
 - 醒來接手：先讀自己單上的新留言，再開工。
 

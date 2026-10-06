@@ -225,8 +225,8 @@ public static partial class SelfTest
 
             var aMode = SCP.Core.Cmd.SCP_CmdRegistry.Find("kb")?.ArgSpecs.FirstOrDefault(a => a.Name == "mode");
             if (aMode == null || !aMode.Choices.Contains("rerank") || !aMode.Choices.Contains("compare")) aFails.Add("kb 的 mode 少了 rerank／compare");
-            // Tim 2026-10-03 拍板：預設排序 hybrid；時間衰減預設不開（題庫量不出衰減的好處）。改預設要連帶重量 ucl-memory 的分數帶。
-            if (aMode != null && aMode.Default != "hybrid") aFails.Add($"🔴 預設排序不是 hybrid（{aMode.Default}）—— 改了要重量 ucl-memory 的分數帶");
+            // Tim 2026-10-03 拍板：預設排序 hybrid；時間衰減預設不開（題庫量不出衰減的好處）。改預設要連帶重量 Memory 文件「回憶」的分數帶。
+            if (aMode != null && aMode.Default != "hybrid") aFails.Add($"🔴 預設排序不是 hybrid（{aMode.Default}）—— 改了要重量 Memory 文件「回憶」的分數帶");
             var aDecay = SCP.Core.Cmd.SCP_CmdRegistry.Find("kb")?.ArgSpecs.FirstOrDefault(a => a.Name == "decay");
             if (aDecay != null && aDecay.Default != "0") aFails.Add("🔴 時間衰減預設不是關");
             return new CheckRow(aName, aFails.Count == 0 ? "公式與設定逐格對上" : string.Join("；", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);

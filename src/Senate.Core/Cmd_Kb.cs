@@ -19,8 +19,8 @@ public sealed class Cmd_Kb : SCP_Cmd
     public override string Summary => "知識庫語意檢索（Senate 版）：status／reindex／search／eval／sidecar —— 模型常駐只載一次";
 
     public override string Details =>
-        "目標清單讀 UCL_Core 的 `Tools~/AgentCommands/kb_targets.json`（與舊 knowledge_base.py 同一份）；索引在 `<資料根>/_kb/<target>/`。\n"
-        + "⚠ 輸入形狀是**一句話**不是關鍵字（語意檢索）。`mode=hybrid`（dense＋sparse）目前只給評估用，預設 dense。\n"
+        "目標清單讀專案 UCL_Core 的 `Tools~/AgentCommands/kb_targets.json`；索引在 `<資料根>/_kb/<target>/`。\n"
+        + "⚠ 輸入形狀是**一句話**不是關鍵字（語意檢索）。預設 `mode=hybrid`（dense＋sparse）；`rerank` 再交給重排模型。\n"
         + "⚠ 第一次檢索要拉起常駐嵌入程序（冷啟動約 1 分多鐘），之後一句約 0.1 秒；閒置 30 分它自己退。\n"
         + "⚠ 缺套件或模型 ⇒ exit 3，照 `senate cmd doc --arg op=show --arg name=Install` §6 問使用者，同意了才裝。";
 
@@ -210,7 +210,7 @@ public sealed class Cmd_Kb : SCP_Cmd
     public sealed record SearchOutcome(List<KbHit> Hits, long QueryMs, long TotalMs, List<string> Reindexed, List<string> Notes, int SearchedChunks);
 
     /// <summary>
-    /// 一次檢索的排序設定。Mode：dense（預設）｜hybrid（dense＋sparse）｜rerank（hybrid 取前 <see cref="RerankPool"/> 再交給重排模型）。
+    /// 一次檢索的排序設定。Mode：hybrid（預設，dense＋sparse）｜dense｜rerank（hybrid 取前 <see cref="RerankPool"/> 再交給重排模型）。
     /// Decay：只對有設半衰期的 target 生效（碎片、工作記憶），分數減掉 DecayWeight×(1−2^(−年齡天數/半衰期))。
     /// </summary>
     public sealed record SearchOpts(string Mode, double SparseWeight, bool Decay, double DecayWeight)

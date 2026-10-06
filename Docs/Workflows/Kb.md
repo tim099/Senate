@@ -83,7 +83,7 @@ senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰�
 | `rerank` | hybrid 取前 30，交給 `bge-reranker-v2-m3` 重排；最後順序＝重排分 | 另需安裝項目 `model-bge-reranker-v2-m3`；缺了走「缺相依」（exit 3） |
 
 - ⚠ **分數尺度不同**：dense／hybrid 是內積，hybrid 比 dense 高一截；rerank 是 0..1 的重排分（很開：相關的 0.99、不相關的 0.01）。**不能跨排序比大小**。
-  ucl-memory 的分數帶**已照 hybrid 重量**（真命中 ≥0.72／灰帶 0.58–0.72／無關 ≤0.58；量法與重疊的提醒在 Memory_Common_Principles §4）；`mode=rerank` 不適用那張表。
+  回憶的分數帶**已照 hybrid 重量**（真命中 ≥0.72／灰帶 0.58–0.72／無關 ≤0.58；怎麼讀見 `Memory` 的「回憶」）；`mode=rerank` 不適用那張表。
 - 重排模型第一次 `/rerank` 才載入（多佔約 1GB 顯存）；舊版常駐程序（沒有 `/rerank`）會被自動關掉重起。重排不是用 FlagReranker：它呼叫 `tokenizer.prepare_for_model`，新版 transformers 已經沒有，改直接載序列分類模型。
 - **時間衰減**（`decay=1`）：分數 −= `decay_weight`（預設 0.05）×（1 − 2^(−年齡天數／半衰期)），年齡取來源檔 mtime。
   ⛔ **只對 `kb_targets.json` 設了 `half_life_days` 的 target 生效**（目前：fragments、work_memory、逐 persona 的 frag_*，各 90 天）；文件類沒設 ⇒ 不衰減。

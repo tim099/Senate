@@ -3,10 +3,10 @@
 //           （`tavern-post` 組訊息 → `tavern-write` 寫入）：
 //             ① 本入口：驗參數（每個 op 的必填＋白名單）、claim 帶 scope 時先開 Coding 場
 //             ② `task-write`（Senate Server，唯一寫入端）：配號、讀改寫、閘與狀態機（`SCP_TaskOps`）
-//             ③ 本入口：落回傳檔、發酒館通知（`SCP_ITavernPostGateway`）、wrapup 的 why 代跑 `work_memory.py`
+//             ③ 本入口：落回傳檔、發酒館通知（`SCP_ITavernPostGateway`）、wrapup 的 why 寫進工作記憶（`SCP_WorkMemory`）
 //           ⇒ `senate cmd commit` 推單、晚安寫 skip、Unity Editor（`Cmd_Task` 寫入 op／後台頁）全部走這一支，
 //             **Editor 關著也能寫單**。
-// 數值影響：一次呼叫 ＝ 一次 Server round-trip ＋ 每則通知一次酒館寫入 ＋（有 why 時）一次 python。
+// 數值影響：一次呼叫 ＝ 一次 Server round-trip ＋ 每則通知一次酒館寫入 ＋（有 why 時）一筆工作記憶。
 //           回傳檔 `letters/<P>/cmd/task_<op>.md`（與 Unity 版同一個落點 —— 讀的人不必知道是誰寫的）。
 //
 // ⚠ 結果四態（照 `tavern-post`）：exit 0 已寫（或 dry-run／冪等零寫入，看 `🔢 wrote`）／
@@ -19,6 +19,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using SCP.Core.Cmd;
+using SCP.Core.WorkMemory;
 using SCP.Core.Letters;
 using SCP.Core.Paths;
 using SCP.Core.Session;
@@ -207,7 +208,7 @@ public sealed class Cmd_Task : SCP_Cmd
         if (aWrite.ExitCode == 0)
         {
             PostNotices(aDataRoot, aPersona, Value(aWrite, "notices_json"), aReport, aResult);
-            RunMemory(aProjectRoot, Value(aWrite, "memory_json"), aReport, aResult);
+            RunMemory(aDataRoot, aProjectRoot, Value(aWrite, "memory_json"), aReport, aResult);
         }
         try { SCP_CmdPayload.Write(aPayload, aReport.ToString()); aResult.AddOutput(aPayload); }
         catch (Exception e) { aResult.Lines.Add($"⚠ 回傳檔沒寫成（{e.Message}）—— 單子的寫入不受影響"); }
@@ -217,7 +218,7 @@ public sealed class Cmd_Task : SCP_Cmd
 
     // ===========================================================
     // 區塊職責：資料根 —— 給了 `data_root` 就直接用（commit 閘／晚安／Unity 這類已經知道資料根的呼叫端）；
-    //           沒給就走 `project`（與早安同一支解析）。專案根另外找（詞典與 work_memory.py 要它），找不到只是少那兩件。
+    //           沒給就走 `project`（與早安同一支解析）。專案根另外找（詞典與工作記憶要它），找不到只是少那兩件。
     // ===========================================================
     static bool TryResolveRoots(SCP_CmdArgs iArgs, out string oDataRoot, out string oProjectRoot, out string oWhere, out SCP_CmdResult? oFail)
     {
@@ -378,13 +379,10 @@ public sealed class Cmd_Task : SCP_Cmd
     }
 
     // ===========================================================
-    // 區塊職責：wrapup 的 `why` ⇒ 代跑 `work_memory.py add`（契約①：記憶側唯一寫入端是 python；C# 不自己寫記憶檔）。
-    // 物理意義：工具位置從**專案根的 `.gitmodules`** 讀 UCL_Core 的掛載路徑 —— 那是 git 宣告的事實，⛔ 不猜安裝路徑
-    //           （各專案掛載位置不同：`Assets/Plugins/UCL_Core`／`Assets/UCL/UCL_Core`…）。
-    //   ⚠ 內文一律 `--body-file`（心得含引號／反引號／換行，在命令列上是地雷）；參數逐個走 ArgumentList。
-    // 數值影響：一次 python；失敗是警告（進度已落盤），並印手動補的指令。
+    // 區塊職責：wrapup 的 `why` ⇒ 寫進工作記憶（`SCP_WorkMemory.Add`，與 `senate cmd work-memory --arg op=add` 同一支）。
+    // 數值影響：寫一份 fragment ＋重建該主題的 `_index.md`；失敗是警告（進度已落盤），並印手動補的指令。
     // ===========================================================
-    static void RunMemory(string iProjectRoot, string iJson, StringBuilder ioReport, SCP_CmdResult ioResult)
+    static void RunMemory(string iDataRoot, string iProjectRoot, string iJson, StringBuilder ioReport, SCP_CmdResult ioResult)
     {
         if (iJson.Length == 0) return;
         Dictionary<string, string>? m;
@@ -392,36 +390,15 @@ public sealed class Cmd_Task : SCP_Cmd
         catch (Exception e) { ioResult.Lines.Add("⚠ 寫入端交回的記憶請求解析不了（" + e.Message + "）—— **記憶那半沒寫**"); return; }
         if (m == null) return;
         string G(string k) => m.TryGetValue(k, out string? v) ? v : "";
-        string aManual = $"python <UCL_Core>/Tools~/AgentCommands/work_memory.py add --topic {G("topic")} --type {G("type")} --id {G("id")} --title \"{G("title")}\" --body-file <檔> --by {G("by")}";
-        string? aTool = WorkMemoryTool(iProjectRoot, out string aWhy);
-        if (aTool == null)
-        {
-            ioResult.Lines.Add("⚠ **記憶那半沒寫成**（" + aWhy + "）—— 進度已落盤");
-            ioReport.AppendLine($"- ⚠ **記憶那半沒寫成**（{aWhy}）—— 進度已落盤，但「為什麼卡住」還沒有家。手動補：`{aManual}`");
-            return;
-        }
-        string aTmp = Path.Combine(Path.GetTempPath(), $"senate_wrapup_{Guid.NewGuid():N}.md");
+        string aManual = SCP_CmdRegistry.InvokeOf<SCP_Cmd_WorkMemory>(
+            $"--arg op=add --arg topic={G("topic")} --arg type={G("type")} --arg id={G("id")} --arg title=\"{G("title")}\" --arg-file body=<檔> --arg by={G("by")}");
         try
         {
-            File.WriteAllText(aTmp, G("body"), new UTF8Encoding(false));
-            var aPsi = new ProcessStartInfo
-            {
-                FileName = "python", UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
-            };
-            foreach (string a in new[] { aTool, "add", "--topic", G("topic"), "--type", G("type"), "--id", G("id"),
-                                         "--title", G("title"), "--body-file", aTmp, "--by", G("by") })
-                aPsi.ArgumentList.Add(a);
-            aPsi.Environment["PYTHONIOENCODING"] = "utf-8";
-            using Process? aProc = Process.Start(aPsi);
-            if (aProc == null) throw new InvalidOperationException("Process.Start 回 null");
-            var aOut = aProc.StandardOutput.ReadToEndAsync();
-            var aErr = aProc.StandardError.ReadToEndAsync();
-            if (!aProc.WaitForExit(60000)) { try { aProc.Kill(true); } catch { } throw new TimeoutException("work_memory.py 超過 60 秒"); }
-            if (aProc.ExitCode != 0) throw new InvalidOperationException($"exit={aProc.ExitCode}; {aErr.Result.Trim()}");
+            var aWm = new SCP_WorkMemory(iDataRoot, iProjectRoot, SCP_WorkMemory.FindUclCoreRoot(iProjectRoot));
+            SCP_WorkMemoryResult aR = aWm.Add(G("topic"), G("type"), G("id"), G("title"), G("body"), "", "", G("by"));
+            if (aR.Exit != 0) throw new InvalidOperationException(string.Join(" ", aR.Lines));
             ioResult.Lines.Add($"🧠 已寫進工作記憶：{G("topic")} / {G("type")} / {G("id")}");
-            ioReport.AppendLine($"- 🧠 已寫進工作記憶：`{G("topic")}` / `{G("type")}` / `{G("id")}`（代跑 work_memory.py）");
+            ioReport.AppendLine($"- 🧠 已寫進工作記憶：`{G("topic")}` / `{G("type")}` / `{G("id")}`");
             ioResult.AddValue("memory", "written");
         }
         catch (Exception e)
@@ -430,12 +407,7 @@ public sealed class Cmd_Task : SCP_Cmd
             ioReport.AppendLine($"- ⚠ **記憶那半沒寫成**（{e.Message}）—— 進度已落盤。手動補：`{aManual}`");
             ioResult.AddValue("memory", "failed");
         }
-        finally { try { File.Delete(aTmp); } catch { } }
     }
-
-    /// <summary>`<專案根>/.gitmodules` 裡路徑以 `UCL_Core` 結尾的那個 submodule 底下的 work_memory.py。</summary>
-    internal static string? WorkMemoryTool(string iProjectRoot, out string oWhy)
-        => UclCoreTool(iProjectRoot, "work_memory.py", out oWhy);
 
     /// <summary>
     /// `<專案根>/.gitmodules` 裡路徑以 `UCL_Core` 結尾的那個 submodule 底下的 `Tools~/AgentCommands/<iFileName>`。
