@@ -29,6 +29,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Setup_And_Build](Workflows/Setup_And_Build.md) | 一鍵配置與一鍵 build 的流程、⛔ **改完 code 先 build 再對 exe 驗**（Debug DLL 與 exe 是兩本帳）、出廠驗收三格、**single-file 的真正判準** |
 | [SCP_Cmd_System](Workflows/SCP_Cmd_System.md) | `senate cmd`：SCP_Core 內建的指令系統（**沒有 queue、不需要 Unity**）、參數規格與四種 exit code、怎麼寫一支新 Cmd |
 | [AgentCmd_Dispatch](Workflows/AgentCmd_Dispatch.md) | `senate ucmd`：把 AgentCommand 派給目標 Unity 專案的 Editor、專案設定、判定語意、沒做的部分 |
+| [Bank](Workflows/Bank.md) | `senate cmd bank`：Server 單一寫入端、op 分類（查詢／消費 pay／後台管理／審批／結帳）、動錢必填 kind／ref／caller、pay 先扣券、transfer 守恆、approve 的 central／mint |
 | [Goodnight](Workflows/Goodnight.md) | 晚安入口（`scp-goodnight` skill 的內容）：只有第一步與回傳檔管不到的幾格（親筆、private_body、Editor 沒開不擋） |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
 | [Sculpture](Workflows/Sculpture.md) | 3D 體積雕刻 `senate cmd sculpture`：十個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享路徑 |
