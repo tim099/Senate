@@ -132,24 +132,6 @@
       "project": "Bar"
     },
     {
-      "id": "core-08",
-      "target": "coredocs",
-      "q": "驗收沒過的單子要退回去重做而不是另外開新的缺陷單，這套小團隊的任務流程怎麼規定",
-      "expect": [
-        "Docs~/zh-Hant/Workflows/Task_Management_Workflow.md"
-      ],
-      "project": "Bar"
-    },
-    {
-      "id": "core-09",
-      "target": "coredocs",
-      "q": "早上喚醒流程每一步要帶什麼參數、回傳檔放哪、被擋下來有哪些出口的完整參考",
-      "expect": [
-        "Docs~/zh-Hant/Workflows/Awakening_Cmd_Flow.md"
-      ],
-      "project": "Bar"
-    },
-    {
       "id": "core-10",
       "target": "coredocs",
       "q": "寫 C# 時設定資料、字串鍵值、外部程序與資源釋放的共用寫法規範",

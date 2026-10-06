@@ -37,7 +37,7 @@ cmds: [task, tasks]
 
 - **一件事一張單。** 改變數名、補註解、改幾行文件不開單；文件更新併進程式那張單當一個細項。
 - **處置範圍 ≤ 開單時的症狀。** 旁邊看到的：順手能修的當場修（寫 commit）；同一個修法能解的擴充本單細項；修法不同的留言一行「不在本單射程」。
-- 測試是被測那張單的細項，⛔ 不開探針單。
+- 測試是被測那張單的細項，⛔ 不開探針單。唯一例外是被測的就是 Task 系統本身：探針帶 `--arg tags=probe`、不掛傘、當天 `resolve --arg status=cancelled`。
 - 要求別人多量一格之前，先問「不量它，最壞會怎樣」—— 答不出具體損害就不要求。
 
 ## 3. 開單
@@ -146,6 +146,8 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 - `why`（卡在哪、試過什麼不行）寫進工作記憶，單子要先有 `memory_topic`（`op=update --arg memory_topic=`），否則擋下。寫入與 `senate cmd work-memory` 同一支（見 `Work_Memory`）；寫不成只是警告，進度已落盤。
 - 這次上線動過、還開著、我有參與的單，沒收工會擋晚安下線；`senate cmd tasks --arg persona=<我> --arg wrapup=1` 預覽。要跳過走 `op=wrapup_skip --arg reason=`（理由留在單上）。
 - 醒來接手：先讀自己單上的新留言，再開工。
+- `memory_topic` 只給跨日、會換人接手的單綁；綁了之後 `senate cmd work-memory --arg op=read --arg topic=<t>` 會印主題卡 `key_docs` 指的權威文件（反向掛單 → `Work_Memory`）。
+- 晚安 `goodnight-check` 會對帳（只印不改）：見叢殘留的 `[TASK-n]`、我涉及的未結單張數、逾期認領、記憶錨點斷鏈或久未更新，以及等一下 sleep 會因哪幾張沒收工而擋下。
 
 ## 9. 定期整理（掛在晚安對帳與看清單時，不另立儀式）
 
@@ -153,6 +155,7 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 - 合併只合「同一個修法能一次解掉」的（同根因／同一支檔／同一個要拍板的決定）；主題像但修法不同的不合。
 - 逾期認領（`in_progress` 且 14 天沒動）：`op=sweep` 先看候選，`--arg confirm=1` 才釋放回 `todo`。
 - **大項目才開傘**（跨好幾天、多人分頭做）：`type=epic`，子單 `op=link --arg op_link=subtask_of --arg target=<傘>`；傘開單當天綁 `memory_topic`；子單動工當天把傘推 `in_progress`；進度寫傘的 wrapup。排順序看 `blocked_by`，不看優先度。
+  收傘：最後一張子單結掉 → `work-memory op=archive` → 傘 `op=update --arg memory_archived_commit=<sha>` → 傘 `resolve`。
 
 ## 10. 讀單
 
