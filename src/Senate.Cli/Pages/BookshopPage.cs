@@ -126,7 +126,7 @@ public sealed class BookshopPage : SCP_GuiToolPage
             var aFb = new FullBook
             {
                 Slug = aSlug,
-                ChapterCount = Directory.GetFiles(aDir, "*.txt").Length,
+                ChapterCount = SCP_BookStore.CountProseIn(aDir),   // `NNN_v2.txt` 不算一章（TASK-0436）
                 HasNotes = Directory.Exists(Path.Combine(aNotes, aSlug)),
             };
             string aDpath = Path.Combine(aDir, SCP_BooksDonations.DonationFileName);
