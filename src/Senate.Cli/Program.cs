@@ -376,6 +376,21 @@ public static class Program
     //           於是互動也有讀數可驗，不是只有靜態畫面。
     static int CmdUi(string iRepoRoot, string[] iArgs)
     {
+        // ⛔ 一次呼叫最多一個動作（--click／--set／--toggle／--fold 合計）。
+        // 🩸 2026-10-06 erina 實測（TASK-0424）：`--set 選人 --set 填欄 --click 儲存` ⇒ 本地路只收第一個 --set 與 --click，
+        //   常駐窗那條路更只送 --click；多給的只在 stderr 印一句警告，被 `2>&1 | grep` 濾掉後，
+        //   「儲存」按在預設選中的人身上、值是同步回來的空字串 ⇒ 走到「清空」。成功與做錯同形。
+        //   ⇒ 不再只是警告：多給就整道擋下、什麼都不做。要多步就分次呼叫（欄位與選取會跨次記住）。
+        int aActions = 0;
+        foreach (string a in iArgs)
+            if (a is "--click" or "--set" or "--toggle" or "--fold") ++aActions;
+        if (aActions > 1)
+        {
+            Console.Error.WriteLine($"✗ 一次只能做一個動作（--click／--set／--toggle／--fold 合計給了 {aActions} 個）⇒ 什麼都沒做。");
+            Console.Error.WriteLine("  分次呼叫：欄位與選取跨次記住。下拉選單：`--click <id>` 展開 → `--set <id>/search=<字>` 篩 → `--click <id>/pick/<值>`。");
+            return 2;
+        }
+
         bool aWindow = HasFlag(iArgs, "--window");
         string? aShot = ArgValue(iArgs, "--screenshot");
 
