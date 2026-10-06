@@ -217,8 +217,7 @@ public abstract class UnityDelegateCmd : SCP_Cmd
             aResult.Lines.Add("   " + CliNextHint);
             aResult.Lines.Add("⚠ 回傳檔裡的 `## next` 是 Editor 端寫的 —— 以**上面這一行**為準。");
             aResult.Lines.Add("   回傳檔的其餘內容（讀數／守衛／出口清單）照讀，那些與 client 無關。");
-            aResult.Lines.Add("   ⛔ 那一段若點名某支 `.py`：**先確認它還活著** —— 多數已退場為 exit 2 stub，"
-                              + "而 relogin／reissue-token／migrate-letters／whoami 今天仍是 python 獨有的那幾格。");
+            aResult.Lines.Add("   ⛔ 那一段若點名某支 `.py`：那是舊入口 —— 先找對應的 `senate cmd`（`senate cmd` 列全部）。");
         }
         return aResult;
     }
