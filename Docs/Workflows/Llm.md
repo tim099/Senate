@@ -43,11 +43,11 @@ senate cmd llm --arg op=stop --arg model=qwen3:4b           # 從顯存卸載
 
 ## 4. 目錄與顯存門檻
 
-- 目錄在 `Cmd_Llm.cs` 的 `LlmOllama.Catalog`（照搬 `llm_admin.py`）。每顆兩個數字：**下載量**（磁碟）與**顯存約**（含 KV cache 與執行期開銷）——不要混用。
+- 目錄在 `Cmd_Llm.cs` 的 `LlmOllama.Catalog`。每顆兩個數字：**下載量**（磁碟）與**顯存約**（含 KV cache 與執行期開銷）——不要混用。
 - 門檻優先序：手動（`vram_budget=`）＞ 偵測（nvidia-smi 的 free，或 `vram_basis=total`）＞ 保底 6 GB。只影響目錄預設列不列，不影響能不能下載。
 - 顯存不夠時 ollama **不報錯**，只把層數丟給 CPU ⇒ `op=ps` 的「跑在哪」不是 100% GPU 就是這個。
 - 「裝了沒」的比對：精確，或同家族且 tag 是「這個 tag」或「這個 tag-變體」（`qwen3:4b-instruct-q4_K_M` 算 `qwen3:4b` 的變體）。
-  ⚠ `llm_admin.py` 原版判「tag 出現在名稱裡」⇒ 裝了 `qwen3:14b` 會把 `qwen3:4b` 判成已裝；Senate 版只認 tag 開頭。沒寫 tag 的（`phi4-mini`）ollama 記成 `:latest`。
+  ⚠ 只認 tag 開頭（不是「tag 出現在名稱裡」—— 那樣裝了 `qwen3:14b` 會把 `qwen3:4b` 判成已裝）。沒寫 tag 的（`phi4-mini`）ollama 記成 `:latest`。
 
 ## 5. 試跑
 
@@ -71,4 +71,3 @@ senate cmd llm --arg op=stop --arg model=qwen3:4b           # 從顯存卸載
 ## 7. 驗證
 
 - `senate selftest --only llm`：表格解析（ps 多了 CONTEXT 欄也不讀錯）、目錄比對（含 14b 不算 4b）、截斷判定、Cmd ↔ 頁面「量不到 ≠ 0 個」的約定。
-- 反向對照（2026-10-05 實測）：`op=install` 一顆 → `llm_admin.py list` 讀得到；`op=uninstall` → 它讀不到。

@@ -16,7 +16,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | | `senate ucmd` | `senate cmd` |
 |---|---|---|
-| 是什麼 | Unity 的 AgentCommand 派遣（`run_cmd.py` 的 C# client） | SCP_Core 的指令系統 |
+| 是什麼 | Unity 的 AgentCommand 派遣（client） | SCP_Core 的指令系統 |
 | 怎麼跑 | 寫 `queue.json` ＋ `pending.trigger` → Editor 的 Watcher 接手 → 輪詢 result 檔 | **直接呼叫 C#**，同步回傳 |
 | 需要 Unity Editor | **是**（Editor 沒開就沒有人執行，逾時 exit 3） | **否**（從頭到尾不需要） |
 | 指令住哪 | 目標專案的 UCL_Core（Editor 端） | `SCP_Core/Runtime/Cmd/`（本 repo） |
@@ -150,11 +150,7 @@ SCP_CmdRegistry.InvocationHint = "senate cmd";
 |---|---|
 | `help` | 列出所有 Cmd／單支參數說明。**內容全部由 ArgSpecs 產生**，沒有一份手寫清單會漂 |
 | `server-ping` | `⤷Server` 探針：回 Server 的 pid／build／thread —— 驗執行器與協議通不通（TASK-0103） |
-| `wake-brief` | 讀 persona 信件庫組一份 wake brief（憲法／見叢／見森／見林／見樹） |
-
-`wake-brief` 的射程：**只含信件讀取層**。python `wake_brief.py` 還有見根／回憶／記憶維護狀態／
-見人／見書／今日動作清單，那些依賴信件庫以外的子系統，**沒有移植**
-⇒ 兩份輸出不是同一份東西，不要拿其中一份當另一份的驗收。
+| `wake-brief` | 讀 persona 信件庫組一份 wake brief（全量：憲法→見根→見叢→見森→見林→見樹→回憶→記憶維護狀態→見人→見書→今日動作清單） |
 
 ## 相關文件
 

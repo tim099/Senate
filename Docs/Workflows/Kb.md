@@ -9,7 +9,6 @@ target_audience: [AI_Agent, Tools_Maintainer]
 # 🧠 知識庫（Senate 版，TASK-0378）
 
 > 一句話：**同一批文件、同一個模型（BGE-M3），模型常駐只載一次，切塊依標題，索引是二進位。**
-> 取代 UCL_Core 的 `knowledge_base.py`；舊的那支在新版切換之前照常可用（兩邊讀同一份 `kb_targets.json`）。
 
 ## 1. 常用
 
@@ -87,7 +86,6 @@ senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰�
 - 重排模型第一次 `/rerank` 才載入（多佔約 1GB 顯存）；舊版常駐程序（沒有 `/rerank`）會被自動關掉重起。重排不是用 FlagReranker：它呼叫 `tokenizer.prepare_for_model`，新版 transformers 已經沒有，改直接載序列分類模型。
 - **時間衰減**（`decay=1`）：分數 −= `decay_weight`（預設 0.05）×（1 − 2^(−年齡天數／半衰期)），年齡取來源檔 mtime。
   ⛔ **只對 `kb_targets.json` 設了 `half_life_days` 的 target 生效**（目前：fragments、work_memory、逐 persona 的 frag_*，各 90 天）；文件類沒設 ⇒ 不衰減。
-  舊的 `knowledge_base.py` 讀同一份檔、只認它要的欄位，多一個 `half_life_days` 無害。
 
 **讀數（2026-10-03，Bar，42 題可算；fragments 24／coredocs 12／work_memory 6；題庫共 53 題，其餘 11 題預期檔不在 Bar 被跳過）**
 
