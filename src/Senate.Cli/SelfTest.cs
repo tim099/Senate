@@ -195,6 +195,7 @@ public static partial class SelfTest
         // 酒館游標積壓出口（TASK-0369）：本體在 SelfTest.TavernCursor0369.cs
         One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
         One(nameof(TavernBacklogCapSettings), "tavern", TavernBacklogCapSettings),
+        One(nameof(TavernInboxAckCleanRoom), "tavern", TavernInboxAckCleanRoom),
         // 見林歸檔見叢前的交接閘（TASK-0373）：本體在 SelfTest.KeysGate0373.cs
         One(nameof(KeysGateCleanRoom), "letters", KeysGateCleanRoom),
         // skill 入口化（TASK-0406）：本體在 SelfTest.Skill0406.cs
