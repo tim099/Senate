@@ -2015,39 +2015,61 @@ public static partial class SelfTest
         var aSavedCopy = SCP_GuiHost.CopyToClipboard;
         try
         {
-            // ① 能開檔案總管 ⇒ 只有「原始碼」那顆
-            SCP_GuiHost.RevealInFileManager = _ => "✓ 假裝開了";
-            SCP_GuiHost.CopyToClipboard = _ => "✓ 假裝複製了";
+            // TASK-0414：cdcde26／de0ba6d 的現行契約是 📂 與 📋 可同時存在、各有自己的 id。
+            // 用實際 click 與宿主呼叫計數守住動作，不能只把舊斷言改成「有兩顆鈕」。
+            int aRevealCalls = 0, aCopyCalls = 0;
+            string? aRevealed = null, aCopied = null;
+            SCP_GuiHost.RevealInFileManager = p => { aRevealCalls++; aRevealed = p; return "✓ 假裝開了"; };
+            SCP_GuiHost.CopyToClipboard = p => { aCopyCalls++; aCopied = p; return "✓ 假裝複製了"; };
             var aA = Ids(DrawProbe(null));
             bool aOkA = aA.Contains(SCP_GuiToolPage.SourceButtonId)
-                        && !aA.Contains(SCP_GuiToolPage.CopyClassButtonId);
+                        && aA.Contains(SCP_GuiToolPage.CopyClassButtonId)
+                        && SCP_GuiToolPage.SourceButtonId != SCP_GuiToolPage.CopyClassButtonId;
+            DrawProbe(SCP_GuiToolPage.SourceButtonId);
+            aOkA &= aRevealCalls == 1 && aCopyCalls == 0 && aRevealed == new ProbeSourcePage().SourceFilePath;
+            DrawProbe(SCP_GuiToolPage.CopyClassButtonId);
+            aOkA &= aRevealCalls == 1 && aCopyCalls == 1 && aCopied == "ProbeSourcePage";
 
-            // ② 開不了 ⇒ 換成「複製類別名」
+            // ② 沒有檔案總管能力 ⇒ 留 📋，按下真的複製類別名。
             SCP_GuiHost.RevealInFileManager = null;
             var aB = Ids(DrawProbe(null));
             bool aOkB = aB.Contains(SCP_GuiToolPage.CopyClassButtonId)
                         && !aB.Contains(SCP_GuiToolPage.SourceButtonId);
+            aCopied = null;
+            DrawProbe(SCP_GuiToolPage.CopyClassButtonId);
+            aOkB &= aRevealCalls == 1 && aCopyCalls == 2 && aCopied == "ProbeSourcePage";
 
-            // ③ 兩種都沒有 ⇒ 兩顆鈕都不畫，但類別名要印在 page key 那行
+            // ③ 兩種能力皆無 ⇒ 📋 仍在；page key 提供類別名，點 📋 明說沒有剪貼簿。
             SCP_GuiHost.CopyToClipboard = null;
             var aCUi = DrawProbe(null);
             var aC = Ids(aCUi);
             string aCText = SCP_GuiTextRenderer.Render(aCUi.Root, 120);
             bool aOkC = !aC.Contains(SCP_GuiToolPage.SourceButtonId)
-                        && !aC.Contains(SCP_GuiToolPage.CopyClassButtonId)
-                        && aCText.Contains("ProbeSourcePage", StringComparison.Ordinal);
+                        && aC.Contains(SCP_GuiToolPage.CopyClassButtonId)
+                        && aCText.Contains(new ProbeSourcePage().Key + "(ProbeSourcePage)", StringComparison.Ordinal);
+            string aCClicked = SCP_GuiTextRenderer.Render(DrawProbe(SCP_GuiToolPage.CopyClassButtonId).Root, 200);
+            aOkC &= aCClicked.Contains("沒有剪貼簿", StringComparison.Ordinal)
+                      && aCClicked.Contains("ProbeSourcePage", StringComparison.Ordinal) && aCopyCalls == 2;
 
             // ④ 裝了但這次失敗 ⇒ 自動退到複製，而且訊息裡看得到類別名
             SCP_GuiHost.RevealInFileManager = _ => "⚠ 假裝開不起來";
-            SCP_GuiHost.CopyToClipboard = _ => "✓ 假裝複製了";
+            aCopied = null;
+            SCP_GuiHost.CopyToClipboard = p => { aCopyCalls++; aCopied = p; return "✓ 假裝複製了"; };
             string aDText = SCP_GuiTextRenderer.Render(DrawProbe(SCP_GuiToolPage.SourceButtonId).Root, 200);
             bool aOkD = aDText.Contains("已改為複製類別名", StringComparison.Ordinal)
-                        && aDText.Contains("ProbeSourcePage", StringComparison.Ordinal);
+                        && aDText.Contains("ProbeSourcePage", StringComparison.Ordinal)
+                        && aCopyCalls == 3 && aCopied == "ProbeSourcePage";
+            // 反向：開啟失敗且沒有剪貼簿，仍能從訊息取到類別名，不假裝複製成功。
+            SCP_GuiHost.CopyToClipboard = null;
+            string aNoCopy = SCP_GuiTextRenderer.Render(DrawProbe(SCP_GuiToolPage.SourceButtonId).Root, 200);
+            aOkD &= aNoCopy.Contains("假裝開不起來", StringComparison.Ordinal)
+                       && aNoCopy.Contains("ProbeSourcePage", StringComparison.Ordinal)
+                       && !aNoCopy.Contains("已改為複製類別名", StringComparison.Ordinal) && aCopyCalls == 3;
 
             bool aOk = aOkA && aOkB && aOkC && aOkD;
             return new CheckRow("原始碼／類別名退路",
-                $"能開檔案總管⇒只有原始碼鈕={aOkA}／開不了⇒換成複製鈕={aOkB}"
-                + $"／兩種都沒有⇒類別名印在 page key 那行={aOkC}／開不起來⇒自動退到複製={aOkD}"
+                $"兩顆鈕各執行自己的動作={aOkA}／只有剪貼簿⇒複製類別名={aOkB}"
+                + $"／兩種皆無⇒key 類別名＋無剪貼簿告示={aOkC}／開啟失敗⇒有剪貼簿就複製、沒有就留類別名={aOkD}"
                 + "（用 stub，沒有碰真的剪貼簿 ⇒ clip.exe 本身未驗）",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
