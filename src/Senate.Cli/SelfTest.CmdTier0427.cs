@@ -31,13 +31,16 @@ public static partial class SelfTest
             SCP_CmdRegistry.Discover();
             IReadOnlyList<SCP_Cmd> aAll = SCP_CmdRegistry.All();
 
-            // ① 每一支都解析得到已知分類（內層沿父鏈）
+            // ① 每一支都解析得到已知分類（內層沿父鏈；外層沒填 ＝「其他」，合法）
             foreach (SCP_Cmd c in aAll)
-            {
-                if (!c.IsInner && c.Category.Length == 0) aFails.Add($"🔴 外層 `{c.Name}` 沒填分類");
-                else if (!SCP_CmdCategory.IsKnown(SCP_CmdCategory.Of(c))) aFails.Add($"🔴 `{c.Name}` 的分類解不出來（{(c.IsInner ? "父指令 " + c.Parent : c.Category)}）");
-                if (c.IsInner && c.Category.Length > 0) aFails.Add($"內層 `{c.Name}` 自己填了分類（該跟父指令走）");
-            }
+                if (!SCP_CmdCategory.IsKnown(SCP_CmdCategory.Of(c))) aFails.Add($"🔴 `{c.Name}` 的分類解不出來（{(c.IsInner ? "父指令 " + c.Parent : c.Category)}）");
+
+            // ①' 沒覆寫 Category ⇒ 落在「其他」；內層照父指令走（它自己的預設值不算）
+            //    探針是巢狀型別 ⇒ 註冊表刻意略過（TASK-0266），不會變成真的指令。
+            if (new UncategorizedProbe().Category != SCP_CmdCategory.Other || SCP_CmdCategory.Of(new UncategorizedProbe()) != SCP_CmdCategory.Other)
+                aFails.Add("🔴 沒填分類的指令沒有落在「其他」");
+            if (SCP_CmdCategory.Of(new InnerProbe()) != SCP_CmdCategory.Routine) aFails.Add("內層探針沒跟著父指令 morning-wake 歸「作息」");
+            if (aAll.Any(c => c is UncategorizedProbe || c is InnerProbe)) aFails.Add("🔴 探針被註冊成真的指令");
 
             // ③ 內層清單＝拍板
             var aInner = aAll.Where(c => c.IsInner).ToDictionary(c => c.Name, c => SCP_CmdCategory.RootOf(c));
@@ -125,5 +128,21 @@ public static partial class SelfTest
                 aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+    }
+
+    // 探針：沒覆寫 Category（預設應為「其他」）／內層（Parent 指向 morning-wake）。巢狀 ⇒ 註冊表不收（TASK-0266 的閘）。
+    public sealed class UncategorizedProbe : SCP_Cmd
+    {
+        public override string Name => "probe-uncategorized";
+        public override string Summary => "自測探針";
+        public override SCP_CmdResult Execute(SCP_CmdArgs iArgs) => SCP_CmdResult.Success();
+    }
+
+    public sealed class InnerProbe : SCP_Cmd
+    {
+        public override string Name => "probe-inner";
+        public override string Summary => "自測探針";
+        public override string Parent => SCP_CmdRegistry.NameOf<SCP_Cmd_MorningWake>();
+        public override SCP_CmdResult Execute(SCP_CmdArgs iArgs) => SCP_CmdResult.Success();
     }
 }

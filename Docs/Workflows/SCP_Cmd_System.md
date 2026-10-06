@@ -95,7 +95,7 @@ senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/b
 public sealed class SCP_Cmd_Example : SCP_Cmd
 {
     public override string Name => "example";                 // ⚠ 這是契約：進了別人的腳本就不能隨便改
-    public override string Category => SCP_CmdCategory.System;  // 必填（外層）：help 依它分組；分類清單在 SCP_CmdCategory
+    public override string Category => SCP_CmdCategory.System;  // help 依它分組（清單在 SCP_CmdCategory）；沒填 ＝「其他」，照常列出、之後再挑
     public override string Summary => "一句話說明";
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
@@ -109,7 +109,7 @@ public sealed class SCP_Cmd_Example : SCP_Cmd
 **外層與內層**：預設是外層（help 上看得到）。只有屬於某支指令子流程的那一步，才改填
 `public override string Parent => SCP_CmdRegistry.NameOf<父類別>();`（不填 `Category`，跟著父指令走）——
 例如 `morning-brief` 屬於 `morning-wake`。內層不出現在預設 help，靠父指令那條流程的回傳指路；
-冷門、管理用、Server 臨界區都**不是**內層的理由。自測會檢查：外層都有已知分類、每支內層都有程式碼指路到它。
+冷門、管理用、Server 臨界區都**不是**內層的理由。自測會檢查：每支的分類都在表上（沒填的落在「其他」，不算錯）、每支內層都有程式碼指路到它。
 
 回傳的三種東西**分開放**（沿用 run_cmd 的慣例，agent 已經在讀）：
 
