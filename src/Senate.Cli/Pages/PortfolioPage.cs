@@ -1,4 +1,5 @@
-// 區塊職責：**投資組合頁**（TASK-0371）—— 工具列選 persona，只顯示那個人的持倉、成本、現值與報酬率。
+// 區塊職責：**投資組合頁**（TASK-0371）—— 工具列選 persona（預設清單第一位），只顯示那個人的持倉、成本、現值與報酬率。
+//           帳住在那個人的信件夾（`letters/<P>/portfolio/`）；券名顯示券檔的實際 ID（例 `Gold`）。
 // 物理意義：數字全部來自 `SCP_Portfolio.Build`（與 `senate cmd portfolio op=show` 同一支）⇒ 頁面與指令同源。
 //           本頁**純讀**：開帳（寫 opening.json）只走指令 `portfolio op=open --arg confirm=1` —— 那是只能做一次的事，
 //           ⛔ 不放一顆按得到的鈕在每天會打開的頁面上。
@@ -79,17 +80,25 @@ public sealed class PortfolioPage : SCP_GuiToolPage
         if (aErr != null) { m_LoadError = "匯率快取讀不了：" + aErr; m_Config = null; return; }
 
         m_Personas = SCP_PersonaProfile.PoolNames(m_LettersRoot, w => m_PoolWarnings.Add(w));
+        // 預設選清單第一位；選過的人還在清單上就留著（重新讀取不會把人換掉）
+        if (m_Personas.Count > 0 && !m_Personas.Contains(m_Sel)) m_Sel = m_Personas[0];
     }
 
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (!m_Loaded) Load();
-        OpenFolderButton(iUi, m_DataRoot.Length > 0 ? SCP_Portfolio.PortfolioDir(m_DataRoot) : null, "portfolio/open-dir");
+        // 帳住在選中那個人的信件夾（letters/<P>/portfolio/）
+        OpenFolderButton(iUi, m_Sel.Length > 0 && m_LettersRoot.Length > 0
+                                  ? SCP_Portfolio.PortfolioDir(new SCP_LettersRoot(m_LettersRoot), m_Sel) : null, "portfolio/open-dir");
         if (iUi.Button("重新讀取", "portfolio/reload")) Load();
         if (m_LoadError != null) return;
 
+        // ⚠ Dropdown 先讀自己存下的值（`<key>/value`）：存過空字串、或存的人已不在清單上，都會蓋掉預設 ⇒
+        //   存的值不在清單上就先對齊成目前選的人，回傳值也只收清單上的人。
+        string aValueKey = PersonaKey + "/value";
+        if (m_Sel.Length > 0 && !m_Personas.Contains(iUi.FieldValue(aValueKey, m_Sel))) iUi.SetField(aValueKey, m_Sel);
         string aPick = iUi.Dropdown("Persona", m_Personas, m_Sel, PersonaKey);
-        if (aPick != m_Sel) m_Sel = aPick;
+        if (aPick.Length > 0 && m_Personas.Contains(aPick)) m_Sel = aPick;
 
         var aCcys = new List<string> { "USD" };
         foreach (var kv in m_Config!.Quotes)
@@ -120,6 +129,9 @@ public sealed class PortfolioPage : SCP_GuiToolPage
             m_ViewKey = aKey;
         }
         var v = m_View;
+
+        // ⚠ 問題放在表格**上面**：「還有沒搬的舊紀錄」會讓下面的差額全部看起來像真的來源不明
+        foreach (string s in v.Problems) g.Note("⚠ " + s);
 
         g.Separator();
         g.Label(v.OpeningExists
@@ -170,8 +182,6 @@ public sealed class PortfolioPage : SCP_GuiToolPage
             if (v.Events.Count == 0) g.Note("（還沒有交易紀錄 —— 紀錄從本功能上線才開始記）");
             for (int i = 0; i < v.Events.Count && i < 50; i++) g.Label(SCP_Cmd_Portfolio.Describe(v.Events[i]));
         }
-
-        foreach (string s in v.Problems) g.Note("⚠ " + s);
     }
 
     static string M(decimal iUsd, decimal iUsdPerCcy) => SCP_Cmd_Portfolio.Money(iUsd / iUsdPerCcy);

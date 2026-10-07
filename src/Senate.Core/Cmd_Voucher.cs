@@ -284,7 +284,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
     {
         string aData = iArgs.Get("data_root").Trim();
         if (aData.Length == 0) aData = SCP_Portfolio.DataRootOfLetters(iLetters);
-        return SCP_Portfolio.RecordFlow(aData, iPersona, iVoucher, iDeltaE8, iSource, iRef, iNow, out _);
+        return SCP_Portfolio.RecordFlow(aData, iLetters, iPersona, iVoucher, iDeltaE8, iSource, iRef, iNow, out _);
     }
 
     /// <summary>寫入前的共用閘：`region` 必填（判準②）。</summary>

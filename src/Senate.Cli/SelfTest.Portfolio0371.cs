@@ -64,9 +64,12 @@ public static partial class SelfTest
             var aProblems = new List<string>();
             var aOpen = SCP_Portfolio.BuildOpening(aData, aLetters, aT0, aProblems);
             bool aOpenOk = aOpen.Positions.Count == 1 && aOpen.Positions[0].ValueUsd == 1000m && aOpen.Unquoted.Count == 1
-                           && SCP_Portfolio.TryWriteOpening(aData, aOpen, out _);
-            // 🔴 反向對照：第二次開帳必須被拒
-            bool aNoRedo = !SCP_Portfolio.TryWriteOpening(aData, aOpen, out string? aRedoErr) && aRedoErr != null;
+                           && SCP_Portfolio.TryWriteOpening(aLetters, aOpen, out var aWritten1, out _) && aWritten1.Count == 1
+                           && File.Exists(SCP_Portfolio.OpeningPath(aLetters, "probe"));
+            // 🔴 反向對照：第二次開帳必須被拒（同一份快照再寫一次 ⇒ 那一位寫不進去）；重新試算也必須把他列成不開帳
+            bool aNoRedo = !SCP_Portfolio.TryWriteOpening(aLetters, aOpen, out var aWritten2, out var aRedoErrs)
+                           && aWritten2.Count == 0 && aRedoErrs.Count == 1
+                           && SCP_Portfolio.BuildOpening(aData, aLetters, aT0, new List<string>()).Positions.Count == 0;
 
             // BTC 漲到 120，換 2 BTC → JPY（免手續費）：2×120/0.01 = 24000 JPY
             aCfg.Quotes["BTC"].Bid = 120m; aCfg.Quotes["BTC"].Ask = 120m;
@@ -75,13 +78,13 @@ public static partial class SelfTest
             bool aSwapOk = aSwap.Success && aSwap.PortfolioWarning == null && aSwap.ToAddedUnitsE8 == 24000L * SCP_VoucherBook.FractionScale;
 
             // 🔴 沒報價的券不記事件
-            int aBefore = SCP_Portfolio.ReadEvents(aData, null, new List<string>()).Count;
-            SCP_Portfolio.RecordFlow(aData, "probe", "canvas", -1 * SCP_VoucherBook.FractionScale, "consume", "", aT0.AddMinutes(2), out bool aRecorded);
-            bool aSkipUnquoted = !aRecorded && SCP_Portfolio.ReadEvents(aData, null, new List<string>()).Count == aBefore;
+            int aBefore = SCP_Portfolio.ReadEvents(aLetters, null, new List<string>()).Count;
+            SCP_Portfolio.RecordFlow(aData, aLetters, "probe", "canvas", -1 * SCP_VoucherBook.FractionScale, "consume", "", aT0.AddMinutes(2), out bool aRecorded);
+            bool aSkipUnquoted = !aRecorded && SCP_Portfolio.ReadEvents(aLetters, null, new List<string>()).Count == aBefore;
 
             var v = SCP_Portfolio.Build(aData, aLetters, "probe", aCfg, aT0.AddMinutes(3));
-            var aBtc = v.Positions.Find(p => p.Symbol == "BTC");
-            var aJpy = v.Positions.Find(p => p.Symbol == "JPY");
+            var aBtc = v.Positions.Find(p => string.Equals(p.Symbol, "BTC", StringComparison.OrdinalIgnoreCase));
+            var aJpy = v.Positions.Find(p => string.Equals(p.Symbol, "JPY", StringComparison.OrdinalIgnoreCase));
             // BTC：剩 8 張、成本 800（均價 100）、已實現 2×120−200 = 40、現值 960、報酬 +20%
             bool aBtcOk = aBtc != null && aBtc.TrackedE8 == 8 * SCP_VoucherBook.FractionScale && aBtc.CostUsd == 800m
                           && aBtc.RealizedUsd == 40m && aBtc.Roi == 0.2m && aBtc.BasisLabel == "上線時估值";
@@ -91,7 +94,7 @@ public static partial class SelfTest
             // 🔴 帳上憑空多 1 BTC（沒有事件）⇒ 只出現在差額，報酬率不變
             SaveBook(aLetters, "probe", "btc", 9, aT0.AddMinutes(4));
             var v2 = SCP_Portfolio.Build(aData, aLetters, "probe", aCfg, aT0.AddMinutes(5));
-            var aBtc2 = v2.Positions.Find(p => p.Symbol == "BTC");
+            var aBtc2 = v2.Positions.Find(p => string.Equals(p.Symbol, "BTC", StringComparison.OrdinalIgnoreCase));
             bool aDrift = aBtc2 != null && aBtc2.DriftE8 == SCP_VoucherBook.FractionScale && aBtc2.Roi == 0.2m;
 
             bool aAll = aOpenOk && aNoRedo && aSwapOk && aSkipUnquoted && aBtcOk && aJpyOk && aDrift && v.Problems.Count == 0;
@@ -133,6 +136,75 @@ public static partial class SelfTest
             return new CheckRow(aName,
                 $"🔴 200 BTC→KRW 拒絕且 BTC 仍 {aBtcAfter.Permanent} 張={aRejected}（{aBig.Error}）／對照 1 BTC→{aSmall.ToNewPermanent} KRW 成功={aSmallOk}",
                 aRejected && aSmallOk ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
+    }
+
+    static CheckRow PortfolioLettersMigrateCleanRoom()
+    {
+        const string aName = "投資組合帳住信件夾：舊落點沒搬要喊、試算零寫入、搬了算得出來、重跑不重複、券名顯示實際 ID（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_pfmig_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            string aData = Path.Combine(aTmp, "data");
+            string aLettersDir = Path.Combine(aTmp, "letters");
+            Directory.CreateDirectory(aData);
+            Directory.CreateDirectory(Path.Combine(aLettersDir, "probe", "profile"));
+            var aLetters = new SCP_LettersRoot(aLettersDir);
+            var aCfg = new SCP_MarketRateConfig { TakerFeePct = 0m };
+            aCfg.Quotes["GOLD"] = new SCP_RateQuote { Symbol = "GOLD", Bid = 10m, Ask = 10m, IsEnabled = true };
+            SCP_MarketRateCache.Save(aData, aCfg, out _);
+            DateTime aT0 = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            // 券簿：實際檔名 `Gold`，15 張
+            SaveBook(aLetters, "probe", "Gold", 15, aT0);
+
+            // 舊落點（資料根 Market/portfolio/）：全員快照 10 張 ＋ 一筆 +5（舊紀錄的券名是全大寫）；另一筆屬於信件夾裡沒有的人
+            string aLegacy = SCP_Portfolio.LegacyPortfolioDir(aData);
+            Directory.CreateDirectory(Path.Combine(aLegacy, "events", "2026-10-02"));
+            File.WriteAllText(Path.Combine(aLegacy, "opening.json"),
+                "{\"schema_version\":1,\"at_utc\":\"2026-10-01T00:00:00Z\",\"positions\":[{\"persona\":\"probe\",\"symbol\":\"GOLD\",\"units_e8\":1000000000,\"bid_usd\":10,\"value_usd\":100}],\"unquoted\":[]}");
+            File.WriteAllText(Path.Combine(aLegacy, "events", "2026-10-02", "20261002T000000000Z_probe_flow_aaaa0001.json"),
+                "{\"schema_version\":1,\"kind\":\"flow\",\"at_utc\":\"2026-10-02T00:00:00Z\",\"persona\":\"probe\",\"symbol\":\"GOLD\",\"delta_e8\":500000000,\"bid_usd\":10,\"value_usd\":50,\"source\":\"demurrage\"}");
+            File.WriteAllText(Path.Combine(aLegacy, "events", "2026-10-02", "20261002T000000000Z_ghost_flow_aaaa0002.json"),
+                "{\"schema_version\":1,\"kind\":\"flow\",\"at_utc\":\"2026-10-02T00:00:00Z\",\"persona\":\"ghost\",\"symbol\":\"GOLD\",\"delta_e8\":100000000,\"bid_usd\":10,\"value_usd\":10,\"source\":\"demurrage\"}");
+
+            // 🔴 反向對照①：沒搬之前，帳不讀舊落點 ⇒ 15 張全是差額，而且必須喊「還有沒搬的」
+            var v0 = SCP_Portfolio.Build(aData, aLetters, "probe", aCfg, aT0.AddDays(2));
+            var g0 = v0.Positions.Find(p => string.Equals(p.Symbol, "Gold", StringComparison.OrdinalIgnoreCase));
+            bool aWarned = g0 != null && g0.DriftE8 == 15L * SCP_VoucherBook.FractionScale && v0.Problems.Exists(s => s.Contains("沒搬"));
+
+            // 🔴 反向對照②：試算零寫入
+            var aDry = SCP_Portfolio.MigrateLegacy(aData, aLetters, false, aT0.AddDays(2));
+            string aPfDir = SCP_Portfolio.PortfolioDir(aLetters, "probe");
+            bool aDryOk = aDry.EventsCopied == 1 && aDry.OpeningsWritten.Count == 1 && aDry.SkippedNoPersona.Count == 1
+                          && !Directory.Exists(aPfDir) && !aDry.MarkerWritten;
+
+            // 實搬：快照 10 ＋ 事件 5 ＝ 15 ⇒ 差額歸零；券名顯示券檔的實際 ID `Gold`
+            var aRun = SCP_Portfolio.MigrateLegacy(aData, aLetters, true, aT0.AddDays(2));
+            var v1 = SCP_Portfolio.Build(aData, aLetters, "probe", aCfg, aT0.AddDays(2));
+            var g1 = v1.Positions.Find(p => string.Equals(p.Symbol, "Gold", StringComparison.OrdinalIgnoreCase));
+            bool aRunOk = aRun.MarkerWritten && aRun.Problems.Count == 0 && g1 != null && g1.DriftE8 == 0
+                          && g1.TrackedE8 == 15L * SCP_VoucherBook.FractionScale && g1.CostUsd == 150m && v1.Problems.Count == 0;
+            bool aDisplay = g1 != null && g1.Symbol == "Gold";
+
+            // 🔴 反向對照③：重跑不重複（已在信件夾的算已搬）
+            var aAgain = SCP_Portfolio.MigrateLegacy(aData, aLetters, true, aT0.AddDays(2));
+            bool aIdem = aAgain.EventsCopied == 0 && aAgain.EventsAlready == 1 && aAgain.OpeningsWritten.Count == 0
+                         && aAgain.OpeningsAlready.Count == 1 && aAgain.Problems.Count == 0;
+
+            // 新寫入的事件直接進信件夾、券名照原樣存
+            SCP_Portfolio.RecordFlow(aData, aLetters, "probe", "Gold", 1 * SCP_VoucherBook.FractionScale, "grant", "", aT0.AddDays(3), out bool aRec);
+            var aEvents = SCP_Portfolio.ReadEvents(aLetters, "probe", new List<string>());
+            bool aNewLand = aRec && aEvents.Count == 2 && aEvents[1].Symbol == "Gold";
+
+            bool aAll = aWarned && aDryOk && aRunOk && aDisplay && aIdem && aNewLand;
+            return new CheckRow(aName,
+                $"🔴 沒搬＝15 張全差額＋喊出來={aWarned}／🔴 試算零寫入（會搬 1、快照 1、沒這個人 1）={aDryOk}"
+                + $"／實搬後差額 {g1?.DriftE8}、成本 {g1?.CostUsd}、標記={aRun.MarkerWritten}={aRunOk}／顯示「{g1?.Symbol}」={aDisplay}"
+                + $"／🔴 重跑 copied={aAgain.EventsCopied} already={aAgain.EventsAlready}={aIdem}／新事件進信件夾＝{aNewLand}",
+                aAll ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
         finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }

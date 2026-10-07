@@ -193,6 +193,7 @@ public static partial class SelfTest
         // 交易所報酬率／法幣（TASK-0371）：本體在 SelfTest.Portfolio0371.cs
         One(nameof(PortfolioFxParserCleanRoom), "market", PortfolioFxParserCleanRoom),
         One(nameof(PortfolioReplayCleanRoom), "market", PortfolioReplayCleanRoom),
+        One(nameof(PortfolioLettersMigrateCleanRoom), "market", PortfolioLettersMigrateCleanRoom),
         One(nameof(PortfolioSwapOverflowGuardCleanRoom), "market", PortfolioSwapOverflowGuardCleanRoom),
         // 酒館游標積壓出口（TASK-0369）：本體在 SelfTest.TavernCursor0369.cs
         One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
