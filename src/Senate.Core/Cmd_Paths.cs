@@ -52,12 +52,8 @@ public sealed class Cmd_Paths : SCP_Cmd
         if (aConfig == null)
             return SCP_CmdResult.Fail(2, "✗ 讀不到設定檔：" + aConfigPath, "  先跑 `senate init`");
 
-        // ── 資料根只有一組 ⇒ 這裡不挑專案，只報「那個唯一的是誰」──────────────
-        // ⚠ 有兩個啟用專案時**不替人挑**：靜默挑一個的症狀是「路徑全對，只是屬於別的專案」。
-        SenateProject? aProj = SenatePathBinding.SingleProject(aConfig, out string? aSingleErr);
-        string aProjNote = aProj != null
-            ? "唯一啟用的專案：'" + aProj.Name + "'　`" + aProj.Root + "`"
-            : "⚠ " + aSingleErr;
+        // ⛔ 2026-10-07（Tim）拿掉「唯一啟用的專案」那一行：資料根已是全域設定（TASK-0390），不住在任何專案上；
+        //   Unity 專案只是選填的施工目標，它在下面的清單裡（UnityProjectRoot）。Senate 專案根也在清單裡（HostRepoRoot）。
 
         SCP_PathStoredValue StoredOf(SCP_PathId iId) => SenatePathBinding.StoredOf(aConfig, iId);
 
@@ -82,7 +78,6 @@ public sealed class Cmd_Paths : SCP_Cmd
         aResult.Lines.Add("# 🗂 動態路徑 —— 共 " + SCP_PathRegistry.All.Count + " 條"
                           + (aIdArg.Length > 0 ? "（只列 " + aIdArg + "）" : ""));
         aResult.Lines.Add("· 設定檔：" + aConfigPath);
-        aResult.Lines.Add("· " + aProjNote);
         aResult.Lines.Add("");
 
         int aUnresolved = 0, aMissing = 0;
@@ -118,7 +113,6 @@ public sealed class Cmd_Paths : SCP_Cmd
         // 0 也印：只在非零時出現的欄位，讀者分不出「乾淨」與「沒量」。
         aResult.AddValue("unresolved", aUnresolved.ToString(CultureInfo.InvariantCulture));
         aResult.AddValue("missing_on_disk", aMissing.ToString(CultureInfo.InvariantCulture));
-        aResult.AddValue("project", aProj?.Name ?? "");
         EmitJson(aResult, iArgs, aWanted, StoredOf);
         return aResult;
     }

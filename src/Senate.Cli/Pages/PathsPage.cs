@@ -110,20 +110,10 @@ public sealed class PathsPage : SCP_GuiToolPage
 
         g.Note($"本頁由 `SCP_PathRegistry` 描述表生成（共 {SCP_PathRegistry.All.Count} 條）——"
                + "**加一條路徑＝加一個 enum 成員 ＋ 一筆 descriptor，本頁不用改**。"
-               + $"寫的是 `{Path.GetFileName(m_ConfigPath)}`（與「設定」／「專案關聯」頁同一份檔），按「儲存」才寫回。");
+               + $"寫的是 `{Path.GetFileName(m_ConfigPath)}`（與「設定」頁同一份檔），按「儲存」才寫回。");
 
-        // ── 資料根只有一組 ⇒ 這裡不是「選專案」，是報「那個唯一的專案是誰」──────
-        SenateProject? aSingle = SenatePathBinding.SingleProject(m_Draft, out string? aSingleErr);
-        using (g.Box("唯一的專案"))
-        {
-            if (aSingle != null)
-                g.Note($"● {(aSingle.Name.Length > 0 ? aSingle.Name : "（未命名）")}　`{aSingle.Root}`");
-            else
-                g.Note("⚠ " + aSingleErr);
-            g.Note("⚠ **資料根只有一組**（Tim 2026-08-31）：酒館 seq／任務單號／session lock"
-                   + " 全都假設只有一棵資料樹 —— 兩棵就是兩份序號、兩份計數，而沒有任何一層會喊。"
-                   + " 要換專案去「專案關聯」頁停用其餘的。");
-        }
+        // ⛔ 2026-10-07（Tim）廢掉「唯一的專案」那一格：資料根已是全域設定（TASK-0390），不住在任何專案上；
+        //   Unity 專案只是選填的施工目標（清單裡的 UnityProjectRoot），Senate 專案根是清單裡的 HostRepoRoot。
 
         // ── 描述表逐條 ─────────────────────────────────────────────
         foreach (SCP_PathDescriptor aD in SCP_PathRegistry.All)
