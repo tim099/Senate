@@ -96,9 +96,7 @@ senate cmd voucher --arg op=balance|list|usage|grant|consume|migrate \
 ```
 
 - **寫入一律要 `region`** —— 券不記歷史，`updated_region` 是唯一的「誰動過它」。
-- Unity 那側走 `UCL_VoucherAuthority`（`Assets/.../UCL_AgentCommands/Voucher/`），
-  它把每一筆讀寫都派給這支 Cmd。⛔ Unity **不碰券檔**。
-- python 那側走 `Cmd_CanvasVoucher`（Editor），而它現在也是薄殼 ⇒ 同樣落到 Server。
+- ⛔ Unity **不碰券檔**，也沒有券的程式（TASK-0453 已刪）。
 
 > 🩸 **為什麼「單一寫入端」不是偏好，是這個設計成立的唯一前提**：
 > 券存的是**狀態不是事件**。兩個寫入端互相覆蓋之後，留下的是一個完全合法的數字，

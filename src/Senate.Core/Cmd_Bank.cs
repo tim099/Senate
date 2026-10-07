@@ -60,8 +60,8 @@ public sealed class Cmd_Bank : ServerDelegateCmd
                     iRequired: true),
                 new SCP_CmdArgSpec("account", "帳號 id（大小寫不拘 —— 寫入端一律正規化成小寫）"
                     + "；`transfer` 時它是**轉出方**；`entries` 必填", iDefault: ""),
-                // TASK-0331：`entries` 的時間下限 —— 語意照 Unity `Treasury op=audit` 的 `since_ts`
-                //   （**嚴格大於**，UTC ISO8601 字串以 Ordinal 比），⛔ 不另立一種語意。
+                // TASK-0331：`entries` 的時間下限 ——
+                //   **嚴格大於**，UTC ISO8601 字串以 Ordinal 比。
                 new SCP_CmdArgSpec("since_ts",
                     "`entries` 用：只列這個時間**之後**的分錄（UTC ISO8601，嚴格大於；空 ＝ 全部）", iDefault: ""),
                 // ⚠ 轉帳的收款方**另開一格**而不是重用 `account` —— 一格裝兩個角色的話，
@@ -156,7 +156,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             case "requests": return Stamp(OpRequests(iArgs), aRoot);
             case "approve": return Stamp(OpDecide(aRoot, iArgs, iApprove: true), aRoot);
             case "reject": return Stamp(OpDecide(aRoot, iArgs, iApprove: false), aRoot);
-            // ── TASK-0331：`Cmd_Treasury` 退場的前提 —— 列分錄＋結帳兩支（`audit`／`closing_list`／`closing_generate` 的對應）
+            // ── TASK-0331：列分錄＋結帳兩支
             case "entries": return Stamp(OpEntries(aRoot, iArgs), aRoot);
             case "closing_list": return Stamp(OpClosingList(aRoot), aRoot);
             case "closing_generate": return Stamp(OpClosingGenerate(aRoot), aRoot);
@@ -437,10 +437,10 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：`op=entries` —— 列某帳戶的分錄（TASK-0331 ①，對應 Unity `Treasury op=audit`）。
-    // 物理意義：`Cmd_Treasury` 退場的前提之一。⛔ 不叫 `audit` —— `bank-audit` 已是綁定健檢，同名會誤導。
-    //           篩選語意照 Unity 那支：帳號正規化後逐字比、`since_ts` **嚴格大於**（Ordinal）；
-    //           順序＝`SCP_BankLedger.EnumerateEntries`（日期夾、檔名 Ordinal）⇒ 兩邊逐筆對得上。
+    // 區塊職責：`op=entries` —— 列某帳戶的分錄（TASK-0331 ①）。
+    // 物理意義：⛔ 不叫 `audit` —— `bank-audit` 已是綁定健檢，同名會誤導。
+    //           篩選：帳號正規化後逐字比、`since_ts` **嚴格大於**（Ordinal）；
+    //           順序＝`SCP_BankLedger.EnumerateEntries`（日期夾、檔名 Ordinal）。
     // 數值影響：唯讀。
     // ⚠ 跟 Unity 那支**刻意不同**的一格：帳號沒開過戶 ⇒ 失敗，⛔ 不回「0 筆」——
     //   打錯帳號與「這個帳號沒有交易」在 0 筆上同形（同 `balance` 的判準）。

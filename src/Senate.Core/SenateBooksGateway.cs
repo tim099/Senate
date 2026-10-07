@@ -1,7 +1,5 @@
 // 區塊職責：書店閘的 **CLI／Server 實作** —— 錢與券**直接串 Server**（`bank` / `voucher`）。
-// 物理意義：本體（`SCP_BooksOps`）搬出 Unity 之後，兩個宿主各給一份閘：
-//           Editor 那份走 `UCL_TreasuryLedger.Pay`，這一份走 `SCP_CmdRegistry.Dispatch`。
-//           ⇒ 這就是 TASK-0234 ② 說的「效果注入」的另一半。
+// 物理意義：本體（`SCP_BooksOps`）只管規則，動錢由宿主給的閘做 —— 這一份走 `SCP_CmdRegistry.Dispatch`（TASK-0234 ②「效果注入」）。
 // 數值影響：`bank op=pay`（主動消費自動先扣酒館券）與 `voucher op=grant`。
 //           ⛔ 本層**不判斷**哪些 kind 算主動消費 —— 那條規則只住在 `SCP_SpendPolicy`。
 //
