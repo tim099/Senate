@@ -462,8 +462,9 @@ public static partial class SelfTest
         var aFails = new List<string>();
         const string P = "D:/proj";
         var aRoots = new SCP_MorningRoots { ProjectRoot = P };
-        if (!string.Equals(aRoots.GlossaryRoot, P + "/Docs/Glossary", StringComparison.OrdinalIgnoreCase))
-            aFails.Add("沒設時應推導成 <專案根>/Docs/Glossary（得 " + aRoots.GlossaryRoot + "）");
+        // TASK-0390：沒設 ⇒ 空字串（＝沒有詞典），⛔ 不再從專案根自己推第二份算式
+        if (aRoots.GlossaryRoot != "")
+            aFails.Add("沒設時應是空字串、不從專案根推（得 " + aRoots.GlossaryRoot + "）");
         aRoots.GlossaryRoot = "E:/elsewhere/glo";
         if (aRoots.GlossaryRoot != "E:/elsewhere/glo") aFails.Add("設了之後應回傳設定值");
 
@@ -472,10 +473,11 @@ public static partial class SelfTest
         if (Pre(P + "/wiki/terms") != "wiki/terms") aFails.Add("專案內自訂根應印相對路徑（得 " + Pre(P + "/wiki/terms") + "）");
         if (Pre("E:/elsewhere/glo") != "E:/elsewhere/glo") aFails.Add("🔴 反向：專案外的根不准印成相對路徑（得 " + Pre("E:/elsewhere/glo") + "）");
 
-        // 描述表：Stored＋auto，上游是 ProjectRoot（⛔ 不准哪天被改成 Derived 而 PathsPage 上就編不了）。
+        // 描述表：Stored＋auto，上游是 Senate 專案根（TASK-0390：詞典是 Senate 的 submodule `Glossary/`）
+        //   ⛔ 不准哪天被改成 Derived 而 PathsPage 上就編不了。
         var aD = SCP_PathRegistry.Get(SCP_PathId.GlossaryRoot);
-        if (aD.Kind != SCP_PathKind.Stored || aD.AutoFrom != SCP_PathId.ProjectRoot || aD.AutoSuffix != "Docs/Glossary")
-            aFails.Add("描述表的 GlossaryRoot 應是 Stored＋auto(ProjectRoot, Docs/Glossary)");
+        if (aD.Kind != SCP_PathKind.Stored || aD.AutoFrom != SCP_PathId.HostRepoRoot || aD.AutoSuffix != "Glossary")
+            aFails.Add("描述表的 GlossaryRoot 應是 Stored＋auto(HostRepoRoot, Glossary)");
 
         return new CheckRow(aName,
             aFails.Count == 0
@@ -3838,7 +3840,8 @@ public static partial class SelfTest
                 iRegion: "PROBEREGION", iDataRoot: "/tmp/ProbeProject/AgentCommands");
             string aBody3 = File.ReadAllText(aR3.Path);
             bool aQualifiedGiven = aBody3.Contains("region: PROBEREGION")
-                                   && aBody3.Contains("project: ProbeProject");
+                                   // TASK-0390（Tim 2026-10-07）：project 定語＝資料根完整路徑，不再取上一層資料夾名
+                                   && aBody3.Contains("project: /tmp/ProbeProject/AgentCommands");
             var aR4 = SCP_LetterWriter.WriteSelfLetter(aLetters, aPersona, "probe-bank", "沒有定語",
                 iNowUtc: DateTime.UtcNow.AddSeconds(3));
             string aBody4 = File.ReadAllText(aR4.Path);
@@ -6466,8 +6469,9 @@ public static partial class SelfTest
                 string aRepo = Path.Combine(Path.GetTempPath(), "senate_dmedia_" + Guid.NewGuid().ToString("N")[..8]);
                 aTmps.Add(aRepo);
                 string aData = Path.Combine(aRepo, "AgentCommands");
-                Directory.CreateDirectory(Path.Combine(aRepo, "img"));
-                File.WriteAllBytes(Path.Combine(aRepo, "img", "a.png"), new byte[] { 1, 2, 3 });
+                // refs 是**資料根相對**（TASK-0390）⇒ 圖放在資料根底下
+                Directory.CreateDirectory(Path.Combine(aData, "img"));
+                File.WriteAllBytes(Path.Combine(aData, "img", "a.png"), new byte[] { 1, 2, 3 });
                 var aFake = new FakeDiscordHttp { MultipartStatus = iStatus };
                 SCP.Core.Market.SCP_HttpFetch.Current = aFake;
                 SCP_TavernChannels.EnsureMainChannel(aData, out _);
@@ -6509,7 +6513,7 @@ public static partial class SelfTest
                 + "{\"id\":\"3\",\"filename\":\"huge.mp4\",\"size\":99999999,\"url\":\"https://cdn.example/huge.mp4\"}]}";
             var aRoute = new SCP.Core.Discord.SCP_DiscordRoute { ChannelId = "9", TavernRoom = "tavern", Label = "probe" };
             var aWl = new SCP.Core.Discord.SCP_DiscordWhitelist();   // 空白名單 ⇒ 作者 42 是白名單外（白名單只標記不擋，Tim 2026-09-30）
-            // 🔴 故意給錯的 repo 根（Server 給的是 Senate 自己的 repo）⇒ refs 仍要是資料所在專案的相對路徑（實測 22520 踩過）
+            // 🔴 故意給錯的 repo 根（Server 給的是 Senate 自己的 repo，實測 22520 踩過）⇒ refs 仍要是**資料根相對**（TASK-0390）
             SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, "D:/wrong-host-repo", aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aPeek, false);
             bool aPeekNoFile = aPeek != null && !Directory.Exists(Path.Combine(aData2, "ChatTavern", "media"));
             SCP.Core.Discord.SCP_DiscordInbound.Convert(aData2, "D:/wrong-host-repo", aRoute, aWl, SCP_JsonParser.Parse(aMsgJson), out var aItem);
@@ -6517,8 +6521,8 @@ public static partial class SelfTest
             SCP_JsonData aRefs = aItem?.MsgJson["refs"] ?? SCP_JsonData.NewArray();
             string aRefPath = aRefs.IsArray && aRefs.Count == 1 ? aRefs[0].GetString("path", "") : "";
             bool aInShape = aItem != null && aBody.StartsWith("看這張") && aBody.Contains("bad.png（下載失敗")
-                            && aBody.Contains("huge.mp4（過大未下載") && aRefPath.StartsWith("AgentCommands/ChatTavern/media/discord/2026-09-28/")
-                            && File.Exists(Path.Combine(aRepo2, aRefPath))
+                            && aBody.Contains("huge.mp4（過大未下載") && aRefPath.StartsWith("ChatTavern/media/discord/2026-09-28/")
+                            && File.Exists(Path.Combine(aData2, aRefPath))
                             && aItem!.MsgJson["meta"].GetString("attachments_saved", "") == "1";
             // 白名單只標記：白名單外 ⇒ 照收＋顯示名後綴＋meta false；🔴 反向：同一人進白名單 ⇒ 無後綴＋meta true
             bool aWlOut = aItem != null && aItem.MsgJson.GetString("sender_name", "").EndsWith(SCP.Core.Discord.SCP_DiscordInbound.NotWhitelistedSuffix)

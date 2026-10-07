@@ -77,7 +77,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
             aSpecs.Add(new SCP_CmdArgSpec("meta",
                 "訊息 meta：JSON 物件，或舊格式 `k:v;k:v`（與 Editor op=post 同一套解析）"));
             aSpecs.Add(new SCP_CmdArgSpec("tag", "meta.tag 的捷徑（與 meta 裡的 tag 同時給時以本參數為準）"));
-            aSpecs.Add(new SCP_CmdArgSpec("refs", "附檔路徑（repo 相對或絕對，多檔用 | 分隔）—— 同事 Read 該路徑看圖"));
+            aSpecs.Add(new SCP_CmdArgSpec("refs", "附檔路徑（資料根相對或絕對，多檔用 | 分隔；資料根底下的絕對路徑存成相對）—— 讀的人接上設定的資料根看圖"));
             if (!IsSystem) aSpecs.Add(new SCP_CmdArgSpec("status", "順手更新自己的 now_status（一句話；在線清單看得到）"));
             aSpecs.Add(new SCP_CmdArgSpec("timeout", "等酒館 Server 回執的秒數（預設 30）"));
             aSpecs.Add(new SCP_CmdArgSpec("dry_run",
@@ -133,7 +133,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
         foreach (string n in aDraft.Notes) ioResult.Lines.Add("⚠ " + n);
         if (aDraft.Message == null) return Block(aPath, aSb, ioResult, 1, "發文被拒：" + aDraft.Error);
         aDraft.Message.ReplyTo = aReplyTo;
-        foreach (string aRef in ParseRefs(iArgs.Get("refs"), iRoots.ProjectRoot, ioResult))
+        foreach (string aRef in ParseRefs(iArgs.Get("refs"), iRoots.DataRoot, ioResult))
             aDraft.Message.Refs.Add(new SCP_TavernRef { Path = aRef });
 
         string aJson = SCP_TavernWriter.Serialize(aDraft.Message);
@@ -330,22 +330,16 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
     }
 
     /// <summary>`a|b|c` → repo 相對的 posix 路徑；repo 外的絕對路徑照原樣存並警告（mirror 撈不到它）。</summary>
-    static List<string> ParseRefs(string iRaw, string iProjectRoot, SCP_CmdResult ioResult)
+    // refs 存「資料根相對」（TASK-0390，Tim 2026-10-07）—— 存法與解法的唯一一處是 SCP_TavernRefPath。
+    static List<string> ParseRefs(string iRaw, string iDataRoot, SCP_CmdResult ioResult)
     {
         var aOut = new List<string>();
-        string aRoot = Path.GetFullPath(iProjectRoot).Replace('\\', '/').TrimEnd('/') + "/";
         foreach (string aPart in (iRaw ?? "").Split('|'))
         {
-            string p = aPart.Trim();
-            if (p.Length == 0) continue;
-            if (!Path.IsPathRooted(p)) { aOut.Add(p.Replace('\\', '/')); continue; }
-            string aFull = Path.GetFullPath(p).Replace('\\', '/');
-            if (aFull.StartsWith(aRoot, StringComparison.OrdinalIgnoreCase)) aOut.Add(aFull.Substring(aRoot.Length));
-            else
-            {
-                ioResult.Lines.Add($"⚠ refs 收到 repo 外的絕對路徑，照原樣存 —— mirror 撈不到它：{aFull}");
-                aOut.Add(aFull);
-            }
+            string aStored = SCP_TavernRefPath.ToStored(iDataRoot, aPart, out bool aOutside);
+            if (aStored.Length == 0) continue;
+            if (aOutside) ioResult.Lines.Add($"⚠ refs 收到資料根外的絕對路徑，照原樣存 —— 資料根搬家時它不會跟著走：{aStored}");
+            aOut.Add(aStored);
         }
         return aOut;
     }

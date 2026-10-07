@@ -1,3 +1,6 @@
 [submodule "SCP_Core"]
 	path = SCP_Core
 	url = https://github.com/tim099/SCP_Core.git
+[submodule "Glossary"]
+	path = Glossary
+	url = https://github.com/tim099/Glossary.git

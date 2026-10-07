@@ -395,7 +395,7 @@ public sealed class Cmd_Task : SCP_Cmd
             $"--arg op=add --arg topic={G("topic")} --arg type={G("type")} --arg id={G("id")} --arg title=\"{G("title")}\" --arg-file body=<檔> --arg by={G("by")}");
         try
         {
-            var aWm = new SCP_WorkMemory(iDataRoot, iProjectRoot, SCP_WorkMemory.FindUclCoreRoot(iProjectRoot));
+            var aWm = new SCP_WorkMemory(iDataRoot);   // 具名根由宿主宣告（TASK-0390）
             SCP_WorkMemoryResult aR = aWm.Add(G("topic"), G("type"), G("id"), G("title"), G("body"), "", "", G("by"));
             if (aR.Exit != 0) throw new InvalidOperationException(string.Join(" ", aR.Lines));
             ioResult.Lines.Add($"🧠 已寫進工作記憶：{G("topic")} / {G("type")} / {G("id")}");

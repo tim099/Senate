@@ -16,17 +16,9 @@ namespace Senate.Core;
 
 public static class PersonaLetters
 {
-    /// <summary>
-    /// 讀設定檔並取出信件夾根。**設定檔不存在 → 回 null**（那是「還沒 init」不是錯誤）；
-    /// 檔在但壞掉 → 照 <see cref="SenateConfig.Load"/> 丟例外（不可靜默降級成「沒設定」）。
-    /// </summary>
-    public static string? LoadLettersRoot(string iRepoRoot)
-    {
-        SenateConfig? aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot));
-        if (aCfg == null) return null;
-        string aRoot = CleanPath(aCfg.Awakening.LettersRoot);
-        return aRoot.Length > 0 ? aRoot : null;
-    }
+    // ⛔ 2026-10-07（TASK-0390）刪掉了 `LoadLettersRoot`：它回的是 `awakening.lettersRoot` 的**原文**，
+    //   設定是 `auto` 時就把字面 "auto" 當路徑交出去。要信件根一律走
+    //   `SCP_PathRegistry.Resolve(SCP_PathId.LettersRoot, id => SenatePathBinding.StoredOf(cfg, id))`。
 
     /// <summary>設定檔整份讀出來（登入／早安流程要 lettersRoot 以外的欄位時用）。</summary>
     public static AwakeningSettings? LoadSettings(string iRepoRoot)

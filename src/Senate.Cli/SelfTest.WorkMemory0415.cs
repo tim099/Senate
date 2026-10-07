@@ -22,7 +22,7 @@ public static partial class SelfTest
         {
             string aData = Path.Combine(aTmp, "AgentCommands");
             Directory.CreateDirectory(aData);
-            var wm = new SCP_WorkMemory(aData, aTmp, null);
+            var wm = new SCP_WorkMemory(aData, new Dictionary<string, string>());
             if (wm.Init("t", "主題", "").Exit != 0) aFails.Add("init 失敗");
             if (wm.Add("t", "decision", "a", "決策甲", "第一行\n第二行：有冒號", "", "x.md:3", "probe").Exit != 0) aFails.Add("add 失敗");
             string aFrag = Path.Combine(aData, "WorkMemory", "t", "decision_a.md");

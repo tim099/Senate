@@ -131,7 +131,7 @@ public sealed class PathsPage : SCP_GuiToolPage
             string aId = "paths/" + aD.Id;
             SCP_PathResolution aRes = SCP_PathRegistry.Resolve(aD.Id, StoredOf);
             string aScope = aD.Scope == SCP_PathScope.Global ? "全域" : "專案";
-            string aKind = aD.Kind == SCP_PathKind.Stored ? "可設定" : "推導（唯讀）";
+            string aKind = aD.Kind == SCP_PathKind.Stored ? "可設定" : aD.Kind == SCP_PathKind.Host ? "宿主（唯讀）" : "推導（唯讀）";
 
             using (g.Box($"{aD.Label}　[{aScope}／{aKind}]"))
             {

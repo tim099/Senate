@@ -99,7 +99,7 @@ public sealed class TavernPage : SCP_GuiToolPage
         if (m_Rows.Count == 0) { g.Note("（這一頁沒有訊息）"); return; }
 
         // 由舊到新（跟聊天軟體一樣，最新的在最下面）。
-        foreach (SCP_TavernDisplayRow r in m_Rows) DrawRow(g, r);
+        foreach (SCP_TavernDisplayRow r in m_Rows) DrawRow(g, r, m_DataRoot);
 
         if (m_ScrollToBottom) { g.ScrollContentToBottom(); m_ScrollToBottom = false; }
         else if (m_Page == 0) g.FollowContentBottom();
@@ -114,7 +114,7 @@ public sealed class TavernPage : SCP_GuiToolPage
         if (SCP_TavernRooms.ReadCurrentSeq(m_DataRoot, m_Room) != m_LastSeq) LoadPage();
     }
 
-    static void DrawRow(SCP_Ui g, SCP_TavernDisplayRow r)
+    static void DrawRow(SCP_Ui g, SCP_TavernDisplayRow r, string iDataRoot)
     {
         SCP_TavernMessage m = r.Message;
         using (g.IdScope("msg" + m.Seq))
@@ -134,7 +134,7 @@ public sealed class TavernPage : SCP_GuiToolPage
                 g.Label($"{aWho}　{r.TimeLocal}　#{m.Seq}{aKind}{aReply}");
                 g.Paragraph(m.Body);
                 foreach (SCP_TavernRef aRef in m.Refs)
-                    g.Note("附件：" + (aRef.Label.Length > 0 ? aRef.Label + " — " : "") + aRef.Path);
+                    g.Note("附件：" + (aRef.Label.Length > 0 ? aRef.Label + " — " : "") + SCP_TavernRefPath.Resolve(iDataRoot, aRef.Path));
                 if (r.MetaText.Length > 0) g.Note(r.MetaText);
             }
         }

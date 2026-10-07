@@ -14,6 +14,9 @@ namespace Senate.Core;
 
 public static class SenatePathBinding
 {
+    /// <summary>Senate 專案根（exe 所在那棵 repo）—— 啟動時由宿主設一次；`SCP_PathId.HostRepoRoot` 的值。</summary>
+    public static string HostRepoRoot { get; set; } = "";
+
     /// <summary>
     /// 那個唯一的專案。<c>oError</c> 有值 ＝ 不唯一（0 個或 &gt;1 個啟用），**呼叫端不准自己挑**。
     /// </summary>
@@ -39,6 +42,11 @@ public static class SenatePathBinding
     {
         switch (iId)
         {
+            // Senate 專案根（Host 格，TASK-0390）：不在設定檔裡 —— 是 exe 所在那棵 repo，啟動時由 Program 宣告。
+            case SCP_PathId.HostRepoRoot:
+                return HostRepoRoot.Length == 0
+                    ? SCP_PathStoredValue.Unavailable("宿主沒有宣告 Senate 專案根（SenatePathBinding.HostRepoRoot 沒設）")
+                    : SCP_PathStoredValue.Of(HostRepoRoot);
             case SCP_PathId.ProjectRoot:
             {
                 SenateProject? aProj = SingleProject(iConfig, out string? aErr);
@@ -103,6 +111,33 @@ public static class SenatePathBinding
         if (aR.Error != null) { oError = aR.Error; return null; }
         return aR.Value;
     }
+
+    /// <summary>
+    /// 把 <c>SCP_DataPaths.Letters(資料根)</c> 接到本設定檔的信件根解析（TASK-0390，2026-10-07）。
+    /// <para>只有傳進來的資料根＝設定那一組時才回設定值；別的資料根回 null（＝慣例值），
+    /// ⛔ 不然 selftest 的暫存樹會寫進真的信件庫。每次現讀設定檔 ⇒ 後台改了路徑，常駐 Server 下一次呼叫就跟上。</para>
+    /// <para>設定檔讀不了／解不出來 ⇒ 回 null 退慣例值：那跟本函式存在之前同形，而設定壞掉時
+    /// `senate cmd paths`／doctor 會出聲（這一層沒有可以說話的通道）。</para>
+    /// </summary>
+    public static void InstallLettersResolver(string iRepoRoot)
+    {
+        SCP_DataPaths.LettersResolver = iDataRoot =>
+        {
+            SenateConfig? aCfg;
+            try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot)); }
+            catch (Exception) { return null; }
+            if (aCfg == null) return null;
+            SCP_PathResolution aData = SCP_PathRegistry.Resolve(SCP_PathId.AgentCommandsRoot, id => StoredOf(aCfg, id));
+            if (aData.Error != null || !SamePath(aData.Value, iDataRoot.Value)) return null;
+            SCP_PathResolution aLetters = SCP_PathRegistry.Resolve(SCP_PathId.LettersRoot, id => StoredOf(aCfg, id));
+            if (aLetters.Error != null || aLetters.Value.Length == 0) return null;
+            return new SCP_LettersRoot(aLetters.Value);
+        };
+    }
+
+    static bool SamePath(string iA, string iB)
+        => string.Equals(iA.Replace('\\', '/').TrimEnd('/'), iB.Replace('\\', '/').TrimEnd('/'),
+                         StringComparison.OrdinalIgnoreCase);
 
     /// <summary>寫回記憶體中的 config。回 false ＝ 這格寫不了（呼叫端要說出來）。</summary>
     public static bool SetStored(SenateConfig iConfig, SCP_PathId iId, string iValue, out string? oError)

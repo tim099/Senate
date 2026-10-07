@@ -82,14 +82,8 @@ public sealed class RateAdminPage : SCP_GuiToolPage
         m_Message = null;
         m_HistoryCache.Clear();
 
-        // 推導資料根
+        // 資料根一律照後台設定那一格（TASK-0390：⛔ 不再猜 `<repo>/AgentCommands` 或寫死的 D:/Unity/Bar —— 猜中舊樹時路徑全對、只是屬於另一棵）
         m_DataRoot = m_Model.AgentCommandsRoot.Value;
-        if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot))
-        {
-            string aCandidate = Path.Combine(m_Model.RepoRoot, "AgentCommands");
-            if (Directory.Exists(aCandidate)) m_DataRoot = aCandidate;
-            else m_DataRoot = "D:/Unity/Bar/AgentCommands";
-        }
 
         if (!Directory.Exists(m_DataRoot))
         {

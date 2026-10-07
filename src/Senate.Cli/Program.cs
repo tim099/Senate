@@ -21,6 +21,8 @@ public static class Program
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         string aRepoRoot = RepoRoot();
+        // Senate 專案根（描述表的 Host 格，TASK-0390）：詞典 `auto` 等「跟著 Senate 走」的路徑從這裡推。
+        SenatePathBinding.HostRepoRoot = aRepoRoot.Replace('\\', '/');
 
         // 宿主的網路出口：把 HTTP 抓取器插進 SCP_Core 的插座（TASK-0272 ②）。
         // ⚠ 這一行是 `rate op=sync` 能不能動的**唯一開關** —— SCP_Core 自己沒有網路
@@ -134,6 +136,16 @@ public static class Program
         // ⚠ 同文件根：錨在 exe 所在的 repo，⛔ 不看 cwd —— 從 LY 跑 `senate cmd skill` 也讀同一棵、裝同一處。
         // 本地 Cmd 殼（早安／晚安／酒館發文，TASK-0406 搬進 SCP_Core）要的宿主能力：選專案、詞典根、環境標記、酒館寫入、發文提示。
         SCP.Core.Cmd.SCP_LocalRootsCmd.Host = new SenateLocalCmdHost();
+        // 信件根（TASK-0390）：凡是從資料根推信件根的地方（SCP_DataPaths.Letters）都改問設定那一格 ——
+        //   ⛔ 沒裝的話，只拿到資料根的那半邊程式會寫慣例那棵，而讀設定的那半邊寫另一棵。
+        SenatePathBinding.InstallLettersResolver(aRepoRoot);
+        // 工作記憶 related_docs 的具名根（TASK-0390）：沒前綴＝資料根；`senate:`／`scp_core:` 錨在 exe 所在的 repo（同文件根）。
+        //   ⛔ 沒有 `ucl_core:` —— 那是 Unity 專案裡的檔，Senate 不讀。
+        SCP.Core.WorkMemory.SCP_WorkMemory.HostNamedRoots = () => new Dictionary<string, string>
+        {
+            ["senate"] = aRepoRoot,
+            ["scp_core"] = Path.Combine(aRepoRoot, "SCP_Core"),
+        };
         SCP.Core.Cmd.SCP_Cmd_Skill.RootsProvider = () =>
             new SCP.Core.Cmd.SCP_SkillRoots(Path.Combine(aRepoRoot, "SCP_Core", "Skills~"), aRepoRoot);
         UnityDelegateCmd.ConfigProvider = () =>
@@ -1850,17 +1862,9 @@ public static class Program
         //   ⇒ 改 stderr 兩邊都保住：**告示照印**（不靜默注入），**值的通道乾淨**。
         //   ⛔ 而 `🔢 k = v` 刻意**不搬** —— 那是全部 Cmd 共用的機器讀數通道，
         //     搬它要動每一個呼叫端；契約寫成「stdout ＝ 值 ＋ 不含大括號的 `🔢` 行」即可。
-        if (aCmd != null && !aRawArgs.ContainsKey("letters_root") && DeclaresArg(aCmd, "letters_root"))
-        {
-            string? aRoot = null;
-            try { aRoot = PersonaLetters.LoadLettersRoot(iRepoRoot); }
-            catch (InvalidDataException e) { Console.Error.WriteLine($"✗ 設定檔有問題：{e.Message}"); return 3; }
-            if (aRoot != null)
-            {
-                aRawArgs["letters_root"] = aRoot;
-                Console.Error.WriteLine($"· letters_root 沒給 ⇒ 用設定檔的 awakening.lettersRoot：{aRoot}");
-            }
-        }
+        // ⚠ 2026-10-07（TASK-0390）：這一格原本直接讀 `awakening.lettersRoot` 的**原文** ——
+        //   設定改成 `auto` 的當下，canvas 就把圖寫進相對路徑 `auto/<P>/cmd/`（落在 cwd）。
+        //   ⇒ 改走下面的 FillRootArg（＝描述表的統一解析，與 `senate cmd paths` 同一支），⛔ 不再讀原文。
 
         // 便利：`data_root` 沒給就用**同一格設定**（`SCP_PathId.AgentCommandsRoot`，＝「路徑管理」頁那一格）。
         // ⚠ 適用範圍是「凡宣告 data_root 的 Cmd」不是某一支 —— 現況 sessions／tasks／canvas 三支
@@ -1886,6 +1890,7 @@ public static class Program
             if (aCfg != null)
             {
                 FillRootArg(aCmd, aRawArgs, aCfg, "data_root", SCP.Core.Paths.SCP_PathId.AgentCommandsRoot);
+                FillRootArg(aCmd, aRawArgs, aCfg, "letters_root", SCP.Core.Paths.SCP_PathId.LettersRoot);
                 // ⚠ bank_root 2026-09-17 起**沒有宿主預設那一層**了：它是 `<資料根>/Bank` 的推導值
                 //   ⇒ 跟 data_root 走同一支、同一個上游。資料根解不出來時這裡什麼都不填，
                 //     讓 Cmd 用「缺必填參數」擋下 —— ⛔ 不要在資料根壞掉的時候還指得出一個銀行。

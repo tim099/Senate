@@ -90,7 +90,7 @@ public sealed class Cmd_Paths : SCP_Cmd
         {
             SCP_PathResolution aRes = SCP_PathRegistry.Resolve(d.Id, StoredOf);
             string aScope = d.Scope == SCP_PathScope.Global ? "全域" : "專案";
-            string aKind = d.Kind == SCP_PathKind.Stored ? "可設定" : "推導";
+            string aKind = d.Kind == SCP_PathKind.Stored ? "可設定" : d.Kind == SCP_PathKind.Host ? "宿主" : "推導";
             aResult.Lines.Add("## " + d.Id + "　" + d.Label + "　[" + aScope + "／" + aKind + "]");
             if (d.Kind == SCP_PathKind.Stored)
                 aResult.Lines.Add("- 儲存鍵：`" + d.JsonKey + "`　現值：`"

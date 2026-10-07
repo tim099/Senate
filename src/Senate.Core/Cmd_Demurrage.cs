@@ -102,7 +102,7 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
         // ⚠ 這條退路在 CLI 上**跑不到**（設定檔那一格先補）—— 它是給沒有設定檔的宿主留的，
         //   而 `SCP_DataPaths` 自己寫著「信件夾根是**慣例值**不是唯一解」⇒ 用到它就印出來，
         //   ⛔ 不靜默地替別人決定券要寫到哪一棵樹。
-        if (aLettersDerived) aLetters = Path.Combine(aData, "ChatTavern", "baton", "letters");
+        if (aLettersDerived) aLetters = SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(aData)).Value;
         string aRegion = SCP_BankRegion.Read(aData, out string? aRegionWhy);
         var aVoucherLines = new List<string>();
         var aVoucherProblems = new List<string>();
