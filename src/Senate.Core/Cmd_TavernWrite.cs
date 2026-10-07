@@ -236,7 +236,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     //          `bank` 的 ServerId 是 main、本 process 是 tavern ⇒ ServerDelegateCmd 會**委派**過去，
     //          ⛔ 不在這裡寫帳本（那是銀行的第二個寫入端）。
     // 數值影響：發薪失敗**不讓寫入失敗**（訊息已經落檔、seq 已經給出去了），但每一筆都印、並回報計數，
-    //          讓 `payroll-audit` 與呼叫端都看得到。冪等命中（同一則被第二條路規劃）另計，⛔ 不算成「付了」。
+    //          讓呼叫端看得到。冪等命中（同一則被第二條路規劃）另計，⛔ 不算成「付了」。
     // ===========================================================
     static void AppendPayroll(string iDataRoot, string iRoom, int iSeq, SCP_TavernMessage iMsg, SCP_CmdResult ioResult)
     {

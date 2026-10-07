@@ -274,6 +274,7 @@ public static partial class SelfTest
         One(nameof(JsonExtensionDataRoundTrip), "bank", JsonExtensionDataRoundTrip),
         One(nameof(VoucherDeadBatchRetention), "bank", VoucherDeadBatchRetention),
         One(nameof(ReconcileLineUnmeasurableNotClean), "bank", ReconcileLineUnmeasurableNotClean),
+        One(nameof(ReconcileSettledRefsCleanRoom), "bank", ReconcileSettledRefsCleanRoom),
 
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
         Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
