@@ -3,7 +3,7 @@
 //           已安裝 ／ 沒安裝 ／ 裝了但壞了 ／ 不完整（下載到一半）／ 量不到（例：找不到 Python）。
 //           ⭐ pip 項目在**新的子程序**裡實際 import 才算裝好 —— 版本讀得到不等於能用
 //             （knowledge_base.py 的血證：null-byte 污染的套件 metadata 讀得到、import 會炸）。
-//           ⭐ 模型以**磁碟上的檔**判定，不看下載指令的 exit code（media_admin.py 同一條）。
+//           ⭐ 模型以**磁碟上的檔**判定，不看下載指令的 exit code。
 // 數值影響：pip 那半會起一個 Python 子程序（import torch 要幾秒）；模型那半純讀檔案。
 using System.Text;
 using System.Text.Json;

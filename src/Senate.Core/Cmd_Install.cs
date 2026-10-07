@@ -277,7 +277,7 @@ public sealed class Cmd_Install : SCP_Cmd
 
     // ── clean_partial ───────────────────────────────────────────────
 
-    // 清模型快取裡的 .incomplete 暫存檔（中斷的下載留下的；HF 不會再接續它們）。對照 Unity media_admin.py 的 clean-partial。
+    // 清模型快取裡的 .incomplete 暫存檔（中斷的下載留下的；HF 不會再接續它們）。
     static SCP_CmdResult CleanPartial(SCP_CmdResult r, InstallEnv aEnv, InstallCatalog aCatalog, List<string> aIds, bool aConfirm)
     {
         if (aIds.Count != 1) return SCP_CmdResult.Fail(2, "✗ op=clean_partial 一次一個 `ids=<模型 id>`");

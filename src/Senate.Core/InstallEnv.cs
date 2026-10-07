@@ -5,10 +5,9 @@
 //             Python 空白 ＝ 從 PATH 找系統那一顆；模型空白 ＝ HF 自己的預設快取。
 // 數值影響：Resolve 純讀（只看檔案在不在）。Run 會起子程序 —— 呼叫端決定跑什麼。
 //
-// 🩸 為什麼要收斂成一份（2026-10-02 量）：Unity 那邊三套各自叫 Python ——
-//   runner 從 PATH 叫 `python`、`memory.py` 用 `sys.executable`、`media_admin.py` 裝到 `--user`
-//   而 `knowledge_base.py` 不帶 `--user` ⇒「裝在哪一份」由呼叫端決定，而它不會叫。
-//   `media_admin.py` 解除安裝要跑最多 4 輪，就是在收這個爛攤子（user-site 與系統 site 各一份）。
+// 🩸 為什麼要收斂成一份：各呼叫端各自叫 Python（PATH 的 `python`／`sys.executable`、帶不帶 `--user`）
+//   ⇒「裝在哪一份」由呼叫端決定，而它不會叫；user-site 與系統 site 各留一份時，
+//   解除安裝要跑好幾輪才收得乾淨。
 // ⚠ 「找不到 Python」是 **量不到**，不是「每一項都沒裝」—— 狀態頁要把它印成「？」，⛔ 不是一排「沒安裝」。
 using System.Diagnostics;
 using System.Text;
