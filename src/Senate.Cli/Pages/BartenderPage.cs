@@ -315,7 +315,7 @@ public sealed class BartenderPage : SCP_GuiToolPage
             if (aCur != NoModel && !aOpts.Any(o => o.Value == aCur)) aOpts.Add(new SCP_GuiOption(aCur, aCur + (m_Models == null ? "" : "（沒有安裝）")));
             g.Dropdown("模型（本機 ollama）", aOpts, aCur, Id("model"));
             string aSelected = g.FieldValue(Id("model") + "/value", aCur);
-            g.Note("上下文容量由 Ollama 管理；模型自帶 num_ctx 可能覆蓋全域預設。這裡的生成上限只限制輸出長度。");
+            g.Note("若要修改 context，請開啟 Ollama → Settings → Context length。上下文容量由 Ollama 管理；模型自帶 num_ctx 可能覆蓋全域預設。這裡的生成上限只限制輸出長度。");
             if (aSelected != NoModel)
                 g.Label(!m_ModelsTried || (Busy && m_JobLabel == "量模型清單") ? "實際 context：查詢中…" : LlmModelPage.ContextStatus(m_LoadedModels, aSelected));
             if (m_ModelStatusError != null) g.Note("[注意] 模型狀態：" + m_ModelStatusError);

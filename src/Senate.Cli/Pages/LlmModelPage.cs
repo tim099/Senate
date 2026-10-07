@@ -306,7 +306,7 @@ public sealed class LlmModelPage : SCP_GuiToolPage
 
         g.Title("AI 模型（ollama）");
         g.Note("本地大語言模型（目前給酒保用）。本頁走 `senate cmd llm`（同一套實作）；模型由 ollama 持有，不走安裝管理頁。");
-        g.Note("上下文容量沿用 Ollama 設定；模型自帶 num_ctx 可能覆蓋全域預設。生成上限是輸出長度，不是 context；本頁不另存上下文設定。");
+        g.Note("若要修改 context，請開啟 Ollama → Settings → Context length。上下文容量沿用 Ollama 設定；模型自帶 num_ctx 可能覆蓋全域預設。生成上限只限制輸出長度。");
         g.Note("頁面設定（顯存門檻、試跑參數）來源：" + m_SettingsSource + "　—— 改了要按頂欄「存檔設定」才會留著，不會自動存。");
         if (Busy)
         {
