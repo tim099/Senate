@@ -126,7 +126,14 @@ senate cmd install --arg op=install --arg ids=<那幾個 id> --arg confirm=1
 
 ## 7. 不在這裡的
 
-- 影音管理頁搬到 Senate 並依賴這套系統：TASK-0392（知識庫頁已搬，TASK-0381）。
-- `media_admin.py` 的幾個特例（onnxruntime-gpu 的拆裝順序、faster-whisper 的 `--no-deps`）還沒收進清單；TASK-0392 一起處理。
+- 影音套件與權重的安裝併進觀影重做：TASK-0450（知識庫頁已搬，TASK-0381）。Unity 的影音管理頁與 `media_admin.py` 已刪（TASK-0449）。
+- 三個特例還沒收進清單，TASK-0450 收：
+  - **onnxruntime-gpu**：`onnxruntime` 與 `onnxruntime-gpu` 兩個 dist 共用同一個 `onnxruntime/` 目錄，疊裝會混成 providers 只剩 CPU 的嵌合體。
+    做法：兩個 dist 反覆 uninstall 到 user／system site 都不見 → 清掉殘留的 `onnxruntime/` 目錄 → 裝 `onnxruntime-gpu` → 子行程實測 providers 含 `CUDAExecutionProvider` 才算成功。
+  - **faster-whisper**：它宣告相依 `onnxruntime`，已裝 `onnxruntime-gpu` 時 pip 會疊上 CPU 版（OCR 安靜退回 CPU）。
+    以 `pip show onnxruntime-gpu` 判斷（⛔ 不用 `import onnxruntime`，兩種 dist 都會成功）；有 gpu 版 ⇒ `--no-deps` 裝本體，再補 `av ctranslate2 tokenizers huggingface-hub tqdm`。
+    驗收要在 CUDA 上實跑一段轉錄 —— ctranslate2 缺 cuDNN／cuBLAS 時安靜退回 CPU。
+  - **torch CUDA**：只帶 `--upgrade` 時，system site 已有更新的 CPU 版會被判「已滿足」而空跑 exit 0。
+    做法：cu126 index ＋ `--force-reinstall --no-deps`（pytorch index 上沒有一般依賴），裝完子行程實測 `torch.cuda.is_available()`。
 - ⭐ **ollama 與它的模型不進這套系統**（Tim 2026-10-05 拍板）：模型由 ollama 服務持有，誰讀 `ollama list` 都是同一份；
   由「AI 模型」頁與 `senate cmd llm` 自己管 —— 見 [`Llm`](Llm.md)。代價：skill 的 `requires_install` 管不到 ollama 模型。
