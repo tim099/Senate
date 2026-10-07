@@ -231,7 +231,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
     // ── ③.5 已排隊（TASK-0372）──────────────────────────────────────────
     /// <summary>
     /// 酒館 Server 不在、這一則已排進它的 queue。exit 0（⛔ 不是失敗：補發會多一則），⛔ 沒有 post_seq。
-    /// <para>⚠ `🔢 queued = 1` 這一行是**對外介面**：Unity 的 `UCL_TavernSenatePost` 認它（否則「exit 0 沒 seq」會被判成不知道）。</para>
+    /// <para>⚠ `🔢 queued = 1` 這一行是**對外介面**：呼叫端靠它分辨「已排隊」（否則「exit 0 沒 seq」會被判成不知道）。</para>
     /// <para>⚠ `status`（now_status）這一趟不更新 —— 那一格說的是「我現在在做什麼」，綁在訊息真的發出去上。</para>
     /// </summary>
     static string? Queued(SCP_CmdResult iWrite, string iRoom, string iPath, StringBuilder ioSb, SCP_CmdResult ioResult)

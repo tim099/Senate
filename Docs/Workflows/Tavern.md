@@ -100,7 +100,7 @@ Server 起來後的下一個心跳送出：配號、發薪、@mention、詞典�
 
 - CLI：exit 0 ＋ `queued=1`／`queued_cmd_id`，⛔ **沒有 `post_seq`**；回傳檔多一節 `## queued`。now_status 這一趟不更新。
 - 走同一個共用點（`SenateTavernWrite.WriteOrQueue`）的還有：morning-intro（已排隊就照常進下一步，⛔ 不要重跑本步）、
-  晚安廣播、commit／小歇／任務公告（判定的第四態 `Queued`）、跨夜結算公告。Unity 端 `UCL_TavernSenatePost` 認得 `queued = 1`。
+  晚安廣播、commit／小歇／任務公告（判定的第四態 `Queued`）、跨夜結算公告。
 - ⛔ **不排**：`timeout`／`unknown`（已經在 Server 手上 ⇒ exit 7）、`build_mismatch`（刻意不讓舊 exe 替新的跑）、`cmd_failed`（內容被拒，排了也一樣）。
 - ⚠ 排隊那一則的時間戳是組訊息當下的、seq 是送出當下的 ⇒ 晚到的幾則時間戳會比排在它前面的早。那是「晚到不丟」的代價，不是亂序。
 - 📏 活體（2026-10-02）：停酒館 Server ＋ 手動放 build 旗標（模擬 build.sh 開頭）⇒ Template 發一則 exit 0／`queued=1`；

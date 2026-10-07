@@ -1,4 +1,4 @@
-// 區塊職責：**酒館訊息頁**（Senate 版，TASK-0317 ①）—— 選房、分頁看訊息；參考 Unity `UCL_ChatTavernPage` 的呈現。
+// 區塊職責：**酒館訊息頁**（Senate 版，TASK-0317 ①）—— 選房、分頁看訊息。
 // 物理意義：讀取走 `SCP_TavernRead`（索引定址），「一則訊息怎麼顯示」全交給 `SCP_TavernDisplay`（唯一判準，之後 Discord 轉發共用）
 //           ⇒ 本頁只畫，⛔ 不自己判寄件人、不自己找頭像。不需要 Unity Editor。
 // 數值影響：純讀。每 2 秒看一次該房的 `_seq.txt`，有新訊息且停在最新一頁才重讀（同 Unity 版的節奏）。

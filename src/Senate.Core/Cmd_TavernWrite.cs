@@ -75,7 +75,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
 
     /// <summary>
     /// 酒館唯一那條 lane。⭐ **事實源在 <see cref="SCP_TavernWriter.LaneName"/>** ——
-    /// 送出端（Unity 的 `UCL_ChatTavernIO`）與本收下端唯一共同編得到的組件是 SCP_Core，
+    /// 送出端與本收下端共同編得到的組件是 SCP_Core，
     /// ⇒ 兩邊指同一顆常數，⛔ 不是各寫一個字面再靠註解說「與對面同字面」。
     /// </summary>
     public const string TavernLane = SCP_TavernWriter.LaneName;
