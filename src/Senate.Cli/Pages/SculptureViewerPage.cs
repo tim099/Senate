@@ -40,7 +40,7 @@ using SCP.Core.Sculpture;
 
 namespace Senate.Cli.Pages;
 
-public sealed class SculptureViewerPage : SCP_GuiToolPage
+public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 {
     public const string PageKey = "sculpture";
     /// <summary>手動渲染圖的顯示邊長（邏輯 px；ImageFit 照原比例縮進這個框）。</summary>
@@ -208,6 +208,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
             return;
         }
         var aData = new SCP_DataRoot(m_DataRoot);
+        ReloadWorks(aData);
         try
         {
             foreach (var kv in new SCP_SculptEngine(aData).LoadExhibits()) m_Exhibits.Add((kv.Key, kv.Value));
@@ -287,7 +288,8 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         if (m_Dirty || aPersona != m_LoadedPersona || aScope != m_LoadedScope) Reload(aPersona, aScope);
         // ⚠ 放在畫任何區塊**之前**：文字模式的渲染是同步的 ⇒ 這一趟底下的結果區就看得到新圖
         //   （放在最後的話，`--set` 那一趟畫的是舊圖，要再下一道指令才看得到）。
-        AutoRender(g, aPersona);
+        DrawWorkSelector(g, aPersona);
+        if (!PersonalSpace(g) || SelectedWork(g).Length > 0) AutoRender(g, aPersona);
 
         if (m_Error != null) g.Note("[注意] " + m_Error);
         if (m_Job != null)
@@ -298,7 +300,12 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         foreach (string p in m_Personas) aPersonaOpts.Add(new SCP_GuiOption(p));
         g.Dropdown("persona（個人設定檔層／貼圖預覽）", aPersonaOpts, None, PersonaSel);
 
-        DrawExhibits(g, aPersona);
+        if (PersonalSpace(g))
+        {
+            DrawWorks(g, aPersona);
+            if (SelectedWork(g).Length == 0) { DrawLog(g); return; }
+        }
+        else DrawExhibits(g, aPersona);
         DrawManual(g, aPersona);
         DrawResult(g);
         DrawProfiles(g, aPersona, aScope);
@@ -532,6 +539,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         string aSubject = g.FieldValue(SSubject, SubjectFull);
         if (aSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal)) a["exhibit"] = aSubject.Substring(SubjectExhibit.Length);
         else if (aSubject.StartsWith(SubjectRegion, StringComparison.Ordinal)) a["region"] = aSubject.Substring(SubjectRegion.Length);
+        AddWorkTarget(g, a);
         oSubject = aSubject;
         return a;
     }
@@ -631,6 +639,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     /// <summary>對象 → 給人看的字（結果區標頭用）。</summary>
     string SubjectText(string iSubject)
     {
+        if (iSubject.StartsWith(SubjectWork, StringComparison.Ordinal)) return "個人作品 " + iSubject.Substring(SubjectWork.Length);
         if (iSubject.StartsWith(SubjectExhibit, StringComparison.Ordinal))
         {
             string aId = iSubject.Substring(SubjectExhibit.Length);
@@ -648,6 +657,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
     {
         string aOut = Path.Combine(PageTempDir, "view.png");
         var aArgs = new Dictionary<string, string>(iArgs, StringComparer.Ordinal) { ["op"] = "view", ["out"] = aOut };
+        AddWorkTarget(g, aArgs);
         if (iPersona.Length > 0 && !aArgs.ContainsKey("persona")) aArgs["persona"] = iPersona;
         Start(g, iLabel, () =>
         {
@@ -825,6 +835,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
                 {
                     string aOut = Path.Combine(PageTempDir, "slice.png");
                     var aArgs = new Dictionary<string, string> { ["op"] = "slice", ["region"] = aRegion, ["out"] = aOut };
+                    AddWorkTarget(g, aArgs);
                     string aAxis = V(g, FSliceAxis);
                     if (aAxis.Length > 0) aArgs["axis"] = aAxis;
                     if (iPersona.Length > 0) aArgs["persona"] = iPersona;
@@ -893,6 +904,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         { m_Message = $"來源區域要是 x,y,w,h 四個整數（w,h > 0）—— 收到「{aRegion}」⇒ 這次沒有動作"; return; }
         if (iPersona.Length == 0) { m_Message = "貼圖預覽要先選 persona（canvas view 的圖寫進那位的 letters/<P>/cmd/；stamp2d 也要記帳人）⇒ 這次沒有動作"; return; }
         string aAt = V(g, FStampAt), aFacing = V(g, FStampFacing), aThick = V(g, FStampThick);
+        string aWorkArg = PersonalSpace(g) ? "--arg work=" + SelectedWork(g) + " " : "";
         string aData = m_DataRoot, aLetters = m_LettersRoot;
         Start(g, "貼圖預覽 " + aRegion, () =>
         {
@@ -917,6 +929,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
             o.Fields[SStampPath] = aPathT;
             o.Fields[SStampInfo] = $"{DateTime.Now:HH:mm:ss}　{w}×{h}　non_transparent_pixels {aN}";
             o.Fields[SStampCmd] = $"senate cmd sculpture --arg op=stamp2d --arg persona={iPersona} "
+                                  + aWorkArg
                                   + $"--arg src_x1={x} --arg src_y1={y} --arg src_x2={x + w - 1} --arg src_y2={y + h - 1} "
                                   + $"--arg at={aAt} --arg facing={aFacing} --arg thickness={aThick} --arg expect_pixels={aN}";
             return o;
@@ -934,6 +947,7 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
             {
                 if (!g.Button("匯出 ." + aFmt, P + "btn/export-" + aFmt)) continue;
                 var aArgs = new Dictionary<string, string> { ["op"] = "export", ["format"] = aFmt };
+                AddWorkTarget(g, aArgs);
                 string aRegion = g.FieldValue(FRegion, "").Trim(), aEx = g.FieldValue(FExclude, "").Trim(), aDir = g.FieldValue(FExportDir, "").Trim();
                 if (aRegion.Length > 0) aArgs["region"] = aRegion;
                 if (aEx.Length > 0) aArgs["exclude_color"] = aEx;
@@ -1069,8 +1083,17 @@ public sealed class SculptureViewerPage : SCP_GuiToolPage
         }
         aPsi.ArgumentList.Add("cmd"); aPsi.ArgumentList.Add("sculpture");
         aShown.Add("senate cmd sculpture");
+        using var aFiles = new WorkArgumentFiles();
         foreach (var kv in iArgs)
         {
+            if (kv.Key == "notes" || kv.Key == "todo")
+            {
+                string path = aFiles.Add(kv.Value);
+                aPsi.ArgumentList.Add("--arg-file");
+                aPsi.ArgumentList.Add(kv.Key + "=" + path);
+                aShown.Add("--arg-file " + kv.Key + "=<筆記檔>");
+                continue;
+            }
             aPsi.ArgumentList.Add("--arg");
             aPsi.ArgumentList.Add(kv.Key + "=" + kv.Value);
             aShown.Add("--arg " + (kv.Value.IndexOfAny(new[] { ' ', ';', '|', '"' }) >= 0 ? $"\"{kv.Key}={kv.Value}\"" : kv.Key + "=" + kv.Value));

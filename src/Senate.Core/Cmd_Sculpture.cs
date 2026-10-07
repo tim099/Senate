@@ -32,13 +32,13 @@ using SCP.Core.Session;
 
 namespace Senate.Core;
 
-public sealed class Cmd_Sculpture : SCP_Cmd
+public sealed partial class Cmd_Sculpture : SCP_Cmd
 {
     public override string Name => "sculpture";
     public override string Category => SCP_CmdCategory.Game;
 
     public override string Summary =>
-        "3D 體積雕刻（box/carve/stamp2d/stampimg 落子收費 ⌈實際落地/100⌉；view/slice/stats/export/exhibit/render-profile 免費）—— **不需要 Unity Editor**";
+        "3D 雕刻：共用展區按落地收費；work 個人作品64³建立10單位、續雕免費、匯入按落地收費；觀測免費（不需要 Unity Editor）";
 
     public override string Details =>
         "落子類（box／carve／stamp2d／stampimg）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
@@ -67,7 +67,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     public const string SlicePngName = "sculpture_slice.png";
 
     static readonly string[] s_Ops =
-        { "box", "carve", "stamp2d", "stampimg", "view", "slice", "stats", "export", "exhibit", "render-profile" };
+        { "box", "carve", "stamp2d", "stampimg", "view", "slice", "stats", "export", "exhibit", "render-profile", "work" };
 
     /// <summary>
     /// 分享的發文端（預設 `tavern-post`）。⚠ 只給自我對拍換成探針 —— 淨室裡不可以真的發進酒館。
@@ -103,6 +103,14 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("project", "分享發文用哪個專案（轉給 tavern-post）"),
         new SCP_CmdArgSpec("account", "付 token 的帳號；不給 ⇒ 由 persona 的權威綁定檔解（⛔ 解不出來不猜）"),
         new SCP_CmdArgSpec("pay", "付款方式", iDefault: "auto", iChoices: new[] { "auto", "freetime", "voucher", "token" }),
+        new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作獨立 64³ 空間"),
+        new SCP_CmdArgSpec("commission", "work create：使用者指定的委託內容；有委託才可填，免建立費並立即發10 token（可用 --arg-file）"),
+        new SCP_CmdArgSpec("commission_ref", "work create：該次委託的唯一來源（task／訊息seq／對話來源），不可重複領酬"),
+        new SCP_CmdArgSpec("notes", "work update：心得與續作筆記（可用 --arg-file）"),
+        new SCP_CmdArgSpec("todo", "work update：待辦（可用 --arg-file）"),
+        new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽"),
+        new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
+        new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數"),
         new SCP_CmdArgSpec("x1", "box/carve：AABB 一角 x（0-255）"),
         new SCP_CmdArgSpec("x2", "box/carve：另一角 x"),
         new SCP_CmdArgSpec("y1", "box/carve：一角 y"),
@@ -165,10 +173,10 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out", "view／slice：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑"),
         new SCP_CmdArgSpec("format", "export：obj|vox", iChoices: new[] { "obj", "vox" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
-        new SCP_CmdArgSpec("sub", "exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
-                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset" }),
-        new SCP_CmdArgSpec("id", "exhibit register：展品 id"),
-        new SCP_CmdArgSpec("title", "exhibit register：標題"),
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import" }),
+        new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
+        new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
         new SCP_CmdArgSpec("desc", "exhibit register：描述"),
         new SCP_CmdArgSpec("bg_color", "exhibit register：背景色（存進 preset）"),
@@ -215,8 +223,12 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         string? aPayload;
         try
         {
+            if (aOp != "work" && !ConfigureWork(aCtx, out string aWorkError))
+                aPayload = Blocked(aCtx, 2, aWorkError);
+            else
             switch (aOp)
             {
+                case "work": aPayload = OpWork(aCtx); break;
                 case "box":
                 case "carve":
                 case "stamp2d":
@@ -249,6 +261,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         public readonly string Op;
         public readonly string Persona;
         public readonly StringBuilder Report = new StringBuilder();
+        public SCP_SculptWork? Work;
 
         public Ctx(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult iResult, string iOp, string iPersona)
         {
@@ -261,7 +274,9 @@ public sealed class Cmd_Sculpture : SCP_Cmd
 
         public SCP_DataRoot Data => new SCP_DataRoot(Roots.DataRoot);
         public SCP_LettersRoot Letters => Roots.Letters;
-        public string SculptDir => Path.Combine(Roots.DataRoot, "Sculpture").Replace('\\', '/');
+        public SCP_SculptWorks Works => new SCP_SculptWorks(Data);
+        public int Size => Work == null ? 256 : SCP_SculptWorks.Size;
+        public string SculptDir => (Work == null ? new SCP_SculptPaths(Data).Root : Works.Folder(Work.id)).Replace('\\', '/');
         public string EngineLockTarget => Path.Combine(SculptDir, "_engine");
     }
 
@@ -271,7 +286,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     /// </summary>
     static SCP_SculptEngine NewEngine(Ctx c)
     {
-        var aEngine = new SCP_SculptEngine(c.Data);
+        var aEngine = c.Work == null ? new SCP_SculptEngine(c.Data) : new SCP_SculptEngine(c.Works.SpacePaths(c.Work.id), c.Roots.DataRoot, c.Size);
         SCP_DataRoot aData = c.Data;
         aEngine.PhotoBase = () =>
         {
@@ -289,6 +304,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     // ===========================================================
     static string? OpPlace(Ctx c)
     {
+        if (c.Work != null) return OpPlaceWork(c);
         if (c.Persona.Length == 0)
             return Blocked(c, 2, "落子需要 --arg persona=<名字>（錢認 persona 的券與帳戶，不能用猜的）");
 
@@ -497,7 +513,9 @@ public sealed class Cmd_Sculpture : SCP_Cmd
             if (!TryInt(c, "x1", out int x1) || !TryInt(c, "x2", out int x2) || !TryInt(c, "y1", out int y1)
                 || !TryInt(c, "y2", out int y2) || !TryInt(c, "z1", out int z1) || !TryInt(c, "z2", out int z2))
             { oBad = c.Op + " 需要 x1 x2 y1 y2 z1 z2 六個整數（0-255）"; return false; }
-            oWorst = ClampedVolume(ref x1, ref x2, ref y1, ref y2, ref z1, ref z2);
+            if (c.Work != null && (x1 < 0 || x1 >= c.Size || x2 < 0 || x2 >= c.Size || y1 < 0 || y1 >= c.Size || y2 < 0 || y2 >= c.Size || z1 < 0 || z1 >= c.Size || z2 < 0 || z2 >= c.Size))
+            { oBad = "作品座標須在 0..63；越界不會裁切或落子"; return false; }
+            oWorst = ClampedVolume(ref x1, ref x2, ref y1, ref y2, ref z1, ref z2, c.Size);
             oWhere = $"({x1}..{x2},{y1}..{y2},{z1}..{z2})";
             string aPersona = c.Persona;
             if (c.Op == "box")
@@ -626,7 +644,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     static SCP_SculptViewPlan? PrepareShare(Ctx c, SCP_SculptEngine iEngine, int iPlaced, out string oSkip)
     {
         oSkip = "";
-        if (c.Args.Get("share").Trim() == "0") { oSkip = "share=0（呼叫端關掉）"; return null; }
+        if (c.Args.Get("share").Trim() == "0" || (c.Work != null && !c.Args.IsExplicit("share"))) { oSkip = "share=0（作品預設不自動分享）"; return null; }
         if (iPlaced <= 0) { oSkip = "這一刀沒有落地任何 voxel"; return null; }
         if (SCP_SculptRenderers.Current == null)
         {
@@ -712,7 +730,7 @@ public sealed class Cmd_Sculpture : SCP_Cmd
         catch (SCP_FileLockTimeoutException e) { return Blocked(c, 4, "拿不到雕刻鎖：" + e.Message); }
         if (aPlan.ExitCode != 0) return Blocked(c, aPlan.ExitCode == 2 ? 2 : 1, "引擎：" + aPlan.Error);
         if (!TryApplyViewTail(c, aPlan.Params, aAutos, out string aTailBad)) return Blocked(c, 2, aTailBad);
-        if (!c.Args.IsExplicit("fit_upscale") && (aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
+        if (!c.Args.IsExplicit("fit_upscale") && (c.Work != null || aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
             aPlan.Params.FitUpscale = true;
 
         if (aViewArgs.Exhibit.Length > 0) aLayers.Add("展品 `" + aViewArgs.Exhibit + "`");
@@ -1451,9 +1469,9 @@ public sealed class Cmd_Sculpture : SCP_Cmd
     public static int CeilDiv(long a, int b) => (int)((a + b - 1) / b);
 
     /// <summary>兩角任意順序、clamp 0..255（與引擎 box 同語意）。回傳 clamp 後體積。</summary>
-    public static int ClampedVolume(ref int x1, ref int x2, ref int y1, ref int y2, ref int z1, ref int z2)
+    public static int ClampedVolume(ref int x1, ref int x2, ref int y1, ref int y2, ref int z1, ref int z2, int iSize = 256)
     {
-        static void Norm(ref int a, ref int b) { if (a > b) (a, b) = (b, a); a = Math.Max(0, a); b = Math.Min(255, b); }
+        void Norm(ref int a, ref int b) { if (a > b) (a, b) = (b, a); a = Math.Max(0, a); b = Math.Min(iSize - 1, b); }
         Norm(ref x1, ref x2); Norm(ref y1, ref y2); Norm(ref z1, ref z2);
         if (x2 < x1 || y2 < y1 || z2 < z1) return 0;
         return (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1);

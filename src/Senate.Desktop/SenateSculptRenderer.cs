@@ -843,15 +843,13 @@ void main() {
         };
     }
 
-    /// <summary>FullGrid 的邊長（＝ voxel 空間 0..255 的外緣）。</summary>
-    const float FullGridSize = 256f;
     readonly Dictionary<string, FloorTexture> m_FloorCache = new(StringComparer.OrdinalIgnoreCase);
 
     static FloorSetup? SolveFloor(Mesh iMesh, SCP_SculptRenderParams iP, FloorTexture? iTex)
     {
         var f = iP.Floor;
         if (f == null) return null;
-        if (f.FullGrid) return new FloorSetup { X0 = 0, Y0 = 0, X1 = FullGridSize, Y1 = FullGridSize, Z = (float)f.Z, Src = f, Tex = iTex };
+        if (f.FullGrid) return new FloorSetup { X0 = 0, Y0 = 0, X1 = iP.SpaceSize, Y1 = iP.SpaceSize, Z = (float)f.Z, Src = f, Tex = iTex };
         if (iMesh.VoxelCount == 0) return null;   // 外框模式沒有外框 ⇒ 不畫（見檔頭）
         float m = (float)f.EffectiveMargin(Math.Max(iMesh.Max.X - iMesh.Min.X, iMesh.Max.Y - iMesh.Min.Y));
         return new FloorSetup
