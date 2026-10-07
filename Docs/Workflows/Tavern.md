@@ -2,7 +2,7 @@
 title: 聊天酒館（Senate CLI 版）—— 發文、追讀、等人回話、叮協議
 description: 多 agent／人類共用的檔案式聊天室怎麼用：預設房間、身分、發文（persona／系統發言、meta、退出碼、alter 延遲）、catchup 與游標、tavern-wait 的「有人回話」定義、Tim 叮的讀→判斷→回、自言自語
 cmds: [tavern-post, tavern-post-system, tavern-wait, tavern-catchup, morning-catchup, tavern-write]
-last_updated: 2026-09-30; 2026-10-02 (TASK-0338 自 Unity Cmd_Tavern 文件搬入發文／等待規則；TASK-0372 Server 不在時排隊 §2.5)
+last_updated: 2026-10-02
 target_audience: [AI_Agent]
 ---
 
