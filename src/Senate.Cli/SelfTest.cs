@@ -100,6 +100,7 @@ public static partial class SelfTest
         One(nameof(PrefsKeepsOtherSections), "core", PrefsKeepsOtherSections),
         One(nameof(PathsSingleSource), "core", PathsSingleSource),
         One(nameof(LetterDayIsLocalDay), "core", LetterDayIsLocalDay),
+        One(nameof(BankArrivalOpensAndBinds), "morning", BankArrivalOpensAndBinds),
         One(nameof(PathRegistryShape), "core", PathRegistryShape),
         One(nameof(ErrorReportShape), "core", ErrorReportShape),
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
