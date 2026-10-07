@@ -31,6 +31,11 @@ public static partial class SelfTest
             List<LlmModelRow> p = LlmOllama.ToRows(LlmOllama.ParseTable(aPs));
             if (p.Count != 1) aFails.Add($"ps 要 1 列得 {p.Count}");
             else if (p[0].Processor != "100% GPU" || p[0].Size != "930 MB") aFails.Add($"🔴 ps 讀錯欄：大小 {p[0].Size}／跑在哪 {p[0].Processor}");
+            else if (p[0].ContextLength != 4096) aFails.Add("ps 的 CONTEXT 4096 沒有保存");
+            if (l.Any(x => x.ContextLength != null)) aFails.Add("list 沒有 CONTEXT 卻編出容量");
+            string aOldPs = "NAME          ID              SIZE      PROCESSOR    UNTIL\n"
+                          + "qwen3:4b      359d7dd4bcda    2.5 GB    100% GPU     4 minutes from now\n";
+            if (LlmOllama.ToRows(LlmOllama.ParseTable(aOldPs)).Single().ContextLength != null) aFails.Add("舊版 ps 缺 CONTEXT 卻冒充有值");
 
             if (LlmOllama.ToRows(LlmOllama.ParseTable("NAME    ID    SIZE    PROCESSOR    CONTEXT    UNTIL \n")).Count != 0) aFails.Add("只有表頭卻讀出列");
             return new CheckRow(aName, aFails.Count == 0 ? "list／ps（含 CONTEXT 欄）／只有表頭，逐格對上" : string.Join("；", aFails),
@@ -119,7 +124,19 @@ public static partial class SelfTest
             if (none == null) aFails.Add("找不到 ollama 那份解析失敗：" + e4);
             else if (none.Found || none.Installed != null || none.DownloadUrl.Length == 0) aFails.Add("找不到 ollama 時頁面沒拿到「找不到＋下載頁」");
 
-            return new CheckRow(aName, aFails.Count == 0 ? "服務打不到／0 個／有裝／找不到 ollama 四份，逐格對上" : string.Join("；", aFails),
+            var aContextRows = new List<LlmModelRow> { new("qwen3:0.6b-dsh", "4.6 GB", "93% GPU", 32768), new("phi4-mini:latest", "3 GB", "100% GPU") };
+            LlmModelPage.StatusView? ctx = LlmModelPage.ParseStatus(Json(new Cmd_Llm.LlmStatusInput("ollama", true, "0.35", new(), aContextRows, v, "")), out string? ec);
+            if (ctx?.Loaded == null || ctx.Loaded[0].ContextLength != 32768 || ctx.Loaded[1].ContextLength != null)
+                aFails.Add("context 的數值／未知未通過 Cmd → JSON → 頁面：" + ec);
+            else
+            {
+                if (!LlmModelPage.ContextStatus(ctx.Loaded, "qwen3:0.6b-dsh").Contains("32")) aFails.Add("alias 生效容量未顯示");
+                if (!LlmModelPage.ContextStatus(ctx.Loaded, "qwen3:0.6b").Contains("尚未載入")) aFails.Add("原模型錯用了 alias 的容量");
+                if (!LlmModelPage.ContextStatus(ctx.Loaded, "phi4-mini").Contains("未知")) aFails.Add("省略 latest 的模型缺欄位未報未知");
+            }
+            if (!LlmModelPage.ContextStatus(null, "qwen3:4b").Contains("量不到")) aFails.Add("量不到被顯示成未載入");
+
+            return new CheckRow(aName, aFails.Count == 0 ? "服務打不到／0 個／有裝／找不到／context 數值、未知與 alias 邊界，逐格對上" : string.Join("；", aFails),
                                 aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }

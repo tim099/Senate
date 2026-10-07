@@ -50,7 +50,7 @@ public sealed class LlmModelPage : SCP_GuiToolPage
 
     public const string SettingsFileName = "llm_page.json";
 
-    internal sealed record Model(string Id, string Size, string Processor);
+    internal sealed record Model(string Id, string Size, string Processor, int? ContextLength = null);
     internal sealed record CatalogRow(string Id, string Params, double SizeGb, double VramGb, int Zh, bool Recommend, string Note, bool Installed, bool Exact, bool Fits);
     internal sealed record Vram(bool GpuOk, string GpuName, double TotalGb, double FreeGb, double UsedGb, string Error, double BudgetGb, string Source);
     internal sealed record StatusView(bool Found, string Path, bool OnPath, string Version, bool Serving, List<Model>? Installed, List<Model>? Loaded,
@@ -216,7 +216,19 @@ public sealed class LlmModelPage : SCP_GuiToolPage
     static List<Model>? Models(JsonElement root, string k)
     {
         if (!root.TryGetProperty(k, out JsonElement a) || a.ValueKind != JsonValueKind.Array) return null;
-        return a.EnumerateArray().Select(m => new Model(S(m, "id"), S(m, "size"), S(m, "processor"))).ToList();
+        return a.EnumerateArray().Select(m => new Model(S(m, "id"), S(m, "size"), S(m, "processor"),
+            m.TryGetProperty("context_length", out JsonElement c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out int n) && n > 0 ? n : null)).ToList();
+    }
+
+    /// <summary>只報最近一次 ollama ps 實測；未載入／量不到／舊版缺欄位均不拿預設值冒充。</summary>
+    internal static string ContextStatus(List<Model>? iLoaded, string iModel)
+    {
+        if (iLoaded == null) return "實際 context：未知（載入狀態量不到）";
+        string aId = iModel.Contains(':') ? iModel : iModel + ":latest";
+        Model? m = iLoaded.FirstOrDefault(x => x.Id == iModel || x.Id == aId);
+        if (m == null) return "實際 context：尚未載入，沒有生效讀數";
+        return m.ContextLength.HasValue ? $"實際 context：{m.ContextLength.Value:N0} tokens（最近一次 ollama ps）"
+            : "實際 context：未知（Ollama 未提供 CONTEXT 欄位）";
     }
 
     internal static StatusView? ParseStatus(string iText, out string? oError)
@@ -294,6 +306,7 @@ public sealed class LlmModelPage : SCP_GuiToolPage
 
         g.Title("AI 模型（ollama）");
         g.Note("本地大語言模型（目前給酒保用）。本頁走 `senate cmd llm`（同一套實作）；模型由 ollama 持有，不走安裝管理頁。");
+        g.Note("上下文容量沿用 Ollama 設定；模型自帶 num_ctx 可能覆蓋全域預設。生成上限是輸出長度，不是 context；本頁不另存上下文設定。");
         g.Note("頁面設定（顯存門檻、試跑參數）來源：" + m_SettingsSource + "　—— 改了要按頂欄「存檔設定」才會留著，不會自動存。");
         if (Busy)
         {
@@ -367,8 +380,8 @@ public sealed class LlmModelPage : SCP_GuiToolPage
         using (g.Box("載入顯存中（ollama ps）", "llm/loaded"))
         {
             if (s.Loaded == null) { g.Note(s.Serving ? "量不到顯存裡的模型。" : "服務打不到 ⇒ 不知道。"); return; }
-            if (s.Loaded.Count == 0) { g.Label("沒有模型佔著顯存。"); return; }
-            using (g.Table("動作", "模型", "大小", "跑在哪"))
+            if (s.Loaded.Count == 0) { g.Label("沒有模型佔著顯存；尚無實際 context 讀數。"); return; }
+            using (g.Table("動作", "模型", "大小", "跑在哪", "實際 context（tokens）"))
                 foreach (Model m in s.Loaded)
                     using (g.TableRowScope())
                     {
@@ -377,6 +390,7 @@ public sealed class LlmModelPage : SCP_GuiToolPage
                         g.TableCell(m.Id);
                         g.TableCell(m.Size);
                         g.TableCell(m.Processor);
+                        g.TableCell(m.ContextLength?.ToString("N0", CultureInfo.InvariantCulture) ?? "未知（未提供）");
                     }
             g.Note("「跑在哪」不是 100% GPU ⇒ 顯存不夠、有層數在 CPU 上（會很慢）。卡住時按卸載：停掉發問的那一方不會讓模型離開顯存。");
         }

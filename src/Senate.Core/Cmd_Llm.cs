@@ -26,7 +26,7 @@ namespace Senate.Core;
 public sealed record LlmCatalogEntry(string Id, string Params, double SizeGb, double VramGb, int Zh, string Family, bool Recommend, string Note);
 
 /// <summary>`ollama list`／`ollama ps` 的一列。</summary>
-public sealed record LlmModelRow(string Id, string Size, string Processor);
+public sealed record LlmModelRow(string Id, string Size, string Processor, int? ContextLength = null);
 
 /// <summary>顯存讀數與門檻。Source：manual／gpu_free／gpu_total／fallback。</summary>
 public sealed record LlmVram(bool GpuOk, string GpuName, double TotalGb, double FreeGb, double UsedGb, string Error, double BudgetGb, string Source, string Basis);
@@ -185,7 +185,9 @@ public static class LlmOllama
     static string Col(Dictionary<string, string> d, string k) => d.TryGetValue(k, out string? v) ? v : "";
 
     public static List<LlmModelRow> ToRows(List<Dictionary<string, string>> iTable)
-        => iTable.Select(d => new LlmModelRow(Col(d, "NAME"), Col(d, "SIZE"), Col(d, "PROCESSOR"))).Where(r => r.Id.Length > 0).ToList();
+        => iTable.Select(d => new LlmModelRow(Col(d, "NAME"), Col(d, "SIZE"), Col(d, "PROCESSOR"),
+            int.TryParse(Col(d, "CONTEXT"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) && n > 0 ? n : null))
+            .Where(r => r.Id.Length > 0).ToList();
 
     /// <summary>
     /// 目錄的這顆裝了沒。精確命中，或**同家族、且已裝的 tag 是「這個 tag」或「這個 tag-變體」**（`qwen3:4b` ↔ `qwen3:4b-instruct-q4_K_M`）——
@@ -381,7 +383,7 @@ public sealed class Cmd_Llm : SCP_Cmd
                 ok = true,
                 ollama_found = iExe != null, ollama_path = iExe ?? "", on_path = iOnPath, version = aVersion,
                 service_reachable = aServing, installed_known = aInstalled != null, loaded_known = aLoaded != null,
-                installed = aInstalled?.Select(m => new { id = m.Id, size = m.Size }), loaded = aLoaded?.Select(m => new { id = m.Id, size = m.Size, processor = m.Processor }),
+                installed = aInstalled?.Select(m => new { id = m.Id, size = m.Size }), loaded = aLoaded?.Select(m => new { id = m.Id, size = m.Size, processor = m.Processor, context_length = m.ContextLength }),
                 catalog = aCatalog.Select(x => new
                 {
                     id = x.c.Id, @params = x.c.Params, size_gb = x.c.SizeGb, vram_gb = x.c.VramGb, zh = x.c.Zh, family = x.c.Family,
@@ -401,7 +403,7 @@ public sealed class Cmd_Llm : SCP_Cmd
         r.Lines.Add("· 已安裝：" + (aInstalled == null ? "量不到（⛔ 不是 0 個）" : $"{aInstalled.Count} 個"));
         foreach (LlmModelRow m in aInstalled ?? new()) r.Lines.Add($"    · {m.Id}　{m.Size}");
         r.Lines.Add("· 載入顯存中：" + (aLoaded == null ? "量不到" : $"{aLoaded.Count} 個"));
-        foreach (LlmModelRow m in aLoaded ?? new()) r.Lines.Add($"    · {m.Id}　{m.Size}　{m.Processor}");
+        foreach (LlmModelRow m in aLoaded ?? new()) r.Lines.Add($"    · {m.Id}　{m.Size}　{m.Processor}　context {m.ContextLength?.ToString(CultureInfo.InvariantCulture) ?? "未知"}");
         r.Lines.Add($"· 顯存門檻：{v.BudgetGb:0.##} GB（{LlmOllama.VramSourceText(v.Source)}）"
                     + (v.GpuOk ? $"　{v.GpuName} total {v.TotalGb} / used {v.UsedGb} / free {v.FreeGb} GB" : ""));
         if (v.Error.Length > 0) r.Lines.Add("  ⚠ 顯存偵測：" + v.Error);
@@ -459,9 +461,9 @@ public sealed class Cmd_Llm : SCP_Cmd
         if (code != 0) return SCP_CmdResult.Fail(4, "✗ 量不到顯存裡的模型（服務打不到？）：" + (e + o).Trim());
         List<LlmModelRow> aRows = LlmOllama.ToRows(LlmOllama.ParseTable(o));
         var r = new SCP_CmdResult().AddValue("loaded_count", aRows.Count.ToString(CultureInfo.InvariantCulture));
-        if (iJson) { r.Lines.Add(JsonSerializer.Serialize(new { ok = true, loaded = aRows.Select(m => new { id = m.Id, size = m.Size, processor = m.Processor }) }, s_Json)); return r; }
+        if (iJson) { r.Lines.Add(JsonSerializer.Serialize(new { ok = true, loaded = aRows.Select(m => new { id = m.Id, size = m.Size, processor = m.Processor, context_length = m.ContextLength }) }, s_Json)); return r; }
         r.Lines.Add($"## 載入顯存中（{aRows.Count}）");
-        foreach (LlmModelRow m in aRows) r.Lines.Add($"- {m.Id}　{m.Size}　{m.Processor}");
+        foreach (LlmModelRow m in aRows) r.Lines.Add($"- {m.Id}　{m.Size}　{m.Processor}　context {m.ContextLength?.ToString(CultureInfo.InvariantCulture) ?? "未知"}");
         return r;
     }
 
@@ -501,6 +503,7 @@ public sealed class Cmd_Llm : SCP_Cmd
         if (iSystem.Length > 0) aMessages.Add(new { role = "system", content = iSystem });
         aMessages.Add(new { role = "user", content = iPrompt });
         var aBody = new Dictionary<string, object> { ["model"] = iModel, ["stream"] = false, ["think"] = iThink, ["options"] = new { num_predict = iNumPredict }, ["messages"] = aMessages };
+        // 上下文由 Ollama 管理（全域預設／模型 num_ctx）；不送 num_ctx，也不以生成上限冒充容量。
         if (iKeepAlive >= 0) aBody["keep_alive"] = iKeepAlive.ToString(CultureInfo.InvariantCulture) + "s";
 
         var sw = Stopwatch.StartNew();

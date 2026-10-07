@@ -35,6 +35,8 @@ public sealed class BartenderPage : SCP_GuiToolPage
     StatusView? m_Status;
     string? m_StatusError;
     List<string>? m_Models;                     // null ＝ 還沒量／量不到（下拉只放目前那一顆）
+    List<LlmModelPage.Model>? m_LoadedModels;    // 最近一次 Ollama 狀態；不把未載入當成全域預設容量
+    string? m_ModelStatusError;
     bool m_ModelsTried;
     (string Key, List<string> Problems)? m_AliasCheck;   // 別名檢查的快取：畫面上的文字沒變就不重讀檔、不重掃白名單
     Task<Done>? m_Job;
@@ -63,6 +65,9 @@ public sealed class BartenderPage : SCP_GuiToolPage
         m_Message = null;
         m_Preview = null;
         m_Stale = true;
+        m_ModelsTried = false;
+        m_LoadedModels = null;
+        m_ModelStatusError = null;
         if (DataRoot.Length == 0 || !Directory.Exists(DataRoot)) return;
         m_Saved = SenateBartender.LoadSettings(DataRoot, out m_SettingsError);
         m_SavedAliases = SCP_TavernMentionAliases.Load(DataRoot, out m_AliasError)
@@ -127,10 +132,13 @@ public sealed class BartenderPage : SCP_GuiToolPage
                 m_Status = ParseStatus(string.Join("\n", r.Lines), out m_StatusError);
                 return;
             case "models":
-                LlmModelPage.StatusView? v = LlmModelPage.ParseStatus(string.Join("\n", r.Lines), out _);
+                LlmModelPage.StatusView? v = LlmModelPage.ParseStatus(string.Join("\n", r.Lines), out m_ModelStatusError);
                 m_Models = v?.Installed?.Select(m => m.Id).ToList();
+                m_LoadedModels = v?.Loaded;
+                if (v != null && v.Loaded == null) m_ModelStatusError = v.Error.Length > 0 ? v.Error : "Ollama 載入狀態量不到";
                 return;
             case "preview":
+                m_ModelsTried = false;   // 試回會載入模型；下一筆重量 context，不能留試回前的讀數
                 string? aJson = JsonOf(string.Join("\n", r.Lines));
                 if (aJson == null) { m_Preview = $"試回沒跑成（exit {r.ExitCode}）：" + string.Join("\n", r.Lines); return; }
                 using (JsonDocument doc = JsonDocument.Parse(aJson))
@@ -306,6 +314,12 @@ public sealed class BartenderPage : SCP_GuiToolPage
             foreach (string m in m_Models ?? new List<string>()) aOpts.Add(new SCP_GuiOption(m));
             if (aCur != NoModel && !aOpts.Any(o => o.Value == aCur)) aOpts.Add(new SCP_GuiOption(aCur, aCur + (m_Models == null ? "" : "（沒有安裝）")));
             g.Dropdown("模型（本機 ollama）", aOpts, aCur, Id("model"));
+            string aSelected = g.FieldValue(Id("model") + "/value", aCur);
+            g.Note("上下文容量由 Ollama 管理；模型自帶 num_ctx 可能覆蓋全域預設。這裡的生成上限只限制輸出長度。");
+            if (aSelected != NoModel)
+                g.Label(!m_ModelsTried || (Busy && m_JobLabel == "量模型清單") ? "實際 context：查詢中…" : LlmModelPage.ContextStatus(m_LoadedModels, aSelected));
+            if (m_ModelStatusError != null) g.Note("[注意] 模型狀態：" + m_ModelStatusError);
+            if (!Busy && g.Button("重新量模型與 context", "bartender/btn/model-context")) m_ModelsTried = false;
             if (m_Models == null && !Busy) g.Note("模型清單量不到（ollama 沒裝或服務沒開？）—— 到 AI 模型頁看。");
             g.Toggle("開思考段（thinking 模型的推理放在思考段，不混進回答）", m_Saved.Think, Id("think"));
             g.TextField("生成上限（token）", m_Saved.NumPredict.ToString(CultureInfo.InvariantCulture), Id("num"));

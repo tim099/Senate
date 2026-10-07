@@ -2,7 +2,7 @@
 title: 酒保（tavern-keeper）—— 被 @ 與 [help] 時由酒館 Server 回一句；別名、人設、開關與試回
 description: 酒保怎麼運作（住在酒館 Server、只回上線之後的 tavern 房訊息）、後台「酒保」頁與 senate cmd bartender 怎麼用、@ 判定規則（別名表、全形 ＠、程式碼區段不算）、只回上線後訊息的規則、設定與狀態檔在哪
 cmds: [bartender]
-last_updated: 2026-10-05
+last_updated: 2026-10-07
 target_audience: [AI_Agent, Tools_Maintainer]
 ---
 
@@ -19,6 +19,10 @@ senate cmd bartender --arg op=preview --arg text="今天推薦什麼？"   # 用
 ```
 
 後台：「酒館 › 酒保」頁（page key `bartender`）。AI 模型頁頂欄有「酒保設定」可以跳過來，酒保頁也能跳回 AI 模型頁。
+
+回應區顯示目前選中模型的 **實際 context**（最近一次 `ollama ps`）。容量沿用 Ollama，全域預設可能被模型自己的 `num_ctx` 覆蓋；酒保不另存一份上下文設定。「生成上限」只限制輸出 tokens，不是 context。
+
+尚未載入顯示沒有生效讀數，服務或欄位量不到顯示未知；不借用其他 tag／alias 的容量。按「重新量模型與 context」可更新外部改動後的讀數；「試回」完成後也會自動重新量。選單顯示的是畫面選中模型，正式酒保仍使用已存檔設定。
 
 ## 2. 怎麼運作
 

@@ -2,7 +2,7 @@
 title: AI 模型（ollama）—— 本地大語言模型的狀態、目錄、下載／移除、顯存卸載、試跑
 description: senate cmd llm 與後台「AI 模型」頁怎麼用：ollama 本體與服務狀態、模型目錄與顯存門檻、下載／移除（不帶 confirm 只印計畫）、從顯存卸載、試跑與紀錄；為什麼 ollama 不走安裝系統
 cmds: [llm]
-last_updated: 2026-10-05
+last_updated: 2026-10-07
 target_audience: [AI_Agent, Tools_Maintainer]
 ---
 
@@ -23,6 +23,14 @@ senate cmd llm --arg op=stop --arg model=qwen3:4b           # 從顯存卸載
 ```
 
 後台：「工具 › AI 模型」頁（page key `llm`），走同一支 Cmd。
+
+### 上下文容量沿用 Ollama
+
+AI 模型試跑與酒保共用 `Cmd_Llm.Chat`，只設定生成上限 `num_predict`，不送 `num_ctx`。上下文容量由 Ollama 管理；模型自身的 `num_ctx` 可以覆蓋全域預設。Senate 不另存一份 context，也不改 Ollama App 的滑桿設定。
+
+「載入顯存中」表格的 **實際 context（tokens）** 取自最近一次 `ollama ps` 的 CONTEXT 欄。CLI `op=status`／`op=ps` 的 JSON 同樣包含 `loaded[].context_length`；缺欄位時為 null，畫面顯示未知。模型尚未載入就沒有實際讀數，不以全域預設或模型 metadata 的上限代替。試跑後自動重新量狀態；外部調整設定後按「重新量狀態」查看新載入結果。
+
+`num_predict` 限制輸出長度，與上下文容量不同。顯存門檻只是篩選條件；實際顯存需求還受模型權重、量化、context 與 CPU/GPU 分配影響。Ollama 預設與模型 override 的行為見 [官方上下文文件](https://docs.ollama.com/context-length)。
 
 ## 2. 為什麼不走安裝系統（Tim 2026-10-05 拍板）
 
