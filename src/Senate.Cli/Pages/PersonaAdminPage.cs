@@ -9,6 +9,8 @@
 //   · actual_agent：在線時同一步改 lock 與 profile（`SetLockActualAgent`），離線時只改 profile。
 //   · 顯示資料：`color.md`／`avatar_url.md`／`avatar.png`。**已有頭像時換頭像要二段確認**。
 //   · 推導欄（status／wake_count／agent…）與結構欄（vector、lineage）只讀 —— 前者真相源在別處，後者不該手改。
+//   · 信件：只讀。列選中那位的自寫信（`SCP_WakeLetters.RecentSelfLetters`，與 brief 見樹同一支：頂層＋wakes/＋rests/），
+//     每封可開 Markdown 檢視頁（TASK-0447，取代 Unity 的 UCL_PersonaInspectorPage 信件清單）。
 // ⚠ 視窗文字不放 emoji（字型沒有那些字 ⇒ 方框）。
 #nullable enable
 using SCP.Core.Bank;
@@ -63,6 +65,8 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
     SCP_AgentEmailInfo? m_SelMail;
     bool m_SelFixture;
     string? m_SelWarn;
+    /// <summary>選中那位的自寫信（新到舊）＋各自的 trigger／所在資料夾 —— 跟其他細節一樣只在換人或重讀時讀磁碟。</summary>
+    List<(SCP_LetterRef Ref, string Trigger, string Where)> m_SelLetters = new();
 
     /// <summary>
     /// 要不要把欄位倉重新對齊成**這一位現在的資料**。
@@ -122,6 +126,15 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
         m_SelModel = SCP_AgentModelRegistry.Resolve(m_LettersRoot, m_Sel, m_Region);
         m_SelMail = SCP_AgentEmail.Resolve(m_LettersRoot, m_Sel, m_Region, m_DataRoot);
         m_SelFixture = SCP_PersonaProfile.IsTestFixture(m_LettersRoot, m_Sel);
+        m_SelLetters = new();
+        string aPersonaDir = SCP_WakeLetters.PersonaDir(m_LettersRoot, m_Sel);
+        foreach (SCP_LetterRef r in SCP_WakeLetters.RecentSelfLetters(m_LettersRoot, m_Sel))
+        {
+            string aParent = Path.GetDirectoryName(r.Path) ?? "";
+            string aWhere = string.Equals(Path.GetFullPath(aParent), Path.GetFullPath(aPersonaDir), StringComparison.OrdinalIgnoreCase)
+                ? "頂層" : Path.GetFileName(aParent);
+            m_SelLetters.Add((r, SCP_LetterText.ReadFrontmatterField(r.Path, "trigger"), aWhere));
+        }
     }
 
     protected override void TopBarButtons(SCP_Ui iUi)
@@ -180,7 +193,29 @@ public sealed class PersonaAdminPage : SCP_GuiToolPage
         g.Separator();
         DrawIdentity(g, aRaw, aAuthor);
         g.Separator();
+        DrawLetters(g);
+        g.Separator();
         DrawAll(g);
+    }
+
+    // ── 信件（只讀）──────────────────────────────────────────
+    void DrawLetters(SCP_Ui g)
+    {
+        using (g.Row())
+        {
+            g.Label($"信件（{m_SelLetters.Count} 封自寫信，新到舊）");
+            OpenFolderButton(g, SCP_WakeLetters.PersonaDir(m_LettersRoot, m_Sel), "persona/letters/open-dir", "開啟信件夾");
+        }
+        using var aFold = g.Fold("展開清單", "persona/letters/fold/" + m_Sel, iDefaultOpen: false);
+        if (!aFold.Open) return;
+        if (m_SelLetters.Count == 0) { g.Note("（沒有自寫信 —— 頂層、wakes/、rests/ 都沒有 type: letter_to_future_self 的檔）"); return; }
+        foreach (var (aRef, aTrigger, aWhere) in m_SelLetters)
+            using (g.IdScope("letter/" + aRef.Path))
+            using (g.Row())
+            {
+                if (g.Button("開啟", "persona/letters/open")) MarkdownViewerPage.Open(g, Controller, m_Model, aRef.Path);
+                g.Label($"{Or(aRef.Day, "（沒日期）")}　{aWhere}/{aRef.FileName}" + (aTrigger.Length > 0 ? "　" + aTrigger : ""));
+            }
     }
 
     // ── 概況（只讀）──────────────────────────────────────────
