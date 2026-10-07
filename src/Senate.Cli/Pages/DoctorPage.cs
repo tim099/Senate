@@ -89,7 +89,7 @@ public sealed class DoctorPage : SCP_GuiToolPage
 
         if (m_Projects.Count == 0)
         {
-            g.Note("設定檔裡沒有任何專案。編輯 SenateData/config/senate.local.json 的 projects[] 加上專案根目錄。");
+            g.Note("設定檔裡沒有任何 Unity 專案（選填 —— 只有要透過 Unity CLI 串接時才需要）。要加就編輯 senate.local.json 的 projects[]。");
             g.Note("⚠ 「沒設定」與「設定了但路徑不存在」是兩件事 —— 後者會在下面列成 Missing，不會靜默消失。");
             return;
         }
@@ -175,7 +175,10 @@ public sealed class DoctorPage : SCP_GuiToolPage
         if (aSha.Length == 0)
             return ($"stamp `{iBuildId}` 解不出 SHA ⇒ 不猜", "·");
 
-        string? aRepo = FindRepoUpwards(AppContext.BaseDirectory, 5);
+        // 本執行檔所屬的 repo ＝ Senate 專案根（宿主宣告的那一格，TASK-0390：不再自己往上找第二份）。
+        //   ⚠ 宿主找不到 `.git` 時會退回 cwd ⇒ 這裡再確認一次真的是 git repo，⛔ 不把 cwd 當成「找到了」。
+        string aHost = SenatePathBinding.HostRepoRoot;
+        string? aRepo = aHost.Length > 0 && SCP_Git.IsRepo(aHost) ? aHost : null;
         if (aRepo == null)
             return ("找不到本執行檔所屬的 git repo（被複製到別處？）⇒ **問不到**，不是沒落後", "·");
 
@@ -217,18 +220,5 @@ public sealed class DoctorPage : SCP_GuiToolPage
         return ($"**落後 {aCnt} 顆**：build `{aSha}` → HEAD `{aHead}`"
                 + (aDirty ? "（且 build 當時工作區是髒的）" : "")
                 + " ⇒ 要最新行為請重 build（⛔ 落後本身不是錯）", "⚠");
-    }
-
-    /// <summary>從 <paramref name="iStart"/> 往上找第一個 git repo；找不到回 null（⛔ 不回空字串當「找到了」）。</summary>
-    static string? FindRepoUpwards(string iStart, int iMaxLevels)
-    {
-        try
-        {
-            var aDir = new DirectoryInfo(iStart);
-            for (int i = 0; i <= iMaxLevels && aDir != null; ++i, aDir = aDir.Parent)
-                if (SCP_Git.IsRepo(aDir.FullName)) return aDir.FullName;
-        }
-        catch { /* 路徑問不到就當找不到 —— 這一格回 null 比丟例外有用 */ }
-        return null;
     }
 }

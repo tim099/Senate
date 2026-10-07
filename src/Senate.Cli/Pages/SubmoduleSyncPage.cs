@@ -755,7 +755,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         bool aPushAll = g.Toggle("push 推到該 repo 的**所有** remote（關 ＝ 只推 origin）", m_Saved?.PushAllRemotes ?? false, PushAllId);
 
         if (aIncludeRoot)
-            g.Note("　⚠ root **永遠不切 branch** —— 專案根換分支影響整個工程，那個動作該是人自己下的，不進批次。");
+            g.Note("　⚠ root **永遠不切 branch** —— 主 repo 根換分支影響整個工程，那個動作該是人自己下的，不進批次。");
         if (aPushAll)
             g.Note("　⚠ 推去哪由各 repo 的 remote 設定決定（那是每台機器各自的 local config）。"
                    + "一個 remote 失敗不影響其他 remote，但整列會記成失敗並逐個列出。"

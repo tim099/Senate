@@ -2,7 +2,7 @@
 // 物理意義（TASK-0311，epic 0295 ③ 第二刀）：**先走 Senate 那條管線**——
 //           `SCP_TavernPostCompose` 組訊息 → 酒館 Server `tavern-write`（配號建檔＋發薪＋@mention）——
 //           跟 `senate cmd tavern-post`（TASK-0308）同一條路；前處理全部在 SCP_Core（TASK-0311／0312）。
-//           TASK-0366 起**沒有** Editor 退路（`Tavern op=post` 已退場）：找不到資料根對應的專案根 ⇒ 確定沒發。
+//           TASK-0366 起**沒有** Editor 退路（`Tavern op=post` 已退場）：TASK-0390 起不再找「資料根對應的 Unity 專案」—— 顯示基準是 Senate 專案根，沒有 Unity 專案也照發。
 //           ⚠ 本閘不做 alter 配對延遲（呼叫端是公告不是對話，見 `PostViaSenate`）。
 //           ⚠ 寫入端只有一個：酒館 Server 的 `tavern-write`（TASK-0341）⇒ 這裡管的是「誰組訊息」，⛔ 不是多開一個寫入端。
 // 數值影響：一次 Server round-trip。
@@ -53,11 +53,11 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         string? aSchema = SCP_TavernMetaSchema.Validate(iMeta);
         if (aSchema != null) return SCP_TavernPostVerdict.Bad("meta 不合 T06.3 schema：" + aSchema);
 
-        // 前處理全部在 Senate 做得完（TASK-0312）；專案根是詞典附註（`Docs/Glossary`）的根，拿不到就組不出訊息。⛔ 不猜一個。
-        if (TryResolveProjectRoot(out string aProjectRoot, out string aWhy))
-            return PostViaSenate(iSenderPersona, iBody, iMeta, aProjectRoot, oLines);
-        // TASK-0366：Editor 的 `Tavern op=post` 已退場 ⇒ ⛔ 沒有交回 Editor 這條路了。找不到專案根 ＝ **確定沒發**（修好設定後重跑安全）。
-        return SCP_TavernPostVerdict.Bad("找不到這個資料根對應的專案根（" + aWhy + "）—— **確定沒發**；把專案寫進 senate.local.json 的 projects[] 後重跑");
+        // 前處理全部在 Senate 做得完（TASK-0312）。詞典附註的顯示基準是 **Senate 專案根**（詞典是 Senate 的 submodule）——
+        //   🩸 TASK-0390：原本要在設定檔裡找「資料根對得上的 Unity 專案」，找不到就**確定沒發** ⇒ 沒有 Unity 專案就不能發文。
+        if (SenatePathBinding.HostRepoRoot.Length == 0)
+            return SCP_TavernPostVerdict.Bad("宿主沒有宣告 Senate 專案根（SenateHostPaths.Install 沒跑）—— 程式錯誤，**確定沒發**");
+        return PostViaSenate(iSenderPersona, iBody, iMeta, SenatePathBinding.HostRepoRoot, oLines);
     }
 
     // ===========================================================
@@ -74,10 +74,10 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             LettersRoot = SCP_DataPaths.Letters(new SCP_DataRoot(m_DataRoot)).Value,
             ProjectRoot = iProjectRoot.Replace('\\', '/'),
         };
-        // 詞典根走 PathsPage 那一格（SCP_PathId.GlossaryRoot）；解不出來 ⇒ 說出來、退回預設推導。
+        // 詞典根走 PathsPage 那一格（SCP_PathId.GlossaryRoot）；解不出來 ⇒ 說出來、本次不附詞典（TASK-0390：不猜根）。
         string? aGlossary = SenatePathBinding.ResolveGlossaryRoot(UnityDelegateCmd.ConfigProvider?.Invoke().Item1, out string? aGlossaryErr);
         if (aGlossary != null) aRoots.GlossaryRoot = aGlossary;
-        else oLines.Add($"⚠ 詞典根解不出來（{aGlossaryErr}）—— 本次用預設 `{aRoots.GlossaryRoot}`");
+        else oLines.Add($"⚠ 詞典根解不出來（{aGlossaryErr}）—— 本次不附詞典附註");
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(aRoots.DataRoot, aRoots.LettersRoot, aRoots.ProjectRoot,
             aRoots.GlossaryRoot, aRoots.Region, Room, iPersona, iBody, iMeta);
         foreach (string n in aDraft.Notes) oLines.Add("⚠ " + n);
@@ -119,36 +119,6 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
                 + "   # 看得到這一則 ⇒ **發了，別補發**；看不到 ⇒ 才補發");
         return SCP_TavernPostVerdict.Bad(
             $"酒館寫入確定沒發（delegate_failure={(aFailure.Length > 0 ? aFailure : "exit " + aWrite.ExitCode)}）");
-    }
-
-    /// <summary>
-    /// 這個資料根是哪個專案的：在 Senate 設定檔的啟用專案裡找「解析出來的 AgentCommands 根 ＝ 本閘的資料根」那一個。
-    /// <para>⛔ 找不到、或有兩個都對得上 ⇒ 回 false（不猜）—— 呼叫端回「確定沒發」。</para>
-    /// </summary>
-    bool TryResolveProjectRoot(out string oProjectRoot, out string oWhy)
-    {
-        oProjectRoot = ""; oWhy = "";
-        if (UnityDelegateCmd.ConfigProvider == null) { oWhy = "宿主沒有裝上設定來源"; return false; }
-        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        if (aConfig == null) { oWhy = "還沒有設定檔（" + aConfigPath + "）"; return false; }
-        string aWant = Norm(m_DataRoot);
-        var aHits = new List<string>();
-        foreach (SenateProject p in aConfig.Projects)
-        {
-            if (!p.Enabled || string.IsNullOrWhiteSpace(p.Root)) continue;
-            string? aDr = ProjectProbe.ResolveAgentCommandsRoot(p.Root, p.AgentCommandsRoot);
-            if (aDr != null && Norm(aDr) == aWant) aHits.Add(p.Root);
-        }
-        if (aHits.Count == 1) { oProjectRoot = aHits[0]; return true; }
-        oWhy = aHits.Count == 0 ? "設定檔的啟用專案裡沒有一個的資料根是它" : "有 " + aHits.Count + " 個專案都對得上，不猜";
-        return false;
-    }
-
-    static string Norm(string iPath)
-    {
-        string aFull;
-        try { aFull = Path.GetFullPath(iPath); } catch (Exception) { aFull = iPath; }
-        return aFull.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
     }
 
     static string Value(SCP_CmdResult iR, string iKey)

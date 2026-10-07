@@ -93,7 +93,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
                 // TASK-0313：詞典附註改由寫入端補（Unity 端不碰詞典）。兩格由 CLI 宿主照 senate.local.json 自動填，
                 //   ⛔ 呼叫端不必給 —— 沒有它們（例如 in-process 呼叫、沒帶）⇒ 不附，照寫。
                 new SCP_CmdArgSpec("glossary_root", "詞典根（宿主自動填；不帶 ⇒ 不補附註）"),
-                new SCP_CmdArgSpec("project_root", "專案根（附註路徑顯示用；宿主自動填）"),
+                new SCP_CmdArgSpec("project_root", "Unity 專案根（附註路徑顯示用；宿主自動填；沒有 Unity 專案時附註印絕對路徑）"),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -205,15 +205,15 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     // 區塊職責：**寫完就通知 @ 到的人**（TASK-0299）—— 規則在 SCP_TavernMentions（與 Editor 本地寫那條同一支）。
     // 物理意義：通知是寫入不變量（任何進到房間的訊息都該觸發），⇒ 掛在寫入端；直打本支的訊息以前沒人通知。
     //          這裡拿得到**真的訊息檔路徑**（Editor 在 server 模式委派之後拿不到）⇒ 截斷的條目會指出全文在哪。
-    // 數值影響：通知失敗不讓寫入失敗；逐人回報。repo 根＝資料根的上一層（只用來把路徑印成 repo 相對，
-    //          資料根不在 repo 底下時退回印絕對路徑，⛔ 不影響通知本身）。
+    // 數值影響：通知失敗不讓寫入失敗；逐人回報。路徑印成「相對資料根」（TASK-0390，
+    //          不在資料根底下的檔才印絕對路徑，⛔ 不影響通知本身）。
     // ===========================================================
     static void AppendMentions(string iDataRoot, string iRoom, int iSeq, string iMsgPath, SCP_TavernMessage iMsg, SCP_CmdResult ioResult)
     {
         try
         {
-            string aRepoRoot = System.IO.Directory.GetParent(iDataRoot.TrimEnd('/', '\\'))?.FullName ?? "";
-            SCP_MentionResult r = SCP_TavernMentions.Notify(iDataRoot, SCP_MentionInput.From(iMsg, iRoom, iSeq, iMsgPath), aRepoRoot,
+            // 通知裡的訊息檔路徑印「相對資料根」（TASK-0390：同 refs 慣例）—— 🩸 舊版拿資料根上一層當 repo 根，印成 `Valhalla/ChatTavern/...`
+            SCP_MentionResult r = SCP_TavernMentions.Notify(iDataRoot, SCP_MentionInput.From(iMsg, iRoom, iSeq, iMsgPath), iDataRoot,
                                                             iLine => ioResult.Lines.Add("· " + iLine));
             if (r.Notified.Count > 0) ioResult.Lines.Add("📥 已通知：" + string.Join("、", r.Notified));
             if (r.Duplicates.Count > 0) ioResult.Lines.Add("📥 已經通知過（冪等，未重寫）：" + string.Join("、", r.Duplicates));

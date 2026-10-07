@@ -2,7 +2,7 @@
 // 物理意義：⭐ 讀的是 UCL_Core 裡**同一份** `Tools~/AgentCommands/kb_targets.json`（舊 knowledge_base.py 也讀它），
 //           ⛔ 不在 Senate 另抄一份：新舊兩套並存的這段期間，兩份清單一漂就是「同一個 target 新舊收的檔不一樣」，
 //           而評估讀數會把那個差別誤讀成檢索品質的差別。舊版退場時這個檔再搬過來。
-//           前綴語意照舊：無前綴＝專案根、`core:`＝UCL_Core 根、`data:`＝AgentCommands 資料根；`expand` 逐 persona 展開。
+//           前綴語意照舊：無前綴＝Unity 專案根、`core:`＝UCL_Core 根、`data:`＝AgentCommands 資料根；`expand` 逐 persona 展開。
 // 數值影響：純讀（列目錄）。
 // ⚠ glob 自己寫（`**`／`*`／`?`／`[!_]`／`[abc]`）：.NET 內建的不支援 `[!_]`，而清單靠它排除 `_root_index.md` 那類機械產物。
 // ⚠ 去重用正規化後的真實路徑（不分大小寫）：Windows 上 `Lessons/**` 與 `lessons/**` 回同一批檔、字串不同
@@ -18,11 +18,17 @@ public sealed record KbTarget(string Name, string Desc, string Kind, IReadOnlyLi
 /// <summary>一個 target 解析出來的來源檔（`Bases` 給「相對路徑」用：塊 id 不用裸檔名，同名檔才不會撞）。</summary>
 public sealed record KbSources(KbTarget Target, List<string> Files, List<string> Bases);
 
+/// <summary>
+/// 知識庫的三個 glob 基準＋定義檔位置（TASK-0390：全部跟著 Senate＋Valhalla，⛔ 不讀 Unity 專案）。
+/// 無前綴＝<see cref="RepoRoot"/>（Senate 專案根）、`scp_core:`＝<see cref="ScpCoreRoot"/>、`data:`＝<see cref="DataRoot"/>。
+/// </summary>
 public sealed class KbRoots
 {
-    public string ProjectRoot { get; init; } = "";
-    public string CoreRoot { get; init; } = "";
+    public string RepoRoot { get; init; } = "";
+    public string ScpCoreRoot { get; init; } = "";
     public string DataRoot { get; init; } = "";
+    /// <summary>`kb_targets.json` 的完整路徑（描述表的 KbTargetsFile）。</summary>
+    public string TargetsFile { get; init; } = "";
 }
 
 public static class KbTargets
@@ -33,7 +39,7 @@ public static class KbTargets
     public static Dictionary<string, KbTarget>? Load(KbRoots iRoots, out string? oError)
     {
         oError = null;
-        string aPath = Path.Combine(iRoots.CoreRoot, "Tools~", "AgentCommands", FileName);
+        string aPath = iRoots.TargetsFile;
         if (!File.Exists(aPath)) { oError = "找不到目標清單：" + aPath; return null; }
         try
         {
@@ -41,6 +47,10 @@ public static class KbTargets
             var d = new Dictionary<string, KbTarget>(StringComparer.Ordinal);
             if (!aDoc.RootElement.TryGetProperty("targets", out JsonElement aTargets) || aTargets.ValueKind != JsonValueKind.Object)
             { oError = "目標清單缺 targets 區塊：" + aPath; return null; }
+            foreach (JsonProperty p in aTargets.EnumerateObject())
+                foreach (string g in Arr(p.Value, "globs"))
+                    if (UnknownPrefix(g) is string aBad)
+                    { oError = $"target `{p.Name}` 的 glob `{g}` 用了不認得的前綴 `{aBad}:`（只認 無／scp_core:／data:）—— ⛔ 不猜，不然它安靜地匹配 0 檔：{aPath}"; return null; }
             foreach (JsonProperty p in aTargets.EnumerateObject())
                 d[p.Name] = new KbTarget(p.Name, Str(p.Value, "desc"), Str(p.Value, "kind", "markdown"), Arr(p.Value, "globs"),
                                          p.Value.TryGetProperty("exclude_from_all", out var x) && x.ValueKind == JsonValueKind.True,
@@ -95,9 +105,23 @@ public static class KbTargets
 
     static (string Base, string Pat) Split(string iGlob, KbRoots iRoots)
     {
-        if (iGlob.StartsWith("core:", StringComparison.Ordinal)) return (iRoots.CoreRoot, iGlob.Substring(5));
-        if (iGlob.StartsWith("data:", StringComparison.Ordinal)) return (iRoots.DataRoot, iGlob.Substring(5));
-        return (iRoots.ProjectRoot, iGlob);
+        if (iGlob.StartsWith(ScpCorePrefix, StringComparison.Ordinal)) return (iRoots.ScpCoreRoot, iGlob.Substring(ScpCorePrefix.Length));
+        if (iGlob.StartsWith(DataPrefix, StringComparison.Ordinal)) return (iRoots.DataRoot, iGlob.Substring(DataPrefix.Length));
+        return (iRoots.RepoRoot, iGlob);
+    }
+
+    const string ScpCorePrefix = "scp_core:", DataPrefix = "data:";
+
+    /// <summary>
+    /// glob 的前綴不是「無／scp_core:／data:」⇒ 回那個前綴名；否則 null。
+    /// 🩸 TASK-0390：舊的 `core:`（Unity 專案裡的 UCL_Core）搬家後若留著，會被當成 repo 相對的字面路徑、安靜地匹配 0 檔。
+    /// </summary>
+    static string? UnknownPrefix(string iGlob)
+    {
+        Match m = Regex.Match(iGlob, @"^([a-z_]+):");
+        if (!m.Success) return null;
+        string aName = m.Groups[1].Value + ":";
+        return aName == ScpCorePrefix || aName == DataPrefix ? null : m.Groups[1].Value;
     }
 
     // ── glob ──────────────────────────────────────────────────────

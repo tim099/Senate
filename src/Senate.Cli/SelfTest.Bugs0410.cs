@@ -20,7 +20,7 @@ public static partial class SelfTest
             Directory.CreateDirectory(data);
             Directory.CreateDirectory(letters);
             var config = new SenateConfig();
-            config.Projects.Add(new SenateProject { Root = root, AgentCommandsRoot = data });
+            config.Paths.AgentCommandsRoot = data;   // 資料根是全域那一格（TASK-0390），不住在專案上
             config.Awakening.LettersRoot = letters;
             config.Save(SenateConfig.DefaultPath(root));
             var method = typeof(Program).GetMethod("CmdScp", BindingFlags.Static | BindingFlags.NonPublic)!;

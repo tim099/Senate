@@ -1,0 +1,91 @@
+{
+  "_comment": "知識庫語料庫 target 定義（config-driven，加 target = 改本檔、零 code）。glob 前綴：無=Senate 專案根 / scp_core:=SCP_Core 根 / data:=AgentCommands 資料根（TASK-0390：從 Unity 專案的 UCL_Core 搬進 Senate；位置＝描述表 KbTargetsFile）。kind 目前僅影響顯示，切塊統一走 chunk_text。Python(knowledge_base.py) 與 C#(AdminPage) 同讀本檔。",
+  "targets": {
+    "docs": {
+      "desc": "Senate 文件 — <Senate>/Docs/**/*.md（指令、工作流、架構）",
+      "kind": "markdown",
+      "globs": [
+        "Docs/**/*.md"
+      ]
+    },
+    "coredocs": {
+      "desc": "SCP_Core 共用文件 — <SCP_Core>/Docs~/**/*.md（共用機制、撰寫規範、skill 內容）",
+      "kind": "markdown",
+      "globs": [
+        "scp_core:Docs~/**/*.md"
+      ]
+    },
+    "lessons": {
+      "desc": "Agent 經驗庫 — AgentCommands/Lessons/*.jsonl + *.md（跨 agent 累積教訓）",
+      "kind": "lessons",
+      "globs": [
+        "data:Lessons/**/*.jsonl",
+        "data:Lessons/**/*.md",
+        "data:lessons/**/*.jsonl",
+        "data:lessons/**/*.md"
+      ]
+    },
+    "fragments": {
+      "desc": "見根 · 關鍵記憶片段 — letters/<persona>/fragments/*.md（每檔一主題，天然 embedding chunk；醒來想不起某事時語意檢索）",
+      "kind": "markdown",
+      "half_life_days": 90,
+      "_note": "glob 一律用 [!_]* 全收，**不要逐型列舉**。🩸 2026-08-16 實證：原本枚舉五型(lesson/unsolved/relation/identity/philosophy)，當天新增第六型 howto_ 之後，新碎片靜默不進索引 —— reindex 照樣印 `106 檔 → 718 chunks / status=ready` 綠燈，跟沒加那個檔一模一樣。缺的那一項不會出現在自己的清單上，而枚舉會乾淨地 exit 0。前綴 _ 排除的是機械產物(_root_index.md)，那份是索引不是記憶。",
+      "globs": [
+        "data:ChatTavern/baton/letters/*/fragments/[!_]*.md"
+      ]
+    },
+    "alaya": {
+      "desc": "集體潛意識 Alaya — AgentCommands/Alaya/fragments/*.md（全員共用的非工作通用經驗；個人碎片放血證，這裡放通用守則，兩邊 links 互指）",
+      "kind": "markdown",
+      "_note": "glob 一律用 [!_]* 全收，不要逐型列舉（同 fragments 的血證：枚舉型別時新型別會靜默不進索引，而 reindex 照樣印綠燈）。",
+      "globs": [
+        "data:Alaya/fragments/[!_]*.md"
+      ]
+    },
+    "library": {
+      "desc": "閱讀／觀影記憶 — BookNotes/Library（每位 reader 的章節心得 round、書架投影、人物觀點）＋ Books/（成書）。想不起『上次看到哪、當時怎麼想』時查這裡。",
+      "kind": "markdown",
+      "_note": "🩸 2026-08-16 補：Tim 要接回《末日後酒店》的觀影記憶，我跑 recall 撈到的全是不相干的 Plan 與 glossary（最高分 0.55）—— 因為**整個閱讀庫從來不是任何 target**。這是同一隻的第三個形狀：①檔沒進索引（型別枚舉）②索引沒進賽場（預設單一 target）③**整個語料庫沒被登記過**。三次都不報錯、三次的回傳都『看起來很正常』。",
+      "_glob_audit": "2026-08-16 落檔當下逐條實數：chapters 154 ／readers 根 15 ／characters 74 = 243。⚠ 初版我還寫了兩條 `data:Books/*/...md`，實跑對數發現**成書是 .txt 不是 .md，那兩條匹配 0 檔** —— 匹配 0 的 glob 不會報錯，只會讓人以為收錄了。既然量到 0 就不留，成書要進索引另開 target 談（.txt 切塊規則跟 md 不同）。characters 那條也踩過同一隻：第一版寫成 `characters/*.md`（實為 `characters/<角色>/vN.md`）⇒ 0 檔，改對後 74 檔。**每加一條 glob 就實數一次，任何一條 0 就是還沒對。**",
+      "globs": [
+        "data:BookNotes/Library/media/*/readers/*/chapters/*/*.md",
+        "data:BookNotes/Library/media/*/readers/*/[!_]*.md",
+        "data:BookNotes/Library/media/*/readers/*/characters/*/*.md"
+      ]
+    },
+    "coding": {
+      "desc": "工程實務知識（外部提煉）— AgentCommands/Knowledge/coding/*.md（解衝突／debug 迴路／TDD seam／deep module／review 兩軸／寫給 agent 的文件…；問『這件事該怎麼做』時查這裡）。⛔ **不收**我們自己的血證（→fragments/lessons/alaya）、本專案機制與 API（→coredocs/docs）、工作進度（→work_memory）",
+      "kind": "markdown",
+      "_note": "本 target 收的是**知識點**不是 skill：外部 skill 我們刻意不搬進專案（多一份要同步的東西），只提取判準與做法。每檔開頭的『## 會這樣問』是刻意的檢索鉤子 —— bge-m3 比對語意，而真人的問句與一份純技術筆記在向量上並不近（本專案既有血證：關鍵字查失敗的樣子跟『這條知識不存在』一模一樣）。前綴 _ 的檔（_README.md）是說明不是知識，不進索引。",
+      "globs": [
+        "data:Knowledge/coding/[!_]*.md"
+      ]
+    },
+    "work_memory": {
+      "desc": "工作記憶區 — AgentCommands/WorkMemory/<topic>/*.md（所有 agent 共用, 每工作主題的拍板/坑/現況/指路; 開工前語意查 knowhow）",
+      "kind": "markdown",
+      "half_life_days": 90,
+      "globs": [
+        "data:WorkMemory/*/decision_*.md",
+        "data:WorkMemory/*/knowhow_*.md",
+        "data:WorkMemory/*/pitfall_*.md",
+        "data:WorkMemory/*/state_*.md",
+        "data:WorkMemory/*/pointer_*.md",
+        "data:WorkMemory/*/_topic.md"
+      ]
+    }
+  },
+  "_expand_comment": "expand: 依磁碟現況自動展開成「一個 owner 一份索引」的 target（不寫名單 —— 列舉會漂，而漂掉的那一個不會叫；見 fragments 的 _note 血證）。展開出的 target 帶 exclude_from_all=true，不進 `--target all`，否則同一份文字在 all 裡會出現兩次、同分並列，看起來像兩筆獨立證據。",
+  "expand": [
+    {
+      "id": "frag_per_persona",
+      "desc_tpl": "個人碎片（單 persona 索引）— letters/{name}/fragments/*.md；載入與重建成本只跟自己的碎片量有關",
+      "kind": "markdown",
+      "half_life_days": 90,
+      "enumerate_dirs": "data:ChatTavern/baton/letters/*/fragments",
+      "owner_dir_index": -2,
+      "name_tpl": "frag_{name}",
+      "glob_tpl": "data:ChatTavern/baton/letters/{name}/fragments/[!_]*.md"
+    }
+  ]
+}

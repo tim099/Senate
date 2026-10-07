@@ -34,7 +34,7 @@ public sealed class Cmd_Install : SCP_Cmd
         new SCP_CmdArgSpec("ids", "項目 id，逗號分隔（check／install；uninstall 一次一個）"),
         new SCP_CmdArgSpec("skill", "check：skill 名或 SKILL.md 路徑 —— 讀它 frontmatter 的 `requires_install`"),
         new SCP_CmdArgSpec("confirm", "install／uninstall／create_env／clean_partial／resume_partial：=1 才真的動手（不給＝只印計畫）"),
-        new SCP_CmdArgSpec("project_root", "check：找 skill 用（`.claude/skills` 等）；沒給 ⇒ 用設定檔那一格"),
+        // ⛔ 2026-10-07（TASK-0390）拿掉 `project_root`：skill 只裝在 Senate 自己 ⇒ check 只找 Senate 那幾個 skills 目錄。
         new SCP_CmdArgSpec("only", "status：只列某一種狀態（installed｜missing｜broken｜partial｜unknown）—— 要知道「裝了哪些、之後可以拆」用 installed",
                            iChoices: new[] { "installed", "missing", "broken", "partial", "unknown" }),
     };
@@ -129,11 +129,9 @@ public sealed class Cmd_Install : SCP_Cmd
         string aSkill = iArgs.Get("skill");
         if (aSkill.Length > 0)
         {
-            string aProj = iArgs.Get("project_root");
             var aRoots = new List<string>();
-            foreach (string aBase in new[] { aProj, ServerDelegateCmd.RepoRootProvider!() })
-                if (aBase.Length > 0)
-                    foreach (string sub in new[] { ".claude/skills", ".agents/skills", ".codex/skills" }) aRoots.Add(Path.Combine(aBase, sub));
+            string aBase = ServerDelegateCmd.RepoRootProvider!();
+            foreach (string sub in new[] { ".claude/skills", ".agents/skills", ".codex/skills" }) aRoots.Add(Path.Combine(aBase, sub));
             string? aFile = InstallRequire.FindSkillFile(aSkill, aRoots, out List<string> aTried);
             if (aFile == null)
                 return SCP_CmdResult.Fail(2, $"✗ 找不到 skill '{aSkill}'", "  找過：" + string.Join("、", aTried));

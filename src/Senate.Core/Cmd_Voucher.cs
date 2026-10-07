@@ -182,8 +182,8 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         if (!int.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int aAmount) || aAmount <= 0)
             return SCP_CmdResult.Fail(2, $"✗ amount 必須是正整數（收到 '{iArgs.Get("amount")}'）");
 
-        string aData = iArgs.Get("data_root").Trim();
-        if (aData.Length == 0) aData = SCP_Portfolio.DataRootOfLetters(iLetters);
+        string aData = DataRootOf(iArgs);
+        if (aData.Length == 0) return SCP_CmdResult.Fail(2, "✗ 資料根解不出來（data_root 沒給、設定檔那一格也解不出）—— 用 `senate cmd paths` 看");
 
         bool aConfirm = iArgs.Get("confirm").Trim() == "1";
         DateTime aNow = DateTime.UtcNow;
@@ -279,11 +279,22 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
     /// 券已落盤之後記一筆交易事件（TASK-0371，報酬率用）。沒報價的券不記（SCP_Portfolio 守衛①）。
     /// 回 null ＝ 已記或不需要記；回字串 ＝ 沒記成 —— ⛔ 不推翻已成立的券異動，由呼叫端印出來。
     /// </summary>
+    /// <summary>
+    /// 資料根：給了 `data_root` 就用；沒給 ⇒ 唯一入口 `SenatePathBinding.ResolveDataRoot`（TASK-0390）。解不出來回空字串。
+    /// 🩸 原本沒給時從信件根往上三層反推 —— 信件根設到別處時，那三層會指到另一個目錄而不報錯。
+    /// </summary>
+    static string DataRootOf(SCP_CmdArgs iArgs)
+    {
+        string aGiven = iArgs.Get("data_root").Trim();
+        if (aGiven.Length > 0) return aGiven;
+        return SenatePathBinding.ResolveDataRoot(UnityDelegateCmd.ConfigProvider?.Invoke().Item1, out _) ?? "";
+    }
+
     static string? LogFlow(SCP_LettersRoot iLetters, SCP_CmdArgs iArgs, string iPersona, string iVoucher,
                            long iDeltaE8, string iSource, string iRef, DateTime iNow)
     {
-        string aData = iArgs.Get("data_root").Trim();
-        if (aData.Length == 0) aData = SCP_Portfolio.DataRootOfLetters(iLetters);
+        string aData = DataRootOf(iArgs);
+        if (aData.Length == 0) return "資料根解不出來 ⇒ 投資組合這一筆沒記";
         return SCP_Portfolio.RecordFlow(aData, iLetters, iPersona, iVoucher, iDeltaE8, iSource, iRef, iNow, out _);
     }
 

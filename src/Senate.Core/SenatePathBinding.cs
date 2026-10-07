@@ -27,7 +27,7 @@ public static class SenatePathBinding
         if (aEnabled.Count == 1) { oError = null; return aEnabled[0]; }
         if (aEnabled.Count == 0)
         {
-            oError = "沒有啟用的專案 —— 專案根沒有人說過（不是空的，是沒有起點）";
+            oError = "沒有啟用的 Unity 專案 —— Unity 專案根沒有人說過（選填：只有 Unity CLI 串接要它）";
             return null;
         }
         var aNames = new List<string>();
@@ -47,23 +47,16 @@ public static class SenatePathBinding
                 return HostRepoRoot.Length == 0
                     ? SCP_PathStoredValue.Unavailable("宿主沒有宣告 Senate 專案根（SenatePathBinding.HostRepoRoot 沒設）")
                     : SCP_PathStoredValue.Of(HostRepoRoot);
-            case SCP_PathId.ProjectRoot:
+            case SCP_PathId.UnityProjectRoot:
             {
                 SenateProject? aProj = SingleProject(iConfig, out string? aErr);
                 return aProj == null
                     ? SCP_PathStoredValue.Unavailable(aErr!)
                     : SCP_PathStoredValue.Of(aProj.Root);
             }
-            // ⚠ 資料根是 Global：值住在那個唯一專案的欄位裡**只是過渡**
-            //   （它之後會搬到 Unity 專案之外）。所以這裡讀的仍是那一格，
-            //   但語意上它不是「某個專案的資料根」，是「這台機器的資料根」。
+            // 資料根／詞典根／漫畫庫根：全域 `paths` 區塊（TASK-0390）—— ⛔ 不再住在 Unity 專案上，沒有專案也解得出來。
             case SCP_PathId.AgentCommandsRoot:
-            {
-                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
-                return aProj == null
-                    ? SCP_PathStoredValue.Unavailable(aErr!)
-                    : SCP_PathStoredValue.Of(aProj.AgentCommandsRoot);
-            }
+                return SCP_PathStoredValue.Of(iConfig.Paths.AgentCommandsRoot ?? "");
             case SCP_PathId.LettersRoot:
                 return SCP_PathStoredValue.Of(iConfig.Awakening.LettersRoot ?? "");
             // 安裝系統（TASK-0375）：空白是合法值（＝用預設），解析結果的 Origin 會是「未設定」，由 InstallEnv 解讀。
@@ -71,22 +64,10 @@ public static class SenatePathBinding
                 return SCP_PathStoredValue.Of(iConfig.Install.PythonEnvRoot ?? "");
             case SCP_PathId.ModelsRoot:
                 return SCP_PathStoredValue.Of(iConfig.Install.ModelsRoot ?? "");
-            // 詞典根（Tim 2026-09-27）：Project 那一格 —— 詞典是跟著專案 repo 走的內容。
             case SCP_PathId.GlossaryRoot:
-            {
-                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
-                return aProj == null
-                    ? SCP_PathStoredValue.Unavailable(aErr!)
-                    : SCP_PathStoredValue.Of(aProj.GlossaryRoot);
-            }
-            // 外部漫畫庫根（TASK-0400）：Project 那一格；空白是合法值（＝沒有外部漫畫庫）。
+                return SCP_PathStoredValue.Of(iConfig.Paths.GlossaryRoot ?? "");
             case SCP_PathId.ComicRoot:
-            {
-                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
-                return aProj == null
-                    ? SCP_PathStoredValue.Unavailable(aErr!)
-                    : SCP_PathStoredValue.Of(aProj.ComicRoot ?? "");
-            }
+                return SCP_PathStoredValue.Of(iConfig.Paths.ComicRoot ?? "");
             // ⛔ `BankRoot` 2026-09-17 起是 **Derived**（`<資料根>/Bank`）⇒ 本檔**不再接它那一格**。
             //   哪天有人把它改回 Stored 而忘了這裡，下面的 default 會當場出聲，
             //   ⛔ 不會靜默回一個空字串（而空字串在頁面上長成「未設定」，那是另一個意思）。
@@ -100,8 +81,22 @@ public static class SenatePathBinding
     }
 
     /// <summary>
-    /// 解出詞典根（走描述表：手填 ＞ auto ⇒ `<專案根>/Docs/Glossary`）。
-    /// 回 null ＝ 解不出來（原因在 <paramref name="oError"/>）—— 呼叫端**要說出來**，並退回 `SCP_MorningRoots` 的預設推導。
+    /// **資料根的唯一入口**（TASK-0390）：走描述表的 `AgentCommandsRoot`。回 null ＝ 解不出來（原因在 <paramref name="oError"/>）。
+    /// <para>⛔ 不再經 `ProjectProbe.ResolveAgentCommandsRoot`／pointer 檔／`&lt;專案&gt;/AgentCommands` —— 那是第二份算式，
+    /// 而且要求有一個 Unity 專案才解得出來。</para>
+    /// </summary>
+    public static string? ResolveDataRoot(SenateConfig? iConfig, out string? oError)
+    {
+        oError = null;
+        if (iConfig == null) { oError = "還沒有設定檔（先跑 senate init）"; return null; }
+        SCP_PathResolution aR = SCP_PathRegistry.Resolve(SCP_PathId.AgentCommandsRoot, id => StoredOf(iConfig, id));
+        if (aR.Error != null) { oError = aR.Error; return null; }
+        return aR.Value;
+    }
+
+    /// <summary>
+    /// 解出詞典根（走描述表：手填 ＞ auto ⇒ `<Senate 專案根>/Glossary`）。
+    /// 回 null ＝ 解不出來（原因在 <paramref name="oError"/>）—— 呼叫端**要說出來**，本次不附詞典。
     /// </summary>
     public static string? ResolveGlossaryRoot(SenateConfig? iConfig, out string? oError)
     {
@@ -145,19 +140,22 @@ public static class SenatePathBinding
         oError = null;
         switch (iId)
         {
-            case SCP_PathId.ProjectRoot:
-            case SCP_PathId.AgentCommandsRoot:
-            case SCP_PathId.GlossaryRoot:
-            case SCP_PathId.ComicRoot:
+            case SCP_PathId.UnityProjectRoot:
             {
                 SenateProject? aProj = SingleProject(iConfig, out string? aErr);
                 if (aProj == null) { oError = aErr; return false; }
-                if (iId == SCP_PathId.ProjectRoot) aProj.Root = iValue;
-                else if (iId == SCP_PathId.AgentCommandsRoot) aProj.AgentCommandsRoot = iValue;
-                else if (iId == SCP_PathId.ComicRoot) aProj.ComicRoot = iValue;
-                else aProj.GlossaryRoot = iValue;
+                aProj.Root = iValue;
                 return true;
             }
+            case SCP_PathId.AgentCommandsRoot:
+                iConfig.Paths.AgentCommandsRoot = iValue;
+                return true;
+            case SCP_PathId.GlossaryRoot:
+                iConfig.Paths.GlossaryRoot = iValue;
+                return true;
+            case SCP_PathId.ComicRoot:
+                iConfig.Paths.ComicRoot = iValue;
+                return true;
             case SCP_PathId.LettersRoot:
                 iConfig.Awakening.LettersRoot = iValue;
                 return true;

@@ -8,7 +8,7 @@
 // ⚠ 與 Unity 版的差異（刻意的）：
 //   · Senate 的兩個 renderer 都不吃 rich-text ⇒ inline 標記是**拿掉**，不是換成 <b> tag（見 MarkdownDoc.Inline）。
 //   · related 連結**原地換頁**（附「上一份」），不 push 新頁：路徑住全域欄位，疊兩頁 viewer 會共用同一格而互相蓋掉。
-//   · related 只解 相對路徑／絕對路徑／`repo:`（＝ 專案根）。`ucl_core:` 這類前綴 Senate 沒有解析器 ——
+//   · related 只解 相對路徑／絕對路徑／`repo:`（＝ Senate 專案根）。`ucl_core:` 這類前綴 Senate 沒有解析器 ——
 //     ⛔ 不在這裡現造第四套（skill ucl-core-paths），解不了就照實說。
 //   · 存檔有**衝突閘**：開始編輯那一刻記下磁碟內容的雜湊，存檔前重讀比對；
 //     不同 ＝ 你編輯期間有人（agent／Server）寫過這份檔 ⇒ 不存，要你按第二次才覆寫。
@@ -308,8 +308,9 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
         string aCandidate;
         if (iUrl.StartsWith("repo:", StringComparison.OrdinalIgnoreCase))
         {
-            string aRoot = m_Model.ProjectRoot.Value;
-            if (aRoot.Length == 0) { oWhy = "專案根解不出來（到「路徑管理」頁看）"; return null; }
+            // `repo:` ＝ Senate 這個 repo（文件住在這裡），⛔ 不是 Unity 專案（TASK-0390）
+            string aRoot = Senate.Core.SenatePathBinding.HostRepoRoot;
+            if (aRoot.Length == 0) { oWhy = "Senate 專案根沒有宣告（宿主沒跑 SenateHostPaths.Install）"; return null; }
             aCandidate = Path.Combine(aRoot, iUrl.Substring(5).TrimStart('/', '\\'));
         }
         else if (iUrl.IndexOf(':') > 1 && !Path.IsPathRooted(iUrl))

@@ -68,16 +68,16 @@ public static class SenateOvernightJob
 
     static string BankRoot(string iDataRoot)
     {
-        var aRes = SCP_TavernPayroll.BankRootOf(iDataRoot);
-        return aRes.Error == null && aRes.Value.Length > 0 ? aRes.Value : Path.Combine(iDataRoot, "Bank");
+        // ⛔ 不留第二個答案（TASK-0390）：原本描述表解不出來時退回自己拼的 `<資料根>/Bank`。版面唯一一處是 SCP_DataPaths。
+        return SCP.Core.Bank.SCP_BankRegion.BankRootOfDataRoot(iDataRoot);
     }
 
     static string StatePath(string iDataRoot) => Path.Combine(BankRoot(iDataRoot), StateFileName);
 
     /// <summary>Unity daemon 的跨日狀態（過渡期守衛③要讀它；⛔ 本檔**只讀不寫**那一份）。</summary>
-    static string BartenderStatePath(string iDataRoot) => Path.Combine(iDataRoot, "ChatTavern", "bartender", "state.json");
+    static string BartenderStatePath(string iDataRoot) => Path.Combine(BartenderDir(iDataRoot), "state.json");
 
-    static string BartenderDir(string iDataRoot) => Path.Combine(iDataRoot, "ChatTavern", "bartender");
+    static string BartenderDir(string iDataRoot) => SCP.Core.Paths.SCP_DataPaths.Bartender(new SCP.Core.Paths.SCP_DataRoot(iDataRoot));
 
     /// <summary>
     /// 讀上次跑的日子。沒有狀態檔 ⇒ 從 Unity daemon 那一格接手（守衛③）並落盤；那一格也沒有 ⇒ 回 null（＝今天要跑）。

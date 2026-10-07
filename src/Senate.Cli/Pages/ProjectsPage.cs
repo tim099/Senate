@@ -117,7 +117,7 @@ public sealed class ProjectsPage : SCP_GuiToolPage
         g.Space();
         using (g.Box("＋ 新增專案"))
         {
-            string aNewPath = g.TextField("專案根路徑（如 D:/Unity/LY）", "", "projects/new/path");
+            string aNewPath = g.TextField("Unity 專案根路徑（如 D:/Unity/LY）", "", "projects/new/path");
             string aClean = CleanPath(aNewPath);
             if (aClean.Length > 0 && !Directory.Exists(aClean))
                 g.Note($"　⚠ 路徑不存在：{aClean}（新增會被擋 —— cmd 派到不存在的資料樹是靜默 pending）");
@@ -192,7 +192,7 @@ public sealed class ProjectsPage : SCP_GuiToolPage
     {
         string aKey = CleanPath(iProj.Root) + "|" + (iProj.Enabled ? "1" : "0");
         if (m_Probes.TryGetValue(aKey, out ProjectReading? aCached)) return aCached;
-        ProjectReading aReading = ProjectProbe.Probe(iProj);
+        ProjectReading aReading = ProjectProbe.Probe(iProj, m_Model.AgentCommandsRoot.Error == null ? m_Model.AgentCommandsRoot.Value : null);
         m_Probes[aKey] = aReading;
         return aReading;
     }

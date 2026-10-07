@@ -20,19 +20,10 @@ public static class ServerBootstrap
 {
     /// <summary>
     /// 從 <paramref name="iStartDir"/> 往上找 `.git` 當 repo 根；找不到就用目前工作目錄。
-    /// <para>⚠ 與 CLI 同一條規則（`Program.RepoRoot()`）——兩邊不一致的話，
+    /// <para>⚠ 與 CLI **同一支**（`SenateHostPaths.FindRepoRoot`，TASK-0390）——兩邊不一致的話，
     /// Server 會服務**另一棵樹**的 queue，而兩邊的輸出看起來都正常。</para>
     /// </summary>
-    public static string FindRepoRoot(string? iStartDir = null)
-    {
-        var aDir = new DirectoryInfo(iStartDir ?? AppContext.BaseDirectory);
-        while (aDir != null)
-        {
-            if (Directory.Exists(Path.Combine(aDir.FullName, ".git"))) return aDir.FullName;
-            aDir = aDir.Parent;
-        }
-        return Environment.CurrentDirectory;
-    }
+    public static string FindRepoRoot(string? iStartDir = null) => SenateHostPaths.FindRepoRoot(iStartDir);
 
     /// <summary>
     /// 裝上 Server 需要的宿主能力，然後前景常駐直到停止。回傳 exit code。
@@ -53,6 +44,10 @@ public static class ServerBootstrap
         // 委派型 Cmd 要知道 Server 根在哪。Server 自己也可能執行到委派型 Cmd（它就是被派的那一端），
         // 沒裝的症狀是 exit 70「宿主沒裝上」——⛔ 不會靜默猜一個根。
         ServerDelegateCmd.RepoRootProvider = () => iRepoRoot;
+
+        // 路徑從哪來：與 CLI 同一支（TASK-0390）。🩸 原本只有 CLI 裝 ⇒ 這顆 process 裡信件根退回慣例值、
+        //   詞典根 auto 解不出來（「宿主沒有宣告」）、要設定檔的委派 Cmd 回 70。
+        SenateHostPaths.Install(iRepoRoot);
 
         // 宿主的網路出口（TASK-0272 ②）：`demurrage op=run` 發完券之後會接著刷新匯率，
         //   而 demurrage 是在**這顆 process** 裡跑的（ServerDelegateCmd）。

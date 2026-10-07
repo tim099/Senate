@@ -129,7 +129,7 @@ public sealed class Cmd_Task : SCP_Cmd
             return SCP_CmdResult.Fail(2, $"✗ op={aOp} 缺必填：{string.Join(", ", aMissing)}（長內文走 --arg-file）");
 
         // ── ② 資料根 ───────────────────────────────────────────────
-        if (!TryResolveRoots(iArgs, out string aDataRoot, out string aProjectRoot, out string aWhere, out SCP_CmdResult? aFail))
+        if (!TryResolveRoots(iArgs, out string aDataRoot, out string aWhere, out SCP_CmdResult? aFail))
             return aFail!;
         var aResult = new SCP_CmdResult();
         aResult.Lines.Add($"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單（不需要 Unity Editor）@ {aWhere}");
@@ -209,7 +209,7 @@ public sealed class Cmd_Task : SCP_Cmd
         if (aWrite.ExitCode == 0)
         {
             PostNotices(aDataRoot, aPersona, Value(aWrite, "notices_json"), aReport, aResult);
-            RunMemory(aDataRoot, aProjectRoot, Value(aWrite, "memory_json"), aReport, aResult);
+            RunMemory(aDataRoot, Value(aWrite, "memory_json"), aReport, aResult);
         }
         try { SCP_CmdPayload.Write(aPayload, aReport.ToString()); aResult.AddOutput(aPayload); }
         catch (Exception e) { aResult.Lines.Add($"⚠ 回傳檔沒寫成（{e.Message}）—— 單子的寫入不受影響"); }
@@ -218,50 +218,31 @@ public sealed class Cmd_Task : SCP_Cmd
     }
 
     // ===========================================================
-    // 區塊職責：資料根 —— 給了 `data_root` 就直接用（commit 閘／晚安／Unity 這類已經知道資料根的呼叫端）；
-    //           沒給就走 `project`（與早安同一支解析）。專案根另外找（詞典與工作記憶要它），找不到只是少那兩件。
+    // 區塊職責：資料根 —— 給了 `data_root` 就直接用；沒給 ⇒ **唯一入口** `SenatePathBinding.ResolveDataRoot`（TASK-0390）。
+    // 🩸 原本沒給時走 UnityTargetResolver（要一個啟用的 Unity 專案），還另外反查「這個資料根是哪個專案的」
+    //   給工作記憶用 —— 工作記憶早已不吃 Unity 專案根，那條反查是死路。
     // ===========================================================
-    static bool TryResolveRoots(SCP_CmdArgs iArgs, out string oDataRoot, out string oProjectRoot, out string oWhere, out SCP_CmdResult? oFail)
+    static bool TryResolveRoots(SCP_CmdArgs iArgs, out string oDataRoot, out string oWhere, out SCP_CmdResult? oFail)
     {
-        oDataRoot = ""; oProjectRoot = ""; oWhere = ""; oFail = null;
+        oDataRoot = ""; oWhere = ""; oFail = null;
         string aExplicit = iArgs.Get("data_root").Trim();
         if (aExplicit.Length > 0)
         {
             oDataRoot = aExplicit.Replace('\\', '/').TrimEnd('/');
             if (!Directory.Exists(oDataRoot)) { oFail = SCP_CmdResult.Fail(2, "✗ data_root 不存在：" + oDataRoot); return false; }
-            oProjectRoot = ProjectRootFor(oDataRoot) ?? "";
             oWhere = "資料根 " + oDataRoot;
             return true;
         }
         if (UnityDelegateCmd.ConfigProvider == null)
         { oFail = SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯"); return false; }
         (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"), ProjectArgSpelling.CmdArg);
-        if (!aTarget.Ok) { oFail = SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint); return false; }
-        oDataRoot = aTarget.Target!.DataRoot.Replace('\\', '/');
-        oProjectRoot = aTarget.Target.ProjectRoot.Replace('\\', '/');
-        oWhere = aTarget.Target.Describe();
+        string? aRoot = SenatePathBinding.ResolveDataRoot(aConfig, out string? aErr);
+        if (aRoot == null)
+        { oFail = SCP_CmdResult.Fail(2, "✗ 資料根解不出來：" + aErr, "  到 `senate ui` 的「路徑管理」頁設定 AgentCommands 資料根（" + aConfigPath + "）"); return false; }
+        oDataRoot = aRoot.Replace('\\', '/').TrimEnd('/');
+        oWhere = "資料根 " + oDataRoot + "（設定檔）";
         return true;
     }
-
-    /// <summary>這個資料根是哪個專案的（設定檔啟用專案裡唯一對得上的那個；⛔ 對不上或兩個都對得上 ⇒ null，不猜）。</summary>
-    internal static string? ProjectRootFor(string iDataRoot)
-    {
-        if (UnityDelegateCmd.ConfigProvider == null) return null;
-        (SenateConfig? aConfig, _) = UnityDelegateCmd.ConfigProvider();
-        if (aConfig == null) return null;
-        string aWant = Norm(iDataRoot);
-        var aHits = new List<string>();
-        foreach (SenateProject p in aConfig.Projects)
-        {
-            if (!p.Enabled || string.IsNullOrWhiteSpace(p.Root)) continue;
-            string? aDr = ProjectProbe.ResolveAgentCommandsRoot(p.Root, p.AgentCommandsRoot);
-            if (aDr != null && Norm(aDr) == aWant) aHits.Add(p.Root.Replace('\\', '/'));
-        }
-        return aHits.Count == 1 ? aHits[0] : null;
-    }
-
-    static string Norm(string s) => Path.GetFullPath(s).Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
 
     // ===========================================================
     // 區塊職責：claim 帶 scope ⇒ 開一場新的，或綁到現有那一場（UCL `TryStartOrBindCodingSession` 的搬家）。
@@ -383,7 +364,7 @@ public sealed class Cmd_Task : SCP_Cmd
     // 區塊職責：wrapup 的 `why` ⇒ 寫進工作記憶（`SCP_WorkMemory.Add`，與 `senate cmd work-memory --arg op=add` 同一支）。
     // 數值影響：寫一份 fragment ＋重建該主題的 `_index.md`；失敗是警告（進度已落盤），並印手動補的指令。
     // ===========================================================
-    static void RunMemory(string iDataRoot, string iProjectRoot, string iJson, StringBuilder ioReport, SCP_CmdResult ioResult)
+    static void RunMemory(string iDataRoot, string iJson, StringBuilder ioReport, SCP_CmdResult ioResult)
     {
         if (iJson.Length == 0) return;
         Dictionary<string, string>? m;
@@ -410,32 +391,7 @@ public sealed class Cmd_Task : SCP_Cmd
         }
     }
 
-    /// <summary>
-    /// `<專案根>/.gitmodules` 裡路徑以 `UCL_Core` 結尾的那個 submodule 底下的 `Tools~/AgentCommands/<iFileName>`。
-    /// <para>⚠ 掛載路徑只從 `.gitmodules` 讀（git 宣告的事實）—— 雕刻（TASK-0363）也走這一支，⛔ 不另寫第二份。</para>
-    /// </summary>
-    internal static string? UclCoreTool(string iProjectRoot, string iFileName, out string oWhy)
-    {
-        oWhy = "";
-        if (iProjectRoot.Length == 0) { oWhy = "找不到這個資料根對應的專案根（詞典／工具要它）"; return null; }
-        string aModules = Path.Combine(iProjectRoot, ".gitmodules");
-        if (!File.Exists(aModules)) { oWhy = "專案根沒有 .gitmodules（" + iProjectRoot + "）"; return null; }
-        var aHits = new List<string>();
-        foreach (string aLine in File.ReadAllLines(aModules))
-        {
-            string t = aLine.Trim();
-            if (!t.StartsWith("path", StringComparison.Ordinal)) continue;
-            int eq = t.IndexOf('=');
-            if (eq < 0) continue;
-            string p = t.Substring(eq + 1).Trim();
-            if (p.Replace('\\', '/').TrimEnd('/').EndsWith("/UCL_Core", StringComparison.OrdinalIgnoreCase) || p == "UCL_Core")
-                aHits.Add(p);
-        }
-        if (aHits.Count != 1) { oWhy = $".gitmodules 裡以 UCL_Core 結尾的 submodule 有 {aHits.Count} 個（⛔ 不猜）"; return null; }
-        string aTool = Path.Combine(iProjectRoot, aHits[0], "Tools~", "AgentCommands", iFileName).Replace('\\', '/');
-        if (!File.Exists(aTool)) { oWhy = iFileName + " 不在 " + aTool; return null; }
-        return aTool;
-    }
+    // ⛔ 2026-10-07（TASK-0390）刪掉 `UclCoreTool`（讀 Unity 專案的 .gitmodules 找 UCL_Core 底下的工具檔）：知識庫定義檔搬進 Senate（描述表 KbTargetsFile）。
 
     static string Value(SCP_CmdResult r, string k)
     {

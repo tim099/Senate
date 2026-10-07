@@ -116,7 +116,7 @@ public sealed class Cmd_TavernWait : SCP_Cmd
             foreach (string t in aExcludeRaw.Split(','))
                 if (t.Trim().Length > 0) aExclude.Add(t.Trim());
 
-        string aSeqFile = Path.Combine(aDataRoot, "ChatTavern", "rooms", aRoom, "_seq.txt").Replace('\\', '/');
+        string aSeqFile = Path.Combine(SCP.Core.Tavern.SCP_TavernMsgIndex.RoomDir(aDataRoot, aRoom), "_seq.txt").Replace('\\', '/');
         if (!File.Exists(aSeqFile))
             return SCP_CmdResult.Fail(3, "✗ 找不到房間的 seq 檔：" + aSeqFile,
                 "　（房名打錯，或 data_root 指到另一棵資料樹 —— 兩者的症狀一樣，所以把路徑印出來）");

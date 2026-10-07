@@ -28,7 +28,7 @@ public sealed class SenateBooksGateway : SCP_IBooksGateway
 
     public SenateBooksGateway(string iDataRoot) { m_DataRoot = iDataRoot; }
 
-    string BankRoot() => System.IO.Path.Combine(m_DataRoot, "Bank");
+    string BankRoot() => SCP.Core.Bank.SCP_BankRegion.BankRootOfDataRoot(m_DataRoot);   // ⛔ 不自己拼 "Bank"（TASK-0390）
 
     string LettersRoot()
         => SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(m_DataRoot)).Value;

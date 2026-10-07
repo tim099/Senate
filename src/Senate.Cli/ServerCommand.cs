@@ -320,7 +320,7 @@ static class ServerCommand
     {
         var aNotes = new List<string>();
         int aPending = 0, aOrphan = 0;
-        string aQueues = Path.Combine(SenatePaths.ServerRoot(iRepoRoot, iServerId), "queues");
+        string aQueues = Path.Combine(SenatePaths.ServerRoot(iRepoRoot, iServerId), SCP.Core.Paths.SCP_DataPaths.QueuesDirName);
         if (!Directory.Exists(aQueues)) return (0, 0, aNotes);
 
         foreach (string aDir in Directory.GetDirectories(aQueues))

@@ -99,6 +99,7 @@ public static partial class SelfTest
         One(nameof(PrefsThreeStates), "core", PrefsThreeStates),
         One(nameof(PrefsKeepsOtherSections), "core", PrefsKeepsOtherSections),
         One(nameof(PathsSingleSource), "core", PathsSingleSource),
+        One(nameof(StandaloneWithoutUnityProject0390), "core", StandaloneWithoutUnityProject0390),
         One(nameof(LetterDayIsLocalDay), "core", LetterDayIsLocalDay),
         One(nameof(BankArrivalOpensAndBinds), "morning", BankArrivalOpensAndBinds),
         One(nameof(PathRegistryShape), "core", PathRegistryShape),
@@ -462,9 +463,9 @@ public static partial class SelfTest
         var aFails = new List<string>();
         const string P = "D:/proj";
         var aRoots = new SCP_MorningRoots { ProjectRoot = P };
-        // TASK-0390：沒設 ⇒ 空字串（＝沒有詞典），⛔ 不再從專案根自己推第二份算式
+        // TASK-0390：沒設 ⇒ 空字串（＝沒有詞典），⛔ 不再從 Unity 專案根自己推第二份算式
         if (aRoots.GlossaryRoot != "")
-            aFails.Add("沒設時應是空字串、不從專案根推（得 " + aRoots.GlossaryRoot + "）");
+            aFails.Add("沒設時應是空字串、不從 Unity 專案根推（得 " + aRoots.GlossaryRoot + "）");
         aRoots.GlossaryRoot = "E:/elsewhere/glo";
         if (aRoots.GlossaryRoot != "E:/elsewhere/glo") aFails.Add("設了之後應回傳設定值");
 
@@ -481,7 +482,7 @@ public static partial class SelfTest
 
         return new CheckRow(aName,
             aFails.Count == 0
-                ? "沒設 ⇒ <專案根>/Docs/Glossary；設了 ⇒ 設定值；附註前綴：預設逐字 docs/Glossary、專案內相對；🔴 反向：專案外印絕對"
+                ? "沒設 ⇒ 空（不從 Unity 專案根推）；設了 ⇒ 設定值；附註前綴：預設逐字 docs/Glossary、專案內相對；🔴 反向：專案外印絕對"
                 : string.Join("；", aFails),
             aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
@@ -2886,7 +2887,7 @@ public static partial class SelfTest
         foreach (var p in iProjects)
         {
             if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
-            string aLetters = Path.Combine(p.AgentCommandsRoot, "ChatTavern", "baton", "letters");
+            string aLetters = SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(p.AgentCommandsRoot)).Value;   // 唯一入口（TASK-0390）
             if (!Directory.Exists(aLetters)) continue;
             string[] aFiles = Directory.GetFiles(aLetters, "reading_recall_*.md", SearchOption.AllDirectories);
             if (aFiles.Length == 0) continue;
@@ -4672,11 +4673,10 @@ public static partial class SelfTest
             string aCfgDir = Path.Combine(aTmp, "SenateData", "config");
             Directory.CreateDirectory(aCfgDir);
             string aProjRoot = aTmp.Replace(Path.DirectorySeparatorChar, '/');
+            // TASK-0390：資料根是全域 `paths` 那一格（⛔ 不再從 Unity 專案推 `<專案>/AgentCommands`）
             File.WriteAllText(Path.Combine(aCfgDir, "senate.local.json"),
-                "{\n  \"schemaVersion\": 1,\n  \"projects\": [\n    {\n"
-                + "      \"name\": \"Probe\",\n      \"root\": \"" + aProjRoot + "\",\n"
-                + "      \"agentCommandsRoot\": \"auto\",\n      \"enabled\": true,\n      \"profile\": \"\"\n"
-                + "    }\n  ],\n  \"awakening\": {\n    \"lettersRoot\": \"auto\"\n  }\n}\n");
+                "{\n  \"schemaVersion\": 1,\n  \"paths\": {\n    \"agentCommandsRoot\": \"" + aProjRoot + "/AgentCommands\"\n  },\n"
+                + "  \"awakening\": {\n    \"lettersRoot\": \"auto\"\n  }\n}\n");
 
             // ② 造一個看得見的 persona —— 掃得到它，就證明掃的不是字面 "auto"
             string aLetters = aProjRoot + "/AgentCommands/ChatTavern/baton/letters";
@@ -6397,7 +6397,13 @@ public static partial class SelfTest
             bool aVerdicts = rNo.Verdict == "no" && rYes.Verdict == "yes" && rUnk.Verdict == "unknown" && rNo.Blocked.Length == 0;
             bool aLetterPick = rLet.Blocked.Length == 0 && string.Equals(rLet.TargetFull, Path.GetFullPath(aLetter), StringComparison.OrdinalIgnoreCase);
             bool aConFixed = rCon.Blocked == "目標檔不存在" && rCon.Report.Contains("_constitution.md");
-            bool aBlocks = rOut.Blocked == "目標在 repo 之外" && rMiss.Blocked == "目標檔不存在" && rMiss.Report.Contains("## blocked");
+            bool aBlocks = rOut.Blocked == "目標在允許範圍之外" && rMiss.Blocked == "目標檔不存在" && rMiss.Report.Contains("## blocked");
+            // TASK-0390：信件根不在宿主 repo 底下（Valhalla）⇒ kind=letter 仍要放行（舊版一律擋成「在 repo 之外」）
+            string aOtherRepo = Path.Combine(Path.GetTempPath(), "senate_docedit_repo_" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(aOtherRepo);
+            var rLetAway = SCP_DocEdit.Run(aDataRoot, aLetRoot, aOtherRepo, "letter", "probe", "", "", aNow);
+            try { Directory.Delete(aOtherRepo, true); } catch (Exception) { }
+            aBlocks = aBlocks && rLetAway.Blocked.Length == 0;
             bool aOk = aVerdicts && aLetterPick && aConFixed && aBlocks;
             return new CheckRow(aName,
                 $"本場判定 舊檔={rNo.Verdict}／新檔={rYes.Verdict}／沒帶 persona={rUnk.Verdict}"

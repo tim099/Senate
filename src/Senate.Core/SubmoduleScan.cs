@@ -265,7 +265,7 @@ public static class SubmoduleScan
     /// 在動手前現場重問。這裡只決定「範圍」與「順序」——
     /// 讓「照片」與「決定」的界線落在一個看得見的地方。</para>
     /// <para><paramref name="iIncludeRoot"/>：root 一起 pull / push。
-    /// **root 永遠不切 branch** —— 專案根換分支該是人自己下的動作。</para>
+    /// **root 永遠不切 branch** —— 主 repo 根換分支該是人自己下的動作。</para>
     /// </summary>
     public static List<SubmoduleSyncRow> RunBatch(SubmoduleScanResult iScan, SCP_GitSyncOptions iOptions,
         bool iIncludeRoot = false, IReadOnlyCollection<string>? iOnly = null,

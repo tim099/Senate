@@ -42,6 +42,9 @@ publish/
 !/SenateData/config/install_catalog.json
 # 知識庫評估題庫（TASK-0378）：新舊版要拿同一份題目量 ⇒ 入版控
 !/SenateData/config/kb_eval.json
+# TASK-0390：知識庫定義檔與自由時間活動 md 從 Unity 專案的 UCL_Core 搬進 Senate（描述表 KbTargetsFile／FreeTimeActivitiesRoot）
+!/SenateData/config/kb_targets.json
+!/SenateData/config/freetime_activities/
 
 ### 一鍵 build 的產物 —— 根層現在只剩一個給人雙擊的捷徑（執行檔住 publish/，已被上面擋掉）
 /senate.lnk

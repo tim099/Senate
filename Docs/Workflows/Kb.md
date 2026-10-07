@@ -56,7 +56,7 @@ senate cmd kb --arg op=reindex --arg target=all
 - **文字沒變的塊沿用舊向量**（雜湊＋模型＋切塊版本都相同才算）⇒ 改一個檔只重嵌那個檔變了的塊。
 - 過期判定：來源檔新增／刪除／mtime 或大小變了。`status` 會列出來。
 - 新架構兼容舊資料的方式是**從同一批文件重建**；舊的 `_vectors/` 不搬、不讀、不動。
-- target 清單在 `kb_targets.json`；底線開頭的檔（機械產物）不進索引。加 glob 用 `[!_]*` 全收、不逐型列舉，每加一條就實數檔數 —— 匹配 0 檔不報錯、reindex 照樣綠燈。
+- target 清單在 `SenateData/config/kb_targets.json`（描述表 `KbTargetsFile`；glob 前綴：無＝Senate 專案根／`scp_core:`／`data:`，其他前綴載入時擋下）；底線開頭的檔（機械產物）不進索引。加 glob 用 `[!_]*` 全收、不逐型列舉，每加一條就實數檔數 —— 匹配 0 檔不報錯、reindex 照樣綠燈。
 - 建好 ≠ 搜得到：抽一筆已知檔用一句話查、確認命中同一檔，再跑一筆無關查詢確認分數明顯偏低。
 
 ## 6. 評估

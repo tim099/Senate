@@ -33,13 +33,18 @@ public sealed record ProjectReading(
 
 public static class ProjectProbe
 {
-    /// <summary>酒保 daemon 的心跳檔（Unity Editor 的 update 迴圈活著時每 0.5 秒摸一次）。</summary>
-    public const string HeartbeatRelPath = "ChatTavern/bartender/_heartbeat.txt";
+    /// <summary>酒保 daemon 的心跳檔（Unity Editor 的 update 迴圈活著時每 0.5 秒摸一次）—— 在 `&lt;酒館根&gt;/bartender/` 底下。</summary>
+    static string HeartbeatPath(string iDataRoot)
+        => Path.Combine(SCP.Core.Paths.SCP_DataPaths.ChatTavern(new SCP.Core.Paths.SCP_DataRoot(iDataRoot)), "bartender", "_heartbeat.txt");
 
     /// <summary>心跳多久沒動就視為 Editor 沒在 tick。0.5s 節拍 ⇒ 4 秒是很寬鬆的判準。</summary>
     public static readonly TimeSpan HeartbeatStaleAfter = TimeSpan.FromSeconds(4);
 
-    public static ProjectReading Probe(SenateProject iProject)
+    /// <param name="iDataRoot">
+    /// 全域資料根（呼叫端用唯一入口 `SenatePathBinding.ResolveDataRoot` 解好再給；null ＝ 解不出來）。
+    /// ⚠ TASK-0390：資料根**不屬於任何專案**，本函式不再自己推（舊的 pointer 檔／`&lt;專案&gt;/AgentCommands` 那條已刪）。
+    /// </param>
+    public static ProjectReading Probe(SenateProject iProject, string? iDataRoot)
     {
         string aName = string.IsNullOrWhiteSpace(iProject.Name) ? "(未命名)" : iProject.Name;
 
@@ -53,14 +58,14 @@ public static class ProjectProbe
         if (!SCP_Git.IsRepo(aRoot))
             return new ProjectReading(aName, aRoot, ProbeState.NotGitRepo, null, null, 0, null, false, null, iProject.Enabled);
 
-        string? aDataRoot = ResolveAgentCommandsRoot(aRoot, iProject.AgentCommandsRoot);
+        string? aDataRoot = string.IsNullOrWhiteSpace(iDataRoot) ? null : iDataRoot!.Replace('\\', '/').TrimEnd('/');
         bool aDataRootExists = aDataRoot != null && Directory.Exists(aDataRoot);
 
         string? aHbText = null;
         bool aEditorAlive = false;
         if (aDataRootExists)
         {
-            string aHb = Path.Combine(aDataRoot!, HeartbeatRelPath.Replace('/', Path.DirectorySeparatorChar));
+            string aHb = HeartbeatPath(aDataRoot!);
             if (File.Exists(aHb))
             {
                 TimeSpan aAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(aHb);
@@ -88,18 +93,6 @@ public static class ProjectProbe
         { EditorLikelyRunning = aEditorAlive };
     }
 
-    /// <summary>
-    /// 解析 AgentCommands 資料根：<c>"auto"</c>／空 → 先讀 pointer 檔
-    /// <c>&lt;root&gt;/.agentcommands_root.local</c>，沒有則 <c>&lt;root&gt;/AgentCommands</c>。
-    /// <para>⚠ 只有這兩個位置。**不猜第三個** —— 猜錯的症狀是寫進另一棵資料樹而且不報錯。</para>
-    /// </summary>
-    public static string? ResolveAgentCommandsRoot(string iProjectRoot, string iSetting)
-    {
-        // ⚠ pointer 檔名與解析規則的唯一落點是 SCP_ProjectPaths（跨語言契約：python
-        //   `_lib/ucl_paths.py` 與 UCL C# `UCL_AgentCommandsPath` 讀同一個檔名）。
-        //   本函式只做「型別轉回字串」給既有呼叫端 —— 不要在這裡重寫規則。
-        if (string.IsNullOrWhiteSpace(iProjectRoot)) return null;
-        var (aRoot, _) = SCP_ProjectPaths.ResolveDataRoot(new SCP_ProjectRoot(iProjectRoot), iSetting);
-        return aRoot.Value;
-    }
+    // ⛔ 2026-10-07（TASK-0390）刪掉 `ResolveAgentCommandsRoot`（pointer 檔／`<專案>/AgentCommands` 的第二份算式）：
+    //   資料根只有一個入口 —— `SenatePathBinding.ResolveDataRoot`（走描述表）。
 }

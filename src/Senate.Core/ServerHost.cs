@@ -513,18 +513,16 @@ public static class ServerHost
     }
 
     /// <summary>
-    /// 這顆 Server 服務的 AgentCommands 資料根。<c>null</c> ＝ 解析不出來（沒有唯一啟用專案／目錄不存在）。
+    /// 這顆 Server 服務的 AgentCommands 資料根。<c>null</c> ＝ 解析不出來（沒設定／目錄不存在）。
     /// <para>⚠ **資料根只有一組**（Tim 2026-08-31）⇒ 這裡不挑、不猜，解析不出來就回 null 讓呼叫端出聲。</para>
+    /// <para>走唯一入口 `SenatePathBinding.ResolveDataRoot`（TASK-0390）—— 🩸 原本要求一個啟用的 Unity 專案，
+    /// 沒有專案時 Server 拿不到資料根：沒有端點卡、夜間結算／Discord／酒保全停。</para>
     /// </summary>
     static string? TryResolveDataRoot(string iRepoRoot)
     {
         try
         {
-            SenateConfig? aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot));
-            if (aCfg == null) return null;
-            SenateProject? aProj = SenatePathBinding.SingleProject(aCfg, out _);
-            if (aProj == null) return null;
-            string? aRoot = ProjectProbe.ResolveAgentCommandsRoot(aProj.Root, aProj.AgentCommandsRoot);
+            string? aRoot = SenatePathBinding.ResolveDataRoot(SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot)), out _);
             return aRoot != null && Directory.Exists(aRoot) ? aRoot : null;
         }
         catch (Exception) { return null; }

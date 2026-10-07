@@ -57,7 +57,7 @@ public static class SenateCodingExitGate
 
     // ===========================================================
     // 區塊職責：這一場的範圍有沒有碰到它的 Unity 專案。
-    // 物理意義：資料根是 `<專案>/AgentCommands` ⇒ 專案根是上一層；有 `Assets/` 才是 Unity 專案。
+    // 物理意義：⚠ 舊假設（TASK-0390 待改）：資料根是 `<專案>/AgentCommands` ⇒ Unity 專案根是上一層 —— 資料根搬到 Valhalla 後不成立；有 `Assets/` 才是 Unity 專案。
     //          範圍沒宣告（＝全域）視為碰到 —— 安全側，同施工場「不宣告＝全域獨佔」的判準。
     // ===========================================================
     static string? UnityProjectInScope(SCP_CodingExitRequest iReq)

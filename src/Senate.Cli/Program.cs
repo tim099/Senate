@@ -21,8 +21,8 @@ public static class Program
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         string aRepoRoot = RepoRoot();
-        // Senate 專案根（描述表的 Host 格，TASK-0390）：詞典 `auto` 等「跟著 Senate 走」的路徑從這裡推。
-        SenatePathBinding.HostRepoRoot = aRepoRoot.Replace('\\', '/');
+        // 路徑從哪來：宿主插座**只在 SenateHostPaths 一處裝**，CLI 與 Server 共用（TASK-0390）。
+        SenateHostPaths.Install(aRepoRoot);
 
         // 宿主的網路出口：把 HTTP 抓取器插進 SCP_Core 的插座（TASK-0272 ②）。
         // ⚠ 這一行是 `rate op=sync` 能不能動的**唯一開關** —— SCP_Core 自己沒有網路
@@ -116,43 +116,10 @@ public static class Program
         // 路徑參數由本宿主照後台設定補上、不收手給值（擋在 `CmdScp`）⇒ 登記給 help，讓它別教人手打（TASK-0391）。
         foreach (string aRootArg in k_HostOnlyRootArgs) SCP.Core.Cmd.SCP_CmdRegistry.HostFilledArgs.Add(aRootArg);
 
-        // 宿主能力③：文件根（TASK-0337）。文件住在指令所在那一邊 —— Senate 的 Cmd ⇒ `Docs/`，SCP_Core 的 ⇒ `SCP_Core/Docs~/`。
-        // ⚠ 兩個根都錨在 **exe 所在的 repo**（RepoRoot 從 AppContext.BaseDirectory 往上找 .git），⛔ 不用 cwd ——
-        //   在別的資料夾跑 senate 時，cwd 推出來的是另一棵樹（或什麼都不是），而那不會報錯。
-        SCP.Core.Docs.SCP_DocStore.RootsProvider = () => new[]
-        {
-            new SCP.Core.Docs.SCP_DocRoot("senate", Path.Combine(aRepoRoot, "Docs")),
-            new SCP.Core.Docs.SCP_DocRoot("scp_core", Path.Combine(aRepoRoot, "SCP_Core", "Docs~")),
-        };
-
-        // 宿主能力②：委派型 Cmd 要知道「派給哪個專案」，而共用層與 Cmd 本身都**不推導路徑**。
-        // ⇒ 設定來源由這裡裝上（同上一條的形狀：能力由宿主宣告，不由下層去找）。
-        // Server 委派也一樣：Cmd 不知道 Server 根在哪，由宿主給 repo 根（ServerDelegateCmd.RepoRootProvider）。
-        // 沒裝的症狀跟上面那格同形：委派 Cmd 回 70 並說「宿主沒裝上」—— 不會靜默猜一個根。
+        // 宿主能力②：委派型 Cmd 要知道 Server 根在哪 —— 由宿主給 repo 根（ServerDelegateCmd.RepoRootProvider）。
+        // 沒裝的症狀：委派 Cmd 回 70 並說「宿主沒裝上」—— 不會靜默猜一個根。
+        // 文件根／資料根／信件根／詞典根／工作記憶與閱讀線的根／本地 Cmd 殼：全在最上面的 SenateHostPaths.Install。
         ServerDelegateCmd.RepoRootProvider = () => aRepoRoot;
-        SCP.Core.Cmd.SCP_Cmd_Library.RootsProvider = () =>
-            SenateLibraryRoots.Resolve(SenateConfig.Load(SenateConfig.DefaultPath(aRepoRoot)));
-        // skill 指令（TASK-0406）：源是 SCP_Core 的 Skills~，安裝對象固定是 Senate 自己（Tim 2026-10-05「只要裝到 D:\Unity\Senate」）。
-        // ⚠ 同文件根：錨在 exe 所在的 repo，⛔ 不看 cwd —— 從 LY 跑 `senate cmd skill` 也讀同一棵、裝同一處。
-        // 本地 Cmd 殼（早安／晚安／酒館發文，TASK-0406 搬進 SCP_Core）要的宿主能力：選專案、詞典根、環境標記、酒館寫入、發文提示。
-        SCP.Core.Cmd.SCP_LocalRootsCmd.Host = new SenateLocalCmdHost();
-        // 信件根（TASK-0390）：凡是從資料根推信件根的地方（SCP_DataPaths.Letters）都改問設定那一格 ——
-        //   ⛔ 沒裝的話，只拿到資料根的那半邊程式會寫慣例那棵，而讀設定的那半邊寫另一棵。
-        SenatePathBinding.InstallLettersResolver(aRepoRoot);
-        // 工作記憶 related_docs 的具名根（TASK-0390）：沒前綴＝資料根；`senate:`／`scp_core:` 錨在 exe 所在的 repo（同文件根）。
-        //   ⛔ 沒有 `ucl_core:` —— 那是 Unity 專案裡的檔，Senate 不讀。
-        SCP.Core.WorkMemory.SCP_WorkMemory.HostNamedRoots = () => new Dictionary<string, string>
-        {
-            ["senate"] = aRepoRoot,
-            ["scp_core"] = Path.Combine(aRepoRoot, "SCP_Core"),
-        };
-        SCP.Core.Cmd.SCP_Cmd_Skill.RootsProvider = () =>
-            new SCP.Core.Cmd.SCP_SkillRoots(Path.Combine(aRepoRoot, "SCP_Core", "Skills~"), aRepoRoot);
-        UnityDelegateCmd.ConfigProvider = () =>
-        {
-            string aCfgPath = SenateConfig.DefaultPath(aRepoRoot);
-            return (SenateConfig.Load(aCfgPath), aCfgPath);
-        };
 
         // 宿主能力③：畫布閘（付款／自由時間資格／分享）——本宿主的實作是「派給 Unity Editor」。
         // ⚠ 工廠吃資料根當參數，**不自己解析** —— Cmd 吃的 `--arg data_root` 與閘用的根若是兩個來源，
@@ -330,7 +297,7 @@ public static class Program
         {
             File.Copy(aExample, aTarget);
             Console.WriteLine($"✓ 已建立：{aTarget}（樣板：{Rel(iRepoRoot, aExample)}）");
-            Console.WriteLine("  下一步：編輯它的 projects[]，把要管的專案根目錄填進去。");
+            Console.WriteLine("  下一步：編輯它的 projects[]，資料根填進 paths.agentCommandsRoot；要串接 Unity 才在 projects[] 填 Unity 專案根。");
         }
         else
         {
@@ -1492,16 +1459,7 @@ public static class Program
     /// repo 根：從執行檔往上找第一個含 `.git` 的目錄；找不到就用當前目錄。
     /// ⚠ 只找 `.git`，**不猜第二個判準** —— 猜錯的症狀是設定檔寫到別的地方而且不報錯。
     /// </summary>
-    static string RepoRoot()
-    {
-        var aDir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (aDir != null)
-        {
-            if (Directory.Exists(Path.Combine(aDir.FullName, ".git"))) return aDir.FullName;
-            aDir = aDir.Parent;
-        }
-        return Environment.CurrentDirectory;
-    }
+    static string RepoRoot() => SenateHostPaths.FindRepoRoot();   // CLI 與 Server 同一支（TASK-0390）
 
     /// <summary>
     /// `--win-size 700x300` → (700, 300)。給不出來就回 (0,0) ＝ **用預設，不猜**。
@@ -1898,7 +1856,10 @@ public static class Program
                 // TASK-0313：詞典附註由寫入端補 ⇒ `tavern-write` 宣告了這兩格，Editor 呼叫它時由這裡填
                 //   （詞典根的唯一真相源是 senate.local.json，Unity 端不碰它）。沒宣告的 Cmd 不受影響。
                 FillRootArg(aCmd, aRawArgs, aCfg, "glossary_root", SCP.Core.Paths.SCP_PathId.GlossaryRoot);
-                FillRootArg(aCmd, aRawArgs, aCfg, "project_root", SCP.Core.Paths.SCP_PathId.ProjectRoot);
+                FillRootArg(aCmd, aRawArgs, aCfg, "project_root", SCP.Core.Paths.SCP_PathId.UnityProjectRoot);
+                // 宿主 repo 根（Senate 專案根，描述表的 Host 格；TASK-0390）：doc-edit 等「文件住在 Senate」的指令用它當基準
+                FillRootArg(aCmd, aRawArgs, aCfg, "repo_root", SCP.Core.Paths.SCP_PathId.HostRepoRoot);
+                FillRootArg(aCmd, aRawArgs, aCfg, "activities_root", SCP.Core.Paths.SCP_PathId.FreeTimeActivitiesRoot);   // 自由時間活動（TASK-0390：搬進 Senate）
                 // ⚠ 舊設定檔可能還留著一個**不生效**的 `bank.bankRoot` ⇒ 出聲。
                 //   不說的話，「我改了設定」與「我改的那一格已經死了」在畫面上完全同形。
                 string? aDead = aCfg.Bank.DeadBankRootWarning();
@@ -2027,7 +1988,7 @@ public static class Program
     }
 
     /// <summary>只由宿主照後台設定補上、CLI 不收手給值的路徑參數（擋的理由見 `CmdScp` 裡那段）。</summary>
-    static readonly string[] k_HostOnlyRootArgs = { "data_root", "letters_root", "bank_root", "glossary_root", "project_root" };
+    static readonly string[] k_HostOnlyRootArgs = { "data_root", "letters_root", "bank_root", "glossary_root", "project_root", "repo_root", "activities_root" };
 
     static bool DeclaresArg(SCP.Core.Cmd.SCP_Cmd iCmd, string iName)
     {

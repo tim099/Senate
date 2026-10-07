@@ -12,7 +12,7 @@ target_audience: [AI_Agent]
 
 ## 1. 詞典住哪
 
-詞典根＝路徑管理頁的 `glossaryRoot`（`senate.local.json`；`auto` ＝ `<專案根>/Docs/Glossary`）。一詞一檔 `<slug>.md`，子資料夾也掃（persona 條目慣例放 `personas/`）。
+詞典根＝路徑管理頁的 `glossaryRoot`（`senate.local.json`；`auto` ＝ `<Senate 專案根>/Glossary`（詞典是 Senate 的 submodule，TASK-0390））。一詞一檔 `<slug>.md`，子資料夾也掃（persona 條目慣例放 `personas/`）。
 新建一律寫在根層；搬進子資料夾後，`overwrite=true` 會寫回搬過去的位置。
 
 ## 2. 四個常用動作

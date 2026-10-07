@@ -44,7 +44,7 @@ public sealed class Cmd_Kb : SCP_Cmd
         new SCP_CmdArgSpec("dry_run", "reindex：=1 只切塊、印統計（塊數、太短的、去重丟掉的、最長），不嵌入不寫檔"),
         new SCP_CmdArgSpec("action", "sidecar：status（預設）｜start｜stop", iDefault: "status", iChoices: new[] { "status", "start", "stop" }),
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（沒給 ⇒ 用設定檔那一格）"),
-        new SCP_CmdArgSpec("project_root", "專案根（沒給 ⇒ 用設定檔那一格；UCL_Core 由它的 .gitmodules 找）"),
+        // ⛔ 2026-10-07（TASK-0390）拿掉 `project_root`：知識庫跟著 Senate（定義檔＝描述表 KbTargetsFile、無前綴 glob＝Senate 專案根）。
     };
 
     public const string DefaultSearchTargets = "fragments,alaya,coredocs,docs,work_memory";
@@ -55,11 +55,14 @@ public sealed class Cmd_Kb : SCP_Cmd
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源／repo 根 —— 這是程式錯誤不是用法錯");
         (SenateConfig? aConfig, _) = UnityDelegateCmd.ConfigProvider();
         string aRepo = ServerDelegateCmd.RepoRootProvider();
-        string aData = iArgs.Get("data_root"), aProj = iArgs.Get("project_root");
-        if (aData.Length == 0 || aProj.Length == 0) return SCP_CmdResult.Fail(2, "✗ 解不出資料根或專案根（設定檔那兩格）—— 用 `senate cmd paths` 看");
-        string? aKbTargets = Cmd_Task.UclCoreTool(aProj, KbTargets.FileName, out string aWhy);
-        if (aKbTargets == null) return SCP_CmdResult.Fail(1, "✗ 找不到 UCL_Core：" + aWhy);
-        var aRoots = new KbRoots { ProjectRoot = aProj, DataRoot = aData, CoreRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(aKbTargets)!, "..", "..")) };
+        string aData = iArgs.Get("data_root");
+        if (aData.Length == 0) return SCP_CmdResult.Fail(2, "✗ 解不出資料根（設定檔那一格）—— 用 `senate cmd paths` 看");
+        if (aConfig == null) return SCP_CmdResult.Fail(2, "✗ 還沒有設定檔");
+        SCP.Core.Paths.SCP_PathResolution aTargetsFile = SCP.Core.Paths.SCP_PathRegistry.Resolve(
+            SCP.Core.Paths.SCP_PathId.KbTargetsFile, id => SenatePathBinding.StoredOf(aConfig, id));
+        if (aTargetsFile.Error != null) return SCP_CmdResult.Fail(2, "✗ 知識庫定義檔解不出來：" + aTargetsFile.Error);
+        string aHostRepo = SenatePathBinding.HostRepoRoot;
+        var aRoots = new KbRoots { RepoRoot = aHostRepo, ScpCoreRoot = aHostRepo + "/SCP_Core", DataRoot = aData, TargetsFile = aTargetsFile.Value };
         Dictionary<string, KbTarget>? aAll = KbTargets.Load(aRoots, out string? aErr);
         if (aAll == null) return SCP_CmdResult.Fail(1, "✗ " + aErr);
 
@@ -197,7 +200,7 @@ public sealed class Cmd_Kb : SCP_Cmd
         if (aNotReady != null) return aNotReady;
         foreach (string n in aNames)
         {
-            KbBuildResult b = KbIndex.Build(KbTargets.Resolve(c.All[n], c.Roots), c.Roots.DataRoot, c.Roots.ProjectRoot,
+            KbBuildResult b = KbIndex.Build(KbTargets.Resolve(c.All[n], c.Roots), c.Roots.DataRoot, c.Roots.RepoRoot,
                                             t => EmbedVia(c.Car, t), Log);
             r.Lines.Add($"✓ {n}：{b.Files} 檔 → {b.Chunks} 塊（沿用 {b.Reused}、新嵌 {b.Embedded}、去重丟 {b.DroppedDuplicates}）　{b.Ms / 1000.0:0.0} 秒");
             r.AddValue(n + "_chunks", b.Chunks.ToString(CultureInfo.InvariantCulture));
@@ -249,7 +252,7 @@ public sealed class Cmd_Kb : SCP_Cmd
             bool aNeed = ix == null || ix.StaleAgainst(s).Any || ix.Meta.Chunker != KbChunker.Version;
             if (aNeed && iAuto)
             {
-                KbIndex.Build(s, c.Roots.DataRoot, c.Roots.ProjectRoot, x => EmbedVia(c.Car, x), Log);
+                KbIndex.Build(s, c.Roots.DataRoot, c.Roots.RepoRoot, x => EmbedVia(c.Car, x), Log);
                 ix = KbIndex.Load(c.Roots.DataRoot, n, out aWhy);
                 aRe.Add(n);
             }

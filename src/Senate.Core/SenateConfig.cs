@@ -25,23 +25,9 @@ public sealed class SenateProject
     /// <summary>專案 git repo 的根目錄（絕對路徑）。</summary>
     public string Root { get; set; } = "";
 
-    /// <summary>
-    /// AgentCommands 資料根。<c>"auto"</c> ＝ 照專案慣例推導
-    /// （先讀 <c>&lt;Root&gt;/.agentcommands_root.local</c> pointer 檔，沒有則 <c>&lt;Root&gt;/AgentCommands</c>）。
-    /// <para>⚠ 推導失敗不會亂猜第二個位置 —— 猜錯的症狀是「寫到另一棵資料樹而且不報錯」。</para>
-    /// </summary>
-    public string AgentCommandsRoot { get; set; } = "auto";
-
-    /// <summary>
-    /// 詞典根（`SCP_PathId.GlossaryRoot`）。<c>"auto"</c> ＝ <c>&lt;Root&gt;/Docs/Glossary</c>。
-    /// <para>⚠ 只管 Senate 這側（Tim 2026-09-27）；Unity Editor 的 `Cmd_Glossary` 不讀本檔。</para>
-    /// </summary>
-    public string GlossaryRoot { get; set; } = "auto";
-
-    /// <summary>
-    /// 外部漫畫庫根（`SCP_PathId.ComicRoot`，TASK-0400）。空字串 ＝ 沒有外部漫畫庫；不支援 <c>"auto"</c>（沒有上游可推導）。
-    /// </summary>
-    public string ComicRoot { get; set; } = "";
+    // ⛔ 2026-10-07（TASK-0390）：資料根／詞典根／漫畫庫根**不再住在專案上** —— 搬到根物件的 `paths` 區塊
+    //   （SenatePathsSettings）。Senate＋Valhalla 要能在沒有任何 Unity 專案時運作；專案只剩「Unity 開發目標」。
+    //   舊檔的這三格由 SenateConfig.Load 一次搬過去（MigratePaths），之後只有 `paths` 一份。
 
     /// <summary>停用的專案仍留在清單裡（不是刪掉）—— 「我關掉它」與「我沒設定過它」是兩件事。</summary>
     public bool Enabled { get; set; } = true;
@@ -160,12 +146,45 @@ public sealed class InstallSettings
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
 }
 
+/// <summary>
+/// 這台機器上 Senate 的**全域路徑**（TASK-0390，Tim 2026-10-07：Senate＝Server、Valhalla＝資料 repo，不依賴 Unity）。
+/// <para>值的意義與解析在 <c>SCP_PathRegistry</c>；本類只負責「存在檔裡哪一格」—— 讀寫一律經 <see cref="SenatePathBinding"/>。</para>
+/// </summary>
+public sealed class SenatePathsSettings
+{
+    /// <summary>AgentCommands 資料根（`SCP_PathId.AgentCommandsRoot`）。空 ＝ 還沒設定（⛔ 不從任何專案推）。</summary>
+    public string AgentCommandsRoot { get; set; } = "";
+
+    /// <summary>詞典根（`SCP_PathId.GlossaryRoot`）。<c>"auto"</c> ＝ <c>&lt;Senate 專案根&gt;/Glossary</c>。</summary>
+    public string GlossaryRoot { get; set; } = "auto";
+
+    /// <summary>外部漫畫庫根（`SCP_PathId.ComicRoot`）。空字串 ＝ 沒有外部漫畫庫。</summary>
+    public string ComicRoot { get; set; } = "";
+
+    /// <summary>本版不認得的欄位 —— 讀進來、寫回去，原樣保留。</summary>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+}
+
 /// <summary>senate.local.json 的根物件。</summary>
 public sealed class SenateConfig
 {
     /// <summary>設定格式版本。讀到未知版本要**擋下並說出來**，不要盡力而為。</summary>
     public int SchemaVersion { get; set; } = 1;
 
+    /// <summary>全域路徑（資料根／詞典根／漫畫庫根）。⚠ 不屬於任何專案 —— 沒有 Unity 專案也要解得出來。</summary>
+    public SenatePathsSettings Paths { get; set; } = new();
+
+    /// <summary>
+    /// 這次 Load 有沒有把舊檔「住在專案上的路徑」搬進 <see cref="Paths"/>（說明文字；空 ＝ 沒搬）。
+    /// ⚠ 只在記憶體 —— 下一次 Save 才落檔（Load 不寫檔）。
+    /// </summary>
+    [JsonIgnore]
+    [SCP_Ignore]
+    public string PathsMigrationNote { get; set; } = "";
+
+    /// <summary>Unity 開發目標（選填）。⚠ 只給「透過 Unity CLI 操作 Unity 專案」用，Senate 本身的路徑不從這裡推。</summary>
     public List<SenateProject> Projects { get; set; } = new();
 
     /// <summary>介面顯示偏好。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。</summary>
@@ -242,7 +261,67 @@ public sealed class SenateConfig
         if (aCfg.SchemaVersion != CurrentSchemaVersion)
             throw new InvalidDataException(
                 $"設定檔 schemaVersion={aCfg.SchemaVersion}，本版只認得 {CurrentSchemaVersion}：{iPath}");
+        aCfg.MigratePaths(HasTopLevel(aText, "paths"));
         return aCfg;
+    }
+
+    static bool HasTopLevel(string iJson, string iName)
+    {
+        try
+        {
+            using JsonDocument aDoc = JsonDocument.Parse(iJson, new JsonDocumentOptions
+                { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            foreach (JsonProperty p in aDoc.RootElement.EnumerateObject())
+                if (string.Equals(p.Name, iName, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        catch (JsonException) { }
+        return false;
+    }
+
+    // 舊檔（2026-10-07 之前）的三格路徑住在專案上 ⇒ 專案已不認得它們，落在專案的 Extra。
+    static readonly string[] s_LegacyProjectPathKeys = { "agentCommandsRoot", "glossaryRoot", "comicRoot" };
+
+    /// <summary>
+    /// 舊檔沒有 `paths` 區塊 ⇒ 從**唯一啟用的專案**把三格搬過來（只在記憶體，Save 才落檔），並把專案上的舊鍵拿掉 ——
+    /// ⛔ 兩邊都留的話就是兩個真相源。有 `paths` 區塊 ⇒ 專案上殘留的舊鍵一律拿掉（`paths` 才是那一份）。
+    /// 啟用專案不唯一 ⇒ 不替人挑，留空並在 <see cref="PathsMigrationNote"/> 說明。
+    /// </summary>
+    void MigratePaths(bool iHasPathsBlock)
+    {
+        static string? Take(SenateProject iP, string iKey)
+        {
+            foreach (string k in iP.Extra.Keys.ToList())
+            {
+                if (!string.Equals(k, iKey, StringComparison.OrdinalIgnoreCase)) continue;
+                JsonElement v = iP.Extra[k];
+                iP.Extra.Remove(k);
+                return v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            }
+            return null;
+        }
+
+        if (iHasPathsBlock)
+        {
+            foreach (SenateProject p in Projects) foreach (string k in s_LegacyProjectPathKeys) Take(p, k);
+            return;
+        }
+        var aEnabled = Projects.Where(p => p.Enabled).ToList();
+        if (aEnabled.Count != 1)
+        {
+            if (Projects.Any(p => s_LegacyProjectPathKeys.Any(k => p.Extra.Keys.Any(e => string.Equals(e, k, StringComparison.OrdinalIgnoreCase)))))
+                PathsMigrationNote = $"舊檔的路徑住在專案上，但啟用的專案有 {aEnabled.Count} 個 ⇒ 不替你挑；到「路徑管理」頁填全域那幾格";
+            return;
+        }
+        SenateProject aP = aEnabled[0];
+        string? aData = Take(aP, "agentCommandsRoot");
+        string? aGlo = Take(aP, "glossaryRoot");
+        string? aComic = Take(aP, "comicRoot");
+        foreach (SenateProject p in Projects) foreach (string k in s_LegacyProjectPathKeys) Take(p, k);
+        // 舊的 "auto" 是「從 Unity 專案推」—— 新架構沒有那條路 ⇒ 不搬 auto，留空讓人明說
+        if (aData != null && !string.Equals(aData.Trim(), "auto", StringComparison.OrdinalIgnoreCase)) Paths.AgentCommandsRoot = aData;
+        if (aGlo != null) Paths.GlossaryRoot = aGlo;
+        if (aComic != null) Paths.ComicRoot = aComic;
+        PathsMigrationNote = $"舊檔的資料根／詞典根／漫畫庫根住在專案「{aP.Name}」上 ⇒ 已搬進全域 `paths`（下次存檔落盤）";
     }
 
     public void Save(string iPath)

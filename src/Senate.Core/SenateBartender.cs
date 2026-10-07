@@ -77,7 +77,7 @@ public static class SenateBartender
 
     static readonly JsonSerializerOptions s_Json = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    public static string Dir(string iDataRoot) => Path.Combine(iDataRoot, "ChatTavern", "bartender");
+    public static string Dir(string iDataRoot) => SCP.Core.Paths.SCP_DataPaths.Bartender(new SCP.Core.Paths.SCP_DataRoot(iDataRoot));   // 版面唯一一處（TASK-0390）
     public static string SettingsPath(string iDataRoot) => Path.Combine(Dir(iDataRoot), SettingsFileName);
     public static string StatePath(string iDataRoot) => Path.Combine(Dir(iDataRoot), StateFileName);
 

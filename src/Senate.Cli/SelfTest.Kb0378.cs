@@ -76,7 +76,7 @@ public static partial class SelfTest
             File.WriteAllText(Path.Combine(aDocs, "a.md"), $"# A\n\n## 一\n\n{Para("甲")}\n\n## 二\n\n{Para("乙")}\n");
             File.WriteAllText(Path.Combine(aDocs, "b.md"), $"# A\n\n## 一\n\n{Para("甲")}\n\n## 三\n\n{Para("丙")}\n");   // 「甲」那段跟 a.md 同文
             var aTarget = new KbTarget("t", "", "markdown", new[] { "docs/*.md" }, false);
-            var aRoots = new KbRoots { ProjectRoot = aTmp, DataRoot = aData, CoreRoot = aTmp };
+            var aRoots = new KbRoots { RepoRoot = aTmp, DataRoot = aData, ScpCoreRoot = aTmp, TargetsFile = Path.Combine(aTmp, KbTargets.FileName) };
             var fake = new FakeEmbedder();
 
             KbBuildResult b1 = KbIndex.Build(KbTargets.Resolve(aTarget, aRoots), aData, aTmp, fake.Embed, _ => { });
@@ -122,7 +122,7 @@ public static partial class SelfTest
             File.WriteAllText(Path.Combine(aTmp, "Lessons", "a.md"), "x");
             File.WriteAllText(Path.Combine(aTmp, "Lessons", "_index.md"), "x");
             File.WriteAllText(Path.Combine(aTmp, "Lessons", "sub", "b.md"), "x");
-            var aRoots = new KbRoots { ProjectRoot = aTmp, DataRoot = aTmp, CoreRoot = aTmp };
+            var aRoots = new KbRoots { RepoRoot = aTmp, DataRoot = aTmp, ScpCoreRoot = aTmp, TargetsFile = Path.Combine(aTmp, KbTargets.FileName) };
             var t1 = new KbTarget("x", "", "markdown", new[] { "Lessons/[!_]*.md" }, false);
             var f1 = KbTargets.Resolve(t1, aRoots).Files.Select(Path.GetFileName).ToList();
             if (string.Join(",", f1) != "a.md") aFails.Add("[!_]* 得 " + string.Join(",", f1));
@@ -179,7 +179,7 @@ public static partial class SelfTest
             Directory.CreateDirectory(Path.Combine(aTmp, "Docs"));
             File.WriteAllText(Path.Combine(aTmp, "Docs", "a.md"), "# 標題\n\n這裡有一段正文，長度夠長不會被併掉，而且包含獨特的句子甲乙丙。\n");
             File.WriteAllText(Path.Combine(aTmp, "Docs", "l.jsonl"), "{\"title\":\"教訓\",\"body\":\"驗流程用測試殼這一句\"}\n");
-            var aRoots = new KbRoots { ProjectRoot = aTmp, DataRoot = aTmp, CoreRoot = aTmp };
+            var aRoots = new KbRoots { RepoRoot = aTmp, DataRoot = aTmp, ScpCoreRoot = aTmp, TargetsFile = Path.Combine(aTmp, KbTargets.FileName) };
             var aMd = KbTargets.Resolve(new KbTarget("m", "", "markdown", new[] { "Docs/*.md" }, false), aRoots);
             var aJl = KbTargets.Resolve(new KbTarget("j", "", "jsonl", new[] { "Docs/*.jsonl" }, false), aRoots);
 
@@ -212,10 +212,10 @@ public static partial class SelfTest
             if (Senate.Core.Cmd_Kb.DecayPenalty(-5, hl, w) != 0) aFails.Add("未來時間（時鐘偏移）不該被扣");
 
             // 半衰期從 kb_targets.json 讀：設了的有、沒設的是 0（文件類不衰減）
-            Directory.CreateDirectory(Path.Combine(aTmp, "Tools~", "AgentCommands"));
-            File.WriteAllText(Path.Combine(aTmp, "Tools~", "AgentCommands", KbTargets.FileName),
+            Directory.CreateDirectory(aTmp);
+            File.WriteAllText(Path.Combine(aTmp, KbTargets.FileName),   // TASK-0390：定義檔位置由 KbRoots.TargetsFile 給
                 "{\"targets\":{\"frag\":{\"kind\":\"markdown\",\"globs\":[\"x/*.md\"],\"half_life_days\":90},\"doc\":{\"kind\":\"markdown\",\"globs\":[\"y/*.md\"]}}}");
-            var aTargets = KbTargets.Load(new KbRoots { ProjectRoot = aTmp, DataRoot = aTmp, CoreRoot = aTmp }, out string? aErr);
+            var aTargets = KbTargets.Load(new KbRoots { RepoRoot = aTmp, DataRoot = aTmp, ScpCoreRoot = aTmp, TargetsFile = Path.Combine(aTmp, KbTargets.FileName) }, out string? aErr);
             if (aTargets == null) aFails.Add("讀不了 targets：" + aErr);
             else
             {

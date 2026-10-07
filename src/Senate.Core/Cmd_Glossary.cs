@@ -20,7 +20,7 @@ public sealed class Cmd_Glossary : SCP_Cmd
     public override string Summary => "新詞辭典：register／lookup／detect／attach／list —— **不需要 Unity Editor**";
 
     public override string Details =>
-        "詞典根＝PathsPage 的 `glossaryRoot`（senate.local.json；auto ＝ <專案根>/Docs/Glossary）。\n"
+        "詞典根＝PathsPage 的 `glossaryRoot`（senate.local.json；auto ＝ <Senate 專案根>/Glossary）。\n"
         + "  register：term／slug／one_line 必填；aliases 逗號分隔；已存在要 overwrite=true（寫回原位置，created_at 不變）。\n"
         + "            created_by 沒給 ⇒ 用 persona；兩者都沒有 ⇒ 寫 unknown（⛔ 不編一個名字）。\n"
         + "  lookup：term 可以是詞、slug 或 alias。\n"
@@ -56,10 +56,9 @@ public sealed class Cmd_Glossary : SCP_Cmd
     {
         if (UnityDelegateCmd.ConfigProvider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯");
-        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"), ProjectArgSpelling.CmdArg);
-        if (!aTarget.Ok) return SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint);
-        string aProjectRoot = aTarget.Target!.ProjectRoot.Replace('\\', '/');
+        (SenateConfig? aConfig, _) = UnityDelegateCmd.ConfigProvider();
+        // 顯示基準＝Senate 專案根（詞典是 Senate 的 submodule，TASK-0390）。🩸 原本要一個啟用的 Unity 專案才肯動。
+        string aProjectRoot = SenatePathBinding.HostRepoRoot;
 
         // 詞典根：唯一真相源是 senate.local.json 那一格。解不出來 ⇒ ⛔ 不猜一個預設（register 會寫錯樹、讀取會安靜地回 0 命中）。
         string? aRoot = SenatePathBinding.ResolveGlossaryRoot(aConfig, out string? aRootErr);

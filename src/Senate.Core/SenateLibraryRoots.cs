@@ -1,6 +1,6 @@
 // 區塊職責：把 Senate 設定接到 Library 入口 —— 資料根、信件庫根、外部漫畫庫根三格都走同一份路徑 registry。
 // 物理意義：外部漫畫庫根是 `SCP_PathId.ComicRoot`（senate.local.json，唯一真相源；TASK-0400）。
-//          舊的 `<專案根>/.comic_root.local` 快照（Unity 閱讀心得管理頁寫的）**不再被讀來當值**，
+//          舊的 `<Unity 專案根>/.comic_root.local` 快照（Unity 閱讀心得管理頁寫的）**不再被讀來當值**，
 //          只在「本格空白、而快照有值」時用來把話說清楚。
 // 數值影響：唯讀；不存在或無法解析的設定交回入口阻擋，不尋找替代資料樹。
 using SCP.Core.Library;
@@ -21,7 +21,7 @@ public static class SenateLibraryRoots
         SCP_PathResolution Root(SCP_PathId iId)
             => SCP_PathRegistry.Resolve(iId, id => SenatePathBinding.StoredOf(iConfig, id));
         return new SCP_LibraryRoots(Root(SCP_PathId.AgentCommandsRoot), Root(SCP_PathId.LettersRoot),
-                                   ComicRoot(Root(SCP_PathId.ComicRoot), Root(SCP_PathId.ProjectRoot)));
+                                   ComicRoot(Root(SCP_PathId.ComicRoot), Root(SCP_PathId.UnityProjectRoot)));
     }
 
     /// <summary>

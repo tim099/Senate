@@ -25,7 +25,9 @@ public static partial class SelfTest
                        Path.Combine(aLetters, "tester", "profile") }) Directory.CreateDirectory(p);
             var aConfig = new SenateConfig();
             // TASK-0400：漫畫庫根是設定值（SCP_PathId.ComicRoot），不再是 .comic_root.local 快照
-            aConfig.Projects.Add(new SenateProject { Root = aProject, AgentCommandsRoot = aData, ComicRoot = aComics });
+            aConfig.Projects.Add(new SenateProject { Root = aProject });
+            aConfig.Paths.AgentCommandsRoot = aData;   // TASK-0390：資料根／漫畫庫根是全域那一格
+            aConfig.Paths.ComicRoot = aComics;
             aConfig.Awakening.LettersRoot = aLetters;
             SCP_Cmd_Library.RootsProvider = () => SenateLibraryRoots.Resolve(aConfig);
             var aFails = new List<string>();
@@ -55,14 +57,15 @@ public static partial class SelfTest
             aConfig.Awakening.LettersRoot = Path.Combine(aRoot, "missing-letters");
             Need(Run("note_chapter", ("chapter_id", "0002"), ("body", "reject")).ExitCode == 3, "根設定變更未即時讀取");
             aConfig.Awakening.LettersRoot = aLetters;
-            aConfig.Projects[0].AgentCommandsRoot = Path.Combine(aRoot, "missing-data");
+            aConfig.Paths.AgentCommandsRoot = Path.Combine(aRoot, "missing-data");
             Need(Run("paths").ExitCode == 3, "不存在的資料根未擋下");
-            aConfig.Projects[0].AgentCommandsRoot = aData;
-            aConfig.Projects.Add(new SenateProject { Root = aProject, AgentCommandsRoot = aData });
-            Need(Run("paths").ExitCode == 3, "多個啟用專案未擋下");
+            aConfig.Paths.AgentCommandsRoot = aData;
+            // TASK-0390：Unity 專案只是開發目標 ⇒ 多一個啟用專案**不影響**資料根（反向：舊版這裡會擋）
+            aConfig.Projects.Add(new SenateProject { Root = aProject });
+            Need(Run("paths").ExitCode == 0, "多個 Unity 開發目標不該影響資料根");
             aConfig.Projects.RemoveAt(1);
             // 本格空白 ⇒ comics 擋下（exit 3）而 paths 不受影響；舊快照有值時要**說出來**，⛔ 不採用
-            aConfig.Projects[0].ComicRoot = "";
+            aConfig.Paths.ComicRoot = "";
             string aLegacy = Path.Combine(aProject, SCP_LibraryComics.ComicRootSnapshotFileName);
             File.WriteAllText(aLegacy, "# local settings\ncomic_root=" + aComics + "\n");
             SCP_CmdResult aBlank = Run("comics");

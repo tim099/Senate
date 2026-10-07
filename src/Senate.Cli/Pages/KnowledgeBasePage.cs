@@ -71,11 +71,11 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
 
     Dictionary<string, string>? BaseArgs(out string? oError)
     {
-        string aData = m_Model.AgentCommandsRoot.Value, aProj = m_Model.ProjectRoot.Value;
+        string aData = m_Model.AgentCommandsRoot.Value;
         oError = null;
         if (string.IsNullOrEmpty(aData) || !Directory.Exists(aData)) { oError = $"找不到 AgentCommands 資料根（{aData}）—— 到「路徑管理」頁設定"; return null; }
-        if (string.IsNullOrEmpty(aProj) || !Directory.Exists(aProj)) { oError = $"找不到專案根（{aProj}）—— 到「路徑管理」頁設定"; return null; }
-        return new Dictionary<string, string> { ["data_root"] = aData, ["project_root"] = aProj };
+        // TASK-0390：知識庫跟著 Senate ⇒ 不再要 Unity 專案根
+        return new Dictionary<string, string> { ["data_root"] = aData };
     }
 
     void Start(string iKind, string iLabel, Dictionary<string, string> iArgs)

@@ -53,23 +53,13 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     //   一句半對的定語比沒有定語貴，因為讀它的人會去錯的地方查為什麼沒扣到。
     public string HostQualifier
         => $"⤷ token 與券由 Senate Server 執行（`bank` / `voucher`）／"
-           + $"在場資格就地讀 session 檔 @ {m_ProjectLabel}（{m_DataRoot}）";
+           + $"在場資格就地讀 session 檔 @ {(m_ProjectLabel == m_DataRoot ? m_DataRoot : m_ProjectLabel + "（" + m_DataRoot + "）")}";
 
-    /// <summary>資料根 → 專案標籤（上一層目錄名）。解不出來就說「未宣告」，⛔ 不猜一個看起來合理的。</summary>
-    static string DeriveProjectLabel(string iDataRoot)
-    {
-        try
-        {
-            string aTrimmed = iDataRoot.Replace('\\', '/').TrimEnd('/');
-            string? aParent = System.IO.Path.GetDirectoryName(aTrimmed);
-            string aName = System.IO.Path.GetFileName(aParent?.Replace('\\', '/').TrimEnd('/') ?? "");
-            return aName.Length > 0 ? aName : "未宣告";
-        }
-        catch (Exception)
-        {
-            return "未宣告";
-        }
-    }
+    /// <summary>
+    /// 資料根 → 定語標籤：走 `SCP_DataPaths.ProjectNameOf`（唯一一份，＝資料根完整路徑，TASK-0390）。
+    /// 🩸 原本自己取「上一層目錄名」—— 資料根搬到 `D:/Unity/Valhalla` 之後印成 `@ Unity`。
+    /// </summary>
+    static string DeriveProjectLabel(string iDataRoot) => SCP.Core.Paths.SCP_DataPaths.ProjectNameOf(iDataRoot);
 
     // ───────────────────────────── 查詢（逾時 ⇒ 不知道）─────────────────────────────
 
@@ -298,7 +288,7 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     // 物理意義：附件**原封不動送絕對路徑**，相對化由 `tavern-post` 對**那個專案的根**做 ——
     //   🩸 2026-09-07 第一版在這裡相對化，整條路掛不上附件：Senate 的 `Program.RepoRoot()` 永遠是 `D:/Unity/Senate`，
     //   而預覽圖住在消費端專案 ⇒ `StartsWith` 永遠不成立。當時的結論是「知道那個根的是 Editor」。
-    //   ⭐ TASK-0366 起 `tavern-post` 以 `target_data_root`（＝本閘的資料根）選專案 ⇒ 它手上的專案根就是那棵樹的根。
+    //   ⭐ TASK-0366 起 `tavern-post` 以 `target_data_root`（＝本閘的資料根）選專案 ⇒ （TASK-0390 起 tavern-post 不再選專案：資料根只有一組，顯示基準是 Senate 專案根）
     //   📌 一般形照舊成立：路徑相對化要在**知道那個根的那一層**做 —— 只是那一層現在在 Senate。
     // 數值影響：`iAttachAbsolutePath` 給 null ⇒ 不帶 refs；`iTag` 給值時掛 `tag`（09-06 之前那批是 `canvas-share`）。
     //          分享失敗**不讓放點失敗** —— 像素已經落盤、錢已經扣了，廣播是 best-effort。

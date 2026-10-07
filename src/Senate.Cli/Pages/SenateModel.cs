@@ -81,24 +81,6 @@ public sealed class SenateModel : ISCP_GuiAppContext
     /// </summary>
     public SCP_GuiProjectRef HostProject => new SCP_GuiProjectRef("Senate（本專案）", m_RepoRoot);
 
-    /// <summary>
-    /// 可以被安裝的專案 —— 就是設定檔裡管的那批（走 Probe 的結果，順便帶 Editor 心跳）。
-    /// <para>⚠ 只列狀態 Ok 的：指向不存在磁碟的專案不該出現在「要裝進誰」的下拉裡。</para>
-    /// </summary>
-    public IReadOnlyList<SCP_GuiProjectRef> ManagedProjects
-    {
-        get
-        {
-            var aList = new List<SCP_GuiProjectRef>();
-            foreach (ProjectReading p in Projects)
-            {
-                if (p.State != ProbeState.Ok) continue;
-                aList.Add(new SCP_GuiProjectRef(p.Name, p.Root, p.EditorLikelyRunning));
-            }
-            return aList;
-        }
-    }
-
     public SenateModel(string iRepoRoot)
     {
         m_RepoRoot = iRepoRoot;
@@ -149,7 +131,8 @@ public sealed class SenateModel : ISCP_GuiAppContext
     public SCP_PathResolution LettersRoot => ResolvePath(SCP_PathId.LettersRoot);
 
     // TASK-0360：自由時間後台頁找活動 md 用 —— 與 CLI `FillRootArg(project_root)` 同一個 SCP_PathId。
-    public SCP_PathResolution ProjectRoot => ResolvePath(SCP_PathId.ProjectRoot);
+    public SCP_PathResolution UnityProjectRoot => ResolvePath(SCP_PathId.UnityProjectRoot);
+    public SCP_PathResolution FreeTimeActivitiesRoot => ResolvePath(SCP_PathId.FreeTimeActivitiesRoot);
 
     /// <summary>
     /// 新銀行的根（TASK-0223）。**2026-09-17 起是推導值**：<c>&lt;資料根&gt;/Bank</c>（Tim 拍板「不額外設定」）。
@@ -213,7 +196,8 @@ public sealed class SenateModel : ISCP_GuiAppContext
         if (aCfg != null)
         {
             foreach (string err in aCfg.Validate()) Console.Error.WriteLine($"⚠ 設定：{err}");
-            foreach (var p in aCfg.Projects) aList.Add(ProjectProbe.Probe(p));
+            string? aDataRoot = SenatePathBinding.ResolveDataRoot(aCfg, out _);   // 資料根全域一組，唯一入口（TASK-0390）
+            foreach (var p in aCfg.Projects) aList.Add(ProjectProbe.Probe(p, aDataRoot));
         }
         Projects = aList;
         RefreshCount++;
