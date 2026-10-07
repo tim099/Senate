@@ -99,6 +99,7 @@ public static partial class SelfTest
         One(nameof(PrefsThreeStates), "core", PrefsThreeStates),
         One(nameof(PrefsKeepsOtherSections), "core", PrefsKeepsOtherSections),
         One(nameof(PathsSingleSource), "core", PathsSingleSource),
+        One(nameof(LetterDayIsLocalDay), "core", LetterDayIsLocalDay),
         One(nameof(PathRegistryShape), "core", PathRegistryShape),
         One(nameof(ErrorReportShape), "core", ErrorReportShape),
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
@@ -2325,6 +2326,35 @@ public static partial class SelfTest
         }
         catch (Exception e) { return new CheckRow("prefs 只動自己那格", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
         finally { try { File.Delete(aPath); } catch { /* 暫存檔刪不掉不影響判定 */ } }
+    }
+
+    // 區塊職責：見樹的寫信日是**本地日**，不是 UTC 日（TASK-0420）。
+    // 物理意義：`written_at` 帶 `Z`；切字串前 10 字會把本地 00:00–08:00（+08）寫的信標成前一天。
+    // 數值影響：純字串，零 IO。時區用自訂的 +08 / -05，⛔ 不依賴跑的那台機器在哪一區
+    //          （用 Local 的話，在 UTC 機器上這一格會安靜地變成「兩邊一樣」而照樣綠）。
+    static CheckRow LetterDayIsLocalDay()
+    {
+        var aTaipei = TimeZoneInfo.CreateCustomTimeZone("selftest+8", TimeSpan.FromHours(8), "selftest+8", "selftest+8");
+        var aWest = TimeZoneInfo.CreateCustomTimeZone("selftest-5", TimeSpan.FromHours(-5), "selftest-5", "selftest-5");
+
+        // ① 開單那封：UTC 10-02 16:32 ＝ +08 的 10-03 00:32
+        string aIso = SCP_WakeLetters.DayOf("2026-10-02T16:32:32.678Z", aTaipei);
+        // ② 緊湊格式同一刻
+        string aCompact = SCP_WakeLetters.DayOf("20261002T163232Z", aTaipei);
+        // ③ 反向對照：換一個時區答案要跟著變（-05 是 10-02 11:32）——量得出差別的尺才算數
+        string aWestDay = SCP_WakeLetters.DayOf("2026-10-02T16:32:32.678Z", aWest);
+        // ④ 不帶時區 ⇒ 照字面，不替它換
+        string aNoZone = SCP_WakeLetters.DayOf("2026-10-02T23:59:00", aTaipei);
+        // ⑤ 帶顯式 offset
+        string aOffset = SCP_WakeLetters.DayOf("2026-10-02T23:30:00-05:00", aTaipei);
+        // ⑥ 解不出來 ⇒ 空字串（不是猜一個）
+        string aJunk = SCP_WakeLetters.DayOf("not-a-date", aTaipei);
+
+        bool aOk = aIso == "2026-10-03" && aCompact == "2026-10-03" && aWestDay == "2026-10-02"
+                   && aNoZone == "2026-10-02" && aOffset == "2026-10-03" && aJunk == "";
+        return new CheckRow("見樹寫信日是本地日",
+            $"ISO+08={aIso}／緊湊+08={aCompact}／ISO-05={aWestDay}／無時區照字面={aNoZone}／顯式offset={aOffset}／壞值={(aJunk.Length == 0 ? "空" : aJunk)}",
+            aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
     // 區塊職責：路徑解析**只有一個落點** —— 這一格就是「兩處各算一次」的探針。
