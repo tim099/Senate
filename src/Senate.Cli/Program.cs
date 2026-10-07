@@ -1258,7 +1258,7 @@ public static class Program
         // ── run ──
         string? aCmdType = iArgs.Length > 2 && !iArgs[2].StartsWith("--") ? iArgs[2] : null;
         if (aCmdType == null)
-            return AgentUsageError("run 少了 <CmdType>", "senate ucmd run Task --arg op=show --arg index=8");
+            return AgentUsageError("run 少了 <CmdType>", "senate ucmd run Recompile --persona <p>");
 
         var aCmdArgs = new Dictionary<string, string>();
         foreach (string aPair in ArgValues(iArgs, "--arg"))

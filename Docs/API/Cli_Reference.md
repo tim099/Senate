@@ -520,7 +520,7 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 機制、協議與邊界的完整說明在 [`AgentCmd_Dispatch`](../Workflows/AgentCmd_Dispatch.md) —— 本節只列旗標與 exit code。
 
 ```bash
-./senate.exe ucmd run Task --persona summit --arg op=show --arg index=8
+./senate.exe ucmd run Recompile --persona summit
 ./senate.exe ucmd status                      # 唯讀：各 persona queue 的 trigger 狀態與殘量
 ```
 
