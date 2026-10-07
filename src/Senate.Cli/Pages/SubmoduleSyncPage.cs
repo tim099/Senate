@@ -96,8 +96,10 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     public override void OnPush()
     {
         base.OnPush();
-        m_Saved = SenatePageStore.Load<SavedSettings>(m_Model.RepoRoot, PageKey,
+        var aSaved = SenatePageStore.Load<SavedSettings>(m_Model.RepoRoot, PageKey,
             iWarn => m_SaveMessage = $"⚠ {iWarn}");
+        m_LoadedSettings = aSaved != null;
+        m_Saved = aSaved ?? new SavedSettings();
     }
 
     // ===========================================================
@@ -123,16 +125,18 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         public Dictionary<string, string> BranchOverrides { get; set; } = new();
     }
 
-    SavedSettings? m_Saved;
+    SavedSettings m_Saved = new();
+    bool m_LoadedSettings;
+    bool m_SaveRequested;
     string? m_SaveMessage;
 
     /// <summary>root 的預設：存檔值 ＞ Senate 自己。所有讀 <see cref="RootAppliedId"/> 的 fallback 都走這裡 ——
     /// fallback 散在六處，各寫一份的話存檔設定只會在其中幾處生效，而那種半生效查不動。</summary>
-    string DefaultRoot => m_Saved?.Root is { Length: > 0 } aRoot ? aRoot : m_Model.RepoRoot;
-    string DefaultBranch => m_Saved?.DefaultBranch ?? "";
-    bool DefaultInclude(string iPath) => m_Saved == null || !m_Saved.Excluded.Contains(iPath);
+    string DefaultRoot => m_Saved.Root is { Length: > 0 } aRoot ? aRoot : m_Model.RepoRoot;
+    string DefaultBranch => m_Saved.DefaultBranch;
+    bool DefaultInclude(string iPath) => !m_Saved.Excluded.Contains(iPath);
     string DefaultBranchPick(string iPath)
-        => m_Saved != null && m_Saved.BranchOverrides.TryGetValue(iPath, out string? aPick)
+        => m_Saved.BranchOverrides.TryGetValue(iPath, out string? aPick)
            && aPick.Length > 0 ? aPick : AutoValue;
 
     /// <summary>
@@ -145,10 +149,13 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     /// </summary>
     protected override void TopBarButtons(SCP_Ui g)
     {
+        // 工具列先畫；等內容區更新常駐的生效設定後再存，避免存到上一幀的值。
+        if (g.Button("💾 儲存本頁設定", "submodule/save-settings")) m_SaveRequested = true;
+
         // ⚠ ToggleValue / FieldValue 只讀驅動端的字典、不建節點 ⇒ 工具列讀得到那些設定的值，
         //   即使它們的節點要等 DrawContent 才被建出來（工具列**先於**內容區畫）。
         //   ⭐ 這就是操作鈕能放在工具列的原因：設定的真相源在 session，不在「這一輪畫到哪了」。
-        bool aFetch = g.ToggleValue(FetchId, m_Saved?.Fetch ?? false);
+        bool aFetch = g.ToggleValue(FetchId, m_Saved.Fetch);
         // 掃描中不畫「重新掃描」（同「執行中不畫操作鈕」的判準）—— 一顆按了不會有事的鈕看起來像壞的。
         // ⚠ 但**不 return**（Tim 2026-10-02）：下面那三顆操作鈕掃描中照樣畫，按下去是**排隊**（見 m_Queued）。
         if (m_ScanJob != null) g.Label("⏳ 掃描中…");
@@ -503,7 +510,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     protected override void DrawContent(SCP_Ui g)
     {
         // ── ① 收集意圖（全部唯讀 —— 這一段不跑任何 git）───────────────
-        // ⚠ 兩個**打字**欄位（repo 路徑、全域預設 branch）是**草稿**，要按「套用」才生效。
+        // ⚠ 兩個打字欄位是草稿，按「套用」或「儲存本頁設定」才生效。
         //   🩸 第一版是「值一變就重掃」，而在視窗裡打字是**逐字元**的 ——
         //     打 `D:/Unity/LY` 會觸發 11 次重掃，每次跑一整輪 git（LY 有 24 顆 submodule）。
         //     那不是慢，是整個視窗在打字期間卡死，而症狀看起來像「這個欄位壞了」。
@@ -548,7 +555,8 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         {
             using (g.Row())
             {
-                if (g.Button("✓ 套用並重新掃描", "submodule/apply"))
+                bool aApply = g.Button("✓ 套用並重新掃描", "submodule/apply");
+                if (aApply || m_SaveRequested)
                 {
                     // ⛔ 路徑不存在就**不套用** —— 寫進去的話 prefs 會留下一個指向空氣的根，
                     //    而症狀是「掃不到任何 submodule」，跟「這個 repo 真的沒有」同形。
@@ -560,6 +568,11 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
                         m_RootRejected = aClean.Length == 0
                             ? "路徑是空的 —— 沒有套用。"
                             : $"這個路徑不存在，沒有套用：{aClean}";
+                        if (m_SaveRequested)
+                        {
+                            m_SaveRequested = false;
+                            m_SaveMessage = $"⚠ 沒有儲存：{m_RootRejected}";
+                        }
                     }
                     else
                     {
@@ -589,49 +602,41 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
                 g.Note("　⚠ **上面的改動還沒生效** —— 下面的表格與指令仍然是"
                        + $"「{aAppliedRoot}」"
                        + (aAppliedBranch.Length > 0 ? $"／預設 branch「{aAppliedBranch}」" : "")
-                       + "。按「套用」才會重新掃描。");
+                       + "。按「套用」或「儲存本頁設定」才會生效。");
             }
         }
 
-        // ── ②.5 本頁設定的存檔 ──────────────────────────────────────
-        // 存的是**生效值**（不是草稿）—— 存一份沒按過套用的草稿，等於替下次的自己按了套用。
-        using (g.Row())
+        // 常駐資料隨生效設定更新；存檔直接使用它，不另外組一份快照。
+        // 儲存要求已在上面驗證並套用草稿；存檔不依賴掃描／fetch 完成。
+        m_Saved.Root = aAppliedRoot;
+        m_Saved.DefaultBranch = aAppliedBranch;
+        m_Saved.Fetch = aOptions.Fetch;
+        m_Saved.IncludeRoot = aOptions.IncludeRoot;
+        m_Saved.PushAllRemotes = aOptions.PushAllRemotes;
+        if (m_Scan is { Ok: true } aCurrentScan && SameRepo(aCurrentScan.Root, aAppliedRoot))
         {
-            if (g.Button("💾 儲存本頁設定", "submodule/save-settings"))
-            {
-                var aToSave = new SavedSettings
-                {
-                    Root = aAppliedRoot,
-                    DefaultBranch = aAppliedBranch,
-                    Fetch = aOptions.Fetch,
-                    IncludeRoot = aOptions.IncludeRoot,
-                    PushAllRemotes = aOptions.PushAllRemotes,
-                    Excluded = new List<string>(aExcluded),
-                    BranchOverrides = new Dictionary<string, string>(aOverrides),
-                };
-                (bool aOk, string aMsg) = SenatePageStore.Save(m_Model.RepoRoot, PageKey, aToSave);
-                if (aOk) m_Saved = aToSave;    // 存檔成功 ⇒ 預設值當場跟上（不必重開頁）
-                m_SaveMessage = aMsg
-                    + (aOk ? $"（root={aAppliedRoot}、排除 {aExcluded.Count}、覆寫 {aOverrides.Count}）" : "");
-            }
+            // 背景掃描尚未取得目標資料時保留已有設定，避免把存檔的排除／覆寫清空。
+            var aSettings = CollectSettings(g);
+            m_Saved.Excluded = aSettings.Excluded;
+            m_Saved.BranchOverrides = aSettings.Overrides;
+        }
+        if (m_SaveRequested)
+        {
+            m_SaveRequested = false;
+            (bool aOk, string aMsg) = SenatePageStore.Save(m_Model.RepoRoot, PageKey, m_Saved);
+            if (aOk) m_LoadedSettings = true;
+            m_SaveMessage = aMsg
+                + (aOk ? $"（root={m_Saved.Root}、排除 {m_Saved.Excluded.Count}、覆寫 {m_Saved.BranchOverrides.Count}）" : "");
         }
         if (m_SaveMessage != null) g.Note($"　{m_SaveMessage}");
-        else if (m_Saved != null)
+        else if (m_LoadedSettings)
             g.Note($"　・已載入存檔設定（{SenatePageStore.DefaultPath(m_Model.RepoRoot)}）——"
                    + "它是各欄位的**預設值**，這一輪動過的欄位以動過的為準。");
 
         // ── ③ 掃描（唯一落點）────────────────────────────────────────
-        // ⚠ 指紋追蹤的是**生效值**（不是草稿）＋ 點選類設定：
-        //   · 打字不會改生效值 ⇒ 不會逐字元重掃（那是這一輪要修掉的血證）
-        //   · fetch 與逐項覆寫是點選 ⇒ 進指紋，立即生效
-        //     （不進的話「我開了先 fetch」就是一顆開了不會有事的開關）
-        // ⚠ `m_Scan == null` 也算不符 —— 新 process 的第一輪就是靠這個條件掃第一次。
-        // ⚠ 批次執行中**一律不重掃**：那會在背景正在移動 HEAD 的同時去讀狀態 ——
-        //   讀到的是一張「一半」的照片，而它看起來跟一張完整的照片一模一樣。
-        //   跑完之後 HarvestJob 會自己重掃一次（報告說切好了不算數，狀態表讀回來的才算）。
-        // ⚠ 多一格 `m_ScanJob == null`：掃描期間使用者改設定 ⇒ 指紋不符 ⇒ 這裡每幀都會想再丟一輪。
-        //   `Rescan` 自己也擋（它是最後一道），但讓「正在掃就不再丟」在**讀得到的地方**寫一次 ——
-        //   一道只寫在被呼叫端的閘，會在有人加第二個呼叫端的那天靜默失效。
+        // 存檔先完成；即使 CLI 同步 fetch 很久，路徑也已經落檔。
+        // 指紋追蹤生效值＋點選設定；打字時不掃，按套用／儲存才更新目標。
+        // 執行或掃描中不重掃；目標有變，完成後下一幀會由指紋差異觸發新掃描。
         string aFingerprint = Fingerprint(aAppliedRoot, aAppliedBranch, aOverrides, aOptions.Fetch);
         if (m_Job == null && m_ScanJob == null && (m_Scan == null || aFingerprint != m_ScannedFingerprint))
         {
@@ -717,9 +722,9 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
     PageSettings CollectSettings(SCP_Ui g)
     {
         var aOptions = new SyncOptions(
-            g.ToggleValue(FetchId, m_Saved?.Fetch ?? false),
-            g.ToggleValue(IncludeRootId, m_Saved?.IncludeRoot ?? false),
-            g.ToggleValue(PushAllId, m_Saved?.PushAllRemotes ?? false));
+            g.ToggleValue(FetchId, m_Saved.Fetch),
+            g.ToggleValue(IncludeRootId, m_Saved.IncludeRoot),
+            g.ToggleValue(PushAllId, m_Saved.PushAllRemotes));
 
         var aOverrides = new Dictionary<string, string>();
         var aExcluded = new List<string>();
@@ -750,9 +755,9 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
         // ⚠ 預設值＝存檔值 ＞ 全關 —— 存過的 fetch=true 會在開頁第一輪就走網路，
         //   那不是副作用：它是使用者上次顯式點過頭、然後按了「儲存本頁設定」的意圖。
         bool aFetch = g.Toggle("先 fetch 再讀（走網路；不開的話 ahead/behind 是上次 fetch 的舊值）",
-            m_Saved?.Fetch ?? false, FetchId);
-        bool aIncludeRoot = g.Toggle("root repo 本身也一起 pull / push", m_Saved?.IncludeRoot ?? false, IncludeRootId);
-        bool aPushAll = g.Toggle("push 推到該 repo 的**所有** remote（關 ＝ 只推 origin）", m_Saved?.PushAllRemotes ?? false, PushAllId);
+            m_Saved.Fetch, FetchId);
+        bool aIncludeRoot = g.Toggle("root repo 本身也一起 pull / push", m_Saved.IncludeRoot, IncludeRootId);
+        bool aPushAll = g.Toggle("push 推到該 repo 的**所有** remote（關 ＝ 只推 origin）", m_Saved.PushAllRemotes, PushAllId);
 
         if (aIncludeRoot)
             g.Note("　⚠ root **永遠不切 branch** —— 主 repo 根換分支影響整個工程，那個動作該是人自己下的，不進批次。");
