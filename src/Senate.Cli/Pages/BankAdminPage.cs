@@ -120,6 +120,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         m_Letters = m_Model.LettersRoot;
         m_DataRoot = m_Model.AgentCommandsRoot;
         m_Regions = ScanRegions(m_Letters.Value);
+        m_VoucherKinds = null;
         // ⚠ 區域名讀**舊系統那一格**（`Treasury/bank_settings.json` 的 `currency_id`）——
         //   新銀行不另立設定：兩份設定會對「這裡是哪一區」給出不同答案，而兩邊都是合法字串。
         m_Region = m_DataRoot.Value.Length > 0
@@ -863,8 +864,8 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                 return;
             }
 
-            string aVoucher = g.TextField("券名（＝檔名）", g.FieldValue("bank/f/vname", "canvas"), "bank/f/vname").Trim();
-            g.Label($"對象：**{aPersona}**　券：**{(aVoucher.Length > 0 ? aVoucher : "（未填）")}**");
+            string aVoucher = DrawVoucherKindPicker(g);
+            g.Label($"對象：**{aPersona}**　券：**{(aVoucher.Length > 0 ? aVoucher : "（未選）")}**");
 
             if (g.Button("查餘額", "bank/do/vbal"))
             {
@@ -874,30 +875,41 @@ public sealed class BankAdminPage : SCP_GuiToolPage
                     new Dictionary<string, string> { ["persona"] = aP, ["voucher"] = aV })));
             }
 
-            using (g.Row())
+            // 版面：欄位一條一條直排。⚠ 這四格原本塞在同一個 Row，視窗一窄標籤就蓋到隔壁的欄位與按鈕
+            //       （Tim 2026-10-07 截圖）；直排不依賴寬度，⛔ 不要再把它們併回同一列。
+            using (g.Column())
             {
                 string aAmt = g.TextField("張數", g.FieldValue("bank/f/vamt", ""), "bank/f/vamt");
                 string aExp = g.TextField("到期（ISO-8601 UTC；**空 ＝ 永久券**）",
                                           g.FieldValue("bank/f/vexp", ""), "bank/f/vexp");
-                string aSrc = g.TextField("為什麼發", g.FieldValue("bank/f/vsrc", ""), "bank/f/vsrc");
+                string aSrc = g.TextField("為什麼發（必填；會原文寫進酒館公告）", g.FieldValue("bank/f/vsrc", ""), "bank/f/vsrc");
+                g.Note("⚠ 到期欄**空的就是永久券** —— 兩者差很多，而空白在畫面上不會替自己說話。"
+                       + "發券成功後會在酒館 @" + aPersona + " 並附上原因。");
                 if (g.Button("發券", "bank/do/vgrant"))
                 {
-                    if (aVoucher.Length == 0) { m_Message = "⚠ 券名是空的 ⇒ **沒有送出**"; return; }
+                    if (aVoucher.Length == 0) { m_Message = "⚠ 還沒選券種 ⇒ **沒有送出**"; return; }
                     if (!int.TryParse(aAmt.Trim(), out int aN) || aN <= 0)
                     { m_Message = $"⚠ 張數 '{aAmt}' 不是正整數 ⇒ **沒有送出**"; return; }
-                    string aP = aPersona, aV = aVoucher, aE = aExp.Trim(), aS = aSrc;
-                    Start($"發券 {aN} 張 {aV} → {aP}", () => DescribeVoucher(DispatchVoucher("grant",
-                        new Dictionary<string, string>
+                    if (aSrc.Trim().Length == 0)
+                    { m_Message = "⚠ 原因是空的 ⇒ **沒有送出**（原因會寫進酒館公告，空白的公告沒人看得懂）"; return; }
+                    string aP = aPersona, aV = aVoucher, aE = aExp.Trim(), aS = aSrc.Trim();
+                    Start($"發券 {aN} 張 {aV} → {aP}", () =>
+                    {
+                        SCP_CmdResult aGrant = DispatchVoucher("grant", new Dictionary<string, string>
                         {
                             ["persona"] = aP,
                             ["voucher"] = aV,
                             ["amount"] = aN.ToString(),
                             ["expires_at"] = aE,
                             ["source"] = aS,
-                        })));
+                        });
+                        string aText = DescribeVoucher(aGrant);
+                        // 只有 grant 真的成功才公告：⛔ 券沒發出去就不能在酒館說「已發」。
+                        if (aGrant.Ok) aText += "\n  " + AnnounceVoucherGrant(aP, aV, aN, aE, aS);
+                        return aText;
+                    });
                 }
             }
-            g.Note("⚠ 到期欄**空的就是永久券** —— 兩者差很多，而空白在畫面上不會替自己說話。");
         }
     }
 
@@ -909,6 +921,99 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         //   ⇒ 一律帶上；讀的時候它會被忽略，帶了沒有壞處。
         iArgs["region"] = m_Region;
         return SCP_CmdRegistry.Dispatch("voucher", iArgs);
+    }
+
+    // ===========================================================
+    // 區塊職責：券種下拉 —— 選項來自**磁碟上真的存在的券檔**（`letters/*/vouchers/*.json` 的檔名），不寫死名單。
+    // 物理意義：券名＝檔名。手打券名打錯一個字（`Canvas`／`canvas `）不會報錯，而是**在某個人名下憑空多出一本新券**；
+    //          下拉選單讓「發出去的券種一定是已經存在的」成為預設，真要發新券種才走「其他」。
+    // 數值影響：只讀；掃描結果快取到下次 OnPush（⛔ 不要每一幀掃一遍全部人的信件夾）。
+    //          `canvas`／`tavern` 固定排最前面（日常發的就這兩種），其餘照名稱排。
+    // ===========================================================
+    const string VoucherCustomKey = "__custom__";
+    List<string>? m_VoucherKinds;
+
+    List<string> VoucherKinds()
+    {
+        if (m_VoucherKinds != null) return m_VoucherKinds;
+        var aSet = new SortedSet<string>(StringComparer.Ordinal);
+        string aRoot = m_Letters.Value;
+        if (aRoot.Length > 0 && Directory.Exists(aRoot))
+        {
+            foreach (string aPersonaDir in Directory.GetDirectories(aRoot))
+            {
+                string aVDir = Path.Combine(aPersonaDir, "vouchers");
+                if (!Directory.Exists(aVDir)) continue;
+                foreach (string f in Directory.GetFiles(aVDir, "*.json"))
+                {
+                    string aName = Path.GetFileNameWithoutExtension(f);
+                    if (aName.Length > 0) aSet.Add(aName);
+                }
+            }
+        }
+        var aList = new List<string>();
+        // 這兩種是日常發的券，磁碟上暫時還沒有檔也要能選（第一次發給誰都不該被擋）。
+        foreach (string aFirst in new[] { "canvas", SCP_SpendPolicy.TavernVoucherId })
+        {
+            aSet.Remove(aFirst);
+            aList.Add(aFirst);
+        }
+        aList.AddRange(aSet);
+        m_VoucherKinds = aList;
+        return aList;
+    }
+
+    /// <summary>券種下拉。回傳選到的券名（「其他」＝手打那一格的值）；沒選／手打是空的 ＝ 空字串。</summary>
+    string DrawVoucherKindPicker(SCP_Ui g)
+    {
+        var aOpts = new List<SCP_GuiOption>();
+        foreach (string aKind in VoucherKinds()) aOpts.Add(new SCP_GuiOption(aKind, aKind));
+        aOpts.Add(new SCP_GuiOption(VoucherCustomKey, "（其他…手動輸入新券種）"));
+
+        string aPick = g.Dropdown("券種（＝券名＝檔名）", aOpts, g.FieldValue("bank/f/vkind", "canvas"), "bank/f/vkind");
+        if (aPick != VoucherCustomKey) return aPick.Trim();
+
+        string aCustom = g.TextField("新券種名稱（⚠ 會在對象名下建立一本新券，大小寫即檔名）",
+                                     g.FieldValue("bank/f/vname", ""), "bank/f/vname").Trim();
+        if (aCustom.Length > 0 && !SCP_BankPolicy.IsValidVoucherType(aCustom))
+        {
+            g.Note($"⚠ `{aCustom}` 不能當券名（券名＝檔名）");
+            return "";
+        }
+        return aCustom;
+    }
+
+    /// <summary>
+    /// 發券成功後在酒館公告：@收券人、帶原因。
+    /// <para>⚠ best-effort：券已經發出去了（落盤、回讀過），公告失敗只回報、⛔ 不回滾也不重發券。
+    /// exit 7 ＝「不知道有沒有發」，⛔ 別補發，先 `tavern-query` 回讀。</para>
+    /// </summary>
+    string AnnounceVoucherGrant(string iPersona, string iVoucher, int iAmount, string iExpires, string iReason)
+    {
+        string aBody = $"🎟 **發券** @{iPersona}：**{iAmount}** 張 `{iVoucher}`"
+                       + (iExpires.Length > 0 ? $"（{iExpires} 到期）" : "（永久券）")
+                       + $"\n原因：{iReason}";
+        var aArgs = new Dictionary<string, string>
+        {
+            ["room"] = "tavern",
+            ["body"] = aBody,
+            ["sender"] = "tavern-keeper",
+            ["target_data_root"] = m_DataRoot.Value,
+        };
+        try
+        {
+            SCP_CmdResult aPost = SCP_CmdRegistry.Dispatch("tavern-post-system", aArgs);
+            string aSeq = "";
+            foreach (KeyValuePair<string, string> kv in aPost.Values) if (kv.Key == "post_seq") aSeq = kv.Value;
+            if (aPost.ExitCode == 0)
+                return aSeq.Length > 0 ? $"📣 已在酒館 @{iPersona}（seq {aSeq}）" : $"📣 已排進酒館（@{iPersona}，尚無 seq）";
+            return $"⚠ 券已發出，但酒館公告 exit {aPost.ExitCode}"
+                   + (aPost.ExitCode == 7 ? "（不知道有沒有發 —— 先 tavern-query 回讀，⛔ 別重發）" : "（確定沒發，可手動補一則）");
+        }
+        catch (Exception e)
+        {
+            return $"⚠ 券已發出，但酒館公告丟例外：{e.GetType().Name}: {e.Message}";
+        }
     }
 
     static string DescribeVoucher(SCP_CmdResult iRes)
