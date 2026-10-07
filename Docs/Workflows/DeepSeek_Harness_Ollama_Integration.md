@@ -1,7 +1,7 @@
 ---
 title: DeepSeek Harness 接入本地 Ollama 模型
 description: 將 LlmModelPage 管理的 Ollama 模型接入 DSH，包含設定、查驗、故障排查與 LY 換機驗收。
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 target_audience: [AI_Agent, Tools_Maintainer, Tim]
 aliases: [DSH, DeepSeek Harness, Ollama, LlmModelPage, 本地模型]
 ---
@@ -26,7 +26,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:11434/v1/models'
 
 **本機已驗證讀數（2026-10-06）**：Ollama 0.35.1 可連線，已安裝 `qwen3:4b`（Q4_K_M，約 2.5 GB），原生與 OpenAI 相容模型列表均列出同一 ID；查驗當時無載入中的模型。這是 Bar 電腦的讀數，LY 電腦須重新查驗。
 
-**尚未驗證**：DSH provider 保存、實際模型回答、thinking 行為與工具呼叫。模型列表可讀不能替代推理驗收。
+Bar 當時尚未驗證 DSH provider 保存、實際模型回答、thinking 行為與工具呼叫。LY 的實測補在 §4.1；模型列表可讀不能替代推理驗收。
 
 ## 2. 在 DSH 添加本地模型
 
@@ -36,7 +36,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:11434/v1/models'
 4. 保存設定。
 5. 在對話的模型選單選取這個 provider 下的模型，**新建對話**再測試。
 
-| 欄位 | Bar 本機填法 |
+| 欄位 | 設定範例 |
 |---|---|
 | 提供商 ID | `local-ollama` |
 | 顯示名稱 | `本地 Ollama` |
@@ -53,6 +53,40 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:11434/v1/models'
 ### 2.1 容量與能力設定
 
 上下文窗口依 Ollama 的實際運行配置填寫；模型 metadata 的最大容量不代表目前服務配置的容量。DSH 自訂模型未指定時的預設容量為 262,144／最大輸出 32,768，不能直接當成本機可用預算。Senate 的 `num_predict` 是生成上限，不是 context window。
+
+LY 最終使用 `qwen3:0.6b-dsh`，contextWindow **32768**、maxTokens **2048**。DSH 的 contextWindow 不會設定 Ollama `num_ctx`；Ollama 的 OpenAI 相容 API 不提供這個請求參數，因此先以 Modelfile 建立專用 alias，再在推理期間核對 `/api/ps` 的 `context_length`。[Ollama 官方說明](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size)。
+
+```text
+# D:\Unity\deepseek-harness-local\Modelfile.dsh
+FROM qwen3:0.6b
+PARAMETER num_ctx 32768
+```
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" create qwen3:0.6b-dsh -f D:\Unity\deepseek-harness-local\Modelfile.dsh
+# DSH 選取 alias，送出新對話後查驗實際容量。
+Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps'
+```
+
+這個 create 重用已安裝的 qwen3:0.6b 權重，不需要再下載另一份。原模型保留；GPU／RAM 配置不同時需重新量容量與速度，不把 LY 的容量直接套給所有電腦。
+
+本次另在 provider patch 保留既有欄位，加入下列設定，讓 UI 可選 Off 並送出明確的 `reasoning_effort: none`。空白 `off:` 只會省略參數，無法明確要求 Ollama 關閉思考。[Ollama 思考控制說明](https://docs.ollama.com/api/openai-compatibility#v1chatcompletions)。
+
+```yaml
+        reasoning: off
+        compat:
+          supportsDeveloperRole: false
+          supportsReasoningEffort: true
+          maxTokensField: max_tokens
+        models:
+          - id: qwen3:0.6b-dsh
+            name: qwen3:0.6b-dsh
+            contextWindow: 32768
+            maxTokens: 2048
+            reasoningEfforts:
+              off: none
+              low: low
+```
 
 本機 `qwen3:4b` 的能力列表包含 completion、tools、thinking，未列 vision，因此輸入類型填 `text`。Ollama 原生 API 的 `think` 與 DSH 的 reasoning 設定不會自動對應；工具能力宣告也不能替代 DSH 實際工具呼叫驗收。
 
@@ -72,6 +106,7 @@ DSH 預設資料目錄是使用者家目錄下的 `.dsh`；若指定 `DSH_HOME`�
 | 缺憑證錯誤 | 在自訂 provider 保存 `ollama` 佔位 key。 |
 | 保存後仍使用原模型 | 在對話模型選單重新選取 provider 下的模型，並新建對話。 |
 | 回答慢、思考長或輸出被截斷 | 記錄回應與錯誤，核對實際容量、生成上限及 thinking 設定；與 Senate 原生測試結果分開記錄。 |
+| UI 顯示完成，但答案與問題無關 | LY 曾將 DSH capacity 設 8192，而 Ollama 實際只有 4096；先以 `/api/ps` 核對，建立 num_ctx 明確的 alias，再同步 DSH capacity 並新建對話。不能只用「有輸出」簽驗收。 |
 | API 拒絕請求格式 | 保留原始錯誤；參考 DSH 指南的 `compat.supportsDeveloperRole: false`／`compat.maxTokensField: max_tokens`。這是尚未在本機路由實測的備案。 |
 
 ## 4. LY 換機流程與紀錄
@@ -86,6 +121,14 @@ DSH 與 Ollama 在同一台 LY 電腦時，仍使用 `127.0.0.1:11434/v1`；重�
 - [ ] 將結果補回 TASK-0442 與本文件，保留症狀、錯誤、處理動作和修復後讀數。
 
 驗收紀錄至少包含日期／電腦、Ollama 與 DSH 版本、provider ID／Base URL／模型 tag、實際上下文配置、測試問題／回答結果、工具結果及未解問題。不要將登入 token、cookie 或真實 API key 放入文件。
+
+### 4.1 LY 實測（2026-10-07）
+
+電腦 DESKTOP-BC18H3C，Windows 11 x64、RTX 2060 6 GB；Ollama 0.35.1、DSH `0.2.1-alpha.1-5badb15`。Provider `local-ollama`、Base URL `http://127.0.0.1:11434/v1` 已保存，工作區 `D:\Unity\LY` 已選取。
+
+最終模型 **qwen3:0.6b-dsh**（既有 751.63M／Q4_K_M 權重），DSH 與 Ollama 實際 context_length 都是 **32768**，maxTokens 2048，Off 明確送出 `none`。新對話問「請只用一句繁體中文回答：2 加 3 等於多少？這是本地部署驗收，請勿讀取檔案或呼叫工具。」回覆 **「2 加 3 等於 5。」**，13 秒完成，約 52 tok/s，14.1K tokens 用量、上下文使用 43%。這一輪沒有工具呼叫。
+
+失敗路徑與限制：原 qwen3:4b 實際 4096 與 DSH 8192 不一致時答案偏題；改為 16K alias 後仍反覆思考且慢，明確 Off 後輸出分析又在 `2 + 3 =` 截斷。專用 alias 的 template 試改也未改善，已還原 template；原 qwen3:4b 保留不動。詳見部署文件 §9.3。沒有將 4B 問答、Low 模式或工作區工具循環標為成功。
 
 ## 5. 依據
 

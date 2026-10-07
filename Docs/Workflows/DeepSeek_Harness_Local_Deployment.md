@@ -1,17 +1,17 @@
 ---
 title: DeepSeek Harness 本地部署與啟動
 description: Windows 與 LY 換機部署的工具鏈、啟停與驗收流程，以及本次問題、解法和未驗備案。
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 target_audience: [AI_Agent, Tools_Maintainer, Tim]
 ---
 
 # DeepSeek Harness 本地部署與啟動
 
-本流程對應 TASK-0439，使用既有的 `D:\Unity\deepseek-harness` checkout。以原始碼建置後啟動官方 `dsh web` profile；資料與模型設定由 Harness 管理，不寫入 Senate 設定。雲端模型需有效 API 憑證；本地 Ollama 可依 §8 接入，目前尚未驗收 DSH 內的模型回答。
+本流程對應 Bar 的 TASK-0439 與 LY 的 TASK-0442。以原始碼建置後啟動官方 `dsh web` profile；資料與模型設定由 Harness 管理，不寫入 Senate 設定。雲端模型需有效 API 憑證；本地 Ollama 可依 §8 接入。
 
-**下一次會在 LY 專案的電腦部署。** §1–5 保存 Bar 這台機器的實測；§6 區分已遇到的問題與未驗備案；§7 提供換機參數、指令與驗收。LY 不必沿用 `Tim` 帳號、D 槽或 Codex runtime 路徑，也不必把 Harness 放進 Unity 的 `Assets`。
+§1–5 保存 Bar 電腦的實測；§6 區分已遇到的問題與未驗備案；§7 提供換機參數、指令與驗收；§9 記錄 2026-10-07 的 LY 部署。LY 不必沿用 `Tim` 帳號、D 槽或 Codex runtime 路徑，也不必把 Harness 放進 Unity 的 `Assets`。
 
-LY 部署由 **TASK-0442 — LY 區域部署 DeepSeek Harness** 追蹤，與已完成的 TASK-0439 關聯。查單：`senate cmd tasks --arg index=442`；LY 尚未部署，其進度以該任務單為準。
+LY 部署由 **TASK-0442 — LY 區域部署 DeepSeek Harness** 追蹤，與已完成的 TASK-0439 關聯。查單：`senate cmd tasks --arg index=442`；進度與驗收勾選以任務單為準。
 
 ## 1. 環境與來源
 
@@ -200,7 +200,7 @@ Stop-Process -Id $dshPid
 
 ## 7. LY 電腦的重跑流程
 
-本節是假設 LY 電腦亦為 **Windows x64** 的部署指引，尚未在該電腦驗證；若是其他平台，不能沿用本次 Windows 原生套件與停止方法。先保持與本次相同的 Git commit、Node 24.19、pnpm 11.7，讓差異主要是電腦環境；若刻意更新上游版本，先重新讀該 checkout 的 README、AGENTS 與 package.json，再記錄新組合。
+本節是 **Windows x64** 的換機部署指引，LY 的實跑結果見 §9；若是其他平台，不能沿用 Windows 原生套件與停止方法。先保持與本次相同的 Git commit、Node 24.19、pnpm 11.7，讓差異主要是電腦環境；若刻意更新上游版本，先重新讀該 checkout 的 README、AGENTS 與 package.json，再記錄新組合。
 
 ### 7.1 換機先決定的值
 
@@ -327,4 +327,61 @@ Stop-Process -Id $dshPid
 
 完整步驟見 [DSH 接入本地 Ollama 模型](DeepSeek_Harness_Ollama_Integration.md)，包含模型列表查驗、DSH 設定表、故障排查與 TASK-0442 的 LY 驗收。
 
-本機已確認 Ollama 服務與 qwen3:4b 模型列表正常；DSH 模型回答及工具呼叫尚未驗收。
+Bar 已確認 Ollama 服務與 qwen3:4b 模型列表正常；LY 的模型回答結果見 §9。工作區工具呼叫須另驗，不能由簡單問答推定成功。
+
+## 9. LY 實際部署（2026-10-07）
+
+### 9.1 環境與建置
+
+本次在 LY 電腦重新 clone 官方 origin，再 detached checkout 到相同基準 SHA；沒有搬 Bar 的 node_modules、資料目錄或認證。Tim 指定的目標為 `D:\Unity\deepseek-harness`。
+
+| 項目 | LY 實測 |
+|---|---|
+| 電腦／系統 | DESKTOP-BC18H3C，Windows 11 Professional x64 |
+| 工作區 | `D:\Unity\LY` |
+| Harness／版本 | `D:\Unity\deepseek-harness`；`5badb15009ae1756c3afe0ae0cef1faafc290ccc`；`0.2.1-alpha.1` |
+| 建置與啟動 Node | `C:\Users\crespirit\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe`；24.19.0；type stripping 可用 |
+| 系統 PATH Node | 24.14.0，符合 engine；PowerShell 5.1 helper preflight 通過。正式驗收仍顯式指定 24.19.0 |
+| Bootstrap pnpm | Codex fallback 的 11.19.0，frozen install exit 0，1393 套件，約 2 分 20 秒 |
+| 鎖定 pnpm | `node_modules/pnpm/bin/pnpm.cjs` 11.7.0；再做 frozen install exit 0 |
+| 完整 build | exit 0；09:16:27–09:23:08，約 6 分 41 秒；355 client artifacts |
+| 產物讀回 | `readClientBuildRecord(process.cwd())` 通過 digest 驗證 |
+| 原生依賴 | ConPTY win10-x64 預建 payload `1.25.260303002` 可用；沒有另裝 C++ 編譯器 |
+| Ollama／GPU | 0.35.1；RTX 2060 6 GB；既有 `qwen3:0.6b`、`qwen3:4b` |
+| DSH 資料 | `C:\Users\crespirit\.dsh`，正式 `profiles/web` |
+
+安裝的 bin ENOENT、平台提示、DEP0190，以及 build 的 plugin timing／大 chunk 警告均保留在 log；最終 install 與 build 都回 0。沒有修改上游 source、lockfile 或 install-script 政策。
+
+### 9.2 本地啟動器與驗收紀錄
+
+原始 commit 不含 Bar 的本地 helper，因此在 LY 根目錄重建 `start-dsh.bat` 與 `start-dsh.ps1`；兩檔保持本地 untracked。使用 §3 的雙擊及 `-CheckOnly`／`-NoBrowser` 方式，顯式 Node 仍由 `DSH_NODE_EXE` 控制。
+
+LY helper 的紀錄依 port 命名：`.dsh-build/local-launch/web-3080.pid`、`web-3080.stdout.log`、`web-3080.stderr.log`；停止時要讀這個 PID，不能套用 Bar 的 `web.pid`。helper 核對 Node executable、完整 CLI path、單一 listener 的 PID 及 loopback address。
+
+瀏覽器自動驗收依 Harness AGENTS 加上 `apps/web/tests/pin-browse-picker.overlay.yml`，讓資料夾 picker 在網頁內可操作。這是驗收 overlay，日常啟動不帶它。CLI loader 選項 `--profile web --patch <overlay>` 必須放在 Web app 的 `--host`／`--port` 選項之前；首次放在 app flags 後面回 `unknown option '--patch'` 並退出，調整順序後成功就緒。
+
+驗收 log 位於 `D:\Unity\deepseek-harness-local`：`install.log`、`pinned-install.log`、`build.log`、`smoke-3080.json`。登入 stdout 在上述 gitignored 目錄，含 token，不提交。HTTP smoke 的 JS 只输出去除認證資料的狀態碼。
+
+首次瀏覽器驗收 PID 31960 綁定 `127.0.0.1:3080`；HTTP 檢查為未登入 API **401**、token 交換 **303** 並發 cookie、認證後首頁 **200**（35,591 bytes）、主要 JS **200**（634,085 bytes）、認證後未知 API **404**。實際 IAB 瀏覽器已渲染 `DSH 本地构建 0.2.1-alpha.1-5badb15`，已新增並選中 LY 工作區及本地 provider。
+
+### 9.3 模型容量排錯
+
+首次 provider 宣告 `qwen3:4b` contextWindow 8192、maxTokens 2048，但 Ollama `/api/ps` 實際只有 **4096**。DSH 執行上下文壓縮後，用了 1 分 24 秒回覆與時間戳相關的英文，沒有回答「2 加 3」，因此該次不算問答驗收通過。
+
+以既有權重建立 `qwen3:4b-dsh`，Modelfile 設 `PARAMETER num_ctx 16384`；DSH model 的 contextWindow 同步為 16384、maxTokens 2048，並改預設模型後新建 LY 對話。`/api/ps` 已確認 alias 真正載入 **16384**，VRAM 約 4.17 GB。容量設定與後續問答結果詳見 [Ollama 接入紀錄](DeepSeek_Harness_Ollama_Integration.md)。DSH 的 contextWindow 只聲明 client 預算，不能替代 Ollama 的 num_ctx。
+
+16K 的 4B 路徑仍不適合作為本次預設：每秒約 5 tokens，持續反覆思考；停止該次後明確送出 `reasoning_effort: none`，另一新對話仍把分析當答案輸出，32 秒後在 `2 + 3 =` 截斷。曾在專用 alias 試改 template 的結尾思考前綴，API 短答仍不通過；已將 4B alias 恢復為原模型 template、只保留 num_ctx 16384，沒有修改原 `qwen3:4b`。
+
+原生 API 查驗既有 `qwen3:0.6b` 在 `think: false` 下能完整回答 `2 + 3 = 5.`。因此另建立 **`qwen3:0.6b-dsh`**，num_ctx 與 DSH contextWindow 均為 **32768**，maxTokens 2048；provider 明確配置 Off → `none`、`supportsDeveloperRole: false` 及 `maxTokensField: max_tokens`。Ollama 實際 `context_length` 32768、VRAM 4,269,549,812 bytes。
+
+**09:37 的 LY UI 問答通過**：新建 LY 標準模式對話、所選 `local-ollama/qwen3:0.6b-dsh`、推理 Off，提問「請只用一句繁體中文回答：2 加 3 等於多少？這是本地部署驗收，請勿讀取檔案或呼叫工具。」完整回覆 **「2 加 3 等於 5。」**，用時 **13 秒**，約 52 tok/s，上下文使用 43%。沒有把早先兩種失敗輸出算成通過。
+
+這項結果驗證本地模型接入與基本問答；0.6B 的程式修改能力、工作區工具循環與 Low 推理仍未驗。4B 的推理問題保留為模型接入限制，沒有宣稱已修復。
+
+### 9.4 正式重啟與文件交付
+
+核對並停止自己的 PID 31960 後，3080 listener 已消失。以不含 picker overlay 的正式 Web profile 重新啟動，**PID 8588** 綁定 `127.0.0.1:3080`；09:38:56 的 HTTP smoke 再次通過 401／303／cookie／首頁 200／JS 200／認證後未知 API 404。啟動 stderr 為空，瀏覽器用新 token 登入並恢復既有 LY 對話。
+
+PowerShell 5.1 的啟動器重用測試保持 PID 31960，顯式指定不存在的 Node 回 exit 1；正式重啟則建立新 PID。最後保留 PID 8588 服務供使用，不新增開機自啟。日常雙擊 `D:\Unity\deepseek-harness\start-dsh.bat` 即可重用服務並登入。
+
+本文件就在同一台 LY 電腦的 `D:\Unity\Senate\Docs\Workflows\DeepSeek_Harness_Local_Deployment.md`，已從 LY 環境讀回；無須另一台電腦 pull 才能取得本地交付。跨機同步仍要另外推送 Senate，本次只作本地提交。
