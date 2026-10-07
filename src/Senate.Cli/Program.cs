@@ -1175,7 +1175,7 @@ public static class Program
         //   Editor 上真的執行。這裡只負責把結果轉成 CLI 的輸出形狀。
         string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
         UnityTargetResolution aResolved = UnityTargetResolver.Resolve(
-            SenateConfig.Load(aCfgPath), aCfgPath, ArgValue(iArgs, "--project"));
+            SenateConfig.Load(aCfgPath), aCfgPath, ArgValue(iArgs, "--project"), ProjectArgSpelling.CliFlag);
         if (!aResolved.Ok) return AgentUsageError(aResolved.Error, aResolved.Hint);
         UnityTarget aTarget = aResolved.Target!;
         if (aTarget.SelectionNote.Length > 0) Console.WriteLine("· " + aTarget.SelectionNote);

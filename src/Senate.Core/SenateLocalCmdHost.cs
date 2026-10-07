@@ -28,7 +28,7 @@ public sealed class SenateLocalCmdHost : ISCP_LocalCmdHost
         (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
         UnityTargetResolution aRes = iTargetDataRoot.Length > 0
             ? UnityTargetResolver.ResolveByDataRoot(aConfig, aConfigPath, iTargetDataRoot, iProject)
-            : UnityTargetResolver.Resolve(aConfig, aConfigPath, iProject);
+            : UnityTargetResolver.Resolve(aConfig, aConfigPath, iProject, ProjectArgSpelling.CmdArg);
         if (!aRes.Ok) { oError = aRes.Error; oHint = aRes.Hint; return false; }
         UnityTarget aWhere = aRes.Target!;
         oTarget.ProjectName = aWhere.ProjectName;

@@ -22,7 +22,7 @@ public sealed class UnityTarget
     public string DataRoot { get; init; } = "";
 
     /// <summary>
-    /// 選擇過程的一句話（例：「未給 --project ⇒ 用唯一啟用的專案」）。
+    /// 選擇過程的一句話（例：「未給 --arg project ⇒ 用唯一啟用的專案」；拼法跟呼叫端走，見 <see cref="ProjectArgSpelling"/>）。
     /// <para>⚠ 自動選中的時候**一定要有值** —— 沒說出口的自動選擇，跟使用者自己點的長得一樣。</para>
     /// </summary>
     public string SelectionNote { get; init; } = "";
@@ -52,8 +52,28 @@ public readonly struct UnityTargetResolution
     public bool Ok => Target != null;
 }
 
+/// <summary>
+/// 呼叫端的「點名專案」怎麼拼 —— 提示要照**這個呼叫端吃得下**的寫法印。
+/// <para>🩸 TASK-0421：`cmd` 走 `--arg project=<名>`，`ucmd` 才吃 `--project <名>`；
+/// 提示寫死成後者時，每一支 `cmd` 都在指一條不存在的路，照字面試兩次都被擋。
+/// ⇒ 刻意做成必填、不給預設值：新呼叫端漏選，編譯器會叫。</para>
+/// </summary>
+public enum ProjectArgSpelling
+{
+    /// <summary>`senate ucmd …` 的 CLI 旗標：<c>--project &lt;名&gt;</c>。</summary>
+    CliFlag,
+    /// <summary>`senate cmd …` 的參數：<c>--arg project=&lt;名&gt;</c>。</summary>
+    CmdArg,
+}
+
 public static class UnityTargetResolver
 {
+    static string Spell(ProjectArgSpelling iSpelling)
+        => iSpelling == ProjectArgSpelling.CliFlag ? "--project" : "--arg project";
+
+    static string SpellWithValue(ProjectArgSpelling iSpelling)
+        => iSpelling == ProjectArgSpelling.CliFlag ? "--project <名>" : "--arg project=<名>";
+
     /// <summary>
     /// 解析要派給哪個專案。
     /// <para>優先序：<c>iProjectName</c> 點名 ＞ 只有一個啟用專案時自動選（會在 SelectionNote 說出來）
@@ -61,8 +81,10 @@ public static class UnityTargetResolver
     /// </summary>
     /// <param name="iConfig">設定檔內容；null ＝ 還沒有設定檔（由呼叫端讀，本層不找檔案）。</param>
     /// <param name="iConfigPath">設定檔路徑，只用來組錯誤訊息（要讓人知道去改哪一個檔）。</param>
-    /// <param name="iProjectName">--project 的值；null／空 ＝ 沒點名。</param>
-    public static UnityTargetResolution Resolve(SenateConfig? iConfig, string iConfigPath, string? iProjectName)
+    /// <param name="iProjectName">點名的專案；null／空 ＝ 沒點名。</param>
+    /// <param name="iSpelling">提示裡「點名專案」要印成哪一種寫法（見 <see cref="ProjectArgSpelling"/>）。</param>
+    public static UnityTargetResolution Resolve(SenateConfig? iConfig, string iConfigPath, string? iProjectName,
+                                                ProjectArgSpelling iSpelling)
     {
         if (iConfig == null)
             return Fail($"還沒有設定檔（{iConfigPath}）",
@@ -91,7 +113,7 @@ public static class UnityTargetResolver
         else if (aEnabled.Count == 1)
         {
             aProj = aEnabled[0];
-            aNote = $"未給 --project ⇒ 用唯一啟用的專案 '{aProj.Name}'（{aProj.Root}）";
+            aNote = $"未給 {Spell(iSpelling)} ⇒ 用唯一啟用的專案 '{aProj.Name}'（{aProj.Root}）";
         }
         else
         {
@@ -100,7 +122,7 @@ public static class UnityTargetResolver
                 aEnabled.Count == 0 ? "設定檔裡沒有任何啟用中的專案" : "有多個啟用中的專案，不猜",
                 aEnabled.Count == 0
                     ? $"把專案寫進 projects[] 並設 enabled=true（{iConfigPath}）"
-                    : $"加 --project <名>；現有啟用：{string.Join(" / ", aEnabled.Select(p => p.Name))}");
+                    : $"加 {SpellWithValue(iSpelling)}；現有啟用：{string.Join(" / ", aEnabled.Select(p => p.Name))}");
         }
 
         string? aDataRoot = ProjectProbe.ResolveAgentCommandsRoot(aProj.Root, aProj.AgentCommandsRoot);
@@ -119,6 +141,7 @@ public static class UnityTargetResolver
 
     /// <summary>
     /// 以 AgentCommands **資料根**選專案（TASK-0366：Unity Editor 叫 Senate 發文時，給的是它自己的根，不是專案名）。
+    /// <para>只有 `cmd` 這一側會帶資料根 ⇒ 提示一律印 <see cref="ProjectArgSpelling.CmdArg"/> 的寫法。</para>
     /// <para>比對啟用中專案解析出來的資料根（完整路徑、不分大小寫）。0 個 ⇒ 擋；同時給了專案名而不一致 ⇒ 擋。
     /// ⛔ 比不到時**不退回預設專案** —— 那正是要防的事：Bar 的 Editor 發的文安靜地落進 LY 的酒館。</para>
     /// </summary>
@@ -142,8 +165,8 @@ public static class UnityTargetResolver
                         $"檢查 {iConfigPath} 的 projects[]（root / agentCommandsRoot / enabled）");
         string aName = (iProjectName ?? "").Trim();
         if (aName.Length > 0 && !string.Equals(aName, aHits[0].Name, System.StringComparison.OrdinalIgnoreCase))
-            return Fail($"--project '{aName}' 與 target_data_root（屬於 '{aHits[0].Name}'）指的不是同一個專案", "兩個只給一個，或讓它們一致");
-        UnityTargetResolution aRes = Resolve(iConfig, iConfigPath, aHits[0].Name);
+            return Fail($"project '{aName}' 與 target_data_root（屬於 '{aHits[0].Name}'）指的不是同一個專案", "兩個只給一個，或讓它們一致");
+        UnityTargetResolution aRes = Resolve(iConfig, iConfigPath, aHits[0].Name, ProjectArgSpelling.CmdArg);
         if (!aRes.Ok) return aRes;
         UnityTarget t = aRes.Target!;
         return new UnityTargetResolution(new UnityTarget

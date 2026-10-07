@@ -236,7 +236,7 @@ public sealed class Cmd_Task : SCP_Cmd
         if (UnityDelegateCmd.ConfigProvider == null)
         { oFail = SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯"); return false; }
         (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"));
+        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"), ProjectArgSpelling.CmdArg);
         if (!aTarget.Ok) { oFail = SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint); return false; }
         oDataRoot = aTarget.Target!.DataRoot.Replace('\\', '/');
         oProjectRoot = aTarget.Target.ProjectRoot.Replace('\\', '/');

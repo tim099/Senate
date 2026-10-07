@@ -95,7 +95,7 @@ public abstract class UnityDelegateCmd : SCP_Cmd
 
         (SenateConfig? aConfig, string aConfigPath) = ConfigProvider();
         UnityTargetResolution aTarget = UnityTargetResolver.Resolve(
-            aConfig, aConfigPath, iArgs.Get("project"));
+            aConfig, aConfigPath, iArgs.Get("project"), ProjectArgSpelling.CmdArg);
         if (!aTarget.Ok)
             return SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint);
 

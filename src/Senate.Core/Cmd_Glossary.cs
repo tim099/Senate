@@ -57,7 +57,7 @@ public sealed class Cmd_Glossary : SCP_Cmd
         if (UnityDelegateCmd.ConfigProvider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯");
         (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"));
+        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"), ProjectArgSpelling.CmdArg);
         if (!aTarget.Ok) return SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint);
         string aProjectRoot = aTarget.Target!.ProjectRoot.Replace('\\', '/');
 

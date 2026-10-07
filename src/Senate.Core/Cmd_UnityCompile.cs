@@ -182,7 +182,7 @@ public sealed class Cmd_UnityCompileStatus : SCP_Cmd
                 "  這是程式錯誤不是用法錯：本層不推導專案路徑。");
 
         (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"));
+        UnityTargetResolution aTarget = UnityTargetResolver.Resolve(aConfig, aConfigPath, iArgs.Get("project"), ProjectArgSpelling.CmdArg);
         if (!aTarget.Ok) return SCP_CmdResult.Fail(2, "✗ " + aTarget.Error, "  " + aTarget.Hint);
 
         UnityTarget aWhere = aTarget.Target!;
