@@ -152,11 +152,10 @@ public static class Program
         // 書店閘（TASK-0234 ②的另一半，2026-09-18）：錢與券**直接串 Server**（`bank` / `voucher`）。
         // ⇒ 裝上它之後，`cmd book op=donate|publish|tip|retry-tips` 與 Editor **共用同一份實作**。
         SCP.Core.Books.SCP_BooksGatewayHost.Factory = aDataRoot => new SenateBooksGateway(aDataRoot);
-        // 棋局閘（TASK-0268 ⑥）：廣播派給 Editor 的 Cmd_Tavern（同 process，⛔ 不再 spawn senate.exe）、券走 `voucher`。
+        // 棋局閘（TASK-0268 ⑥）：廣播走 `tavern-post`、券走 `voucher`。
         SCP.Core.Chess.SCP_ChessGatewayHost.Factory = aDataRoot => new SenateChessGateway(aDataRoot);
-        // Coding 退場的編譯閘（TASK-0058 **A2**）：這一側的尺是 `dotnet build`，
-        // ⛔ 跟 Unity 側的 `unity-compile-status` **不可以合成一把**（合了會讓其中一邊量的不是它自己的編譯）。
-        //   （名字 2026-09-10 更新：舊名 `check_compile` 那支 python 已整支刪除，Unity 側現在是本 exe 的兩支子命令。）
+        // Coding 退場的編譯閘（TASK-0058 A2／TASK-0454）：一律 `dotnet build`；範圍碰到 Unity 專案時另外讀那個專案的 Unity 編譯狀態，
+        // ⛔ 兩把**不合成一把**（合了會讓其中一邊量的不是它自己的編譯）—— 各自判、各自報。
         // ⚠ 沒裝閘不是綠燈 —— `cmd coding --arg op=end` 沒閘時會明說「未驗編譯」。
         SenateCodingExitGate.Install(aRepoRoot);
         // 宿主能力④：酒館發文閘（`cmd rest` 的廣播那半）—— 同樣是**派給 Editor**：
