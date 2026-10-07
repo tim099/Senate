@@ -3633,7 +3633,6 @@ public static partial class SelfTest
         var aRoot = new SCP_DataRoot(aTmp);
         try
         {
-            SCP_ActivitySessionGatewayHost.ClearForTest();
             Directory.CreateDirectory(SCP_ActivitySessionStore.Dir(aRoot));
 
             // ① 未知鍵保留：手寫一份帶 kind 專屬欄位的檔（真檔就長這樣：rounds / activities_done / activity）
@@ -3665,47 +3664,40 @@ public static partial class SelfTest
             bool aSameOk = SCP_ActivitySessionStore.TryStart(aRoot, "probe", aSame,
                 SCP_ActivitySessionKind.FreeTime, DateTime.Now, out _);
 
-            // ④ 關場三本帳：沒有 handler ⇒ 關得掉且**明說沒有 handler**（不是靜默成功）
+            // ④ 關場（TASK-0448：就地翻三欄＋回讀，沒有委派）：三欄都要翻，而且**磁碟上**是關的
             var aCur = SCP_ActivitySessionStore.Load(aRoot, "probe")!;
-            var aNoGate = SCP_ActivitySessionStore.CloseWithSettlement(aRoot, "probe", aCur, "selftest");
-            bool aNoGateOk = aNoGate.Closed && !aNoGate.HasHandler && !aNoGate.Settled
-                             && SCP_ActivitySessionStore.Load(aRoot, "probe")!.active == false;
+            bool aCloseSaid = SCP_ActivitySessionStore.CloseVerified(aRoot, "probe", aCur, "selftest");
+            var aClosedBack = SCP_ActivitySessionStore.Load(aRoot, "probe");
+            bool aCloseOk = aCloseSaid && aClosedBack != null && !aClosedBack.active
+                            && aClosedBack.end_reason == "selftest" && aClosedBack.ended_at.Length > 0;
 
-            // ⑤ gateway 炸掉 ⇒ **不留半關的場**，而且判定看的是**回讀**不是 gateway 說什麼。
-            //   🩸 語意 2026-09-04 改過：gateway 從「只結算」變成「整步關場」（權威狀態由那一端寫）
-            //   ⇒ 它炸掉時本層**不自己補寫** —— 補寫就是第二個寫入端，而那正是 TASK-0100 的主題。
-            //   ⇒ 要驗的因此不是「場仍關閉」，是「**磁碟上那份沒有被動過**」（沒有半關的狀態）。
-            SCP_ActivitySessionGatewayHost.Register(new ThrowingGate());
-            var aBoom = new SCP_ActivitySession { persona = "probe2", kind = SCP_ActivitySessionKind.FreeTime,
-                session_id = "ft-z", active = true, end_ts = "2099-01-01T00:00:00.000Z" };
-            SCP_ActivitySessionStore.Save(aRoot, "probe2", aBoom, SCP_ActivitySessionKind.FreeTime);
-            var aRes = SCP_ActivitySessionStore.CloseWithSettlement(aRoot, "probe2", aBoom, "selftest");
-            var aAfterBoom = SCP_ActivitySessionStore.Load(aRoot, "probe2");
-            bool aSplitLedger = !aRes.Closed && aRes.HasHandler && !aRes.ClosedByGateway
-                                && aRes.SettleError.Length > 0
-                                && aAfterBoom != null && aAfterBoom.active && aAfterBoom.ended_at.Length == 0;
+            // ⑤ 觀影 kind 也一樣就地關（原本它是唯一要委派 Editor 結算的那種）—— 🔴 反向對照：寫不進去 ⇒ 回 false，不冒充關成
+            var aWatch = new SCP_ActivitySession { persona = "probe2", kind = SCP_ActivitySessionKind.StreamWatch,
+                session_id = "sw-z", active = true, end_ts = "2000-01-01T00:00:00.000Z" };
+            SCP_ActivitySessionStore.Save(aRoot, "probe2", aWatch, SCP_ActivitySessionKind.StreamWatch);
+            bool aWatchClosed = SCP_ActivitySessionStore.CloseVerified(aRoot, "probe2", aWatch, "selftest")
+                                && SCP_ActivitySessionStore.Load(aRoot, "probe2")?.active == false;
+            //    寫不進去的造法：session 檔的位置先放一個同名**資料夾** ⇒ 寫檔一定失敗
+            Directory.CreateDirectory(SCP_ActivitySessionStore.PathOf(aRoot, "probe3") ?? Path.Combine(aTmp, "x"));
+            var aGhost = new SCP_ActivitySession { persona = "probe3", kind = SCP_ActivitySessionKind.FreeTime,
+                session_id = "ft-ghost", active = true };
+            bool aGhostSaid;
+            try { aGhostSaid = SCP_ActivitySessionStore.CloseVerified(aRoot, "probe3", aGhost, "selftest"); }
+            catch (Exception) { aGhostSaid = false; }
+            bool aNoFalseClose = !aGhostSaid;
 
             bool aOk = aReadOk && aKeepUnknown && aBlocked && aBlockerNamed && aVictimAlive && aSameOk
-                       && aNoGateOk && aSplitLedger;
+                       && aCloseOk && aWatchClosed && aNoFalseClose;
             return new CheckRow("活動 session 行為",
                 $"讀真形狀={aReadOk}／未知鍵保留={aKeepUnknown}／跨 kind 擋下={aBlocked}（點名擋你的那場={aBlockerNamed}）"
-                + $"／被擋後原場沒被覆蓋={aVictimAlive}／同 kind 不擋={aSameOk}／無 gateway 走 base close={aNoGateOk}"
-                + $"／gateway 炸掉不留半關的場={aSplitLedger}",
+                + $"／被擋後原場沒被覆蓋={aVictimAlive}／同 kind 不擋={aSameOk}／就地關場三欄＋回讀={aCloseOk}"
+                + $"／觀影 kind 也就地關={aWatchClosed}／🔴 讀不回來不冒充關成={aNoFalseClose}",
                 aOk ? CheckResult.Pass : CheckResult.Fail);
         }
         finally
         {
-            SCP_ActivitySessionGatewayHost.ClearForTest();
             try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
         }
-    }
-
-    /// <summary>只會爆炸的關場 gateway —— 驗「gateway 炸掉時，判定看的是回讀不是它說什麼」。</summary>
-    sealed class ThrowingGate : SCP_IActivitySessionCloseGateway
-    {
-        public string Kind => SCP_ActivitySessionKind.FreeTime;
-        public bool TryClose(SCP_ActivitySession iSession, string iReason, List<string> oLines, out string oError)
-            => throw new InvalidOperationException("關場故意炸掉（selftest）");
     }
 
     // ===========================================================
@@ -3723,7 +3715,6 @@ public static partial class SelfTest
         var aRoot = new SCP_DataRoot(aTmp);
         try
         {
-            SCP_ActivitySessionGatewayHost.ClearForTest();
             Directory.CreateDirectory(SCP_ActivitySessionStore.Dir(aRoot));
 
             // ① 子類別寫出去 ⇒ 專屬欄位**真的落在檔案裡**，而且 bool 是**原生 bool** 不是 "True" 字串。
@@ -3772,7 +3763,6 @@ public static partial class SelfTest
         }
         finally
         {
-            SCP_ActivitySessionGatewayHost.ClearForTest();
             try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { }
         }
     }

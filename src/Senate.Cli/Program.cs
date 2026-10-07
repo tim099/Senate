@@ -154,11 +154,6 @@ public static class Program
         SCP.Core.Books.SCP_BooksGatewayHost.Factory = aDataRoot => new SenateBooksGateway(aDataRoot);
         // 棋局閘（TASK-0268 ⑥）：廣播派給 Editor 的 Cmd_Tavern（同 process，⛔ 不再 spawn senate.exe）、券走 `voucher`。
         SCP.Core.Chess.SCP_ChessGatewayHost.Factory = aDataRoot => new SenateChessGateway(aDataRoot);
-        // 活動 session 的關場閘（TASK-0127 ⑤）：Senate 這側**不寫 session 檔、不算錢** ——
-        // 整步委派 Editor 的 SessionClose（結算就是金流，而金流搬家是 TASK-0106，Tim 拍 B 不動）。
-        // ⏳ 過渡（退場條件：TASK-0106）—— 那天換掉 SenateSessionCloseGateway 一個 class 就好。
-        SCP.Core.Session.SCP_ActivitySessionGatewayHost.Factory =
-            (aDataRoot, aKind) => new SenateSessionCloseGateway(aDataRoot, aKind);
         // Coding 退場的編譯閘（TASK-0058 **A2**）：這一側的尺是 `dotnet build`，
         // ⛔ 跟 Unity 側的 `unity-compile-status` **不可以合成一把**（合了會讓其中一邊量的不是它自己的編譯）。
         //   （名字 2026-09-10 更新：舊名 `check_compile` 那支 python 已整支刪除，Unity 側現在是本 exe 的兩支子命令。）
