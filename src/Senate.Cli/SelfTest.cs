@@ -102,6 +102,7 @@ public static partial class SelfTest
         One(nameof(LegacyProjectsMigration0390), "core", LegacyProjectsMigration0390),
         One(nameof(LetterDayIsLocalDay), "core", LetterDayIsLocalDay),
         One(nameof(BankArrivalOpensAndBinds), "morning", BankArrivalOpensAndBinds),
+        One(nameof(LettersMigrationCleanRoom), "morning", LettersMigrationCleanRoom),
         One(nameof(PathRegistryShape), "core", PathRegistryShape),
         One(nameof(ErrorReportShape), "core", ErrorReportShape),
         One(nameof(ProcessStatusClassification), "core", ProcessStatusClassification),
