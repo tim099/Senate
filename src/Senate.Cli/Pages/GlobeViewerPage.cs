@@ -127,29 +127,76 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
             if (g.Button("台灣特寫", P + "btn/tw")) { g.SetField(FLat, "23.7"); g.SetField(FLon, "121"); g.SetField(FZoom, "12"); }
             if (g.Button("整顆", P + "btn/whole")) g.SetField(FZoom, "1");
         }
+        g.Note("在圖上拖曳＝轉動地球、滾輪＝縮放（視窗模式）。");
         PumpRender(g);
+        if (File.Exists(ViewPng))
+        {
+            SCP_GuiPointer? aPtr = g.ImageInteractive(ViewPng, ViewSide, "球面預覽", P + "img/view");
+            if (aPtr != null) ApplyPointer(g, aPtr);
+        }
         string aSig = ViewSig(g);
         if (aSig != m_RenderedSig && aSig != m_RenderingSig) StartRender(g, aSig);
         if (m_Render != null) g.Note("渲染中…（畫面是上一張）");
-        if (File.Exists(ViewPng)) g.ImageFit(ViewPng, ViewSide, "球面預覽");
     }
 
-    string ViewSig(SCP_Ui g) => string.Join("|", V(g, FLat), V(g, FLon), V(g, FZoom), V(g, FGrat), g.ToggleValue(TGrat, true) ? "1" : "0", g.ToggleValue(TZones, true) ? "1" : "0", g.ToggleValue(TSeams) ? "1" : "0", m_Version.ToString(CultureInfo.InvariantCulture));
+    /// <summary>上一次讀好的狀態（版本＝m_Version）；背景渲染執行緒讀寫，⛔ 只整份換、不就地改。</summary>
+    (int Version, SCP_GlobeState State, List<SCP_GlobeZone> Zones)? m_StateCache;
+
+    /// <summary>拖曳中（低解析度快速重渲）；放開後簽名變了 ⇒ 補一張全解析度。</summary>
+    bool m_Dragging;
+
+    void ApplyPointer(SCP_Ui g, SCP_GuiPointer p)
+    {
+        m_Dragging = p.Dragging;
+        if (!TryD(V(g, FLat), out double la)) la = 0;
+        if (!TryD(V(g, FLon), out double lo)) lo = 0;
+        double z = Zoom(g);
+        if (p.DragX != 0 || p.DragY != 0)
+        {
+            GlobeDrag(la, lo, z, p.DragX, p.DragY, out la, out lo);
+            g.SetField(FLat, F(la)); g.SetField(FLon, F(lo));
+        }
+        if (p.Wheel != 0) g.SetField(FZoom, F(GlobeWheelZoom(z, p.Wheel)));
+    }
+
+    /// <summary>
+    /// 拖曳換算（純函式，selftest 驗）：拖過整張圖的寬 ＝ 轉過畫面看得到的直徑（2/zoom 個球半徑 ≈ 弧度）。
+    /// 往右拖 ⇒ 地球跟著往右轉 ⇒ 中心往西；往下拖 ⇒ 中心往北。經度照緯度放大，讓手感在高緯也一致。
+    /// </summary>
+    public static void GlobeDrag(double iLat, double iLon, double iZoom, double iDx, double iDy, out double oLat, out double oLon)
+    {
+        double k = 2.0 / Math.Max(iZoom, 0.01) * 180 / Math.PI;
+        oLat = Math.Max(-89, Math.Min(89, iLat + iDy * k));
+        double lo = iLon - iDx * k / Math.Max(Math.Cos(iLat * Math.PI / 180), 0.2);
+        while (lo > 180) lo -= 360;
+        while (lo < -180) lo += 360;
+        oLon = lo;
+    }
+
+    /// <summary>滾輪一格 ×1.25（往上捲放大），夾在 0.5..400。</summary>
+    public static double GlobeWheelZoom(double iZoom, double iWheel) => Math.Max(0.5, Math.Min(400, iZoom * Math.Pow(1.25, iWheel)));
+
+    string ViewSig(SCP_Ui g) => string.Join("|", V(g, FLat), V(g, FLon), V(g, FZoom), V(g, FGrat), g.ToggleValue(TGrat, true) ? "1" : "0", g.ToggleValue(TZones, true) ? "1" : "0", g.ToggleValue(TSeams) ? "1" : "0", m_Dragging ? "drag" : "full", m_Version.ToString(CultureInfo.InvariantCulture));
 
     void StartRender(SCP_Ui g, string iSig)
     {
         if (m_Render != null) return;
         if (!TryD(V(g, FLat), out double la) || !TryD(V(g, FLon), out double lo) || !TryD(V(g, FZoom), out double z) || !TryD(V(g, FGrat), out double gr))
         { m_Message = "視角欄位要是數字"; m_RenderedSig = iSig; return; }
-        var v = new SCP_GlobeView { CenterLat = Math.Max(-90, Math.Min(90, la)), CenterLon = lo, Zoom = z, Graticule = g.ToggleValue(TGrat, true) ? gr : 0, Seams = g.ToggleValue(TSeams), Size = 720 };
+        var v = new SCP_GlobeView { CenterLat = Math.Max(-90, Math.Min(90, la)), CenterLon = lo, Zoom = z, Graticule = g.ToggleValue(TGrat, true) ? gr : 0, Seams = g.ToggleValue(TSeams), Size = m_Dragging ? 360 : 720 };
         bool aZones = g.ToggleValue(TZones, true);
+        int aVersion = m_Version;
         string aRoot = DataRoot, aOut = ViewPng;
         m_RenderingSig = iSig;
         Func<string> aJob = () =>
         {
             var store = new SCP_GlobeStore(new SCP_GlobePaths(new SCP_DataRoot(aRoot)));
-            if (aZones) v.Zones = new SCP_GlobeZones(store.Paths).List();
-            byte[] png = SCP_GlobeRender.RenderPng(store.Load(), v);
+            // 拖曳時每幀都在渲染 ⇒ 狀態只在版本變了（寫入成功／重新讀取）才重讀，其餘沿用上一份（渲染只讀不寫）
+            (int Version, SCP_GlobeState State, List<SCP_GlobeZone> Zones)? aCached = m_StateCache;
+            if (aCached == null || aCached.Value.Version != aVersion)
+                aCached = m_StateCache = (aVersion, store.Load(), new SCP_GlobeZones(store.Paths).List());
+            if (aZones) v.Zones = aCached.Value.Zones;
+            byte[] png = SCP_GlobeRender.RenderPng(aCached.Value.State, v);
             Directory.CreateDirectory(Path.GetDirectoryName(aOut)!);
             string aTmp = aOut + ".tmp";
             File.WriteAllBytes(aTmp, png);

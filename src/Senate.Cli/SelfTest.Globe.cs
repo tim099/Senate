@@ -99,6 +99,20 @@ public static partial class SelfTest
                 var aLineFaces = new HashSet<int>(line.Select(c => c / (g.N * g.N)));
                 readings.Add($"長線 {line.Count} 格跨 {aLineFaces.Count} 面、最大間隔 {aGap:0.00} 格");
                 Check(aGap <= 1.6 && aLineFaces.Count >= 3, "大圓線不斷");
+
+                // 頁面的拖曳／滾輪換算（純函式）
+                Senate.Cli.Pages.GlobeViewerPage.GlobeDrag(0, 0, 1, 0.5, 0, out double la1, out double lo1);
+                Senate.Cli.Pages.GlobeViewerPage.GlobeDrag(0, 0, 4, 0.5, 0, out _, out double lo4);
+                Senate.Cli.Pages.GlobeViewerPage.GlobeDrag(0, 170, 1, -0.5, 0, out _, out double loWrap);
+                Senate.Cli.Pages.GlobeViewerPage.GlobeDrag(80, 0, 1, 0, 1, out double laClamp, out _);
+                Senate.Cli.Pages.GlobeViewerPage.GlobeDrag(0, 0, 1, 0, 0.1, out double laDown, out _);
+                readings.Add($"拖半張圖：zoom1 經度 {lo1:0.#}°、zoom4 {lo4:0.#}°；跨換日線 {loWrap:0.#}°");
+                Check(la1 == 0 && lo1 < -50 && Math.Abs(lo4 - lo1 / 4) < 1e-9, "往右拖 ⇒ 中心往西、zoom 越大轉越少");
+                Check(loWrap > -180 && loWrap < -100, "經度跨換日線折回 -180..180");
+                Check(laClamp == 89 && laDown > 0, "往下拖 ⇒ 中心往北、緯度夾在 ±89");
+                Check(Math.Abs(Senate.Cli.Pages.GlobeViewerPage.GlobeWheelZoom(2, 1) - 2.5) < 1e-9
+                      && Senate.Cli.Pages.GlobeViewerPage.GlobeWheelZoom(1, -100) == 0.5
+                      && Senate.Cli.Pages.GlobeViewerPage.GlobeWheelZoom(300, 10) == 400, "滾輪一格 ×1.25、夾在 0.5..400");
             }
             finally { try { Directory.Delete(aRoot, true); } catch { } }
         }

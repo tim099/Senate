@@ -56,6 +56,14 @@ public sealed class GuiImGuiRenderer
     /// </summary>
     readonly HashSet<string> m_Committed = new();
 
+    /// <summary>可互動圖片累積的指標事件（id → 事件），下一次 <see cref="TakeInput"/> 送出就清掉。</summary>
+    readonly Dictionary<string, SCP_GuiPointer> m_Pointers = new();
+    /// <summary>
+    /// 上一幀指標停在可互動圖片上 ⇒ 這一幀內容子區域不吃滾輪（滾輪要給圖片縮放）。
+    /// <para>⚠ 慢一幀是刻意的：子區域的 flags 要在 BeginChild 時給，而「停在哪」要畫到那張圖才知道。</para>
+    /// </summary>
+    bool m_WheelCaptured, m_WheelCapturedNext;
+
     /// <summary>由宿主注入一次「編輯完成」（常駐窗的 set 請求 —— 跟手放開滑桿走同一格）。</summary>
     public void InjectCommitted(string iId) => m_Committed.Add(iId);
 
@@ -68,6 +76,8 @@ public sealed class GuiImGuiRenderer
         foreach (var kv in Fields) aInput.Fields[kv.Key] = kv.Value;
         foreach (var kv in Toggles) aInput.Toggles[kv.Key] = kv.Value;
         foreach (var kv in Folds) aInput.Folds[kv.Key] = kv.Value;
+        foreach (var kv in m_Pointers) aInput.Pointers[kv.Key] = kv.Value;
+        m_Pointers.Clear();        // 同點擊：累積量只送一次
         ClickedId = null;          // 點擊是事件，只送一次（不清會變成每幀都在按）
         return aInput;
     }
@@ -80,6 +90,29 @@ public sealed class GuiImGuiRenderer
     public void ApplyWrites(SCP_Ui iUi)
     {
         foreach (var kv in iUi.FieldWrites) Fields[kv.Key] = kv.Value;
+    }
+
+    /// <summary>
+    /// 可互動圖片：在圖上蓋一顆同大小的隱形按鈕接指標 —— 拖曳量以圖片邊長為 1、滾輪照格數，累積到下一次 TakeInput。
+    /// </summary>
+    void CapturePointer(string iId, Vector2 iAt, Vector2 iSize)
+    {
+        Vector2 aAfter = ImGui.GetCursorScreenPos();
+        ImGui.SetCursorScreenPos(iAt);
+        ImGui.InvisibleButton("##ptr" + iId, iSize);
+        bool aActive = ImGui.IsItemActive(), aHovered = ImGui.IsItemHovered(), aReleased = ImGui.IsItemDeactivated();
+        ImGui.SetCursorScreenPos(aAfter);
+        if (aHovered) m_WheelCapturedNext = true;
+        var io = ImGui.GetIO();
+        float aWheel = aHovered ? io.MouseWheel : 0f;
+        Vector2 aDelta = aActive ? io.MouseDelta : Vector2.Zero;
+        if (!aActive && !aHovered && !aReleased) return;
+        if (!m_Pointers.TryGetValue(iId, out SCP_GuiPointer? p)) m_Pointers[iId] = p = new SCP_GuiPointer();
+        if (iSize.X > 0 && iSize.Y > 0) { p.DragX += aDelta.X / iSize.X; p.DragY += aDelta.Y / iSize.Y; }
+        p.Wheel += aWheel;
+        p.Dragging = aActive;
+        p.Released |= aReleased;
+        p.Hovered = aHovered;
     }
 
     /// <summary>
@@ -208,7 +241,9 @@ public sealed class GuiImGuiRenderer
         // ⚠ 高度顯式取剩餘空間（`GetContentRegionAvail().Y`）而不是傳 0：
         //   傳 0 時 ImGui 會用一個預設高度，那個值不保證等於「剩下的全部」。
         var aAvail = ImGui.GetContentRegionAvail();
-        if (ImGui.BeginChild(ContentChildId, new System.Numerics.Vector2(0f, aAvail.Y), ImGuiChildFlags.None))
+        m_WheelCapturedNext = false;
+        if (ImGui.BeginChild(ContentChildId, new System.Numerics.Vector2(0f, aAvail.Y), ImGuiChildFlags.None,
+                             m_WheelCaptured ? ImGuiWindowFlags.NoScrollWithMouse : ImGuiWindowFlags.None))
         {
             // ⚠ 讀在**設定之前**：`SetScrollY` 寫的是 target，要到 EndChild 才套用並夾範圍
             //   ⇒ 設完立刻讀會讀回「還沒動」的舊值，而那個值看起來完全合理。
@@ -235,6 +270,7 @@ public sealed class GuiImGuiRenderer
                 (iScroll != SCP_GuiContentScroll.None ? $"（請求 {iScroll}，本幀{(aToBottom ? "捲到底" : "不動：使用者不在底")}）" : "");
         }
         ImGui.EndChild();
+        m_WheelCaptured = m_WheelCapturedNext;
     }
 
     /// <summary>
@@ -304,7 +340,10 @@ public sealed class GuiImGuiRenderer
                     // 整張縮進框（TASK-0377）：長邊＝aSide、照原比例，⛔ 不裁切。
                     float aK = aSide / Math.Max(aTex.Width, aTex.Height);
                     // ⛔ 不掛 hover 提示（Tim 2026-10-02：預覽圖上浮一塊字會擋住作品）；檔名與尺寸頁面自己印在圖上方。
-                    ImGui.Image((IntPtr)aTex.Handle, new Vector2(aTex.Width * aK, aTex.Height * aK));
+                    var aSize = new Vector2(aTex.Width * aK, aTex.Height * aK);
+                    Vector2 aAt = ImGui.GetCursorScreenPos();
+                    ImGui.Image((IntPtr)aTex.Handle, aSize);
+                    if (iNode.Interactive && iNode.Id.Length > 0) CapturePointer(iNode.Id, aAt, aSize);
                 }
                 else if (aTex != null && aTex.Handle != 0)
                 {
