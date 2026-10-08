@@ -272,6 +272,28 @@ public static partial class SelfTest
             Check(Run(("op", "zone"), ("sub", "update"), ("persona", "a"), ("id", "japan"), ("status", "finished")).ExitCode == 2, "壞 status 擋");
             Check(store.Load().LastSeq == 0, "施工區不寫格子事件");
 
+            // 規劃：計畫清單、勾項（署名＋expect_text 防錯格）、日誌、繪製掛區統計
+            Check(Run(("op", "zone"), ("sub", "plan"), ("persona", "z"), ("id", "japan"), ("item", "本州")).ExitCode == 2, "非成員不能加計畫");
+            Check(Run(("op", "zone"), ("sub", "plan"), ("persona", "a"), ("id", "japan"), ("item", "本州陸地")).ExitCode == 0
+                  && Run(("op", "zone"), ("sub", "plan"), ("persona", "c"), ("id", "japan"), ("item", "富士山")).ExitCode == 0, "加計畫");
+            Check(Run(("op", "zone"), ("sub", "check"), ("persona", "a"), ("id", "japan"), ("index", "1"), ("expect_text", "富士")).ExitCode == 2
+                  && new SCP_GlobeZones(store.Paths).Find("japan")!.Items.TrueForAll(x => !x.Done), "expect_text 對不上 ⇒ 一格都不勾");
+            Check(Run(("op", "zone"), ("sub", "check"), ("persona", "a"), ("id", "japan"), ("index", "9")).ExitCode == 2, "序號越界擋");
+            var ck = Run(("op", "zone"), ("sub", "check"), ("persona", "a"), ("id", "japan"), ("index", "1"), ("expect_text", "本州"));
+            Check(ck.ExitCode == 0 && Val(ck, "left") == "1", "勾項＋剩幾項");
+            Check(Run(("op", "zone"), ("sub", "log"), ("persona", "c"), ("id", "japan"), ("note", "畫了輪廓；下一步富士山")).ExitCode == 0, "寫日誌");
+            Check(Run(("op", "point"), ("persona", "a"), ("lat", "36"), ("lon", "138"), ("radius", "1"), ("color", "#00AA00"), ("zone", "nope")).ExitCode == 2
+                  && store.Load().LastSeq == 0, "掛不存在的施工區 ⇒ 擋、零寫入");
+            Run(("op", "point"), ("persona", "a"), ("lat", "36"), ("lon", "138"), ("radius", "1"), ("color", "#00AA00"), ("zone", "japan"));
+            Run(("op", "point"), ("persona", "c"), ("lat", "35"), ("lon", "136"), ("color", "#00AA00"), ("zone", "japan"));
+            Run(("op", "point"), ("persona", "c"), ("lat", "34"), ("lon", "135"), ("color", "#00AA00"), ("zone", "japan"));
+            Run(("op", "undo"), ("persona", "c"));
+            Run(("op", "point"), ("persona", "a"), ("lat", "0"), ("lon", "0"), ("color", "#00AA00"));
+            var sh = Run(("op", "zone"), ("sub", "show"), ("id", "japan"));
+            Check(Val(sh, "items") == "2" && Val(sh, "items_done") == "1" && Val(sh, "events") == "2"
+                  && sh.Lines.Exists(l => l.Contains("下一項：富士山")) && sh.Lines.Exists(l => l.Contains("下一步富士山")),
+                  $"show 統計（被 undo 的、沒掛區的不算）：events={Val(sh, "events")} cells={Val(sh, "cells")}");
+
             string o1 = Path.Combine(aData, "z0.png"), o2 = Path.Combine(aData, "z1.png");
             Run(("op", "render"), ("center", "35,135"), ("zoom", "3"), ("size", "128"), ("graticule", "0"), ("out", o1));
             Run(("op", "render"), ("center", "35,135"), ("zoom", "3"), ("size", "128"), ("graticule", "0"), ("zones", "1"), ("out", o2));
