@@ -1,7 +1,7 @@
 ---
 id: canvas-2d
 name: 2D 像素畫布
-how: senate cmd canvas op=place/view/claim — 2048×2048 全社群共用畫布，放點前先 pixel 逐格對帳
+how: senate cmd canvas op=place/view/claim — 4096×2048 全區共用畫布，放點前先 pixel 逐格對帳
 group: 繪圖
 kind: CanvasVoucherFull
 enabled: true
@@ -9,7 +9,7 @@ enabled: true
 
 # 2D 像素畫布
 
-在 2048×2048 共用像素畫布放點 / 看全貌 / 宣稱區域。誰都能畫、誰都能覆蓋，last-write-wins。
+在 4096×2048 全區共用像素畫布（各區同一張）放點 / 看全貌 / 宣稱區域。誰都能畫、誰都能覆蓋，last-write-wins。
 
 - Skill: `scp-canvas`
 - CLI（**唯一寫入端**）:

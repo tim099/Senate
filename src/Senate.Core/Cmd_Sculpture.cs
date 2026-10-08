@@ -118,7 +118,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("z1", "box/carve：一角 z"),
         new SCP_CmdArgSpec("z2", "box/carve：另一角 z"),
         new SCP_CmdArgSpec("color", "box：顏色 index（0-255，RGB332）", iDefault: "19"),
-        new SCP_CmdArgSpec("src_x1", "stamp2d：2D 畫布來源區域一角 x（0-2047）"),
+        new SCP_CmdArgSpec("src_x1", "stamp2d：2D 畫布來源區域一角 x（0 起算，上限是畫布實際寬度 −1，見 canvas op=size）"),
         new SCP_CmdArgSpec("src_y1", "stamp2d：一角 y"),
         new SCP_CmdArgSpec("src_x2", "stamp2d：另一角 x"),
         new SCP_CmdArgSpec("src_y2", "stamp2d：另一角 y"),
@@ -541,7 +541,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         {
             if (!TryInt(c, "src_x1", out int sx1) || !TryInt(c, "src_y1", out int sy1)
                 || !TryInt(c, "src_x2", out int sx2) || !TryInt(c, "src_y2", out int sy2))
-            { oBad = "stamp2d 需要 src_x1 src_y1 src_x2 src_y2 四個整數（2D 畫布座標 0-2047）"; return false; }
+            { oBad = "stamp2d 需要 src_x1 src_y1 src_x2 src_y2 四個整數（2D 畫布座標，範圍見 canvas op=size）"; return false; }
             int w = Math.Abs(sx2 - sx1) + 1, h = Math.Abs(sy2 - sy1) + 1;
             aArea = (long)w * h;
             oWhere = $"2D 畫布 ({sx1},{sy1})-({sx2},{sy2}) = {w}x{h} × thickness {aThick} @({aAt})";
