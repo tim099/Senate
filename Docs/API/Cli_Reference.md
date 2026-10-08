@@ -24,9 +24,9 @@ dotnet run --project src/Senate.Cli -- <command>      # 開發中直接跑
 每支子命令有自己吃的旗標清單。打了它沒宣告的 `--旗標`，CLI 在 dispatch **之前**就擋下來：
 
 ```
-$ senate ucmd status --totally-bogus-flag zzz
-✗ `ucmd` 認不得的旗標 '--totally-bogus-flag'
-  `ucmd` 吃的是：--arg , --arg-file , --persona , --project , --timeout , --lane , --no-wait , --output-file , --ack-timeout , --poll-interval
+$ senate selftest --help
+✗ `selftest` 認不得的旗標 '--help'
+  `selftest` 吃的是：--list , --only , --all , --enable , --disable , --clipboard , --width , --scale , --size
 ⇒ exit 2
 ```
 
@@ -304,7 +304,7 @@ AgentCommands 資料根解析到哪、存不存在／Editor 在不在跑）—�
 ### `cmd` —— SCP_CMD（不依賴 Unity）
 
 SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor 沒開照樣跑。
-機制、怎麼寫一支新 Cmd、與 `ucmd` 的分工在
+機制、怎麼寫一支新 Cmd 在
 [`SCP_Cmd_System`](../Workflows/SCP_Cmd_System.md) —— 本節只列旗標與 exit code。
 
 ```bash
@@ -375,10 +375,10 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 三格定語，**每一格都是會咬人的**：
 
 - 🔴 **射程＝這個 process 已載入的組件**（`Senate.Core` / `SCP_Core` / BCL）。
-  ⛔ 打 `UnityEditor.*` 在這裡一定找不到，那要走 Unity 端的 `ucmd run Invoke` ——
-  **兩支同名而受詞不同**。
+  ⛔ 打 `UnityEditor.*` 在這裡一定找不到 —— 要在 Editor 裡跑 C# 走 Unity CLI 的 `eval`
+  （[`Unity_CLI`](../Workflows/Unity_CLI.md)）。
 - ⚠ **變數（`store_as` / `$name`）只活在同一次呼叫內。**
-  Unity 那側是常駐 process 所以跨 Cmd 呼叫存活；CLI 每次都是新 process ⇒ 分兩次跑的話
+  CLI 每次都是新 process ⇒ 分兩次跑的話
   `$var` 永遠找不到。⇒ 鏈式呼叫**把每一步寫在同一份 `steps` 裡**（一行一步，`k=v|k=v`；
   ⚠ 分隔符是 `|`，因為 `;` 是 `args` 自己在用的）。
 - ⚠ **回傳三態**（`value_kind`）：`void` ／ `null` ／ `value`（**可能是空字串**）。
@@ -472,37 +472,10 @@ CLI 那側撞到的四種「沒有結果」都是 exit 3，細分在 `🔢 deleg
 
 Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 說的話（result 檔 `lines`）原樣印回來。
 
-### `ucmd run` / `ucmd status`
+### Unity 專案 → Unity CLI
 
-把一筆 **AgentCommand** 派給目標 Unity 專案的 Editor（u＝Unity；不需要 Editor 的指令走上面的 `cmd`）。
-機制、協議與邊界的完整說明在 [`AgentCmd_Dispatch`](../Workflows/AgentCmd_Dispatch.md) —— 本節只列旗標與 exit code。
-
-```bash
-./senate.exe ucmd run Recompile --persona summit
-./senate.exe ucmd status                      # 唯讀：各 persona queue 的 trigger 狀態與殘量
-```
-
-| 旗標 | 做什麼 |
-|---|---|
-| `--project <name>` | 對哪個專案（`senate.local.json` projects[]）。**只有一個啟用專案時可省略**（會印出它選了誰）；多個啟用不猜、停用的擋下並說原因 |
-| `--persona <p>` | 身分 —— 決定 queue 路由（`queues/<p>/`）並在 args 缺席時戳進 `persona`。沒給走 `anonymous` |
-| `--arg k=v` | 指令參數，可重複 |
-| `--arg-file k=<路徑>` | 參數值從檔案讀（UTF-8）—— **長內文不經過 shell**，檔案不存在直接擋、不寫 queue |
-| `--timeout <秒>` | 等待逾時（預設 120） |
-| `--no-wait` | 送出就返回（不等 Editor 執行完） |
-
-#### exit code
-
-| code | 意思 |
-|---|---|
-| 0 | 成功（判定來源是 `_cmd_results/<id>.json`，不是「從 queue 消失」的推論） |
-| 2 | Cmd 失敗，或用法錯誤（失敗判決 stderr＋stdout 各印一份，附 Editor 端錯誤報告節錄） |
-| 3 | 逾時 —— Editor 沒開或 Watcher 停用。⚠ 此時**回傳檔沒被更新**，別去讀上一輪的 |
-
-⚠ 這是**派遣不是代跑**：目標專案的 Unity Editor 必須開著（`UCL_AgentCommandWatcher` 執行中），
-Senate 只負責 client 半邊。⚠ 沒做的（刻意，不是壞掉）：
-無 schema 預檢與 type 別名（打錯 type 由 Editor 端擋並附 did-you-mean）、
-無 Tavern `wait-reply` 握手、`op=post` 成功後不提交 catch-up cursor。
+`senate` 不派指令給 Unity Editor（`senate ucmd` 已廢棄）。要碰 Editor 一律用官方 Unity CLI，
+流程與讀法在 [`Unity_CLI`](../Workflows/Unity_CLI.md)。
 
 ### `server start` / `server stop` / `server status`
 

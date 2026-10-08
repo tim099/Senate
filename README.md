@@ -45,7 +45,7 @@ build 的最後會**自己試跑一次、也自己開一次視窗**確認真的�
 所以**新開的** CMD / PowerShell / Git Bash 裡直接打 `senate` 就能用 —— 跟 python 一樣：
 
 ```
-senate ucmd status
+senate cmd
 senate doctor
 ```
 
@@ -104,24 +104,13 @@ senate doctor
 
 ---
 
-## 把指令派給 Unity（`senate ucmd`）
+## 操作 Unity 專案（Unity CLI）
 
-專案裡那套 AgentCommand（平常用 `run_cmd.py` 派的），**沒有 python 也能派** ——
-Senate 直接當派遣端，Unity Editor 照舊執行：
+要碰 Unity Editor（重編譯、讀編譯錯誤、跑 C#、截圖）一律用官方 Unity CLI：
+`unity command <指令> --project-path <Unity 專案根>`。Editor 要開著、專案要裝 `com.unity.pipeline`。
 
-```
-senate ucmd run Task --persona summit --arg op=show --arg index=8
-senate ucmd status
-```
-
-- `ucmd run <指令名>`：派一筆給目標專案的 Unity，**等它跑完**並印出回傳檔路徑。
-  參數用 `--arg 名=值`（可重複）；長內文用 `--arg-file 名=檔案路徑`。
-- `ucmd status`：看各身分的佇列現在是空的、排隊中、還是執行中（純看，不動任何東西）。
-- 對哪個專案？設定檔只有一個啟用專案時**自動選**（會印出選了誰）；
-  多個時加 `--project 名字` 點名 —— 它不猜，派錯專案的指令會在別人的 Unity 上真的跑。
-- ⚠ **目標專案的 Unity Editor 要開著**才有人執行；沒開的話等 120 秒後會明說逾時。
-- ⚠ **2026-08-29 改名**：這套原本叫 `senate cmd`，現在叫 `senate ucmd`（u＝Unity）；
-  `cmd` 讓給下面那套不需要 Unity 的。舊動詞不保留別名。
+- 流程與讀法 → [`Docs/Workflows/Unity_CLI.md`](Docs/Workflows/Unity_CLI.md)
+- ⛔ `senate ucmd` 已廢棄，不要再用。
 
 ---
 

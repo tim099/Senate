@@ -32,7 +32,7 @@ steps: move, board, lobby    # 選填 — 允許代跑的子命令白名單 (空
 cmd_steps: add-book=book:add # 選填 — 把 step 路由到 **in-process SCP cmd**（`<step>=<cmd>:<op>`）；代跑**只有這條路**
                              #        ⛔ 宣告壞了不回退（fail-closed）；在白名單裡卻沒有路由的 step 一律擋
                              #        ⛔ 舊的 `tool:`（python 腳本）路已移除 —— 只宣告 tool 的活動 op=step 會擋並要你改成 cmd_steps
-                             #        ⚠ 目標只能是 `senate cmd` 註冊表裡的 cmd —— `ucmd run <Type>` 路不進來
+                             #        ⚠ 目標只能是 `senate cmd` 註冊表裡的 cmd
 cmd_persona_arg: reader      # 選填 — 走 cmd_steps 時身分塞進哪個 `--arg`
 steps_need_persona: move     # 選填 — 這些 step 由 op=step 自動補身分；`step=<arg>` 可覆寫單一 step 的參數名（同一支 cmd 不一定一致）
 ---

@@ -1,6 +1,6 @@
 ---
 title: SCP_CMD（`senate cmd`）—— 不依賴 Unity 的指令系統
-description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生；與 Unity 那套（senate ucmd）的分工
+description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生；Unity 專案走官方 Unity CLI
 last_updated: 2026-10-06
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
@@ -12,19 +12,15 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ---
 
-## 兩套 Cmd，兩個動詞（2026-08-29 拍板）
+## 跟 Unity 的分工
 
-| | `senate ucmd` | `senate cmd` |
+| | `senate cmd`（本文） | Unity 專案 |
 |---|---|---|
-| 是什麼 | Unity 的 AgentCommand 派遣（client） | SCP_Core 的指令系統 |
-| 怎麼跑 | 寫 `queue.json` ＋ `pending.trigger` → Editor 的 Watcher 接手 → 輪詢 result 檔 | **直接呼叫 C#**，同步回傳 |
-| 需要 Unity Editor | **是**（Editor 沒開就沒有人執行，逾時 exit 3） | **否**（從頭到尾不需要） |
-| 指令住哪 | 目標專案的 UCL_Core（Editor 端） | `SCP_Core/Runtime/Cmd/`（本 repo） |
-| 文件 | [`AgentCmd_Dispatch`](AgentCmd_Dispatch.md) | 本文 |
+| 怎麼跑 | **直接呼叫 C#**，同步回傳 | 官方 Unity CLI（`unity command …`）問正在跑的 Editor |
+| 需要 Unity Editor | **否** | 是 |
+| 文件 | 本文 | [`Unity_CLI`](Unity_CLI.md) |
 
-> ⚠ **改名紀錄**：Unity 那套原本叫 `senate cmd`，2026-08-29 改成 `senate ucmd`，
-> `cmd` 讓給本系統。舊指令**不保留別名** —— 留著會讓「打了不會動」變成
-> 「打了做了另一件事」，而後者的代價高得多（一個要 Editor、一個不要）。
+⛔ `senate ucmd`（把 AgentCommand 派給 Editor 的佇列）已廢棄，不要再用。
 
 ## 為什麼沒有 queue（⚠ 2026-09-02 起只對 `Native` 成立）
 
@@ -32,6 +28,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 > CLI 是呼叫端、`senate server` 是執行端，中間走的正是下面說「不需要」的那套 queue／trigger／result 檔協議
 > （根是 Senate 自己的 `SenateData/runtime/server/`）。本節保留原文不改寫：它對 `Native` 仍然成立，
 > 而且它列出的那些坑（`.running` 殘留、「消失＝結束」）正是 Server 執行器要照 Editor 的修法重做一次的清單。
+> ⚠ 協議的路徑樣板、queue entry 欄位、trigger 內容、result 檔判定由 client（`AgentCmdClient.cs`）與 Server（`ServerExecutor.cs`）共用，
+> 路徑常數一律走 `SCP_DataPaths`／`AgentCmdClient`。**改樣板兩端一起改** —— 落後那端的症狀是 trigger 寫在對方沒在看的地方，靜默 pending 到 timeout。
 
 queue 的存在理由是「呼叫端與執行端是兩個 process」。CLI 直接串到 C# 之後那個前提消失了，
 於是連帶不存在的還有：trigger 檔、Watcher 輪詢、`.running` 殘留、
@@ -162,5 +160,5 @@ SCP_CmdRegistry.InvocationHint = "senate cmd";
 
 ## 相關文件
 
-- [`AgentCmd_Dispatch`](AgentCmd_Dispatch.md) —— Unity 那套（`senate ucmd`）
+- [`Unity_CLI`](Unity_CLI.md) —— 操作 Unity 專案（官方 Unity CLI）
 - [`Cli_Reference`](../API/Cli_Reference.md) —— 所有指令與旗標速查
