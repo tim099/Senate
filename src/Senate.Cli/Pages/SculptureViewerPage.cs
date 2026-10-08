@@ -262,11 +262,12 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     string PageTempDir => Path.Combine(SenatePaths.RuntimeDir(m_Model.RepoRoot), PageTempDirName);
 
     // ===========================================================
-    // 區塊職責：工具列 —— 重新讀取／開 Sculpture 資料夾／開匯出資料夾／開暫存資料夾。
+    // 區塊職責：工具列 —— 重新讀取／匯出 obj・vox／開 Sculpture 資料夾／開匯出資料夾／開暫存資料夾。
     // ===========================================================
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", P + "btn/reload")) { m_Dirty = true; m_Message = "已重新讀取"; }
+        ExportButtons(iUi);
         // ⚠ TopBar 先於 DrawContent 畫 ⇒ 第一次 Reload 前 m_DataRoot 還是空的，直接問 model
         string aRoot = m_Model.AgentCommandsRoot.Value ?? "";
         OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_SculptRenderProfiles.SculptureDir(new SCP_DataRoot(aRoot)) : null, P + "btn/open-dir");
@@ -311,7 +312,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         DrawProfiles(g, aPersona, aScope);
         DrawSlice(g, aPersona);
         DrawStamp(g, aPersona);
-        DrawExport(g, aPersona);
+        DrawExport(g);
         DrawLog(g);
     }
 
@@ -938,35 +939,39 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
     // ===========================================================
     // 區塊職責：匯出 obj／vox（範圍＝手動區 region／exclude；檔名由引擎產生，⛔ 本頁不組檔名）。
+    // 物理意義：按鈕住 TopBar（Tim 2026-10-08）；內容區只留匯出資料夾設定與上一次的路徑。
+    //   「開啟匯出資料夾」本來就在 TopBar，而它在沒設資料夾時就開上一次匯出檔那一層 ⇒ 不另放第二顆。
     // ===========================================================
-    void DrawExport(SCP_Ui g, string iPersona)
+    void ExportButtons(SCP_Ui g)
     {
-        using (g.Row())
+        // 個人區沒選到作品時內容區整段不畫 ⇒ TopBar 也不給按（不准變成對展區匯出）
+        if (PersonalSpace(g) && SelectedWork(g).Length == 0) return;
+        string aPersona = g.FieldValue(PersonaSel + "/value", None);
+        if (aPersona == None) aPersona = "";
+        foreach (string aFmt in new[] { "obj", "vox" })
         {
-            foreach (string aFmt in new[] { "obj", "vox" })
+            if (!g.Button("匯出 ." + aFmt, P + "btn/export-" + aFmt)) continue;
+            var aArgs = new Dictionary<string, string> { ["op"] = "export", ["format"] = aFmt };
+            AddWorkTarget(g, aArgs);
+            string aRegion = g.FieldValue(FRegion, "").Trim(), aEx = g.FieldValue(FExclude, "").Trim(), aDir = g.FieldValue(FExportDir, "").Trim();
+            if (aRegion.Length > 0) aArgs["region"] = aRegion;
+            if (aEx.Length > 0) aArgs["exclude_color"] = aEx;
+            if (aDir.Length > 0) aArgs["out_dir"] = aDir;
+            if (aPersona.Length > 0) aArgs["persona"] = aPersona;
+            string aLabel = "匯出 ." + aFmt + (aRegion.Length > 0 ? " region " + aRegion : "（全空間）");
+            Start(g, aLabel, () =>
             {
-                if (!g.Button("匯出 ." + aFmt, P + "btn/export-" + aFmt)) continue;
-                var aArgs = new Dictionary<string, string> { ["op"] = "export", ["format"] = aFmt };
-                AddWorkTarget(g, aArgs);
-                string aRegion = g.FieldValue(FRegion, "").Trim(), aEx = g.FieldValue(FExclude, "").Trim(), aDir = g.FieldValue(FExportDir, "").Trim();
-                if (aRegion.Length > 0) aArgs["region"] = aRegion;
-                if (aEx.Length > 0) aArgs["exclude_color"] = aEx;
-                if (aDir.Length > 0) aArgs["out_dir"] = aDir;
-                if (iPersona.Length > 0) aArgs["persona"] = iPersona;
-                string aLabel = "匯出 ." + aFmt + (aRegion.Length > 0 ? " region " + aRegion : "（全空間）");
-                Start(g, aLabel, () =>
-                {
-                    CliRun r = RunCli(aArgs);
-                    var o = new Outcome { Log = r.Log(aLabel) };
-                    if (r.Exit == 0 && r.Value("path", "").Length > 0) o.Fields[SExportPath] = r.Value("path", "");
-                    return o;
-                });
-            }
-            string aLast = g.FieldValue(SExportPath, "");
-            if (aLast.Length > 0 && SCP_GuiHost.RevealInFileManager != null && g.Button("開啟匯出檔所在資料夾", P + "btn/export-reveal"))
-                m_Message = RevealFolder(Path.GetDirectoryName(aLast));
+                CliRun r = RunCli(aArgs);
+                var o = new Outcome { Log = r.Log(aLabel) };
+                if (r.Exit == 0 && r.Value("path", "").Length > 0) o.Fields[SExportPath] = r.Value("path", "");
+                return o;
+            });
         }
-        using var aFold = g.Fold("匯出 obj／vox", P + "fold/export", iDefaultOpen: false);
+    }
+
+    void DrawExport(SCP_Ui g)
+    {
+        using var aFold = g.Fold("匯出設定（按鈕在上方工具列）", P + "fold/export", iDefaultOpen: false);
         if (!aFold.Open) return;
         g.Note("範圍＝手動區的 region／exclude_color（空 region＝全空間）。");
         Field(g, "匯出資料夾（空＝預設）", FExportDir);
