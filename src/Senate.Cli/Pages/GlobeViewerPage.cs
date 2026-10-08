@@ -19,7 +19,8 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
     const float ViewSide = 720f;
     const string P = "globe/";
     const string FLat = P + "f/center_lat", FLon = P + "f/center_lon", FZoom = P + "f/zoom", FGrat = P + "f/graticule";
-    const string TSeams = P + "t/seams";
+    const string TSeams = P + "t/seams", TGrat = P + "t/graticule", TZones = P + "t/zones";
+    const string FZoneId = P + "f/zone_id", FZoneTitle = P + "f/zone_title", FZoneBbox = P + "f/zone_bbox", FZoneStatus = P + "f/zone_status";
     const string FColor = P + "f/color", FBase = P + "f/base";
     const string FPLat = P + "f/p_lat", FPLon = P + "f/p_lon", FRadius = P + "f/radius", FWidth = P + "f/width", FMax = P + "f/max_cells";
     const string FPoints = P + "f/points", FPersona = P + "f/persona";
@@ -43,6 +44,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
     string? m_Message;
     string m_Status = "";
     bool m_Initialized;
+    List<string> m_ZoneLines = new();
     bool m_Dirty = true;
     Task<string>? m_Render;
     string m_RenderedSig = "", m_RenderingSig = "";
@@ -91,6 +93,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         if (DataRoot.Length == 0) { m_Status = "找不到 AgentCommands 資料根 —— 到「路徑管理」頁設定"; m_Initialized = false; return; }
         SCP_CmdResult r = Dispatch(new() { ["op"] = "status" });
         m_Initialized = r.ExitCode == 0;
+        m_ZoneLines = m_Initialized ? Dispatch(new() { ["op"] = "zone", ["sub"] = "list" }).Lines : new();
         m_Status = string.Join("\n", r.Lines.Where(l => l.Trim().Length > 0));
     }
 
@@ -104,9 +107,14 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
                 Field(g, "中心緯度", FLat);
                 Field(g, "中心經度", FLon);
                 Field(g, "zoom（1＝整個半球）", FZoom);
-                Field(g, "經緯線間隔（度，0＝關）", FGrat);
-                g.Toggle("疊面接縫", false, TSeams);
+                Field(g, "經緯線間隔（度）", FGrat);
             }
+        }
+        using (g.Row())
+        {
+            g.Toggle("經緯線", true, TGrat);
+            g.Toggle("施工區框線", true, TZones);
+            g.Toggle("面接縫", false, TSeams);
         }
         using (g.Row())
         {
@@ -126,19 +134,21 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         if (File.Exists(ViewPng)) g.ImageFit(ViewPng, ViewSide, "球面預覽");
     }
 
-    string ViewSig(SCP_Ui g) => string.Join("|", V(g, FLat), V(g, FLon), V(g, FZoom), V(g, FGrat), g.ToggleValue(TSeams) ? "1" : "0", m_Version.ToString(CultureInfo.InvariantCulture));
+    string ViewSig(SCP_Ui g) => string.Join("|", V(g, FLat), V(g, FLon), V(g, FZoom), V(g, FGrat), g.ToggleValue(TGrat, true) ? "1" : "0", g.ToggleValue(TZones, true) ? "1" : "0", g.ToggleValue(TSeams) ? "1" : "0", m_Version.ToString(CultureInfo.InvariantCulture));
 
     void StartRender(SCP_Ui g, string iSig)
     {
         if (m_Render != null) return;
         if (!TryD(V(g, FLat), out double la) || !TryD(V(g, FLon), out double lo) || !TryD(V(g, FZoom), out double z) || !TryD(V(g, FGrat), out double gr))
         { m_Message = "視角欄位要是數字"; m_RenderedSig = iSig; return; }
-        var v = new SCP_GlobeView { CenterLat = Math.Max(-90, Math.Min(90, la)), CenterLon = lo, Zoom = z, Graticule = gr, Seams = g.ToggleValue(TSeams), Size = 720 };
+        var v = new SCP_GlobeView { CenterLat = Math.Max(-90, Math.Min(90, la)), CenterLon = lo, Zoom = z, Graticule = g.ToggleValue(TGrat, true) ? gr : 0, Seams = g.ToggleValue(TSeams), Size = 720 };
+        bool aZones = g.ToggleValue(TZones, true);
         string aRoot = DataRoot, aOut = ViewPng;
         m_RenderingSig = iSig;
         Func<string> aJob = () =>
         {
             var store = new SCP_GlobeStore(new SCP_GlobePaths(new SCP_DataRoot(aRoot)));
+            if (aZones) v.Zones = new SCP_GlobeZones(store.Paths).List();
             byte[] png = SCP_GlobeRender.RenderPng(store.Load(), v);
             Directory.CreateDirectory(Path.GetDirectoryName(aOut)!);
             string aTmp = aOut + ".tmp";
@@ -195,8 +205,21 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
                         Run(g, "多邊形填色", Common(g, "polygon", new() { ["points"] = V(g, FPoints) }));
                     if (g.Button("點列＝台灣輪廓", P + "btn/tw-outline")) g.SetField(FPoints, TaiwanOutline.Replace(";", ";\n"));
                 }
+                g.Note("橡皮擦：擦回底色（大海），參數同上面那一種畫法；擦錯了一樣可以 Undo。");
+                using (g.Row())
+                {
+                    if (g.Button("擦點", P + "btn/erase-point"))
+                        Run(g, "擦點", Erase(g, "point", new() { ["lat"] = V(g, FPLat), ["lon"] = V(g, FPLon), ["radius"] = V(g, FRadius) }));
+                    if (g.Button("擦線", P + "btn/erase-line"))
+                        Run(g, "擦線", Erase(g, "line", new() { ["points"] = V(g, FPoints), ["width"] = V(g, FWidth) }));
+                    if (g.Button("擦多邊形", P + "btn/erase-polygon"))
+                        Run(g, "擦多邊形", Erase(g, "polygon", new() { ["points"] = V(g, FPoints) }));
+                    if (g.Button("擦連通區（從這個經緯度）", P + "btn/erase-fill"))
+                        Run(g, "擦連通區", Erase(g, "fill", new() { ["lat"] = V(g, FPLat), ["lon"] = V(g, FPLon), ["max_cells"] = V(g, FMax) }));
+                }
             }
         }
+        DrawZones(g);
         using (var aFold = g.Fold("底色", P + "fold/base", iDefaultOpen: false))
         {
             if (aFold.Open)
@@ -204,6 +227,50 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
                 g.Note("底色＝沒畫過的格子顯示的顏色（海水）。改它不動任何格子。");
                 Field(g, "底色（#RRGGBB）", FBase);
                 if (g.Button("套用底色", P + "btn/base")) Run(g, "改底色", new() { ["op"] = "base", ["color"] = V(g, FBase) });
+            }
+        }
+    }
+
+    Dictionary<string, string> Erase(SCP_Ui g, string iShape, Dictionary<string, string> iArgs)
+    {
+        iArgs["op"] = "erase";
+        iArgs["shape"] = iShape;
+        iArgs["persona"] = V(g, FPersona);
+        return iArgs;
+    }
+
+    // ── 施工區 ─────────────────────────────────────────────
+    void DrawZones(SCP_Ui g)
+    {
+        using var aFold = g.Fold("施工區（誰在哪裡畫什麼；可重疊、不擋人）", P + "fold/zones", iDefaultOpen: true);
+        if (!aFold.Open) return;
+        foreach (string l in m_ZoneLines) g.Label(l);
+        Field(g, "施工區 id（小寫英數、-、_）", FZoneId);
+        Field(g, "名稱（例：創造日本）", FZoneTitle);
+        Field(g, "範圍 南,西,北,東（度；西 > 東 ＝ 跨 180°）", FZoneBbox);
+        Field(g, "狀態（active／paused／done，更新時用）", FZoneStatus);
+        using (g.Row())
+        {
+            string aId = V(g, FZoneId), aMe = V(g, FPersona);
+            if (g.Button("開施工區", P + "btn/zone-add"))
+                Run(g, "開施工區", new() { ["op"] = "zone", ["sub"] = "add", ["persona"] = aMe, ["id"] = aId, ["title"] = V(g, FZoneTitle), ["bbox"] = V(g, FZoneBbox) });
+            if (g.Button("加入", P + "btn/zone-join"))
+                Run(g, "加入施工區", new() { ["op"] = "zone", ["sub"] = "join", ["persona"] = aMe, ["id"] = aId });
+            if (g.Button("更新（名稱／範圍／狀態）", P + "btn/zone-update"))
+            {
+                var a = new Dictionary<string, string> { ["op"] = "zone", ["sub"] = "update", ["persona"] = aMe, ["id"] = aId };
+                if (V(g, FZoneTitle).Length > 0) a["title"] = V(g, FZoneTitle);
+                if (V(g, FZoneBbox).Length > 0) a["bbox"] = V(g, FZoneBbox);
+                if (V(g, FZoneStatus).Length > 0) a["status"] = V(g, FZoneStatus);
+                Run(g, "更新施工區", a);
+            }
+            if (g.Button("看這一區", P + "btn/zone-goto") && SCP_GlobeZones.TryParseBbox(V(g, FZoneBbox), out double s, out double w, out double n, out double e, out _))
+            {
+                double lon = w <= e ? (w + e) / 2 : (w + e + 360) / 2;
+                if (lon > 180) lon -= 360;
+                double span = Math.Max(n - s, (w <= e ? e - w : e + 360 - w) * Math.Cos((s + n) / 2 * Math.PI / 180));
+                g.SetField(FLat, F((s + n) / 2)); g.SetField(FLon, F(lon));
+                g.SetField(FZoom, F(Math.Max(1, Math.Min(200, 80 / Math.Max(span, 0.1)))));
             }
         }
     }

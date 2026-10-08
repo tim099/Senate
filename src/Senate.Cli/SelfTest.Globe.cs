@@ -201,17 +201,86 @@ public static partial class SelfTest
             Check(!re.FromCache && re.Cells.ContentEquals(aWithCache), "刪快取重播一致");
             readings.Add($"事件共 {re.LastSeq} 筆（含 undo），最後有效 {re.Stack.Count} 筆");
 
-            // 渲染：決定性
+            // cell：查得到剛畫的黑、沒畫過的是 empty
+            var cBlack = Run(("op", "cell"), ("lat", "0"), ("lon", "0"));
+            var cSea = Run(("op", "cell"), ("lat", "-45"), ("lon", "-120"));
+            Check(Val(cBlack, "color") == "#000001" && Val(cSea, "color") == "empty", "op=cell 讀回格子顏色");
+
+            // 橡皮擦：擦回大海；跟 undo 一樣只是一筆事件
+            int eBefore = Events();
+            var er = Run(("op", "erase"), ("persona", "t"), ("lat", "0"), ("lon", "0"), ("radius", "3"));
+            Check(er.ExitCode == 0 && store.Load().Cells.PaintedCount() == 0 && Events() == eBefore + 1
+                  && store.ReadEvent(eBefore + 1).Op == "erase-point", "op=erase 擦回底色（記成 erase-point 事件）");
+            Check(Run(("op", "erase"), ("persona", "t"), ("shape", "blob"), ("lat", "0"), ("lon", "0")).ExitCode == 2 && Events() == eBefore + 1, "erase 壞 shape 零寫入");
+            Check(Run(("op", "undo"), ("persona", "t")).ExitCode == 0 && store.Load().Cells.ContentEquals(aWithCache), "erase 也能 undo");
+
+            // 渲染：決定性；給 persona ⇒ 寫進自己的 cmd 夾，不給 letters_root 就喊
             string o1 = Path.Combine(aData, "a.png"), o2 = Path.Combine(aData, "b.png");
             var r1 = Run(("op", "render"), ("center", "0,0"), ("size", "128"), ("out", o1));
             var r2 = Run(("op", "render"), ("center", "0,0"), ("size", "128"), ("out", o2));
             Check(r1.ExitCode == 0 && r2.ExitCode == 0 && File.ReadAllBytes(o1).SequenceEqual(File.ReadAllBytes(o2)), "渲染決定性");
+            string aLetters = Path.Combine(aData, "letters");
+            Directory.CreateDirectory(Path.Combine(aLetters, "t"));
+            Check(Run(("op", "render"), ("persona", "t"), ("size", "64")).ExitCode == 2, "render 給 persona 沒 letters_root ⇒ exit 2");
+            var rp = Run(("op", "render"), ("persona", "t"), ("letters_root", aLetters), ("size", "64"));
+            Check(rp.ExitCode == 0 && File.Exists(Path.Combine(aLetters, "t", "cmd", "globe_view.png")), "render 寫進 <persona>/cmd/globe_view.png");
         }
         catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
         finally { try { Directory.Delete(aData, true); } catch { } }
         string aRead = string.Join("；", readings);
         return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
             : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
+    }
+
+    static CheckRow GlobeZoneCleanRoom()
+    {
+        const string name = "球面施工區：開區／同 id 擋／重疊可／跨 180° 判內外／非成員不能改、join 後可以／cell 列出所在區／框線疊圖（淨室）";
+        var failures = new List<string>();
+        void Check(bool c, string what) { if (!c) failures.Add(what); }
+        string aData = Path.Combine(Path.GetTempPath(), "senate_globe_zone_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(aData);
+            SCP_CmdResult Run(params (string K, string V)[] a)
+            {
+                var d = new Dictionary<string, string> { ["data_root"] = aData };
+                foreach (var (k, v) in a) d[k] = v;
+                return SCP_CmdRegistry.Dispatch("globe", d);
+            }
+            string Val(SCP_CmdResult r, string k) => r.Values.FirstOrDefault(kv => kv.Key == k).Value ?? "";
+            Check(Run(("op", "init"), ("n", "64")).ExitCode == 0, "init");
+            Check(Run(("op", "zone"), ("sub", "add"), ("persona", "a"), ("id", "japan"), ("title", "創造日本"), ("bbox", "24,122,46,146")).ExitCode == 0, "開區");
+            Check(Run(("op", "zone"), ("sub", "add"), ("persona", "b"), ("id", "japan"), ("title", "搶名"), ("bbox", "0,0,1,1")).ExitCode == 2, "同 id 擋");
+            Check(Run(("op", "zone"), ("sub", "add"), ("persona", "b"), ("id", "east-asia"), ("title", "東亞"), ("bbox", "10,100,50,150")).ExitCode == 0, "重疊可以");
+            Check(Run(("op", "zone"), ("sub", "add"), ("persona", "b"), ("id", "fiji"), ("title", "斐濟"), ("bbox", "-21,176,-15,-178")).ExitCode == 0, "跨 180° 開區");
+            Check(Run(("op", "zone"), ("sub", "add"), ("persona", "b"), ("id", "Bad Id"), ("title", "x"), ("bbox", "0,0,1,1")).ExitCode == 2
+                  && Run(("op", "zone"), ("sub", "add"), ("persona", "b"), ("id", "x"), ("title", "x"), ("bbox", "10,0,5,1")).ExitCode == 2, "壞 id／壞 bbox 擋");
+            Check(Val(Run(("op", "zone"), ("sub", "list")), "zones") == "3", "列出 3 區");
+
+            var tokyo = Run(("op", "cell"), ("lat", "35.7"), ("lon", "139.7"));
+            Check(Val(tokyo, "zones") == "east-asia,japan", "東京同時在兩區：" + Val(tokyo, "zones"));
+            Check(Val(Run(("op", "cell"), ("lat", "-18"), ("lon", "179")), "zones") == "fiji"
+                  && Val(Run(("op", "cell"), ("lat", "-18"), ("lon", "-179")), "zones") == "fiji"
+                  && Val(Run(("op", "cell"), ("lat", "-18"), ("lon", "170")), "zones") == "", "跨 180° 判內外");
+
+            Check(Run(("op", "zone"), ("sub", "update"), ("persona", "c"), ("id", "japan"), ("status", "done")).ExitCode == 2, "非成員不能改");
+            Check(Run(("op", "zone"), ("sub", "join"), ("persona", "c"), ("id", "japan")).ExitCode == 0
+                  && Run(("op", "zone"), ("sub", "update"), ("persona", "c"), ("id", "japan"), ("status", "paused")).ExitCode == 0, "join 後可以改");
+            var store = new SCP_GlobeStore(new SCP_GlobePaths(Path.Combine(aData, SCP_GlobePaths.DirName)));
+            var jp = new SCP_GlobeZones(store.Paths).Find("japan");
+            Check(jp != null && jp.Status == "paused" && jp.Members.Contains("c") && jp.Owner == "a", "改動讀回");
+            Check(Run(("op", "zone"), ("sub", "update"), ("persona", "a"), ("id", "japan"), ("status", "finished")).ExitCode == 2, "壞 status 擋");
+            Check(store.Load().LastSeq == 0, "施工區不寫格子事件");
+
+            string o1 = Path.Combine(aData, "z0.png"), o2 = Path.Combine(aData, "z1.png");
+            Run(("op", "render"), ("center", "35,135"), ("zoom", "3"), ("size", "128"), ("graticule", "0"), ("out", o1));
+            Run(("op", "render"), ("center", "35,135"), ("zoom", "3"), ("size", "128"), ("graticule", "0"), ("zones", "1"), ("out", o2));
+            Check(!File.ReadAllBytes(o1).SequenceEqual(File.ReadAllBytes(o2)), "zones=1 疊得出框線");
+        }
+        catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
+        finally { try { Directory.Delete(aData, true); } catch { } }
+        return failures.Count == 0 ? new CheckRow(name, "全部格子通過", CheckResult.Pass)
+            : new CheckRow(name, "失敗：" + string.Join("、", failures), CheckResult.Fail);
     }
 
     static double Ang(SCP_GlobeGrid g, int a, int b)
