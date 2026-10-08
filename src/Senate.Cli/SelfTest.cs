@@ -196,6 +196,8 @@ public static partial class SelfTest
         One(nameof(SculptExportMergeCleanRoom), "sculpture", SculptExportMergeCleanRoom),
         One(nameof(GlobeGridCleanRoom), "globe", GlobeGridCleanRoom),
         One(nameof(GlobePaintCleanRoom), "globe", GlobePaintCleanRoom),
+        One(nameof(GlobePreviewMemoryCleanRoom), "globe", GlobePreviewMemoryCleanRoom),
+        One(nameof(GlobeRegridCleanRoom), "globe", GlobeRegridCleanRoom),
         One(nameof(GlobeExportCleanRoom), "globe", GlobeExportCleanRoom),
         One(nameof(GlobeZoneCleanRoom), "globe", GlobeZoneCleanRoom),
         One(nameof(SculptureCommissionCleanRoom), "sculpture", SculptureCommissionCleanRoom),

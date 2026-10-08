@@ -2,6 +2,7 @@
 // 物理意義：每一格都拿「跟工具無關的量」對：格子中心換回自己、相鄰取樣點的角距離、逐格快照比對 ——
 //   不以「回 success」當憑據。
 using SCP.Core.Cmd;
+using SCP.Core.Gui;
 using SCP.Core.Globe;
 using SCP.Core.Json;
 
@@ -120,6 +121,344 @@ public static partial class SelfTest
         string aRead = string.Join("；", readings);
         return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
             : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
+    }
+
+    static CheckRow GlobePreviewMemoryCleanRoom()
+    {
+        const string name = "球面預覽走記憶體影像：Put 驗長度／版本遞增／文字模式有圖無圖分得開／渲染結果逐位元組進得去／檔案被鎖也不影響（淨室）";
+        var failures = new List<string>();
+        var readings = new List<string>();
+        void Check(bool c, string what) { if (!c) failures.Add(what); }
+        string aRoot = Path.Combine(Path.GetTempPath(), "senate_globe_mem_" + Guid.NewGuid().ToString("N"));
+        string aKey = "selftest/globe-mem-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            // 長度與尺寸對不上 ⇒ 擋（⛔ 不安靜吞掉一張壞圖）
+            bool aThrew = false;
+            try { SCP_GuiImageStore.Put(aKey, new byte[10], 2, 2); } catch (ArgumentException) { aThrew = true; }
+            Check(aThrew && !SCP_GuiImageStore.Has(aKey), "長度對不上 ⇒ 丟例外、登記處沒有東西");
+
+            // 文字模式：沒圖 ⇒ [無圖…]；Put 之後 ⇒ [圖：…]
+            string TextOf() { var ui = new SCP_Ui(); ui.ImageInteractive(SCP_GuiImageStore.Ref(aKey), 720f, "球面預覽", "t/img"); return SCP_GuiTextRenderer.Render(ui.Root); }
+            Check(TextOf().Contains("[無圖：球面預覽]") && !TextOf().Contains("[圖："), "key 在、圖還沒進 ⇒ 文字模式印無圖");
+
+            // 真的渲染一張球面，拿它放進去
+            Directory.CreateDirectory(aRoot);
+            var d = new Dictionary<string, string> { ["data_root"] = aRoot };
+            SCP_CmdResult Run(params (string k, string v)[] a)
+            {
+                var m = new Dictionary<string, string>(d);
+                foreach (var (k, v) in a) m[k] = v;
+                return SCP_CmdRegistry.Dispatch("globe", m);
+            }
+            Check(Run(("op", "init"), ("n", "64")).ExitCode == 0, "init");
+            Check(Run(("op", "point"), ("persona", "t"), ("lat", "0"), ("lon", "0"), ("radius", "3"), ("color", "#FF0000")).ExitCode == 0, "中心畫紅");
+            var store = new SCP_GlobeStore(new SCP_GlobePaths(Path.Combine(aRoot, SCP_GlobePaths.DirName)));
+            SCP_GlobeState st = store.Load();
+            var v = new SCP_GlobeView { CenterLat = 0, CenterLon = 0, Zoom = 1, Graticule = 0, Size = 96 };
+            byte[] rgba = SCP_GlobeRender.RenderRgba(st, v);
+
+            // 反向對照：舊做法把圖寫到固定檔名；那個檔被別人鎖住時寫不進去 —— 記憶體這條路不碰檔案
+            string aLocked = Path.Combine(aRoot, "view.png");
+            using (var aHold = new FileStream(aLocked, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+            {
+                bool aOldWayFails = false;
+                try { File.WriteAllBytes(aLocked, new byte[] { 1 }); } catch (IOException) { aOldWayFails = true; }
+                Check(aOldWayFails, "反向對照：鎖住的檔案確實寫不進去（舊做法的失敗樣子）");
+                long aV1 = SCP_GuiImageStore.Put(aKey, rgba, v.Width, v.Height);
+                Check(SCP_GuiImageStore.TryGet(aKey, out SCP_GuiImageFrame f1) && f1.Version == aV1 && f1.Width == 96 && f1.Height == 96, "檔案被鎖住時照樣放得進去、讀得出來");
+                readings.Add($"檔案鎖住時：舊路徑寫入失敗={aOldWayFails}、記憶體版本 {aV1}");
+            }
+
+            Check(SCP_GuiImageStore.TryGet(aKey, out SCP_GuiImageFrame f2) && f2.Rgba.SequenceEqual(rgba), "進去的就是渲染出來的那份（逐位元組）");
+            int aRed = 0;
+            for (int k = 0; k < rgba.Length; k += 4) if (rgba[k] > 150 && rgba[k + 1] < 80 && rgba[k + 2] < 80) aRed++;   // ortho 有打光 ⇒ 不是純 255,0,0，認「紅色優勢」
+            Check(aRed > 0, "那張圖裡看得到紅點（不是一張空白圖）");
+            readings.Add($"96² 預覽紅色像素 {aRed}");
+            Check(TextOf().Contains("[圖：球面預覽]"), "放進去之後文字模式印有圖");
+
+            // 版本遞增、同 key 覆蓋
+            long aV2 = SCP_GuiImageStore.Put(aKey, new byte[4 * 4 * 4], 4, 4);
+            Check(aV2 > f2.Version && SCP_GuiImageStore.TryGet(aKey, out SCP_GuiImageFrame f3) && f3.Width == 4 && f3.Version == aV2, "同 key 再放 ⇒ 版本遞增、尺寸跟著新圖");
+            SCP_GuiImageStore.Remove(aKey);
+            Check(!SCP_GuiImageStore.Has(aKey) && TextOf().Contains("[無圖："), "Remove 之後回到無圖");
+            Check(SCP_GuiImageStore.IsMemory(SCP_GuiImageStore.Ref(aKey)) && SCP_GuiImageStore.KeyOf(SCP_GuiImageStore.Ref(aKey)) == aKey
+                  && !SCP_GuiImageStore.IsMemory("D:/a/b.png") && SCP_GuiImageStore.KeyOf("D:/a/b.png") == null, "mem: 前綴只認自己，路徑不被誤判");
+        }
+        catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
+        finally { SCP_GuiImageStore.Remove(aKey); try { Directory.Delete(aRoot, true); } catch { } }
+        string aRead = string.Join("；", readings);
+        return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
+            : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
+    }
+
+    static CheckRow GlobeRegridCleanRoom()
+    {
+        const string name = "球面 regrid：dry-run 零寫入／每格變 f×f 逐格對／網格巢狀／舊事件不動／Undo 跨一次與兩次 regrid／舊 N 快取續播／緊湊編碼＝舊格式逐格相同／初始格單位換算／過期 N 的寫入被擋（淨室）";
+        var failures = new List<string>();
+        var readings = new List<string>();
+        void Check(bool c, string what) { if (!c) failures.Add(what); }
+        string aData = Path.Combine(Path.GetTempPath(), "senate_globe_regrid_" + Guid.NewGuid().ToString("N"));
+        string aY = Path.Combine(Path.GetTempPath(), "senate_globe_legacy_" + Guid.NewGuid().ToString("N"));
+        string aCacheKeep = Path.Combine(Path.GetTempPath(), "senate_globe_cachekeep_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(aData);
+            SCP_CmdResult Run(string iRoot, params (string K, string V)[] a)
+            {
+                var d = new Dictionary<string, string> { ["data_root"] = iRoot };
+                foreach (var (k, v) in a) d[k] = v;
+                return SCP_CmdRegistry.Dispatch("globe", d);
+            }
+            SCP_CmdResult R(params (string K, string V)[] a) => Run(aData, a);
+            string Val(SCP_CmdResult r, string k) => r.Values.FirstOrDefault(kv => kv.Key == k).Value ?? "";
+            var store = new SCP_GlobeStore(new SCP_GlobePaths(Path.Combine(aData, SCP_GlobePaths.DirName)));
+            int Events() => store.Load().LastSeq;
+            SCP_GlobeCells Snap() => store.Load().Cells.Clone();
+            // 細格每一格都等於它的母格（逐格、不靠 Expand 自己）
+            bool Nested(SCP_GlobeCells iFine, int iFineN, SCP_GlobeCells iCoarse, int iCoarseN)
+            {
+                int f = iFineN / iCoarseN;
+                for (int face = 0; face < 6; face++)
+                    for (int j = 0; j < iFineN; j++)
+                        for (int i = 0; i < iFineN; i++)
+                            if (iFine.Get(face * iFineN * iFineN + j * iFineN + i) != iCoarse.Get(face * iCoarseN * iCoarseN + (j / f) * iCoarseN + (i / f))) return false;
+                return true;
+            }
+
+            Check(R(("op", "init"), ("n", "64")).ExitCode == 0, "init");
+            Check(R(("op", "point"), ("persona", "t"), ("lat", "23.7"), ("lon", "121"), ("radius", "3"), ("color", "#FF0000")).ExitCode == 0, "A：畫紅點");
+            SCP_GlobeCells sA = Snap();
+            var poly = R(("op", "polygon"), ("persona", "t"), ("color", "#00FF00"), ("points", "10,10;10,30;30,30;30,10"));
+            SCP_GlobeCells sB = Snap();
+            Check(poly.ExitCode == 0, "B：多邊形");
+            var ln = R(("op", "line"), ("persona", "t"), ("color", "#FFFFFF"), ("points", "-40,-60;40,60"), ("width", "1"));
+            SCP_GlobeCells sL = Snap();
+            Check(ln.ExitCode == 0, "L：跨面長線");
+            int aPaintedOld = sL.PaintedCount();
+
+            // ── 緊湊編碼 ──
+            SCP_GlobeEvent ePoly = store.ReadEvent(2);
+            int aRunSum = 0;
+            for (int k = 0; k + 3 < ePoly.Runs.Count; k += 4) aRunSum += ePoly.Runs[k + 1];
+            Check(ePoly.Cells.Count == 0 && ePoly.Runs.Count > 0 && ePoly.Runs.Count % 4 == 0 && aRunSum == ePoly.CountCells() && ePoly.CountCells() == int.Parse(Val(poly, "changed")),
+                  "新事件只存 Runs（不存 Cells 三元組），區段長度總和＝實際改的格數");
+            readings.Add($"多邊形 {ePoly.CountCells()} 格存成 {ePoly.Runs.Count / 4} 段（約 {ePoly.CountCells() / Math.Max(1, ePoly.Runs.Count / 4)} 格／段）");
+            SCP_GlobeMeta m1 = store.LoadMeta();
+            Check(m1.Mapping == SCP_GlobeMeta.MappingNameV2 && m1.Mapping != SCP_GlobeMeta.MappingName && m1.Version == 2,
+                  "出現緊湊事件後 meta 改成 v2 mapping（舊版程式不認得 ⇒ 大聲拒絕，不會靜默算錯）");
+
+            // 重疊覆蓋：舊值一半是沒畫過、一半是綠 ⇒ 區段要在舊值變的地方切開，undo 逐格回到前一刻
+            SCP_GlobeCells sBeforeOver = Snap();
+            var over = R(("op", "point"), ("persona", "t"), ("lat", "30"), ("lon", "30"), ("radius", "4"), ("color", "#FFFF00"));
+            SCP_GlobeEvent eOver = store.ReadEvent(store.Load().LastSeq);
+            var aOlds = new HashSet<int>();
+            for (int k = 0; k + 3 < eOver.Runs.Count; k += 4) aOlds.Add(eOver.Runs[k + 3]);
+            Check(over.ExitCode == 0 && aOlds.Contains(0) && aOlds.Contains(0x00FF00) && eOver.Runs.Count / 4 >= 2, "壓在別人的色上：舊值不同的格子分成不同段");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 0 && Snap().ContentEquals(sBeforeOver), "混舊值的事件 undo 逐格回到前一刻");
+
+            // 舊事件檔的位元組，regrid 前後要一模一樣
+            var aBytes = new Dictionary<int, byte[]>();
+            for (int q = 1; q <= Events(); q++) aBytes[q] = File.ReadAllBytes(store.Paths.EventFile(q));
+            // 舊 N 的快取（regrid 之後拿回來，驗「舊快取＋補重播 regrid」）
+            CopyDir(store.Paths.CacheDir, aCacheKeep);
+            int eBefore = Events();
+
+            // ── dry-run 與壞參數：零寫入 ──
+            var dry = R(("op", "regrid"), ("persona", "t"));
+            Check(dry.ExitCode == 0 && Val(dry, "regrid") == "dry_run" && Val(dry, "to_n") == "128" && Events() == eBefore && store.Load().Grid.N == 64, "dry-run：只印、零寫入");
+            foreach (string aBad in new[] { "1", "2.5", "abc", "1000", "0", "-2" })
+                Check(R(("op", "regrid"), ("persona", "t"), ("factor", aBad), ("confirm", "1")).ExitCode == 2 && Events() == eBefore, "regrid 壞倍率 " + aBad + " ⇒ exit 2、零寫入");
+            Check(R(("op", "regrid"), ("confirm", "1")).ExitCode == 2 && Events() == eBefore, "regrid 沒給 persona ⇒ exit 2、零寫入");
+
+            // ── regrid ×2 ──
+            var rg = R(("op", "regrid"), ("persona", "t"), ("confirm", "1"), ("note", "測試"));
+            Check(rg.ExitCode == 0 && Val(rg, "regrid") == "done" && Val(rg, "n") == "128", "regrid ×2 成功");
+            SCP_GlobeState st1 = store.Load();
+            Check(st1.Grid.N == 128 && st1.InitialN == 64 && st1.Regrids.Count == 2 && st1.Regrids[1] == 128 && st1.LastSeq == eBefore + 1, "N=128、初始 64、regrid 事件 #" + (eBefore + 1));
+            Check(st1.Cells.PaintedCount() == aPaintedOld * 4, $"有畫的格子 {aPaintedOld} → {st1.Cells.PaintedCount()}（×4）");
+            Check(Nested(st1.Cells, 128, sL, 64), "每個細格都等於它的母格（逐格，98304 格）");
+            {
+                // 反向對照：偷改一個細格 ⇒ Nested 一定要抓到（不然這把尺是不會紅的尺）
+                SCP_GlobeCells aTamper = st1.Cells.Clone();
+                int aAt = -1;
+                for (int q = 0; q < st1.Grid.CellCount && aAt < 0; q++) if (aTamper.Get(q) != 0) aAt = q;
+                aTamper.Set(aAt, aTamper.Get(aAt) ^ 0x010101);
+                Check(aAt >= 0 && !Nested(aTamper, 128, sL, 64), "反向對照：偷改一個細格，巢狀檢查會紅");
+            }
+            bool aSame = true;
+            for (int q = 1; q <= eBefore; q++) if (!File.ReadAllBytes(store.Paths.EventFile(q)).SequenceEqual(aBytes[q])) aSame = false;
+            Check(aSame, "舊事件檔一個位元組都沒動");
+            SCP_GlobeMeta m2 = store.LoadMeta();
+            Check(m2.N == 128 && m2.InitialN == 64 && m2.Mapping == SCP_GlobeMeta.MappingNameV2, "meta：N=128、InitialN=64、v2");
+            var stat = R(("op", "status"));
+            Check(Val(stat, "n") == "128" && Val(stat, "initial_n") == "64" && Val(stat, "regrids") == "1", "status 讀得出 N／初始 N／regrid 次數");
+            Check(R(("op", "history"), ("last", "3")).Lines.Any(l => l.Contains("regrid → 每面 128 格")), "history 看得到 regrid 事件");
+
+            // 網格巢狀：同一個經緯度，細格一定落在母格裡面
+            {
+                var g64 = new SCP_GlobeGrid(64, m2.Faces);
+                var g128 = st1.Grid;
+                var rnd = new Random(7);
+                int aBadNest = 0;
+                for (int q = 0; q < 2000; q++)
+                {
+                    double la = Math.Asin(rnd.NextDouble() * 2 - 1) * 180 / Math.PI, lo = rnd.NextDouble() * 360 - 180;
+                    g64.Unpack(g64.LatLonToCell(la, lo), out int cf, out int ci, out int cj);
+                    g128.Unpack(g128.LatLonToCell(la, lo), out int ff, out int fi, out int fj);
+                    if (ff != cf || fi / 2 != ci || fj / 2 != cj) aBadNest++;
+                }
+                readings.Add($"隨機 2000 個經緯度：細格不在母格內 {aBadNest} 個");
+                Check(aBadNest == 0, "網格是巢狀的（2000 個隨機經緯度，細格都在母格內）");
+            }
+
+            // 舊 N 的快取＋補重播（含 regrid 事件）＝ 從頭重播
+            Directory.Delete(store.Paths.CacheDir, true);
+            CopyDir(aCacheKeep, store.Paths.CacheDir);
+            SCP_GlobeState stOldCache = store.Load();
+            Check(stOldCache.FromCache && stOldCache.Grid.N == 128 && stOldCache.Cells.ContentEquals(st1.Cells), "用 regrid 之前的舊快取開球：從快取起算、補重播 regrid、結果同一份");
+            Directory.Delete(store.Paths.CacheDir, true);
+            SCP_GlobeState stScratch = store.Load();
+            Check(!stScratch.FromCache && stScratch.Cells.ContentEquals(st1.Cells), "刪快取從頭重播：同一份");
+            R(("op", "point"), ("persona", "t"), ("lat", "-60"), ("lon", "-120"), ("radius", "1"), ("color", "#123456"));   // 存一份 N=128 的快取
+            R(("op", "undo"), ("persona", "t"));
+            SCP_GlobeState stNewCache = store.Load();
+            Check(stNewCache.FromCache && stNewCache.Cells.ContentEquals(st1.Cells), "regrid 之後存的新快取（tiles_128）讀得回來、內容一致");
+            Check(Directory.Exists(store.Paths.CacheTilesDir("tiles_128")), "N=128 的分塊放在自己的夾（不跟 N=64 的分塊混用）");
+
+            // ── 初始格單位換算 ──
+            var pIni = R(("op", "point"), ("persona", "t"), ("lat", "0"), ("lon", "0"), ("radius", "2"), ("color", "#0000FF"));
+            var pCell = R(("op", "point"), ("persona", "t"), ("lat", "0"), ("lon", "90"), ("radius", "2"), ("color", "#0000FF"), ("unit", "cell"));
+            int cIni = int.Parse(Val(pIni, "changed")), cCell = int.Parse(Val(pCell, "changed"));
+            readings.Add($"radius=2：初始格單位 {cIni} 格、unit=cell {cCell} 格（regrid ×2 之後）");
+            Check(pIni.ExitCode == 0 && pCell.ExitCode == 0 && cCell >= 9 && cCell <= 25 && cIni > cCell * 25 / 10, "radius=2 預設＝初始格（面積約 ×4），unit=cell 照實際格數");
+            Check(R(("op", "point"), ("persona", "t"), ("lat", "0"), ("lon", "0"), ("radius", "2"), ("unit", "bogus")).ExitCode == 2, "unit 壞值 ⇒ exit 2");
+            var kp = R(("op", "polygon"), ("persona", "t"), ("color", "#00AA00"), ("points", "40,10;40,30;55,30;55,10"));
+            int aKp = int.Parse(Val(kp, "changed"));
+            int eNow = Events();
+            int aLimit = aKp / 4 + 10;
+            var fCell = R(("op", "fill"), ("persona", "t"), ("lat", "47"), ("lon", "20"), ("color", "#AA00AA"), ("max_cells", aLimit.ToString()), ("unit", "cell"));
+            Check(fCell.ExitCode == 2 && Events() == eNow, $"fill max_cells={aLimit}（unit=cell）擋 {aKp} 格 ⇒ exit 2、零寫入");
+            var fIni = R(("op", "fill"), ("persona", "t"), ("lat", "47"), ("lon", "20"), ("color", "#AA00AA"), ("max_cells", aLimit.ToString()));
+            Check(fIni.ExitCode == 0 && int.Parse(Val(fIni, "changed")) == aKp, $"同一個 max_cells={aLimit}（初始格）換算成 {aLimit * 4} 格 ⇒ 塗得下 {aKp} 格");
+
+            // ── 過期 N 的寫入被擋 ──
+            int eGuard = Events();
+            bool aThrew = false;
+            try { store.Paint("point", "t", "", new[] { 0, 1, 2 }, 0xFF0000, "", 64); } catch (SCP_GlobeException) { aThrew = true; }
+            Check(aThrew && Events() == eGuard, "拿 N=64 算的格子去寫 N=128 的球面 ⇒ 例外、零寫入");
+
+            // ── Undo：先退掉 regrid 之後畫的，回到 regrid 剛做完的樣子 ──
+            SCP_GlobeCells sAfterR1 = st1.Cells;
+            int aUndos = 0;
+            while (store.Load().Stack.Count > st1.Stack.Count)   // ⚠ undo 自己也是事件（LastSeq 會增加）⇒ 用「有效繪製堆疊的深度」判斷
+            {
+                var u = R(("op", "undo"), ("persona", "t"));
+                if (u.ExitCode != 0) break;
+                aUndos++;
+                if (aUndos > 20) break;
+            }
+            Check(Snap().ContentEquals(sAfterR1), $"退掉 regrid 之後畫的 {aUndos} 筆 ⇒ 回到 regrid 剛做完的樣子");
+
+            // ── 第二次 regrid（128→256），undo 跨兩次 ──
+            R(("op", "point"), ("persona", "t"), ("lat", "-20"), ("lon", "45"), ("radius", "2"), ("color", "#00FFFF"));   // X：N=128 時代
+            SCP_GlobeCells sX = Snap();
+            var rg2 = R(("op", "regrid"), ("persona", "t"), ("confirm", "1"));
+            Check(rg2.ExitCode == 0 && Val(rg2, "n") == "256", "第二次 regrid（128→256）");
+            R(("op", "point"), ("persona", "t"), ("lat", "-20"), ("lon", "80"), ("radius", "2"), ("color", "#FF00FF"));      // Y：N=256 時代
+            SCP_GlobeState st2 = store.Load();
+            Check(st2.Grid.N == 256 && st2.Regrids.Count == 4 && st2.NAt(2) == 64 && st2.NAt(eBefore + 2) == 128 && st2.NAt(st2.LastSeq) == 256, "regrid 歷史兩筆；每筆事件寫下時的 N 推得出來（64／128／256）");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 0 && Nested(Snap(), 256, sX, 128), "undo Y（256 時代）⇒ 等於畫 Y 之前（X 展成 256）");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 0 && Nested(Snap(), 256, sAfterR1, 128), "undo X（128 時代，跨一次 regrid）⇒ 等於第一次 regrid 剛做完（展成 256）");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 0 && Nested(Snap(), 256, sB, 64), "undo L（64 時代，跨兩次 regrid，一格變 4×4）⇒ 等於畫 L 之前");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 0 && Nested(Snap(), 256, sA, 64), "undo B（跨兩次）⇒ 等於畫 B 之前");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 0 && Snap().PaintedCount() == 0, "undo A ⇒ 全空");
+            Check(R(("op", "undo"), ("persona", "t")).ExitCode == 1, "沒得退 ⇒ exit 1");
+            Directory.Delete(store.Paths.CacheDir, true);
+            Check(store.Load().Cells.PaintedCount() == 0 && store.Load().Grid.N == 256, "刪快取從頭重播（含兩次 regrid 與全部 undo）⇒ 一樣全空、N=256");
+
+            // ── meta 被別人「剛好正在讀」：換檔要重試，不能一擲就丟（正式 regrid 撞過一次） ──
+            {
+                string aMeta = store.Paths.Meta;
+                var aBase = store.LoadMeta();
+                File.Copy(aMeta, aMeta + ".probe", true);   // 換檔用的來源（要真的存在，不然丟的是「找不到檔」而不是「被掛住」）
+                using (var aHold = new FileStream(aMeta, FileMode.Open, FileAccess.Read, FileShare.Read))   // 不給 Delete 共享 ⇒ File.Replace 會丟 IOException
+                {
+                    bool aNoRetryFails = false;
+                    try { File.Replace(aMeta + ".probe", aMeta, null); } catch (Exception) { aNoRetryFails = true; }
+                    Check(aNoRetryFails, "反向對照：目標檔被掛住時，一次性的 File.Replace 確實會丟例外");
+                }
+                File.Delete(aMeta + ".probe");
+                var aReleaser = new System.Threading.Thread(() => { using (var h = new FileStream(aMeta, FileMode.Open, FileAccess.Read, FileShare.Read)) System.Threading.Thread.Sleep(250); });
+                aReleaser.Start();
+                System.Threading.Thread.Sleep(60);   // 讓那條執行緒先把檔案掛住
+                bool aWrote = true;
+                try { store.WriteMeta(aBase); } catch (Exception) { aWrote = false; }
+                aReleaser.Join();
+                Check(aWrote, "meta 被掛住 250 ms ⇒ WriteMeta 重試後寫成功");
+                var aLong = new System.Threading.Thread(() => { using (var h = new FileStream(aMeta, FileMode.Open, FileAccess.Read, FileShare.Read)) System.Threading.Thread.Sleep(3000); });
+                aLong.Start();
+                System.Threading.Thread.Sleep(60);
+                bool aThrewLong = false;
+                try { store.WriteMeta(aBase); } catch (IOException) { aThrewLong = true; }
+                aLong.Join();
+                Check(aThrewLong, "掛住太久（3 秒）⇒ 重試用完照丟例外（不吞）");
+                Check(store.LoadMeta().N == aBase.N, "兩次之後 meta 仍然讀得回來、內容沒壞");
+            }
+
+            // ── 緊湊編碼 ＝ 舊格式（Cells 三元組）逐格相同 ──
+            {
+                string aX = Path.Combine(Path.GetTempPath(), "senate_globe_x_" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    Directory.CreateDirectory(aX); Directory.CreateDirectory(aY);
+                    Check(Run(aX, ("op", "init"), ("n", "64")).ExitCode == 0, "（對照組）init");
+                    Run(aX, ("op", "point"), ("persona", "t"), ("lat", "23.7"), ("lon", "121"), ("radius", "3"), ("color", "#FF0000"));
+                    Run(aX, ("op", "polygon"), ("persona", "t"), ("color", "#00FF00"), ("points", "10,10;10,30;30,30;30,10"));
+                    Run(aX, ("op", "point"), ("persona", "t"), ("lat", "30"), ("lon", "30"), ("radius", "4"), ("color", "#FFFF00"));
+                    Run(aX, ("op", "undo"), ("persona", "t"));
+                    var sx = new SCP_GlobeStore(new SCP_GlobePaths(Path.Combine(aX, SCP_GlobePaths.DirName)));
+                    // 把每筆事件轉成舊格式（Cells 三元組、沒有 Runs），寫進另一顆「純舊版」的球
+                    var sy = new SCP_GlobeStore(new SCP_GlobePaths(Path.Combine(aY, SCP_GlobePaths.DirName)));
+                    SCP_GlobeMeta myMeta = sx.LoadMeta();
+                    myMeta.Mapping = SCP_GlobeMeta.MappingName; myMeta.Version = 1; myMeta.InitialN = 0;
+                    sy.WriteMeta(myMeta);
+                    Directory.CreateDirectory(sy.Paths.Events);
+                    int aLegacyCells = 0;
+                    for (int q = 1; q <= sx.Load().LastSeq; q++)
+                    {
+                        SCP_GlobeEvent e = sx.ReadEvent(q);
+                        var legacy = new SCP_GlobeEvent { Seq = e.Seq, Op = e.Op, Persona = e.Persona, At = e.At, Note = e.Note, Target = e.Target, Zone = e.Zone };
+                        e.ForEachCell((idx, nw, old) => { legacy.Cells.Add(idx); legacy.Cells.Add(nw); legacy.Cells.Add(old); aLegacyCells++; });
+                        File.WriteAllText(sy.Paths.EventFile(q), SCP_JsonWriter.Write(SCP_JsonMapper.ToJson(legacy), false));
+                    }
+                    SCP_GlobeState sxs = sx.Load(), sys = sy.Load();
+                    Check(sys.Cells.ContentEquals(sxs.Cells) && sys.Stack.SequenceEqual(sxs.Stack), "舊格式（Cells 三元組）重播 ＝ 緊湊編碼重播（格子與有效堆疊都一樣）");
+                    readings.Add($"對照：{aLegacyCells} 格轉成舊格式");
+                    SCP_GlobeCells sysCells = sys.Cells.Clone();
+                    // 舊格式的球：undo 仍可用、再畫新事件會升級成 v2
+                    Check(Run(aY, ("op", "point"), ("persona", "t"), ("lat", "-30"), ("lon", "100"), ("radius", "2"), ("color", "#0000FF")).ExitCode == 0
+                          && sy.LoadMeta().Mapping == SCP_GlobeMeta.MappingNameV2, "舊格式的球照樣能畫、第一筆緊湊事件寫下時才升級成 v2");
+                    Check(Run(aY, ("op", "undo"), ("persona", "t")).ExitCode == 0 && sy.Load().Cells.ContentEquals(sysCells), "舊格式的球：undo 緊湊事件後回到只有舊事件的樣子");
+                }
+                finally { try { Directory.Delete(aX, true); } catch { } }
+            }
+        }
+        catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
+        finally
+        {
+            foreach (string d in new[] { aData, aY, aCacheKeep }) { try { Directory.Delete(d, true); } catch { } }
+        }
+        string aRead = string.Join("；", readings);
+        return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
+            : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
+    }
+
+    static void CopyDir(string iFrom, string iTo)
+    {
+        Directory.CreateDirectory(iTo);
+        foreach (string f in Directory.GetFiles(iFrom)) File.Copy(f, Path.Combine(iTo, Path.GetFileName(f)), true);
+        foreach (string d in Directory.GetDirectories(iFrom)) CopyDir(d, Path.Combine(iTo, Path.GetFileName(d)));
     }
 
     static CheckRow GlobePaintCleanRoom()

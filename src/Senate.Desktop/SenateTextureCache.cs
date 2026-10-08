@@ -5,6 +5,7 @@
 // ⚠ 讀不了的檔**也快取失敗結果**（同一個 mtime 不重試）—— 不然一張壞圖會讓每一幀都去解碼一次。
 //   而失敗要**看得見**：renderer 會畫佔位框，滑鼠提示印原因（Error）。
 #nullable enable
+using SCP.Core.Gui;
 using Silk.NET.OpenGL;
 using StbImageSharp;
 
@@ -21,6 +22,8 @@ public sealed class SenateTextureCache : IDisposable
         public int Width;
         public int Height;
         public DateTime WriteTimeUtc;
+        /// <summary>記憶體影像（`mem:`）的版本（<see cref="SCP_GuiImageFrame.Version"/>）；圖檔那一路是 0。</summary>
+        public long Version;
         public string? Error;
     }
 
@@ -37,6 +40,7 @@ public sealed class SenateTextureCache : IDisposable
     public Entry? Get(string iPath, bool iFull = false)
     {
         if (string.IsNullOrEmpty(iPath)) return null;
+        if (SCP_GuiImageStore.IsMemory(iPath)) return GetMemory(SCP_GuiImageStore.KeyOf(iPath)!, iFull);
         string aKey = iFull ? "full|" + iPath : iPath;
         DateTime aMtime;
         try { aMtime = File.Exists(iPath) ? File.GetLastWriteTimeUtc(iPath) : DateTime.MinValue; }
@@ -62,7 +66,56 @@ public sealed class SenateTextureCache : IDisposable
         using (var aFs = File.OpenRead(iPath)) aImg = ImageResult.FromStream(aFs, ColorComponents.RedGreenBlueAlpha);
 
         (byte[] aPixels, int aW, int aH) = Downscale(aImg.Data, aImg.Width, aImg.Height, iMaxSide);
+        ioEntry.Handle = CreateTexture(aPixels, aW, aH);
+        ioEntry.Width = aW;
+        ioEntry.Height = aH;
+    }
 
+    /// <summary>
+    /// 記憶體影像（<see cref="SCP_GuiImageStore"/>）→ 貼圖：不經過檔案，所以檔案被鎖、磁碟滿、路徑不存在都不影響畫面。
+    /// 版本沒變 ⇒ 原貼圖；版本變了且尺寸沒變 ⇒ 原地覆蓋（<c>TexSubImage2D</c>，不重建貼圖）；尺寸變了 ⇒ 換新的。
+    /// 登記處沒有這個 key ⇒ 回帶 Error 的空 Entry（<b>不快取</b>：圖一放進去下一幀就看得到），並把舊貼圖還給顯存。
+    /// </summary>
+    Entry GetMemory(string iKey, bool iFull)
+    {
+        string aKey = (iFull ? "mem-full|" : "mem|") + iKey;
+        m_Map.TryGetValue(aKey, out Entry? aOld);
+        if (!SCP_GuiImageStore.TryGet(iKey, out SCP_GuiImageFrame aFrame))
+        {
+            if (aOld != null) { if (aOld.Handle != 0) m_Gl.DeleteTexture(aOld.Handle); m_Map.Remove(aKey); }
+            return new Entry { Error = "記憶體影像還沒有內容：" + iKey };
+        }
+        if (aOld != null && aOld.Version == aFrame.Version) return aOld;
+
+        var aNew = new Entry { Version = aFrame.Version, WriteTimeUtc = DateTime.UtcNow };
+        try
+        {
+            (byte[] aPixels, int aW, int aH) = Downscale(aFrame.Rgba, aFrame.Width, aFrame.Height, iFull ? FullMaxSide : MaxSide);
+            if (aOld != null && aOld.Handle != 0 && aOld.Width == aW && aOld.Height == aH)
+            {
+                UpdateTexture(aOld.Handle, aPixels, aW, aH);   // 同尺寸 ⇒ 原地覆蓋
+                aNew.Handle = aOld.Handle;
+            }
+            else
+            {
+                if (aOld != null && aOld.Handle != 0) m_Gl.DeleteTexture(aOld.Handle);
+                aNew.Handle = CreateTexture(aPixels, aW, aH);
+            }
+            aNew.Width = aW;
+            aNew.Height = aH;
+        }
+        catch (Exception e)
+        {
+            // 失敗要看得見：舊貼圖若還在就保留顯示（畫面不黑），但 Error 要帶出去 —— 不安靜地吞。
+            aNew.Error = $"記憶體影像上傳失敗（{e.GetType().Name}: {e.Message}）";
+            if (aOld != null && aOld.Handle != 0) { aNew.Handle = aOld.Handle; aNew.Width = aOld.Width; aNew.Height = aOld.Height; }
+        }
+        m_Map[aKey] = aNew;
+        return aNew;
+    }
+
+    unsafe uint CreateTexture(byte[] iPixels, int iW, int iH)
+    {
         uint aTex = m_Gl.GenTexture();
         m_Gl.BindTexture(TextureTarget.Texture2D, aTex);
         m_Gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
@@ -70,14 +123,21 @@ public sealed class SenateTextureCache : IDisposable
         m_Gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
         m_Gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
         m_Gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
-        fixed (byte* p = aPixels)
-            m_Gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba, (uint)aW, (uint)aH, 0,
+        fixed (byte* p = iPixels)
+            m_Gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba, (uint)iW, (uint)iH, 0,
                             PixelFormat.Rgba, PixelType.UnsignedByte, p);
         m_Gl.BindTexture(TextureTarget.Texture2D, 0);
+        return aTex;
+    }
 
-        ioEntry.Handle = aTex;
-        ioEntry.Width = aW;
-        ioEntry.Height = aH;
+    unsafe void UpdateTexture(uint iHandle, byte[] iPixels, int iW, int iH)
+    {
+        m_Gl.BindTexture(TextureTarget.Texture2D, iHandle);
+        m_Gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+        fixed (byte* p = iPixels)
+            m_Gl.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, (uint)iW, (uint)iH,
+                               PixelFormat.Rgba, PixelType.UnsignedByte, p);
+        m_Gl.BindTexture(TextureTarget.Texture2D, 0);
     }
 
     /// <summary>面積平均縮圖（長邊 ≤ <paramref name="iMax"/>）。已經夠小就原樣回傳。</summary>

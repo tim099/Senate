@@ -1,6 +1,7 @@
 // 區塊職責：後台「球面繪製」頁（prototype，TASK-0467）—— 預覽可繪製球面、用經緯度畫點／線／多邊形／油漆桶、Undo、改底色。
 // 物理意義：寫入一律走 `cmd globe`（同一支 Cmd，in-process Dispatch）—— 頁面 ⛔ 不自己改格子；
-//          預覽在 in-process 讀狀態後 CPU 渲染成 PNG（同 `cmd globe --arg op=render` 的同一支渲染）。
+//          預覽在 in-process 讀狀態後 CPU 渲染成 RGBA，**直接放進記憶體影像登記處**（SCP_GuiImageStore）給視窗變貼圖 ——
+//          ⛔ 不經過檔案：view.png 被別的程式鎖住（預覽軟體／同步工具／防毒）時，舊做法寫不進去、畫面停在舊圖而沒有任何一層喊。
 // 數值影響：每次寫入成功、或視角參數變了，就重渲一張；渲染在背景跑，畫面先留上一張。
 //          TopBar 的「輸出」也走 `cmd globe op=render export=1`（檔名與資料夾由 SCP_GlobePaths 決定），在背景跑、不擋畫面。
 #nullable enable
@@ -62,7 +63,8 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
     public override void OnPush() { base.OnPush(); m_Dirty = true; }
 
     string DataRoot => m_Model.AgentCommandsRoot.Value ?? "";
-    string ViewPng => Path.Combine(SenatePaths.RuntimeDir(m_Model.RepoRoot), "globe_page", "view.png");
+    /// <summary>預覽圖在記憶體影像登記處的 key（Image 節點用 <see cref="SCP_GuiImageStore.Ref"/> 取它）。</summary>
+    const string ViewKey = "globe/view";
 
     // ── 工具列 ─────────────────────────────────────────────
     protected override void TopBarButtons(SCP_Ui iUi)
@@ -191,9 +193,9 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         }
         g.Note("在圖上拖曳＝轉動地球、滾輪＝縮放（視窗模式）。");
         PumpRender(g);
-        if (File.Exists(ViewPng))
+        if (SCP_GuiImageStore.Has(ViewKey))
         {
-            SCP_GuiPointer? aPtr = g.ImageInteractive(ViewPng, ViewSide, "球面預覽", P + "img/view");
+            SCP_GuiPointer? aPtr = g.ImageInteractive(SCP_GuiImageStore.Ref(ViewKey), ViewSide, "球面預覽", P + "img/view");
             if (aPtr != null) ApplyPointer(g, aPtr);
         }
         string aSig = ViewSig(g);
@@ -248,7 +250,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         var v = new SCP_GlobeView { CenterLat = Math.Max(-90, Math.Min(90, la)), CenterLon = lo, Zoom = z, Graticule = g.ToggleValue(TGrat, true) ? gr : 0, Seams = g.ToggleValue(TSeams), Size = m_Dragging ? 360 : 720 };
         bool aZones = g.ToggleValue(TZones, true);
         int aVersion = m_Version;
-        string aRoot = DataRoot, aOut = ViewPng;
+        string aRoot = DataRoot;
         m_RenderingSig = iSig;
         Func<string> aJob = () =>
         {
@@ -258,11 +260,8 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
             if (aCached == null || aCached.Value.Version != aVersion)
                 aCached = m_StateCache = (aVersion, store.Load(), new SCP_GlobeZones(store.Paths).List());
             if (aZones) v.Zones = aCached.Value.Zones;
-            byte[] png = SCP_GlobeRender.RenderPng(aCached.Value.State, v);
-            Directory.CreateDirectory(Path.GetDirectoryName(aOut)!);
-            string aTmp = aOut + ".tmp";
-            File.WriteAllBytes(aTmp, png);
-            File.Move(aTmp, aOut, true);
+            byte[] rgba = SCP_GlobeRender.RenderRgba(aCached.Value.State, v);
+            SCP_GuiImageStore.Put(ViewKey, rgba, v.Width, v.Height);   // 整份換、不就地改（渲染執行緒與繪圖執行緒各讀各的）
             return "";
         };
         if (SCP_GuiHost.RedrawsContinuously) m_Render = Task.Run(aJob);
