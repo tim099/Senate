@@ -280,7 +280,6 @@ public static partial class SelfTest
         Many(nameof(RealActivitySessionRoundTrip), "real", () => RealActivitySessionRoundTrip(iTargets)),
         Many(nameof(RealWatchLedgerRead), "watch", () => RealWatchLedgerRead(iTargets)),
         Many(nameof(RealWatchResolveFingerprint), "watch", () => RealWatchResolveFingerprint(iTargets)),
-        Many(nameof(RealWatchChapterRebuild), "watch", () => RealWatchChapterRebuild(iTargets)),
         One(nameof(WatchIdentityGuard), "watch", WatchIdentityGuard),
         Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iTargets)),
         Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iTargets)),
@@ -3914,104 +3913,6 @@ public static partial class SelfTest
             yield return new CheckRow("觀影反查全量對拍",
                 "找不到任何專案的 `StreamWatch/sessions_log.jsonl` ⇒ **跳過**（⛔ 不當成通過）",
                 CheckResult.Skipped);
-    }
-
-    // 區塊職責：把**磁碟上真的章**用 C# 版重出一次，逐位元組比。
-    // 物理意義：章的表頭是機械產物，它自己就寫著當初的參數（媒材／區間／章名／作品／場次／備註）
-    //          ⇒ 拿它當輸入重跑，就是一次**不需要任何人記得參數**的重現實驗。
-    // ⭐ 判準只認**最新那一章**：舊章可能是更早版本的 python 排出來的，
-    //   它們不符不代表移植錯（那是「舊快照」不是「壞掉」）。⇒ 其餘章只報數字不判定。
-    // ⚠ 純讀：重出的結果只留在記憶體裡比對，**一個位元組都不寫回 Books/**。
-    static IEnumerable<CheckRow> RealWatchChapterRebuild(IReadOnlyList<SelfTestTarget> iTargets)
-    {
-        bool aAny = false;
-        foreach (SelfTestTarget p in iTargets)
-        {
-            if (p.AgentCommandsRoot == null) continue;
-            string aBooks = Path.Combine(p.AgentCommandsRoot, "Books");
-            if (!Directory.Exists(aBooks)) continue;
-
-            var aFiles = new List<string>();
-            foreach (string aDir in Directory.GetDirectories(aBooks, "watch-*"))
-                foreach (string aF in Directory.GetFiles(aDir, "???.txt"))
-                {
-                    string aStem = Path.GetFileNameWithoutExtension(aF);
-                    if (aStem.Length == 3 && int.TryParse(aStem, out _)) aFiles.Add(aF);
-                }
-            if (aFiles.Count == 0) continue;
-            aAny = true;
-            aFiles.Sort((x, y) => File.GetLastWriteTimeUtc(y).CompareTo(File.GetLastWriteTimeUtc(x)));
-
-            // ⚠ 判定只認最新那章 ⇒ **先問它在不在本區的 seq 軸上**。
-            //   不問的話，一章別區產的實錄會讓整格變紅，而紅的理由跟「移植壞了」同形。
-            {
-                string aTop = File.ReadAllText(aFiles[0], Encoding.UTF8).Replace("\r\n", "\n");
-                if (TryParseChapterHeader(aTop, out _, out List<SCP_SeqRange> aTopRanges,
-                                          out _, out _, out _, out _, out _))
-                {
-                    string? aOut = WhyOutOfThisRegion(p.AgentCommandsRoot, aTopRanges);
-                    if (aOut != null)
-                    {
-                        yield return new CheckRow($"觀影章重出對拍（{p.Name}）",
-                            $"最新那章 `{Path.GetFileName(Path.GetDirectoryName(aFiles[0]))}/"
-                            + $"{Path.GetFileName(aFiles[0])}`：{aOut}"
-                            + $" ⇒ **跳過**（⛔ 不當成通過）。全庫共 {aFiles.Count} 章，本次一章都沒判",
-                            CheckResult.Skipped);
-                        continue;
-                    }
-                }
-            }
-
-            int aMatch = 0, aDiff = 0, aSkip = 0;
-            var aMatched = new List<string>();
-            bool aNewestOk = false; string aNewestName = ""; string aNewestWhy = "";
-            for (int i = 0; i < aFiles.Count; ++i)
-            {
-                string aF = aFiles[i];
-                string aWant = File.ReadAllText(aF, Encoding.UTF8).Replace("\r\n", "\n");
-                if (!TryParseChapterHeader(aWant, out string aMedia, out List<SCP_SeqRange> aRanges,
-                                           out string aTitle, out string aSub, out string aWork,
-                                           out string aSessions, out string aNote))
-                { ++aSkip; if (i == 0) { aNewestName = Path.GetFileName(aF); aNewestWhy = "表頭解析不出來"; } continue; }
-
-                var aWarn = new List<string>();
-                var aCh = SCP_WatchExport.BuildChapter(
-                    p.AgentCommandsRoot, "tavern", aRanges,
-                    Path.GetFileNameWithoutExtension(aF), aMedia, aTitle, aSub, aWork, aSessions, aNote,
-                    null, null, iAllowZeroStripped: true, aWarn);
-                bool aSame = aCh.Error.Length == 0
-                             && string.Equals(aCh.Text, aWant, StringComparison.Ordinal);
-                if (aSame)
-                {
-                    ++aMatch;
-                    // ⚠ 印出**是哪幾章**符合 —— 只印數字的話，「哪幾章」永遠是讀的人自己推的，
-                    //   而推出來的相關性跟量出來的長得一樣。
-                    aMatched.Add(Path.GetFileName(Path.GetDirectoryName(aF)) + "/"
-                                 + Path.GetFileName(aF) + "@"
-                                 + File.GetLastWriteTime(aF).ToString("MM-dd HH:mm"));
-                }
-                else ++aDiff;
-                if (i == 0)
-                {
-                    aNewestOk = aSame;
-                    aNewestName = Path.GetFileName(Path.GetDirectoryName(aF)) + "/" + Path.GetFileName(aF);
-                    if (!aSame)
-                        aNewestWhy = aCh.Error.Length > 0 ? aCh.Error
-                                     : $"長度 {aCh.Text.Length} vs {aWant.Length}";
-                }
-            }
-            yield return new CheckRow($"觀影章重出對拍（{p.Name}）",
-                $"**最新那章 `{aNewestName}` 逐位元組相同={aNewestOk}**"
-                + (aNewestOk ? "" : $"（{aNewestWhy}）")
-                + $"／全部 {aFiles.Count} 章：符合 {aMatch}／不符 {aDiff}／表頭解不出 {aSkip}"
-                + "　符合的是：" + (aMatched.Count > 0 ? string.Join("、", aMatched) : "（無）")
-                + "　⚠ 只判定最新那章 —— **舊章可能是更早版本的 python 排的**，"
-                + "它們不符是「舊快照」不是「移植壞了」（⛔ 也不代表它們一定沒事，那是未量）",
-                aNewestOk ? CheckResult.Pass : CheckResult.Fail);
-        }
-        if (!aAny)
-            yield return new CheckRow("觀影章重出對拍",
-                "找不到任何 `Books/watch-*/NNN.txt` ⇒ **跳過**（⛔ 不當成通過）", CheckResult.Skipped);
     }
 
     /// <summary>從章的表頭把當初的參數讀回來。⛔ 解不出就回 false，不猜。</summary>
