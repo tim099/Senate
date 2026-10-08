@@ -85,7 +85,7 @@ public sealed class AwakeningSettings
 {
     /// <summary>
     /// persona 信件夾根目錄（絕對路徑），例如
-    /// <c>D:/Unity/Bar/AgentCommands/ChatTavern/baton/letters</c>。空 ＝ 還沒設定。
+    /// <c>&lt;資料根&gt;/ChatTavern/baton/letters</c>。空 ＝ 還沒設定。
     /// </summary>
     public string LettersRoot { get; set; } = "";
 

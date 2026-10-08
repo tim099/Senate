@@ -2280,7 +2280,7 @@ public static partial class SelfTest
             bool aDefaultExplicit = aPrefs.Get(aKey) == "(預設)";
 
             // ② 寫進去 ⇒ Present，而且值就是寫進去的那個
-            var (aWroteOk, aWroteMsg) = aPrefs.Write(aKey, "D:/Unity/Bar/AgentCommands/ChatTavern/baton/letters");
+            var (aWroteOk, aWroteMsg) = aPrefs.Write(aKey, "D:/Proj/AgentCommands/ChatTavern/baton/letters");
             var aAfter = aPrefs.Read(aKey);
             bool aPresentOk = aAfter.State == SCP_PrefState.Present
                               && aAfter.Value.EndsWith("baton/letters", StringComparison.Ordinal);
@@ -2372,7 +2372,7 @@ public static partial class SelfTest
     // 數值影響：純字串，零 IO（pointer 那格用暫存目錄，跑完刪掉）。
     static CheckRow PathsSingleSource()
     {
-        const string aData = "D:/Unity/Bar/AgentCommands";
+        const string aData = "D:/Proj/AgentCommands";
         var aRoot = new SCP_DataRoot(aData);
 
         // ① 舊入口（AgentCmdClient）與新解析器必須逐字同意 —— 不同意就是有人還在自己算
@@ -2390,8 +2390,8 @@ public static partial class SelfTest
                                  && SCP_DataPaths.SafeQueueId("basecamp") == "basecamp";
 
         // ④ 根正規化：反斜線與尾斜線不可以生出第二種寫法
-        bool aNormalised = new SCP_DataRoot(@"D:\Unity\Bar\AgentCommands\").Value == aData
-                           && new SCP_DataRoot("D:/Unity/Bar/AgentCommands/").Value == aData;
+        bool aNormalised = new SCP_DataRoot(@"D:\Proj\AgentCommands\").Value == aData
+                           && new SCP_DataRoot("D:/Proj/AgentCommands/").Value == aData;
 
         // ⑤ 舊的 letters 入口與新解析器同意（SCP_WakeLetters 已退化成外殼）
         var aLetters = SCP_DataPaths.Letters(aRoot);

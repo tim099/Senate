@@ -35,7 +35,7 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         m_DataRoot = iDataRoot;
         // 🩸 專案標籤**從資料根自己算**（資料根的上一層目錄名 —— 與地理定語的寫入端同一條規則）。
         //    2026-09-03 實測：原本吃宿主傳進來的 repo 根 basename ⇒ 印出
-        //    「⤷ 錢與資格由 Unity Editor 執行 @ Senate（D:/Unity/Bar/AgentCommands）」——
+        //    「⤷ 錢與資格由 Unity Editor 執行 @ Senate（<另一棵資料樹>）」——
         //    定語與它描述的那棵樹**是兩個來源**，於是定語自己說了謊。
         //    ⇒ 定語必須從被描述的那個東西身上長出來，不能由呼叫端另外宣告。
         //    （呼叫端仍可顯式覆寫，但那是刻意行為，不是預設。）

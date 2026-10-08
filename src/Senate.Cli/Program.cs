@@ -125,7 +125,7 @@ public static class Program
         // ⚠ 工廠吃資料根當參數，**不自己解析** —— Cmd 吃的 `--arg data_root` 與閘用的根若是兩個來源，
         //   不一致時會安靜地把付款派到另一個專案（錢那邊扣、像素這邊落）。
         // ⚠ 定語不由這裡宣告：閘自己從資料根算專案標籤。
-        //   實測過相反的做法 —— 傳 repo 根的 basename 會印出「@ Senate（D:/Unity/Bar/…）」，
+        //   實測過相反的做法 —— 傳 repo 根的 basename 會印出「@ Senate（<另一棵樹的路徑>）」，
         //   而那是兩個來源拼出來的定語，比沒有定語更毒（它有出處的樣子）。
         SCP.Core.Canvas.SCP_CanvasGatewayHost.Factory = aDataRoot => new SenateCanvasGateway(aDataRoot);
         // 書店閘（TASK-0234 ②的另一半，2026-09-18）：錢與券**直接串 Server**（`bank` / `voucher`）。
