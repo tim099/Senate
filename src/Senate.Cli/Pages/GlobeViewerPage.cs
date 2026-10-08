@@ -2,6 +2,7 @@
 // 物理意義：寫入一律走 `cmd globe`（同一支 Cmd，in-process Dispatch）—— 頁面 ⛔ 不自己改格子；
 //          預覽在 in-process 讀狀態後 CPU 渲染成 PNG（同 `cmd globe --arg op=render` 的同一支渲染）。
 // 數值影響：每次寫入成功、或視角參數變了，就重渲一張；渲染在背景跑，畫面先留上一張。
+//          TopBar 的「輸出」也走 `cmd globe op=render export=1`（檔名與資料夾由 SCP_GlobePaths 決定），在背景跑、不擋畫面。
 #nullable enable
 using System.Globalization;
 using System.Threading.Tasks;
@@ -24,6 +25,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
     const string FColor = P + "f/color", FBase = P + "f/base";
     const string FPLat = P + "f/p_lat", FPLon = P + "f/p_lon", FRadius = P + "f/radius", FWidth = P + "f/width", FMax = P + "f/max_cells";
     const string FPoints = P + "f/points", FPersona = P + "f/persona";
+    const string FExportSize = P + "f/export_size", FMapWidth = P + "f/map_width";
     const string SLog = P + "state/log";
 
     static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
@@ -32,6 +34,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         [FColor] = "#2E8B57", [FBase] = "#0049AA",
         [FPLat] = "23.7", [FPLon] = "121", [FRadius] = "0", [FWidth] = "0", [FMax] = "200000",
         [FPoints] = "", [FPersona] = "Tim",
+        [FExportSize] = "2048", [FMapWidth] = "4096",
     };
 
     /// <summary>台灣本島輪廓（粗略，逆時針；prototype 試畫用）。</summary>
@@ -66,13 +69,69 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
     {
         if (iUi.Button("重新讀取", P + "btn/reload")) { m_Dirty = true; m_Version++; }
         if (iUi.Button("↶ Undo", P + "btn/undo")) Run(iUi, "Undo", new() { ["op"] = "undo", ["persona"] = V(iUi, FPersona) });
+        if (m_Export == null)
+        {
+            if (iUi.Button("輸出目前視角", P + "btn/export-view")) StartExport(iUi, "輸出目前視角", ExportArgs(iUi, false));
+            if (iUi.Button("輸出世界地圖", P + "btn/export-map")) StartExport(iUi, "輸出世界地圖", ExportArgs(iUi, true));
+        }
         string aRoot = DataRoot;
-        OpenFolderButton(iUi, aRoot.Length > 0 ? new SCP_GlobePaths(new SCP_DataRoot(aRoot)).Root : null, P + "btn/open-dir");
+        SCP_GlobePaths? aPaths = aRoot.Length > 0 ? new SCP_GlobePaths(new SCP_DataRoot(aRoot)) : null;
+        OpenFolderButton(iUi, aPaths?.Root, P + "btn/open-dir");
+        OpenFolderButton(iUi, aPaths?.ExportsDir, P + "btn/open-exports", "開啟輸出資料夾");
+    }
+
+    // ── 輸出（TopBar）──────────────────────────────────────
+    /// <summary>背景跑的那一次輸出；跑完前 TopBar 不給再按（兩張同時跑只是多吃一倍記憶體）。</summary>
+    Task<SCP_CmdResult>? m_Export;
+    string m_ExportLabel = "";
+
+    /// <summary>用畫面上同一組開關（經緯線／施工區框線／面接縫）；視角輸出另外帶中心與 zoom。</summary>
+    Dictionary<string, string> ExportArgs(SCP_Ui g, bool iMap)
+    {
+        var a = new Dictionary<string, string>
+        {
+            ["op"] = "render", ["export"] = "1",
+            ["projection"] = iMap ? SCP_GlobeView.ProjEquirect : SCP_GlobeView.ProjOrtho,
+            ["size"] = V(g, iMap ? FMapWidth : FExportSize),
+            ["graticule"] = g.ToggleValue(TGrat, true) ? V(g, FGrat) : "0",
+            ["zones"] = g.ToggleValue(TZones, true) ? "1" : "0",
+            ["seams"] = g.ToggleValue(TSeams) ? "1" : "0",
+        };
+        if (!iMap) { a["center"] = V(g, FLat) + "," + V(g, FLon); a["zoom"] = V(g, FZoom); }
+        return a;
+    }
+
+    void StartExport(SCP_Ui g, string iLabel, Dictionary<string, string> iArgs)
+    {
+        m_ExportLabel = iLabel;
+        Func<SCP_CmdResult> aJob = () =>
+        {
+            try { return Dispatch(iArgs); }
+            catch (Exception e) { return SCP_CmdResult.Fail(1, "炸了：" + e.GetType().Name + ": " + e.Message); }
+        };
+        if (SCP_GuiHost.RedrawsContinuously) { m_Export = Task.Run(aJob); m_Message = iLabel + "中…"; }
+        else FinishExport(g, aJob());
+    }
+
+    void PumpExport(SCP_Ui g)
+    {
+        if (m_Export == null || !m_Export.IsCompleted) return;
+        SCP_CmdResult r = m_Export.Result;   // aJob 自己接住例外 ⇒ 這裡不會丟
+        m_Export = null;
+        FinishExport(g, r);
+    }
+
+    /// <summary>輸出不改格子 ⇒ ⛔ 不動 m_Version（不然預覽會白白重渲一張）。</summary>
+    void FinishExport(SCP_Ui g, SCP_CmdResult r)
+    {
+        g.SetField(SLog, $"[{DateTime.Now:HH:mm:ss} {m_ExportLabel}] exit {r.ExitCode}\n{string.Join("\n", r.Lines)}");
+        m_Message = (r.ExitCode == 0 ? "" : "✗ ") + (r.Lines.FirstOrDefault(l => l.Trim().Length > 0) ?? m_ExportLabel);
     }
 
     protected override void DrawContent(SCP_Ui g)
     {
         if (m_Dirty) ReloadStatus();
+        PumpExport(g);
         if (m_Message != null) g.Note(m_Message);
         if (m_Status.Length > 0) g.Label(m_Status);
         if (!m_Initialized)
@@ -108,6 +167,9 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
                 Field(g, "中心經度", FLon);
                 Field(g, "zoom（1＝整個半球）", FZoom);
                 Field(g, "經緯線間隔（度）", FGrat);
+                g.Note("TopBar 的輸出用目前的視角與下面三個開關；圖存在球面資料根的 exports/。");
+                Field(g, "輸出目前視角：邊長（px，16–4096）", FExportSize);
+                Field(g, "輸出世界地圖：寬（px，16–8192；高＝寬／2；8192＝赤道一格一像素）", FMapWidth);
             }
         }
         using (g.Row())

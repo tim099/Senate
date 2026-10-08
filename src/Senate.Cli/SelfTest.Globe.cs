@@ -246,6 +246,78 @@ public static partial class SelfTest
             : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
     }
 
+    static CheckRow GlobeExportCleanRoom()
+    {
+        const string name = "球面輸出：世界地圖方位（西北紅在左上、東南藍在右下）／空格顯示底色／2:1／決定性／export=1 落 exports/ 不互蓋／壞參數 exit 2（淨室）";
+        var failures = new List<string>();
+        var readings = new List<string>();
+        void Check(bool c, string what) { if (!c) failures.Add(what); }
+        string aData = Path.Combine(Path.GetTempPath(), "senate_globe_export_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(aData);
+            SCP_CmdResult Run(params (string K, string V)[] a)
+            {
+                var d = new Dictionary<string, string> { ["data_root"] = aData };
+                foreach (var (k, v) in a) d[k] = v;
+                return SCP_CmdRegistry.Dispatch("globe", d);
+            }
+            string Val(SCP_CmdResult r, string k) => r.Values.FirstOrDefault(kv => kv.Key == k).Value ?? "";
+
+            Check(Run(("op", "init"), ("n", "64")).ExitCode == 0, "init");
+            Check(Run(("op", "point"), ("persona", "t"), ("lat", "60"), ("lon", "-150"), ("radius", "2"), ("color", "#FF0000")).ExitCode == 0, "西北畫紅");
+            Check(Run(("op", "point"), ("persona", "t"), ("lat", "-60"), ("lon", "150"), ("radius", "2"), ("color", "#0000FF")).ExitCode == 0, "東南畫藍");
+            var store = new SCP_GlobeStore(new SCP_GlobePaths(Path.Combine(aData, SCP_GlobePaths.DirName)));
+            SCP_GlobeState st = store.Load();
+
+            // 方位：用像素中心反推經緯度的同一條公式去取像素，再拿格子本身的顏色對（格子走 LatLonToCell，不經渲染器）
+            var v = new SCP_GlobeView { Projection = SCP_GlobeView.ProjEquirect, Size = 360, Graticule = 0 };
+            byte[] rgba = SCP_GlobeRender.RenderRgba(st, v);
+            Check(v.Width == 360 && v.Height == 180 && rgba.Length == 360 * 180 * 4, "世界地圖 2:1");
+            int Px(double lat, double lon, int ch) { int x = (int)((lon + 180) / 360 * v.Width), y = (int)((90 - lat) / 180 * v.Height); return rgba[(y * v.Width + x) * 4 + ch]; }
+            bool Is(double lat, double lon, int rgb) => Px(lat, lon, 0) == ((rgb >> 16) & 255) && Px(lat, lon, 1) == ((rgb >> 8) & 255) && Px(lat, lon, 2) == (rgb & 255);
+            Check(st.Cells.Get(st.Grid.LatLonToCell(60, -150)) == 0xFF0000 && Is(60, -150, 0xFF0000), "西北紅落在地圖左上（左右、上下都沒翻）");
+            Check(st.Cells.Get(st.Grid.LatLonToCell(-60, 150)) == 0x0000FF && Is(-60, 150, 0x0000FF), "東南藍落在地圖右下");
+            Check(!Is(-60, -150, 0xFF0000) && !Is(60, 150, 0x0000FF), "反向對照：鏡像的位置不是那個顏色");
+            Check(Is(0, 0, st.BaseRgb) && Is(-30, 100, st.BaseRgb), "沒畫過的格子顯示底色（不打光）");
+            Check(SCP_GlobeRender.RenderRgba(st, v).SequenceEqual(rgba), "世界地圖決定性");
+            int aRedPx = 0;
+            for (int k = 0; k < rgba.Length; k += 4) if (rgba[k] == 255 && rgba[k + 1] == 0 && rgba[k + 2] == 0) aRedPx++;
+            readings.Add($"360×180 地圖上紅色像素 {aRedPx}");
+            Check(aRedPx > 0, "紅色點在地圖上看得到");
+
+            // export=1：寫進 exports/、檔名帶時間戳、連按兩次不互蓋；值帶回寬高
+            var e1 = Run(("op", "render"), ("projection", "equirect"), ("size", "64"), ("export", "1"));
+            System.Threading.Thread.Sleep(5);
+            var e2 = Run(("op", "render"), ("projection", "equirect"), ("size", "64"), ("export", "1"));
+            var e3 = Run(("op", "render"), ("center", "0,0"), ("size", "32"), ("export", "1"));
+            string p1 = Val(e1, "path"), p2 = Val(e2, "path"), p3 = Val(e3, "path");
+            string aDir = store.Paths.ExportsDir.Replace('\\', '/');
+            Check(e1.ExitCode == 0 && e2.ExitCode == 0 && e3.ExitCode == 0, "export 三次都成功");
+            Check(p1.StartsWith(aDir + "/globe_map_", StringComparison.Ordinal) && p3.StartsWith(aDir + "/globe_view_", StringComparison.Ordinal), "export 落在 <球面根>/exports/，map／view 分開命名");
+            Check(p1 != p2 && File.Exists(p1) && File.Exists(p2), "連按兩次不互蓋");
+            Check(Val(e1, "width") == "64" && Val(e1, "height") == "32" && Val(e3, "width") == "32" && Val(e3, "height") == "32", "回傳寬高（地圖 2:1、視角正方形）");
+            readings.Add($"exports/ 有 {Directory.GetFiles(store.Paths.ExportsDir).Length} 張");
+
+            // 壞參數：零寫入（exports/ 張數不變）
+            int aBefore = Directory.GetFiles(store.Paths.ExportsDir).Length;
+            foreach (var bad in new[]
+            {
+                Run(("op", "render"), ("projection", "globe"), ("export", "1")),
+                Run(("op", "render"), ("projection", "equirect"), ("size", "9000"), ("export", "1")),
+                Run(("op", "render"), ("size", "5000"), ("export", "1")),
+                Run(("op", "render"), ("export", "1"), ("out", Path.Combine(aData, "x.png"))),
+            })
+                Check(bad.ExitCode == 2, "壞參數 exit 2：" + string.Join(" ", bad.Lines));
+            Check(Directory.GetFiles(store.Paths.ExportsDir).Length == aBefore && !File.Exists(Path.Combine(aData, "x.png")), "壞參數零寫入");
+        }
+        catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
+        finally { try { Directory.Delete(aData, true); } catch { } }
+        string aRead = string.Join("；", readings);
+        return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
+            : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
+    }
+
     static CheckRow GlobeZoneCleanRoom()
     {
         const string name = "球面施工區：開區／同 id 擋／重疊可／跨 180° 判內外／非成員不能改、join 後可以／cell 列出所在區／框線疊圖（淨室）";
