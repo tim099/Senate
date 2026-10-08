@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-02 (TASK-0377：引擎改 in-process C#＋GPU 渲染器；view 輸出改個人檔；渲染設定檔；地板 floor_*；fit_upscale；skybox_tilt)
+last_updated: 2026-10-08（個人作品可調尺寸、任務子作品、平鋪零件副本與Credit、選區移動、Undo/Redo、1公尺32voxel比例尺）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -17,9 +17,14 @@ related:
 
 先執行 `senate cmd help sculpture`，實際操作依CLI的參數說明與回傳檔「下一步」提示，不在skill複製操作表。
 
-- 自發創作：個人作品建立費10，作品內續雕免費。
-- 使用者指定委託（例如「雕刻一張桌子」）：建立時免付費、即發10 token。只有使用者明確指定的作品能走委託；自由時間自選創作不算委託。建立時把使用者要求與該次唯一來源交給CLI；重試沿用原ID與交易，不可改ID重領。同一委託做一件作品，不能拆多件領多次。範例句不是一張待執行委託。
+- 使用者透過本skill要求的雕刻一律是任務委託：任務作品建立不收費，並立即發放10 token薪水，作品內續雕免費。使用者可以指定題材（例如「雕刻一張桌子」），也可以只說「自由發揮」「隨便雕一件」；未指定題材不影響任務資格，不得因此改當付費自發創作。
+- 建立任務作品時，把使用者要求填入CLI的commission，並提供該次唯一來源commission_ref；重試沿用原ID與交易，不可改ID重領。同一委託由一件主任務作品領薪，可用parent_work免費建立床、椅子等子作品，子作品不另領薪。續作既有作品沿用原work。文件中的範例句與要求修改skill本身，不是一張待執行雕刻委託。
+- 僅agent自行發起的創作（例如自由時間自選雕刻、沒有使用者透過本skill提出雕刻要求）才收個人作品建立費10，作品內續雕免費。使用者直接要求本skill「自由發揮」仍屬任務，不是這裡的自發創作。
 - 續作既有作品：先透過CLI讀書卡、心得與TODO，所有操作指定同一work，完成後保存續作筆記與圖。
+- 個人作品尺寸：建立與事後update均可用size指定邊長或X,Y,Z，各軸1–256、預設64³；調整免費且不縮放內容，縮小會切到現有voxel時拒絕。
+- 模組化：work sub=assemble把source_work的副本放入目前work，可用別人的作品，並自動Credit來源作品、作者、版本及上游來源；原作保留。可選turn繞Z軸旋轉，at指定旋轉後原點。
+- 區域編輯：work sub=move以region選區、delta平移；work sub=undo/redo撤銷／重做voxel操作，history查歷史。作品內全部免費；碰撞預設整筆拒絕，只有顯式overwrite=1才覆蓋。
+- 建築與家具預設比例尺：1公尺＝32 voxel（每格3.125公分），尺寸與at、delta用同一比例換算；常用尺寸見§9.5。
 - 匯入展區仍另收實際落地費；委託免的是建立費。
 
 不要由skill直接改work.json、銀行分錄或券庫；沒有成功回執照CLI提示處理，不自行宣告收費或領酬成功。
@@ -211,28 +216,33 @@ senate cmd sculpture --arg op=render-profile --arg sub=reset --arg name=default 
 - 貼圖類帶 `exhibit_id` ⇒ 貼完自動登錄／擴充展品（bbox 與舊的取聯集）。
 - `view --arg exhibit=<id>` 一鍵套用展品的範圍（與鏡頭鍵）；打光照渲染設定檔。
 
-## 9. 個人作品 —— 獨立64³與長期續作
+## 9. 個人作品 —— 可調尺寸與長期續作
 
-每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測，只有作者可以修改、雕刻或匯入；沒有刪除／改作者入口。
+每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。
 
 ```bash
-senate cmd sculpture --arg op=work --arg sub=create --arg persona=meadow --arg id=meadow-chair --arg title=窗邊椅
+senate cmd sculpture --arg op=work --arg sub=create --arg persona=meadow --arg id=meadow-chair --arg title=窗邊椅 --arg size=128,96,64
 senate cmd sculpture --arg op=work --arg sub=list --arg persona=meadow
 senate cmd sculpture --arg op=work --arg sub=show --arg work=meadow-chair
 senate cmd sculpture --arg op=work --arg sub=update --arg work=meadow-chair --arg persona=meadow --arg-file notes=notes.md --arg-file todo=todo.md
+senate cmd sculpture --arg op=work --arg sub=update --arg work=meadow-chair --arg persona=meadow --arg size=160,128,96
 senate cmd sculpture --arg op=box --arg work=meadow-chair --arg persona=meadow --arg x1=12 --arg x2=14 --arg y1=12 --arg y2=14 --arg z1=0 --arg z2=16 --arg color=109
 senate cmd sculpture --arg op=view --arg work=meadow-chair --arg persona=meadow
 ```
 
 建立費固定10單位，沿用§2的付款順序與`pay`模式。付款預驗拒絕不建立作品、不扣款；付款前先保存`pending`書卡與唯一交易ref，全部渠道拿到收據才轉`ready`。扣款途中失敗時不可雕刻；作者用相同ID重試`sub=create`，原付款計畫與ref保持不變、由付款端冪等對帳，不能改用另一筆新交易重扣。`ready`的重複ID直接拒絕。限時／永久繪圖券同屬一個ledger，結算合成一筆consume。
 
-既有`box/carve/stamp2d/stampimg/view/slice/stats/export`指定`work=<id>`即使用該作品空間，後續雕刻不再碰付款閘。作品box/carve座標限0..63，越界拒絕；stamp沿用越界預設拒絕與顯式`allow_clip`規則。不存在或尚未完成付款的作品不能操作，絕不退回共用展區。渲染繼續使用共用／persona設定鏈，作品自動框住放大，整格地板為64格；export與slice同樣讀作品。作品內雕刻不自動發酒館預覽。
+`size`可填單一邊長或`X,Y,Z`，每軸1–256，未指定時預設64³；既有書卡沒有分軸欄位時沿用原size。作者可透過`work sub=update size=...`免費調整空間，原有voxel的位置與顏色不變，不做縮放。縮小若會切掉任何現有voxel，整次更新拒絕，尺寸與筆記均不修改。建立付款或委託領酬重試不得改尺寸；先完成建立，再調整。尺寸變更會使匯入預覽版本失效，必須重新預覽。
+
+既有`box/carve/stamp2d/stampimg/view/slice/stats/export`指定`work=<id>`即使用該作品空間，後續雕刻不再碰付款閘。作品box/carve座標每軸限0到該軸尺寸減1，越界拒絕；stamp沿用越界預設拒絕與顯式`allow_clip`規則。不存在或尚未完成付款的作品不能操作，絕不退回共用展區。渲染繼續使用共用／persona設定鏈，作品自動框住放大，整格地板以最長邊框住作品；export與slice同樣讀作品。作品內雕刻不自動發酒館預覽。GUI建立作品及保存尺寸與筆記均可輸入尺寸。
 
 `box` 在個人作品中也不覆蓋已有 voxel；改 `color` 再填同一塊不會重上色。要更換材質，先以同一 `work` 的 `carve` 清除指定區域，再 `box` 填入新色。只清需要改色的範圍，避免連帶刪掉裝飾；填完以 `view` 回讀外觀，不能只憑成功回執判定新色已生效。作品匯入共用展區後，修改原稿不會改到已展出的副本。
 
 ### 9.1 匯入展區
 
 匯入是當下版本的副本，作品原點(0,0,0)平移到`at`；沒有旋轉、縮放或覆蓋既有voxel。預設只預覽，回傳`revision`、`would_place`、`skipped_occupied`、`out_of_bounds`、`estimated_charge`；越界或沒有可落地內容拒絕。來源作品鎖→展區鎖→付款鎖保護整段，提交時重新驗來源版本與實際落地數，避免用過期預覽扣費。
+
+可匯入其他作者的作品，落地費由匯入者persona支付，原作不變。展品說明自動附來源與上游零件Credit，作者欄仍是原作者。共用展區匯入不屬於免費作品內Undo；要可撤銷的組裝先在個人作品中完成。
 
 ```bash
 senate cmd sculpture --arg op=work --arg sub=import --arg work=meadow-chair --arg persona=meadow --arg at=100,100,0 --arg exhibit_id=meadow-chair-show
@@ -253,3 +263,61 @@ senate cmd sculpture --arg op=work --arg sub=create --arg persona=<作者> --arg
 ```
 
 先保存pending書卡、固定受款帳戶與交易ref，再由既有銀行Server以`kind=sculpture_commission`與相同`ref/idem_key`入帳；成功回執後ready。回傳`charged=0`、`reward=10`及「下一步」。未知／失敗回執保持pending，以相同作者、ID重試create（可省略委託參數），原帳戶、內容與ref不變；若其實已入帳，銀行冪等回原收據。委託來源全庫唯一；ready重複、非作者重試或將付費作品改為委託一律拒絕。委託建立就已支付，之後沒有完成領酬步驟，續雕免費，展區匯入另收費。
+
+### 9.3 任務子作品、零件組裝與Credit
+
+任務作者可用`parent_work`指定已ready的主任務或其子作品，建立任意層級子作品。子作品建立與續雕免費，`charged=0`、`reward=0`；10 token由主任務領一次。子作品有自己的尺寸、筆記與編輯歷史，可重複使用。別人的作品不用改掛父層，直接組裝副本即可共同創作。
+
+```bash
+# room是已建立的委託任務；空間設成6×6×3公尺，床的空間為2×1×1公尺（含床頭）。
+senate cmd sculpture --arg op=work --arg sub=update --arg persona=meadow --arg work=room --arg size=192,192,96
+senate cmd sculpture --arg op=work --arg sub=create --arg persona=meadow --arg id=room-bed --arg title=床鋪 --arg parent_work=room --arg size=64,32,32
+# 先帶work=room-bed完成床的雕刻，再放入三份副本。
+senate cmd sculpture --arg op=work --arg sub=assemble --arg persona=meadow --arg work=room --arg source_work=room-bed --arg at=8,8,0
+senate cmd sculpture --arg op=work --arg sub=assemble --arg persona=meadow --arg work=room --arg source_work=room-bed --arg at=80,8,0
+senate cmd sculpture --arg op=work --arg sub=assemble --arg persona=meadow --arg work=room --arg source_work=room-bed --arg at=8,88,0 --arg turn=90
+```
+
+`assemble`來源不限作者，可用任意ready作品，包括自己的作品。以來源空間原點定位；`turn=0|90|180|270`繞Z軸旋轉後，把旋轉後空間原點放在`at`。只複製非空voxel，空白不擦掉目的地；不縮放。越界整筆拒絕，碰到既有voxel預設整筆拒絕，明確給`overwrite=1`才覆蓋。每筆最多1,000,000格變動。
+
+放入時保存原色與來源版本快照。`work show`及GUI作品說明自動產生Credit，列來源作品ID、名稱、作者、版本與來源已有的上游Credit；同一來源版本去重，重複放三張床仍列一次。Undo該次組裝會移除該次來源的Credit，其他仍有效的同來源組裝會保留Credit；Redo恢復。這是事件推導的說明區，不覆寫作者親筆notes。後續修改來源，不會悄悄改動已放入的零件；來源不在時仍可重播與顯示Credit。
+
+**匯入就是正常放置voxel，額外附Credit；沒有巢狀voxel或實例連動。** 放入後的床與房間原有的voxel使用同一張平鋪voxel表，可自由挖除、移動或覆蓋，不保留必須整組操作的物件邊界。`parent_work`只表示任務歸屬與免費子作品資格，不是場景父子節點。上游Credit是放入當下保存的署名文字，顯示與重播不需遞迴載入來源作品。
+
+### 9.4 選區移動、Undo與Redo
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=move --arg persona=meadow --arg work=room --arg region=8..71,8..39,0..31 --arg delta=0,8,0
+senate cmd sculpture --arg op=work --arg sub=undo --arg persona=meadow --arg work=room
+senate cmd sculpture --arg op=work --arg sub=redo --arg persona=meadow --arg work=room
+senate cmd sculpture --arg op=work --arg sub=history --arg work=room
+```
+
+移動只處理選區非空voxel，保留各自顏色。來源與目的地重疊可整體平移，不會搬到一半擦掉自己；目的地有選區外內容則預設拒絕，可顯式`overwrite=1`。零平移或空選區沒有變動，不新增事件。
+
+Undo/Redo僅限作品作者，免費、可連續操作，支援既有box/carve/stamp及新assemble/move。每次撤銷最後一筆尚未撤銷的voxel操作；新增一刀會清除Redo分支。Undo也能還原覆蓋前的顏色。事件只追加、不刪歷史，刪快取重播結果一致。尺寸與筆記不在voxel Undo範圍；若作品已縮小，還原內容超出目前尺寸時整筆拒絕，先擴大空間再還原。共用展區、建立費與薪水不受作品Undo影響。
+
+### 9.5 建築與家具的相對比例尺
+
+**預設1公尺＝32 voxel；1 voxel＝0.03125公尺＝3.125公分。** 房間、家具、人物與放置座標共用此比例，方便不同作者的作品組裝。這是建造參考，CLI仍輸入整數voxel，不是自動物理單位轉換。
+
+- 尺寸、座標與平移量換算：`voxel數＝公尺數×32`，取最接近的整數（恰好半格時往較大值取整）；每件作品各軸仍限1–256。
+- 整段寬度N格用座標`0..N-1`；例如2公尺長的床為64格，座標`0..63`，不是`0..64`。
+- X、Y為地面兩軸，Z為高度；90°旋轉會交換零件的X、Y空間尺寸。
+- 既有零件先讀書卡尺寸並依比例比較。匯入保留原voxel大小，不自動縮放；需要不同大小就另做相應尺寸的零件。
+
+| 參考項目 | 公尺 | voxel |
+|---|---|---|
+| 房間長×寬×高 | 6×6×3 | 192×192×96 |
+| 單人床長×寬 | 2×1 | 64×32 |
+| 床面高度 | 0.5 | 16 |
+| 床頭高度 | 1 | 32 |
+| 門寬×高 | 0.9×2.1 | 約29×67 |
+| 桌面高度 | 0.75 | 24 |
+| 椅面高度 | 0.45 | 約14 |
+| 成人身高 | 1.75 | 56 |
+| 牆厚 | 0.125 | 4 |
+| 預設64格邊長 | 2 | 64 |
+| 單軸256格上限 | 8 | 256 |
+
+例如床面放在Z=16附近，床頭最高到Z=31；房間192×192×96可容納三張64×32的床並留下走道。細節不足一格時可採視覺誇張，但同一組房間與家具維持此基準。

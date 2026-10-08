@@ -12,7 +12,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureWorksCleanRoom()
     {
-        const string name = "個人雕刻作品：唯一ID／10單位／作者權限／64³／免費續作／原色副本匯入與版本閘／事件重播（TASK-0460）";
+        const string name = "個人雕刻作品：唯一ID／10單位／作者權限／可調長方體／免費續作／縮小保護／原色匯入與版本閘／事件重播（TASK-0460）";
         var failures = new List<string>();
         void Check(bool condition, string what) { if (!condition) failures.Add(what); }
         try
@@ -95,7 +95,33 @@ public static partial class SelfTest
             mixedGate.FailToken = false;
             Check(Create("recover").ExitCode == 0 && store.Load("recover").status == "ready" && mixedGate.VoucherPaid == 7 && mixedGate.TokenPaid == 3, "重試只扣剩下渠道；限時永久券合併且不重扣");
             Check(Create("recover").ExitCode == 2 && mixedGate.VoucherPaid + mixedGate.TokenPaid == 10, "完成後重建拒絕");
-            return new CheckRow(name, failures.Count == 0 ? "每件建立10、匯入1；競爭與部分付款恢復不重扣；免費續雕；權限／越界／版本／原色／重播／觀測通過" : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+            // 調整空間只改邊界：必須驗證分軸限制、縮小保護、版本閘及原色重播。
+            var legacy = store.Load("chair");
+            legacy.size_x = legacy.size_y = legacy.size_z = 0;
+            store.Save(legacy);
+            Check(store.Load("chair").Dimensions == "64,64,64", "舊書卡沿用64尺寸");
+            SCP_CmdResult Resize(string dimensions, string owner = "p") => room.Run(("op", "work"), ("sub", "update"), ("work", "chair"), ("persona", owner), ("size", dimensions));
+            Check(Resize("128,96,32", "q").ExitCode == 2 && Resize("0,96,32").ExitCode == 2 && Resize("257").ExitCode == 2 && Resize("8,9").ExitCode == 2, "作者與非法尺寸拒絕");
+            string revisionBefore = SculptRoom.V(room.Run(("op", "work"), ("sub", "show"), ("work", "chair")), "revision");
+            var sizePreview = room.Run(("op", "work"), ("sub", "import"), ("work", "chair"), ("persona", "p"), ("at", "20,20,20"));
+            Check(Resize("128,96,32").ExitCode == 0 && store.Load("chair").Dimensions == "128,96,32", "擴大與分軸縮小免費保存");
+            var resizedShow = room.Run(("op", "work"), ("sub", "show"), ("work", "chair"));
+            Check(SculptRoom.V(resizedShow, "revision") != revisionBefore, "只改尺寸也使版本失效");
+            Check(room.Run(("op", "work"), ("sub", "import"), ("work", "chair"), ("persona", "p"), ("at", "20,20,20"), ("confirm", "1"), ("exhibit_id", "stale-size"), ("expect_revision", SculptRoom.V(sizePreview, "revision")), ("expect_placed", SculptRoom.V(sizePreview, "would_place"))).ExitCode == 5, "尺寸改變後拒絕舊匯入預覽");
+            Check(Box("p", "chair", 100, 100, 77).ExitCode == 0 && store.Engine(store.Load("chair"), room.Data).LoadSpace().Voxels.Get(100, 0, 0) == 77, "擴大後64以外可雕且原色保存");
+            SCP_CmdResult Corner(string op, int y, int z) => room.Run(("op", op), ("work", "chair"), ("persona", "p"), ("x1", "127"), ("x2", "127"), ("y1", y.ToString()), ("y2", y.ToString()), ("z1", z.ToString()), ("z2", z.ToString()));
+            Check(Corner("box", 95, 31).ExitCode == 0 && Corner("box", 96, 31).ExitCode == 2 && Corner("box", 95, 32).ExitCode == 2, "長方體三軸邊界各自生效");
+            Check(room.Run(("op", "stampimg"), ("work", "chair"), ("persona", "p"), ("png", png), ("at", "127,95,31")).ExitCode == 5, "長方體貼圖越界拒絕");
+            Check(room.Run(("op", "view"), ("work", "chair"), ("out", picture)).ExitCode == 0 && renderer.Last?.SpaceSize == 128, "調尺寸後渲染採新範圍");
+            var rejected = room.Run(("op", "work"), ("sub", "update"), ("work", "chair"), ("persona", "p"), ("size", "64"), ("title", "不該保存"), ("notes", "不該保存"));
+            Check(rejected.ExitCode == 2 && store.Load("chair").Dimensions == "128,96,32" && store.Load("chair").title == "椅子" && !store.ReadText("chair", false).Contains("不該"), "危險縮小整次拒絕不改筆記或名稱");
+            Check(room.Run(("op", "export"), ("work", "chair"), ("format", "vox"), ("out_dir", room.Root)).ExitCode == 0, "長方體可匯出");
+            Check(Box("p", "chair", 100, 100, 77).ExitCode == 0 && Corner("carve", 95, 31).ExitCode == 0, "新邊界挖除可用");
+            room.Run(("op", "carve"), ("work", "chair"), ("persona", "p"), ("x1", "100"), ("x2", "100"), ("y1", "0"), ("y2", "1"), ("z1", "0"), ("z2", "0"));
+            Check(Resize("64").ExitCode == 0 && store.Load("chair").Dimensions == "64,64,64" && workEngine.LoadSpace().Voxels.Count == 8, "清空外圍後縮小保留內容");
+            File.Delete(store.SpacePaths("chair").CacheFile);
+            Check(workEngine.LoadSpace().Voxels.Count == 8 && mixedGate.VoucherPaid + mixedGate.TokenPaid == 10, "調尺寸不收費且事件可重播");
+            return new CheckRow(name, failures.Count == 0 ? "預設64³與128×96×32皆通過；免費調尺寸、三軸邊界、縮小零損失、版本閘、渲染匯出、付款恢復與重播通過" : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(name, "例外：" + e, CheckResult.Fail); }
     }

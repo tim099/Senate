@@ -38,7 +38,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     public override string Category => SCP_CmdCategory.Game;
 
     public override string Summary =>
-        "3D 雕刻：共用展區按落地收費；work 個人作品64³建立10單位、續雕免費、匯入按落地收費；觀測免費";
+        "3D雕刻：作品可調尺寸、免費組裝他人零件與Credit、移動、Undo/Redo；任務建立免費領10 token且可開免費子作品；自發建立10、展區按落地收費";
 
     public override string Details =>
         "落子類（box／carve／stamp2d／stampimg）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
@@ -102,7 +102,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("persona", "誰（落子類**必填** —— 錢記在人頭上；view／slice 沒給 out 時必填；其餘選填）"),
         new SCP_CmdArgSpec("account", "付 token 的帳號；不給 ⇒ 由 persona 的權威綁定檔解（⛔ 解不出來不猜）"),
         new SCP_CmdArgSpec("pay", "付款方式", iDefault: "auto", iChoices: new[] { "auto", "freetime", "voucher", "token" }),
-        new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作獨立 64³ 空間"),
+        new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作作品的獨立空間"),
+        new SCP_CmdArgSpec("size", "work create/update：邊長或X,Y,Z，各軸1–256；建立預設64。調尺寸免費，縮小不可切掉現有voxel"),
+        new SCP_CmdArgSpec("parent_work", "work create：任務作品或其子作品ID；同作者免費建立子作品，不另領薪"),
+        new SCP_CmdArgSpec("source_work", "work assemble：零件來源作品ID，可用其他作者作品；自動Credit並保留原作"),
+        new SCP_CmdArgSpec("delta", "work move：選區平移量dx,dy,dz；選區用region=x1..x2,y1..y2,z1..z2"),
+        new SCP_CmdArgSpec("turn", "work assemble：繞Z軸旋轉0/90/180/270度，旋轉後原點放在at", iDefault: "0"),
         new SCP_CmdArgSpec("commission", "work create：使用者指定的委託內容；有委託才可填，免建立費並立即發10 token（可用 --arg-file）"),
         new SCP_CmdArgSpec("commission_ref", "work create：該次委託的唯一來源（task／訊息seq／對話來源），不可重複領酬"),
         new SCP_CmdArgSpec("notes", "work update：心得與續作筆記（可用 --arg-file）"),
@@ -126,7 +131,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）"),
         new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+）"),
         new SCP_CmdArgSpec("thickness", "stamp 類：層數", iDefault: "1"),
-        new SCP_CmdArgSpec("overwrite", "stamp 類：1 ＝ 覆蓋既有 voxel（預設跳過）／render-profile copy：1 ＝ 覆蓋既有目標"),
+        new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標"),
         new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數，對不上即拒絕（**強烈建議帶**）"),
         new SCP_CmdArgSpec("alpha_threshold", "stamp 類：alpha 門檻（預設 128）"),
         new SCP_CmdArgSpec("allow_clip", "stamp 類：1 ＝ 接受越界裁切（預設越界即拒絕）"),
@@ -173,8 +178,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("format", "export：obj|vox", iChoices: new[] { "obj", "vox" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
-                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import" }),
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
@@ -275,7 +280,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         public SCP_DataRoot Data => new SCP_DataRoot(Roots.DataRoot);
         public SCP_LettersRoot Letters => Roots.Letters;
         public SCP_SculptWorks Works => new SCP_SculptWorks(Data);
-        public int Size => Work == null ? 256 : SCP_SculptWorks.Size;
+        public int Size => Work == null ? 256 : Work.size;
         public string SculptDir => (Work == null ? new SCP_SculptPaths(Data).Root : Works.Folder(Work.id)).Replace('\\', '/');
         public string EngineLockTarget => Path.Combine(SculptDir, "_engine");
     }
@@ -286,7 +291,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     /// </summary>
     static SCP_SculptEngine NewEngine(Ctx c)
     {
-        var aEngine = c.Work == null ? new SCP_SculptEngine(c.Data) : new SCP_SculptEngine(c.Works.SpacePaths(c.Work.id), c.Roots.DataRoot, c.Size);
+        if (c.Work != null) c.Work = c.Works.Load(c.Work.id);
+        var aEngine = c.Work == null ? new SCP_SculptEngine(c.Data) : c.Works.Engine(c.Work, c.Roots.DataRoot);
         SCP_DataRoot aData = c.Data;
         aEngine.PhotoBase = () =>
         {
@@ -513,8 +519,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             if (!TryInt(c, "x1", out int x1) || !TryInt(c, "x2", out int x2) || !TryInt(c, "y1", out int y1)
                 || !TryInt(c, "y2", out int y2) || !TryInt(c, "z1", out int z1) || !TryInt(c, "z2", out int z2))
             { oBad = c.Op + " 需要 x1 x2 y1 y2 z1 z2 六個整數（0-255）"; return false; }
-            if (c.Work != null && (x1 < 0 || x1 >= c.Size || x2 < 0 || x2 >= c.Size || y1 < 0 || y1 >= c.Size || y2 < 0 || y2 >= c.Size || z1 < 0 || z1 >= c.Size || z2 < 0 || z2 >= c.Size))
-            { oBad = "作品座標須在 0..63；越界不會裁切或落子"; return false; }
+            if (c.Work != null && (x1 < 0 || x1 >= c.Work.SizeX || x2 < 0 || x2 >= c.Work.SizeX || y1 < 0 || y1 >= c.Work.SizeY || y2 < 0 || y2 >= c.Work.SizeY || z1 < 0 || z1 >= c.Work.SizeZ || z2 < 0 || z2 >= c.Work.SizeZ))
+            { oBad = "作品座標超出尺寸 " + c.Work.Dimensions + "；越界不會裁切或落子"; return false; }
             oWorst = ClampedVolume(ref x1, ref x2, ref y1, ref y2, ref z1, ref z2, c.Size);
             oWhere = $"({x1}..{x2},{y1}..{y2},{z1}..{z2})";
             string aPersona = c.Persona;

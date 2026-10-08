@@ -16,17 +16,21 @@ public sealed partial class SculptureViewerPage
     const string SubjectWork = "work:";
     List<SCP_SculptWork> m_Works = new();
     readonly Dictionary<string, (string Notes, string Todo)> m_WorkTexts = new();
+    readonly Dictionary<string, List<SCP_SculptCredit>> m_WorkCredits = new();
     string m_WorksError = "";
 
     void ReloadWorks(SCP_DataRoot data)
     {
-        m_Works = new(); m_WorkTexts.Clear(); m_WorksError = "";
+        m_Works = new(); m_WorkTexts.Clear(); m_WorkCredits.Clear(); m_WorksError = "";
         try
         {
             var store = new SCP_SculptWorks(data);
             m_Works = store.List();
             foreach (var card in m_Works)
+            {
                 m_WorkTexts[card.id] = (store.ReadText(card.id, false), store.ReadText(card.id, true));
+                m_WorkCredits[card.id] = SCP_SculptHistory.Read(store.SpacePaths(card.id)).Credits();
+            }
         }
         catch (Exception e) { m_WorksError = "作品讀取失敗：" + e.Message; }
     }
@@ -45,7 +49,7 @@ public sealed partial class SculptureViewerPage
     }
     void DrawWorkSelector(SCP_Ui g, string persona)
     {
-        g.Dropdown("雕刻空間", new List<SCP_GuiOption> { new("shared", "共用展區（256³）"), new("work", "個人作品（每件64³）") }, "shared", SpaceSel);
+        g.Dropdown("雕刻空間", new List<SCP_GuiOption> { new("shared", "共用展區（256³）"), new("work", "個人作品（可調尺寸）") }, "shared", SpaceSel);
         if (PersonalSpace(g))
         {
             var options = m_Works.Select(w => new SCP_GuiOption(w.id, w.title + "｜" + w.owner + "｜" + w.status)).ToList();
@@ -70,17 +74,20 @@ public sealed partial class SculptureViewerPage
     void DrawWorks(SCP_Ui g, string persona)
     {
         if (m_WorksError.Length > 0) g.Note(m_WorksError);
-        g.Note("每件作品獨立64³；建立收10單位，作品內雕刻免費。匯入展區另按實際落地收費，原稿保留。");
+        g.Note("作品預設64³，各軸可設1–256；建立收10單位，作品內雕刻與調尺寸免費。匯入展區另按實際落地收費，原稿保留。");
         using (var create = g.Fold("建立作品", P + "fold/work-create", iDefaultOpen: false))
         {
             if (create.Open)
             {
                 string id = g.TextField("全庫唯一 ID（英數 _ -）", "", WorkCreateId);
                 string title = g.TextField("作品名稱", "", WorkCreateTitle);
+                string dimensions = g.TextField("尺寸（邊長或X,Y,Z，各軸1–256）", "64", P + "work/create-size");
+                string parent = g.TextField("任務父作品ID（子作品才填）", "", P + "work/create-parent").Trim();
                 string pending = g.FieldValue(Pending, "");
-                Armed(g, pending, "work-create", "建立作品（10單位）", () =>
+                Armed(g, pending, "work-create", parent.Length > 0 ? "建立任務子作品（免費）" : "建立作品（10單位）", () =>
                 {
-                    var args = new Dictionary<string, string> { ["op"] = "work", ["sub"] = "create", ["persona"] = persona, ["id"] = id, ["title"] = title };
+                    var args = new Dictionary<string, string> { ["op"] = "work", ["sub"] = "create", ["persona"] = persona, ["id"] = id, ["title"] = title, ["size"] = dimensions };
+                    if (parent.Length > 0) args["parent_work"] = parent;
                     Start(g, "建立作品", () =>
                     {
                         var result = RunCli(args);
@@ -94,8 +101,14 @@ public sealed partial class SculptureViewerPage
         string selected = SelectedWork(g);
         if (selected.Length == 0) { g.Note("請建立或選擇付款完成的作品；待付款作品可用同一 ID 再按建立對帳。"); return; }
         var card = m_Works.Find(w => w.id == selected)!;
-        g.Label(card.title + "｜" + selected + "｜作者 " + card.owner + "｜64³");
+        g.Label(card.title + "｜" + selected + "｜作者 " + card.owner + "｜" + card.Dimensions);
         if (card.commission.Length > 0) g.Note("委託：" + card.commission + "｜來源 " + card.commission_ref + "｜建立免費、報酬10 token（" + card.status + "）");
+        if (card.parent_work.Length > 0) g.Note("任務子作品｜父作品 " + card.parent_work + "｜建立免費，不另領薪");
+        if (m_WorkCredits.TryGetValue(selected, out var credits) && credits.Count > 0)
+        {
+            g.Label("Credit（自動）");
+            foreach (var credit in credits) g.Note(credit.title + "（" + credit.work + "）｜by " + credit.author + "｜版本 " + credit.revision);
+        }
         if (g.Button("渲染作品", P + "btn/work-render")) RunView(g, "作品 " + selected, new() { ["work"] = selected }, persona, SubjectWork + selected);
         var text = m_WorkTexts.TryGetValue(selected, out var saved) ? saved : (Notes: "", Todo: "");
         string titleKey = P + "work/" + selected + "/title", notesKey = P + "work/" + selected + "/notes", todoKey = P + "work/" + selected + "/todo";
@@ -104,17 +117,19 @@ public sealed partial class SculptureViewerPage
             if (notesFold.Open)
             {
                 string title = g.TextField("名稱", card.title, titleKey);
+                string dimensions = g.TextField("空間尺寸（邊長或X,Y,Z）", card.Dimensions, P + "work/" + selected + "/size");
+                g.Note("調整空間不移動或縮放作品；縮小若會切掉內容，整次保存會拒絕。");
                 string notes = g.TextArea("心得／進度／下次從哪開始", text.Notes, notesKey, 6);
                 string todo = g.TextArea("TODO", text.Todo, todoKey, 4);
                 if (persona == card.owner)
                 {
-                    if (g.Button("保存作品筆記（免費）", P + "btn/work-save"))
-                        Start(g, "保存作品筆記", () => new Outcome { Log = RunCli(new() { ["op"] = "work", ["sub"] = "update", ["work"] = selected, ["persona"] = persona, ["title"] = title, ["notes"] = notes, ["todo"] = todo }).Log("保存作品筆記"), Reload = true });
+                    if (g.Button("保存尺寸與筆記（免費）", P + "btn/work-save"))
+                        Start(g, "保存尺寸與筆記", () => new Outcome { Log = RunCli(new() { ["op"] = "work", ["sub"] = "update", ["work"] = selected, ["persona"] = persona, ["title"] = title, ["size"] = dimensions, ["notes"] = notes, ["todo"] = todo }).Log("保存尺寸與筆記"), Reload = true });
                 }
                 else g.Note("目前 persona 不是作者；可觀測，不能修改。");
             }
         }
-        if (persona != card.owner) return;
+        if (persona == card.owner) DrawWorkEditing(g, persona, selected);
         using var importFold = g.Fold("匯入共用展區", P + "fold/work-import", iDefaultOpen: false);
         if (!importFold.Open) return;
         string at = g.TextField("展區座標（作品原點0,0,0平移到這裡）", "0,0,0", WorkAt);
