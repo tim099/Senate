@@ -1,11 +1,11 @@
 // 區塊職責：**Markdown 檢視／編輯頁**（Senate 版）—— 檢視模式把 .md 渲染成標題／段落／表格／程式碼框／mermaid 樹；
-//          編輯模式是一整塊純文字編輯區（SCP_Ui.TextArea），存檔寫回原檔。參考 Unity `UCL_MarkdownViewerPage`。
+//          編輯模式是一整塊純文字編輯區（SCP_Ui.TextArea），存檔寫回原檔。
 // 物理意義：解析交給 MarkdownDoc（純函式）；本頁只做 IO、渲染、與編輯狀態。
 //          ⭐ 所有「跨輪要記得的狀態」都住 session 欄位（路徑、模式、草稿、草稿的基準雜湊），⛔ 不住實例欄位 ——
 //            CLI 每次呼叫都是新 process，住實例欄位的話「按了編輯 → 下一步存檔」在 CLI 就接不起來。
 // 數值影響：讀 ＝ 路徑變了或按「重新讀取」才讀一次檔；寫 ＝ 只有「存檔」那顆鈕，temp → 取代（SCP_TextFile.ReplaceOrMove）。
 //
-// ⚠ 與 Unity 版的差異（刻意的）：
+// ⚠ 刻意的設計：
 //   · Senate 的兩個 renderer 都不吃 rich-text ⇒ inline 標記是**拿掉**，不是換成 <b> tag（見 MarkdownDoc.Inline）。
 //   · related 連結**原地換頁**（附「上一份」），不 push 新頁：路徑住全域欄位，疊兩頁 viewer 會共用同一格而互相蓋掉。
 //   · related 只解 相對路徑／絕對路徑／`repo:`（＝ Senate 專案根）。`ucl_core:` 這類前綴 Senate 沒有解析器 ——
@@ -308,7 +308,7 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
         string aCandidate;
         if (iUrl.StartsWith("repo:", StringComparison.OrdinalIgnoreCase))
         {
-            // `repo:` ＝ Senate 這個 repo（文件住在這裡），⛔ 不是 Unity 專案（TASK-0390）
+            // `repo:` ＝ Senate 這個 repo（文件住在這裡，TASK-0390）
             string aRoot = Senate.Core.SenatePathBinding.HostRepoRoot;
             if (aRoot.Length == 0) { oWhy = "Senate 專案根沒有宣告（宿主沒跑 SenateHostPaths.Install）"; return null; }
             aCandidate = Path.Combine(aRoot, iUrl.Substring(5).TrimStart('/', '\\'));
@@ -390,7 +390,7 @@ public sealed class MarkdownViewerPage : SCP_GuiToolPage
             }
     }
 
-    // mermaid：不做真的圖排版 —— 從入度 0 的節點 DFS 成縮排樹，重訪標「(重複)」（同 Unity 版 v1）
+    // mermaid：不做真的圖排版 —— 從入度 0 的節點 DFS 成縮排樹，重訪標「(重複)」
     static void DrawMermaid(SCP_Ui g, MdBlock b, int iIndex)
     {
         MdMermaidGraph? aGraph = b.Graph;

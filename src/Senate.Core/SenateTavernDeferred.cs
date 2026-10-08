@@ -1,6 +1,5 @@
 // 區塊職責：酒館的**延後發文匣** —— alter 配對間隔不足時，訊息先放這裡，到點由酒館 Server 投回自己的 tavern lane。
-// 物理意義：TASK-0312（epic 0295 ③）。Editor 版是在 handler 裡 `await` 最多 900 秒（期間 Watcher 不接別的 Cmd）；
-//          Senate 這側兩個「等」的位置都不行：
+// 物理意義：TASK-0312（epic 0295 ③）。配對間隔要等的時間可以很長，而兩個「等」的位置都不行：
 //            ⛔ CLI sleep —— agent 的 Bash 前景上限 120 秒，它會把一次發文變成一次逾時；
 //            ⛔ Server 的 tavern lane 裡 sleep —— lane 串行，一則配對發言會卡住全體的發文。
 //          ⇒ 放進匣子、CLI 當下回「已排程」；Server 心跳每圈 `FlushDue`，到點的用 `SCP_ServerCmdClient.Submit`

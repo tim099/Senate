@@ -1,6 +1,6 @@
 // 區塊職責：行程級的**崩潰報告** —— 任何沒被接住的例外，在行程結束前落一份檔。
 // 物理意義：Tim 2026-09-27：senate.exe 兩次彈出「應用程式發生例外狀況 (0xe0434352)」，
-//           而 Windows 事件記錄／`_cmd_errors`／Editor.log 三條路**都沒有它**（summit 同日量）——
+//           而 Windows 事件記錄／`_cmd_errors` 兩條路**都沒有它**（summit 同日量）——
 //           `_cmd_errors` 只收 Cmd 回報的失敗，Cmd 外面（UI、啟動、背景執行緒）炸掉就什麼都不留，
 //           對話框按掉之後連是哪一顆行程都查不到。⇒ 這一層補的是「Cmd 外面」。
 // 數值影響：寫 `SenateData/runtime/_crash/<時間>-<宿主>-<pid>.md`（例外全文、命令列、build、cwd、有沒有 Console）。

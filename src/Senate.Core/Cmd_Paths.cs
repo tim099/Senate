@@ -1,4 +1,4 @@
-// 區塊職責：`senate cmd paths` —— 列出**所有動態路徑**（enum ＋ 解析後的值）。**原生**，不需要 Unity。
+// 區塊職責：`senate cmd paths` —— 列出**所有動態路徑**（enum ＋ 解析後的值）。
 // 物理意義：清單由 `SCP_PathRegistry` 描述表生成 ⇒ 加一條路徑＝加一個 enum 成員 ＋ 一筆 descriptor，
 //           **本檔一行都不用改**（同「路徑管理頁」）。
 //           ⇒ 待列清單的**唯一落點**是那張表，不另外維護一份 md 或一份 switch

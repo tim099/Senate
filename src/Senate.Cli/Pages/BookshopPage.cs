@@ -1,5 +1,5 @@
 // 區塊職責：**書店頁**（TASK-0403）—— 藏書架（依系列）、全文書庫、捐贈簿、捐贈表單、推薦書單。
-// 物理意義：Unity `UCL_LibraryManagePage` 書店那幾區的對應（漫畫區在「漫畫庫」頁、舊筆記索引區由「閱讀心得」頁的全庫瀏覽取代）。
+// 物理意義：漫畫區在「漫畫庫」頁、筆記索引在「閱讀心得」頁的全庫瀏覽。
 //           資料全部來自 SCP_Books*（與 `senate cmd book` 的 shelf／series／donations 同源）：藏書架用 `SCP_BooksShelf.LoadShelf`，
 //           捐贈簿用 `SCP_BooksDonations.LoadDonations`。⛔ 本頁不存路徑、不自己解析 `_donation.json` 欄位。
 // 數值影響：唯一動錢的是「捐贈」，且**先預覽、確認才扣**（走 `SCP_BooksOps.Donate`，與 `book op=donate` 同一支）；其餘純讀。

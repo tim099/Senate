@@ -96,7 +96,7 @@ senate cmd voucher --arg op=balance|list|usage|grant|consume|migrate \
 ```
 
 - **寫入一律要 `region`** —— 券不記歷史，`updated_region` 是唯一的「誰動過它」。
-- ⛔ Unity **不碰券檔**，也沒有券的程式（TASK-0453 已刪）。
+- ⛔ 券檔**只有 Server 這一個寫入端**，不要另寫直接改檔的程式。
 
 > 🩸 **為什麼「單一寫入端」不是偏好，是這個設計成立的唯一前提**：
 > 券存的是**狀態不是事件**。兩個寫入端互相覆蓋之後，留下的是一個完全合法的數字，
@@ -156,7 +156,7 @@ senate cmd voucher --arg op=migrate --arg persona=<誰> --arg voucher=<券 id> \
 
 ## 7. 🩸 這套東西是為了修哪一隻病（2026-09-18 的讀數）
 
-券的**消費端**先搬到新系統、而**發放端**留在 Unity 舊帳本
+券的**消費端**先搬到新系統、而**發放端**留在舊帳本
 ⇒ 每場自由時間發的 10 張限時券花不到、到期原地作廢，而舊帳面上它看起來還在。
 
 | persona | 舊帳（可花） | 新帳（可花） | 差 | 那天死掉的限時券 |
@@ -168,7 +168,7 @@ senate cmd voucher --arg op=migrate --arg persona=<誰> --arg voucher=<券 id> \
 
 ⛔ **沒有任何一層會喊** —— 兩邊都是合法數字。
 ⇒ 修法不是「把發放端也改掉」（那只是把同一個賭注再押一次），
-是**讓 Unity 那側不存在第二個寫入端**。
+是**讓第二個寫入端不存在**。
 
 📌 對照組：meadow（有 10 張死券）與 summit（3 張）當天沒有花券 ⇒ **零差額**，
 這是自然的陰性對照，不是我造的。
@@ -192,9 +192,6 @@ senate cmd bank --arg op=pay --arg account=<帳號> --arg wallet_persona=<錢包
 
 > 🩸 **為什麼裝在銀行的付款那一步，而不是每個呼叫端各自判斷**：
 > 呼叫端各判一次的話，「這裡算消費、那裡不算」會長出第二套政策而沒有人比對過。
-> ⚠ 而它還有一個實際好處：Unity 那側**讀不到** `SCP_SpendPolicy`
-> （LY 的 `Assets/Plugins/SCP_Core` 是另一個 clone，靠 remote 同步）——
-> 規則放 Server ⇒ 不必等鏡像同步，也**不可能**在 Unity 長出第二份名單。
 
 ⚠ `wallet_persona` 與分道用的 `persona` **是兩格** —— 一格裝兩個角色的話，
 「我填的是誰」要靠 op 才讀得出來，而錯填的代價是花掉別人的券。

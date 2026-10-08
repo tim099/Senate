@@ -13,9 +13,9 @@
 //
 // ⚠ 為什麼引擎放這一層而不是 Cmd 端阻塞（TASK-0160 拍板題①，2026-09-14 summit 拍板）：
 //   委派路的 CLI 端等待上限是 **120 秒**，而自由時間要等的是 180 秒這種量級 ⇒
-//   Cmd 端阻塞會讓 CLI 先 exit 3（逾時）而 Editor 那邊還卡著，**把一個缺功能換成一個更難看的失敗**；
-//   而且 Editor 的委派 lane 是單槽，阻塞它等於那段時間 persona 的所有 Cmd 都排不進去。
-//   ⇒ 選 (A) CLI 端輪詢。⛔ 不選 (C) 判定不做：那會讓自由時間的核心機制在**唯一還活著的那條路**上不存在。
+//   Cmd 端阻塞會讓 CLI 先 exit 3（逾時）而執行端那邊還卡著，**把一個缺功能換成一個更難看的失敗**；
+//   而且同一條 lane 是串行的，阻塞它等於那段時間 persona 的所有 Cmd 都排不進去。
+//   ⇒ 選 (A) CLI 端輪詢。⛔ 不選 (C) 判定不做：那會讓自由時間的核心機制不存在。
 //
 // ⚠ 為什麼等待中要出聲（拍板題②）：血證裡那 45 秒**一行字都沒有** ——
 //   「在等」與「已經結束了」在畫面上同形。心跳行落 **stderr**（給人的告示），stdout 留給值。
@@ -34,7 +34,7 @@ public sealed class Cmd_TavernWait : SCP_Cmd
     public override string Category => SCP_CmdCategory.Tavern;
 
     public override string Summary =>
-        "自由時間的對話流引擎：**擋住 turn** 等人回話，等到就提早返回、逾時就照實說 —— 本地跑，不需要 Editor";
+        "自由時間的對話流引擎：**擋住 turn** 等人回話，等到就提早返回、逾時就照實說 —— 本地跑";
 
     public override string Details =>
         "⭐ **它是唯一擋得住 turn 的那一層。**\n"

@@ -25,9 +25,9 @@ public enum AgentCmdWaitResult
 
     /// <summary>
     /// **不知道**：那筆 cmd 已經不在 queue 裡，而判定檔**不存在**（TASK-0263）。
-    /// <para>🩸 它以前被讀成 <see cref="Success"/>，理由是相容「不寫判定檔的舊版 Editor」——
-    /// 而同一個形狀也是「這筆委派**被別人的寫回整個蓋掉了**」的樣子。
-    /// 兩者處置相反（一個沒事、一個訊息不見了），⛔ 不得共用一個回傳值。
+    /// <para>🩸 這個形狀也是「這筆委派**被別人的寫回整個蓋掉了**」的樣子 ——
+    /// 跟「執行端沒寫判定檔、其實做完了」分不出來，而兩者處置相反
+    /// （一個沒事、一個訊息不見了），⛔ 不得讀成 <see cref="Success"/>。
     /// 實測（2026-09-21，60 筆併發）：落盤 55，而 **60 顆 client 全部 exit 0**。</para>
     /// <para>⚠ 數值取 7 ＝ 與 `cmd rest` 那條「不知道」對齊（6 是確定沒發、7 是沒等到回執）。
     /// ⛔ 處置一律是**先回讀，不要直接重送** —— 重送的代價是做第二次。</para>
@@ -185,7 +185,7 @@ public static class AgentCmdClient
         // 🩸 env marker 分得出**環境**卻分不出**哪個 client** —— 兩個 client 在 Claude Code
         //   底下都回 `claude-code`，於是「某人今天走了新入口」這件事系統本身答不出來，
         //   只能去問本人（2026-08-31 實測：早安切 CLI 當天就撞到）。
-        //   ⇒ Editor 端 WriteCmdResult 把它寫進 `_cmd_results/<id>.json` 的 `client` 欄。
+        //   ⇒ 執行端（ServerExecutor）把它寫進 `_cmd_results/<id>.json` 的 `client` 欄。
         if (!iArgs.ContainsKey("_caller_client"))
             iArgs["_caller_client"] = ClientId;
         // 顯式 --persona 戳進 args（與 run_cmd.py 同律：只在缺席時填；兩者不同 → 出聲照 --arg 走）
@@ -205,7 +205,7 @@ public static class AgentCmdClient
         }
 
         string aCmdId = MakeId(iCmdType);
-        // 🔴 讀改寫整段在檔案鎖裡（TASK-0263）—— 這顆 queue 有多個寫入端（每顆 CLI／Editor／
+        // 🔴 讀改寫整段在檔案鎖裡（TASK-0263）—— 這顆 queue 有多個寫入端（每顆 CLI／
         //   Server 執行器）。沒有互斥時兩邊各自讀到同一份舊內容、各自寫回，
         //   **後寫的把先寫的那一筆整個吃掉**，而每一層都回報成功。
         //   ⛔ 別把 `SaveQueue` 的 atomic replace 讀成已經有互斥：它保護的是「寫到一半的檔」，
@@ -248,7 +248,7 @@ public static class AgentCmdClient
 
     /// <summary>
     /// 等待一筆 cmd 結束並判定結果（＝ run_cmd.py cmd_wait 的移植）。
-    /// <para>權威判定來源是 <c>_cmd_results/&lt;id&gt;.json</c>（Editor Runner 出隊前寫）——
+    /// <para>權威判定來源是 <c>_cmd_results/&lt;id&gt;.json</c>（執行端出隊前寫）——
     /// 「從 queue 消失」只代表結束，不代表成功。找不到 result 檔才退回舊推論並明講。</para>
     /// </summary>
     /// <param name="iPrintOutputs">
@@ -296,7 +296,7 @@ public static class AgentCmdClient
                         if ((string?)aVerdict["result"] == "Failed")
                         {
                             string aErrMsg = (string?)aVerdict["error"] ?? "(no error message)";
-                            FailVerdict(iOut, iErr, $"  ✗ Cmd failed（Editor 已自動出隊）: {aErrMsg}");
+                            FailVerdict(iOut, iErr, $"  ✗ Cmd failed（執行端已自動出隊）: {aErrMsg}");
                             if (iPrintOutputs) PrintOutputs(aVerdict, iOut, iDataRoot);   // blocked 也會先落 payload —— 出口清單在那個檔裡
                             PrintErrorReport(iDataRoot, iCmdId, iOut);
                             return AgentCmdWaitResult.Failed;
@@ -306,9 +306,8 @@ public static class AgentCmdClient
                         return AgentCmdWaitResult.Success;
                     }
                     // 🔴 不在 queue ＋ 沒有判定檔 ＝ **不知道**（TASK-0263）。
-                    //   🩸 舊版在這裡回 Success，理由是相容「不寫判定檔的舊版 Editor」——
-                    //   而同一個形狀也是「這筆委派被別人的寫回整個蓋掉」的樣子，
-                    //   兩者處置相反（一個沒事、一個訊息不見了）。
+                    //   🩸 這個形狀跟「這筆委派被別人的寫回整個蓋掉」分不出來，
+                    //   而兩者處置相反（一個沒事、一個訊息不見了）⇒ ⛔ 不回 Success。
                     //   實測 2026-09-21：60 筆併發委派，落盤 55，而 **60 顆 client 全 exit 0**。
                     //   ⇒ 分不出來的時候要說「分不出來」，⛔ 不挑好聽的那個。
                     iErr("  ⚠ Cmd 從 queue 消失了，而**判定檔不存在** ⇒ 這一筆的結局**不知道**。");
@@ -367,7 +366,7 @@ public static class AgentCmdClient
     /// **要寫回**的那兩條路（Submit／RemoveCmd）專用的讀法 —— 壞檔、讀不了一律**丟例外、一個位元組都不寫**（TASK-0265）。
     /// <para>🩸 舊版兩條路都走寬鬆的 <see cref="LoadQueue"/>：解析失敗 ⇒ 空骨架 ⇒ append 一筆寫回
     /// ⇒ **整條 queue 被蓋成只剩這一筆**，而那顆壞檔（證據）也一起沒了。註解卻寫「舊內容不動」。
-    /// Unity 那側早就是「讀不到就不寫回」（TASK-0264）—— 這裡對齊同一個立場。</para>
+    /// ⇒ 讀不到就不寫回。</para>
     /// <para>⚠ 呼叫時必須已經握著 queue 的 <c>SCP_FileLock</c>：所有寫入端都在同一顆鎖下換檔，
     /// 所以鎖裡看到的「不存在」就是真的不存在（⛔ 不是換檔窗口）。</para>
     /// </summary>
@@ -420,7 +419,7 @@ public static class AgentCmdClient
         }
     }
 
-    /// <summary>atomic ＋ retry 寫回 queue.json（temp → File.Move overwrite；撞 Editor 檔鎖 backoff 重試 5 次）。</summary>
+    /// <summary>atomic ＋ retry 寫回 queue.json（temp → File.Move overwrite；撞檔鎖 backoff 重試 5 次）。</summary>
     static void SaveQueue(string iDataRoot, string? iPersona, JsonObject iRoot)
     {
         string aPath = QueuePath(iDataRoot, iPersona);
@@ -508,8 +507,8 @@ public static class AgentCmdClient
     /// 要把這些併進自己的 <c>SCP_CmdResult</c>）。
     /// <para>⛔ **只在判定成功之後才准呼叫。** 逾時的時候 result 檔沒有被更新，
     /// 這時讀到的是**上一輪**的路徑 —— 而順著那個路徑開出來的檔案格式完整、數字合理
-    /// （UCL 2026-08-16 血證）。這支不自己擋，因為它拿不到判定；擋的責任在呼叫端。</para>
-    /// <para>回 <c>Found=false</c> ＝ 沒有 result 檔（舊版 Editor／落檔失敗）——
+    /// （2026-08-16 血證）。這支不自己擋，因為它拿不到判定；擋的責任在呼叫端。</para>
+    /// <para>回 <c>Found=false</c> ＝ 沒有 result 檔（落檔失敗）——
     /// 那跟「有 result 檔但沒有 outputs」是兩件事，不可同形。</para>
     /// </summary>
     public static (bool Found, List<string> Outputs, List<KeyValuePair<string, string>> Values)
@@ -546,7 +545,7 @@ public static class AgentCmdClient
     }
 
     /// <summary>
-    /// result 檔裡執行端留下的人可讀行（`lines`）—— Senate Server 會寫，Editor 端不寫（回空清單，不是錯）。
+    /// result 檔裡執行端留下的人可讀行（`lines`）—— 沒有這一欄回空清單，不是錯。
     /// <para>⛔ 同 <see cref="ResultReport"/>：只在判定成功之後才准呼叫。</para>
     /// </summary>
     public static List<string> ResultLines(string iDataRoot, string iCmdId)

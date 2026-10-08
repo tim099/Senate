@@ -30,7 +30,7 @@ public static class SenatePages
         // 🔴 **只有這一行是顯式的，而它逃不掉**（雞生蛋）：入口頁要拿著目錄才畫得出清單，
         //    而目錄正在被建 ⇒ 反射沒有第二個參數可以遞。⇒ 它的 ctor 是 `(ctx, catalog)`，
         //    落在 `AutoRegister` 的「形狀不符」那一格，所以這裡先佔住 key（顯式優先，不算缺陷）。
-        //   （它自己 MenuGroup = null，所以不會把自己列進自己的清單 —— 同 UCL 排除 EditorMenuPage 那一格）
+        //   （它自己 MenuGroup = null，所以不會把自己列進自己的清單）
         aCatalog.Register(SCP_GuiHomePage.PageKey, () => new SCP_GuiHomePage(iModel, aCatalog));
 
         // ⭐ 其餘**全部自動收**（TASK-0276，Tim 2026-09-22 拍板 C）：

@@ -1,5 +1,4 @@
-// 區塊職責：**AI 模型（ollama）後台頁**（TASK-0383）—— ollama 本體與服務狀態、模型目錄×已安裝、顯存裡的模型與卸載、下載／移除、試跑與紀錄；
-//           參考 Unity `UCL_LLMModelAdminPage`（之後廢棄，Tim 2026-10-02）。
+// 區塊職責：**AI 模型（ollama）後台頁**（TASK-0383）—— ollama 本體與服務狀態、模型目錄×已安裝、顯存裡的模型與卸載、下載／移除、試跑與紀錄。
 // 物理意義：本頁**不自己算任何東西**：全部走 `senate cmd llm`（Cmd_Llm），跟 agent 在終端機打的是同一套實作。
 //           ⭐ ollama 與它的模型**不進安裝系統**（Tim 2026-10-05）：狀態住在 ollama 服務裡，本頁只是讀它、叫它做事。
 // 數值影響：開頁量一次狀態（`ollama list`／`ps`／nvidia-smi，各一次）；下載／移除會動磁碟 ⇒ 先上膛攤計畫、按確認才動手；
@@ -37,7 +36,7 @@ public sealed class LlmModelPage : SCP_GuiToolPage
 
     /// <summary>
     /// 頁面設定值（顯存門檻與試跑參數）。**按頂欄「存檔設定」才寫檔，⛔ 不自動存**（Tim 2026-10-05）。
-    /// 存在 `SenateData/config/llm_page.json`（本機設定，不入版控 —— 同 Unity 頁存在 EditorPrefs 的性質）。
+    /// 存在 `SenateData/config/llm_page.json`（本機設定，不入版控）。
     /// </summary>
     internal sealed record Settings(string Basis, string ManualGb, bool FitOnly, string TestModel, string Prompt, string System,
                                     bool Think, string NumPredict, string KeepAlive, string Timeout);

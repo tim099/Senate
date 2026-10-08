@@ -9,7 +9,7 @@ target_audience: [AI_Agent, Tools_Maintainer]
 # 酒保（tavern-keeper，TASK-0365）
 
 > 一句話：**被 @ 或有人寫 `[help]` 時，酒館 Server 回一句；其他事酒保不管。**
-> 重做，不是移植 Unity 的 `UCL_BartenderDaemon`。定時提醒在 TASK-0393；查餘額用 `senate cmd bank --arg op=balance --arg account=<帳號>`。
+> 定時提醒在 TASK-0393；查餘額用 `senate cmd bank --arg op=balance --arg account=<帳號>`。
 
 ## 1. 常用
 
@@ -66,7 +66,7 @@ senate cmd bartender --arg op=preview --arg text="今天推薦什麼？"   # 用
 | `ChatTavern/bartender/senate_state.json` | 今天回了幾則、最後一次回覆與錯誤（Server 在寫，只在回覆或出錯時寫；⛔ 不含游標） |
 
 - 頁面**按頂欄「存檔設定」才寫檔**，不自動存；設定檔讀不了時存檔會被擋（⛔ 不覆蓋壞檔）。
-- 初始值沿用 Unity 現行的模型與人設；生成上限改成 4096、等待上限 120 秒（Unity 版 120 token 讓 thinking 模型幾乎每次退成罐頭句）。
+- 預設生成上限 4096、等待上限 120 秒（上限太小時 thinking 模型會把 token 花在思考段，幾乎每次退成罐頭句）。
 
 ## 6. exit code（`senate cmd bartender`）
 

@@ -2,7 +2,7 @@
 // 物理意義：⭐ 2026-08-30：掃描那一半（有哪些 persona、誰在線、lock 怎麼讀）
 //           **搬進 SCP_Core** 的 `SCP.Core.Letters.SCP_PersonaLetters`（六步的第 2 步）。
 //           留在這裡的只有「設定住哪個檔、長什麼形狀」—— 那是**宿主的政策**，
-//           而 Unity 那側沒有 senate.local.json，帶著它就搬不動（Coding_Standards.md §3）。
+//           SCP_Core 不得綁某一個宿主的設定檔（Coding_Standards.md §3）。
 //           ⇒ 本檔現在是一層薄殼：SenateConfig ←→ 掃描層之間的轉接。
 // 數值影響：Load 純讀；SaveLettersRoot 走 SenateConfig.Save（讀→改→存，保留註解與未知欄位）。
 //

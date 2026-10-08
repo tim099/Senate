@@ -1,8 +1,8 @@
-// 區塊職責：TASK-0360（自由時間搬到 Senate）的自我對拍。
+// 區塊職責：TASK-0360（自由時間）的自我對拍。
 // 物理意義：三格各驗一個「錯了也不會叫」的地方：
 //           ① 設定檔：不存在／讀不了／不合法 三種狀態不可同形（都會退回預設值，差別只在有沒有說出來）。
 //           ② 活動 md：欄位寫回要讀得回來、帶冒號的值要加引號、同 id 不准覆寫（反向對照：零寫入）。
-//           ③ 後台頁：Unity 專案根走宿主解析器、設定讀的是磁碟上那一份（畫面數字 ＝ 檔裡的數字，不是常數）。
+//           ③ 後台頁：活動目錄走宿主解析器、設定讀的是磁碟上那一份（畫面數字 ＝ 檔裡的數字，不是常數）。
 // 數值影響：全在 temp 目錄裡寫、跑完刪；⛔ 不碰真實資料根。
 #nullable enable
 using SCP.Core.FreeTime;
@@ -96,7 +96,7 @@ public static partial class SelfTest
             File.WriteAllText(Path.Combine(aCfgDir, "senate.local.json"),
                 // TASK-0390：資料根是全域 `paths` 那一格（⛔ 不再從專案推 `<專案>/AgentCommands`）
                 "{\n  \"schemaVersion\": 1,\n  \"paths\": {\n    \"agentCommandsRoot\": \"" + aProjRoot + "/AgentCommands\"\n  },\n"
-                + "  \"awakening\": {\n    \"lettersRoot\": \"auto\"\n  }\n}\n");   // TASK-0390：⛔ 沒有任何 Unity 專案
+                + "  \"awakening\": {\n    \"lettersRoot\": \"auto\"\n  }\n}\n");
             string aData = aProjRoot + "/AgentCommands";
             Directory.CreateDirectory(aData);
             var aSet = SCP_FreeTimeSettings.Defaults(); aSet.PixelsPerSession = 7;

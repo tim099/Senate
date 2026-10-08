@@ -1,7 +1,7 @@
 // 區塊職責：**Senate 宿主的 HTTP 抓取器** —— `SCP.Core.Market.ISCP_HttpFetcher` 的實作。
 // 物理意義：SCP_Core 刻意不引入網路（它釘在 netstandard2.1 且 **Unity 也要編它**，
 //           見 `SCP_RateSource.cs` 守衛①）⇒ 真正會連外的那一段住在宿主這裡。
-//           ⇒ Senate CLI / Server 有網路出口；Unity Editor 端沒有，而那會被**明說**不會靜默。
+//           ⇒ 網路出口只在宿主（Senate CLI / Server）。
 // 數值影響：只讀不寫（GET）。逾時由呼叫端給，預設由 `rate op=sync --arg timeout_sec` 決定。
 // 🩸 守衛：
 //   ① **不丟例外**：呼叫端是 Cmd，它要把失敗印成一行字，不是讓整支指令炸掉。

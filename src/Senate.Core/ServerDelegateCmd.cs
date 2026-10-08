@@ -41,7 +41,7 @@ public abstract class ServerDelegateCmd : SCP_Cmd
     /// </summary>
     public static Func<string>? RepoRootProvider;
 
-    /// <summary>Server 端的 lane 上限 —— 同 lane 串行、跨 lane 並行（照 Editor Runner 的形狀）。</summary>
+    /// <summary>Server 端的 lane 上限 —— 同 lane 串行、跨 lane 並行。</summary>
     public const string DefaultLane = "server";
 
     public sealed override SCP_CmdPortStatus PortStatus => SCP_CmdPortStatus.DelegatedToServer;

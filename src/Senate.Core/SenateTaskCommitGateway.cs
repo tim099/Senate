@@ -1,7 +1,6 @@
 // 區塊職責：Senate 側的**推單閘** —— `senate cmd commit` 的 `Fixes/Refs TASK-n` 交給 `senate cmd task op=commit`。
 // 物理意義：狀態機（有 blocker 不推進／有 QA 推 in_review／沒 QA 才 done）只有一份，住在 SCP_Core `SCP_TaskOps`，
 //           由任務單唯一的寫入端（Senate Server `task-write`）執行。本層只把訊號送過去，**不判、不猜、不本地重算**。
-//           🩸 TASK-0349 之前這一格委派 Unity Editor 的 `Task op=commit` ⇒ **Editor 沒開，commit 就推不了單**。
 // 數值影響：一張單一次 Server round-trip（＋狀態有變時一則酒館通知，由入口發）。⛔ 不重試 —— 送出之後的失敗可能其實已經推進了。
 //
 // ⚠ 三態照舊（呼叫端只認這一套）：入口 exit 0 ⇒ Advanced；exit 7（結果不明）⇒ Unresolved；其餘 ⇒ NotSent（確定沒寫）。

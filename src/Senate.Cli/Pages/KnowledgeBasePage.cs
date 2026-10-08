@@ -1,5 +1,4 @@
-// 區塊職責：**知識庫後台頁**（TASK-0381）—— 每個 target 的檔數／塊數／新鮮度、常駐嵌入程序在不在、重建、檢索與評估；
-//           參考 Unity `UCL_KnowledgeBaseAdminPage`（之後廢棄，Tim 2026-10-02）。
+// 區塊職責：**知識庫後台頁**（TASK-0381）—— 每個 target 的檔數／塊數／新鮮度、常駐嵌入程序在不在、重建、檢索與評估。
 // 物理意義：本頁**不自己算任何東西**：狀態、重建、檢索、評估全部走 `senate cmd kb`（Cmd_Kb），
 //           跟 agent 在終端機打的是同一套實作 ⇒ 兩邊不可能對同一份索引給出不同的讀數。
 //           狀態與檢索用 `format=json` 讀結構化結果；重建／評估／常駐程序的結果照印 Cmd 的行。
@@ -74,7 +73,7 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
         string aData = m_Model.AgentCommandsRoot.Value;
         oError = null;
         if (string.IsNullOrEmpty(aData) || !Directory.Exists(aData)) { oError = $"找不到 AgentCommands 資料根（{aData}）—— 到「路徑管理」頁設定"; return null; }
-        // TASK-0390：知識庫跟著 Senate ⇒ 不再要 Unity 專案根
+        // TASK-0390：知識庫只要資料根
         return new Dictionary<string, string> { ["data_root"] = aData };
     }
 
@@ -230,7 +229,7 @@ public sealed class KnowledgeBasePage : SCP_GuiToolPage
             Start("status", "量狀態", new Dictionary<string, string>(aBase) { ["op"] = "status", ["format"] = "json" });
 
         g.Title("知識庫");
-        g.Note("語意檢索的索引管理。本頁走 `senate cmd kb`（同一套實作）；索引在 <資料根>/_kb/<target>/，target 清單讀 UCL_Core 的 kb_targets.json。");
+        g.Note("語意檢索的索引管理。本頁走 `senate cmd kb`（同一套實作）；索引在 <資料根>/_kb/<target>/，target 清單讀 `SenateData/config/kb_targets.json`（描述表 KbTargetsFile）。");
         if (aBaseErr != null) { g.Note("[注意] " + aBaseErr); return; }
         if (Busy) g.Note($"執行中：{m_JobLabel}（第一次要拉起常駐嵌入程序，冷啟動約 1 分多鐘；完成後自動更新）");
         if (m_Message != null) g.Note(m_Message);

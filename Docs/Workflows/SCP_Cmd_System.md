@@ -1,5 +1,5 @@
 ---
-title: SCP_CMD（`senate cmd`）—— 不依賴 Unity 的指令系統
+title: SCP_CMD（`senate cmd`）—— SCP_Core 的指令系統
 description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生；Unity 專案走官方 Unity CLI
 last_updated: 2026-10-06
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
@@ -7,35 +7,29 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 # 🧩 SCP_CMD（`senate cmd`）
 
-> 一句話：**UCL_Core AgentCommand 的概念，拿掉 queue、拿掉 Unity。**
+> 一句話：**指令目錄 ＋ 直接派遣，`Native` 沒有 queue。**
 > CLI 直接呼叫 C#，同一個 process 同步跑完回來。
 
 ---
 
-## 跟 Unity 的分工
+## Unity 專案不走這裡
 
-| | `senate cmd`（本文） | Unity 專案 |
-|---|---|---|
-| 怎麼跑 | **直接呼叫 C#**，同步回傳 | 官方 Unity CLI（`unity command …`）問正在跑的 Editor |
-| 需要 Unity Editor | **否** | 是 |
-| 文件 | 本文 | [`Unity_CLI`](Unity_CLI.md) |
+操作 Unity 專案（重編、讀編譯錯誤、跑 C#）一律用官方 Unity CLI → [`Unity_CLI`](Unity_CLI.md)。
+⛔ `senate ucmd` 已廢棄，不要再用。
 
-⛔ `senate ucmd`（把 AgentCommand 派給 Editor 的佇列）已廢棄，不要再用。
+## `Native` 為什麼沒有 queue
 
-## 為什麼沒有 queue（⚠ 2026-09-02 起只對 `Native` 成立）
-
-> ⚠ **前提已變**（Senate D20 / TASK-0103）：`⤷Server` 那一類 Cmd 的呼叫端與執行端**又是兩個 process** ——
-> CLI 是呼叫端、`senate server` 是執行端，中間走的正是下面說「不需要」的那套 queue／trigger／result 檔協議
-> （根是 Senate 自己的 `SenateData/runtime/server/`）。本節保留原文不改寫：它對 `Native` 仍然成立，
-> 而且它列出的那些坑（`.running` 殘留、「消失＝結束」）正是 Server 執行器要照 Editor 的修法重做一次的清單。
-> ⚠ 協議的路徑樣板、queue entry 欄位、trigger 內容、result 檔判定由 client（`AgentCmdClient.cs`）與 Server（`ServerExecutor.cs`）共用，
-> 路徑常數一律走 `SCP_DataPaths`／`AgentCmdClient`。**改樣板兩端一起改** —— 落後那端的症狀是 trigger 寫在對方沒在看的地方，靜默 pending 到 timeout。
-
-queue 的存在理由是「呼叫端與執行端是兩個 process」。CLI 直接串到 C# 之後那個前提消失了，
+queue 的存在理由是「呼叫端與執行端是兩個 process」。`Native` 由 CLI 直接串到 C#，那個前提不存在，
 於是連帶不存在的還有：trigger 檔、Watcher 輪詢、`.running` 殘留、
-以及**「從 queue 消失代表結束」那套推論**（那套推論在 UCL 端出過事：失敗的 OneShot 也會出隊）。
+以及**「從 queue 消失代表結束」那套推論**（失敗的 OneShot 也會出隊）。
 
 ⇒ 回傳值就是回傳值。沒有第二個地方需要對帳。
+
+`⤷Server` 那一類（D20 / TASK-0103）呼叫端與執行端**是兩個 process** ——
+CLI 是呼叫端、`senate server` 是執行端，中間走 queue／trigger／result 檔協議
+（根是 `SenateData/runtime/server/`）⇒ 上面那幾個坑（`.running` 殘留、「消失＝結束」）在 Server 執行器上都要處理。
+⚠ 協議的路徑樣板、queue entry 欄位、trigger 內容、result 檔判定由 client（`AgentCmdClient.cs`）與 Server（`ServerExecutor.cs`）共用，
+路徑常數一律走 `SCP_DataPaths`／`AgentCmdClient`。**改樣板兩端一起改** —— 落後那端的症狀是 trigger 寫在對方沒在看的地方，靜默 pending 到 timeout。
 
 ## 怎麼用
 
@@ -73,7 +67,7 @@ senate cmd wake-brief --arg persona=Template --arg wake=4 --arg out_dir=D:/tmp/b
 
 ## ⭐ 沒宣告的參數名一律擋下
 
-這是本系統相對 UCL 端刻意多做的一格。UCL 那邊 BUG-14／BUG-15 是同一天開的兩張單：
+這一格擋的是 BUG-14／BUG-15 —— 同一天開的兩張單：
 
 - **BUG-14**：沒宣告規格時 `value` 打錯名（`val=`）⇒ **靜默取空字串** ⇒ 欄位被清空。
 - **BUG-15**：把它放進「必填」之後，**合法的空值進不來**（清空欄位本來就是 `value=`）。

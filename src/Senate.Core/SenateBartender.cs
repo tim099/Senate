@@ -6,7 +6,6 @@
 // ⚠ **只回酒保上線之後收到的訊息**（Tim 2026-10-05）：上線＝酒館 Server 跑起來、或開關從關打開的那一刻 ⇒ 游標設在當時最新一則；
 //   停機期間的訊息不補、⇒ 游標**不存檔**（只活在 Server 的記憶體裡）。
 //   上線期間回覆寫不進去 ⇒ 游標停在那一則前面、稍後重試（⛔ 不漏）。
-// ⚠ 設定檔與 Unity 的 `llm_settings.json` **分開**：Unity 那份的 mention_enabled 是 Unity daemon 在讀，共用的話兩邊會一起開關。
 // ⚠ 酒保的發文身分 `sender_id=tavern-keeper` 被一排讀取端當判準（薪資排除、catchup、早安隱藏…）⇒ ⛔ 不改名。
 #nullable enable
 using System.Globalization;
@@ -23,9 +22,8 @@ public sealed record BartenderSettings(
     string PersonaPrompt, IReadOnlyList<string> CannedReplies, int CooldownSeconds, int DailyCap)
 {
     /// <summary>
-    /// 初始值。⚠ **預設關**：Unity 的 daemon 停掉訊息掃描之前兩邊都開會回兩次（驗收②）；開關在後台「酒保」頁。
-    /// 模型、人設、冷卻、上限沿用 Unity 現行的 llm_settings.json（2026-08-21）；生成上限與逾時放寬 ——
-    /// Unity 版 120 token 讓 thinking 模型幾乎每次都被截斷、退成罐頭句（seq 21396 就是 canned）。
+    /// 初始值。⚠ **預設關**；開關在後台「酒保」頁。
+    /// 生成上限與逾時放寬 —— 120 token 會讓 thinking 模型幾乎每次都被截斷、退成罐頭句（seq 21396 就是 canned）。
     /// </summary>
     public static readonly BartenderSettings Defaults = new(
         false, "酒保", "qwen3:0.6b", true, 4096, 120, 120, "あなたはツンデレな猫耳メイドです",

@@ -112,7 +112,7 @@ SCP_Core 共用碼的自我對拍。⚠ 這張表**只挑幾項舉例**，真正
 | 頁面堆疊／摺疊 | 只畫最上頁、生命週期順序、同實例 push 擋下、收合時子節點不存在 |
 | 下拉選單 | 收合不建子節點／關鍵字（非 regex）比對／分頁夾取／選取有寫回 |
 | 頁面目錄 | opt-in（`MenuGroup`）／分組篩選／壞頁記一筆不擋清單／重複 key 丟例外 |
-| 讀真檔 | 拿 **Unity 端寫出來的** `commands_schema.json` 讀 → 寫 → 再讀，兩棵樹等價 |
+| 讀真檔 | 拿資料根上**真的** `commands_schema.json` 讀 → 寫 → 再讀，兩棵樹等價 |
 
 ⚠ 找不到樣本檔時回報「**跳過**」而非通過（沒測與測過而且對，不得同形）。
 
@@ -201,7 +201,7 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 #### 安全設計（三格，都是為了同一件事）
 
 1. **`sync` 不給預設對象** —— 必須 `--root`。
-   🩸 UCL 那邊的血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
+   🩸 血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
    回報一整排 ✓，而 B 的 submodule 一個位元組都沒動 —— **綠燈全亮，量到的是別的 repo。**
    ⇒ 會寫東西的指令不猜對象；唯讀的 `status` 才給預設（猜錯也不會壞東西）。
 2. **`--push` 另外要 `--yes`** —— 互動式確認在這裡做不到（stdin 是 null device），
@@ -280,7 +280,7 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 ### `cmd` —— SCP_CMD
 
-SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor 沒開照樣跑。
+SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**。
 機制、怎麼寫一支新 Cmd 在
 [`SCP_Cmd_System`](../Workflows/SCP_Cmd_System.md) —— 本節只列旗標與 exit code。
 
@@ -369,7 +369,7 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor
 
 #### 動錢對帳：`bank-reconcile`（2026-09-28，TASK-0245）
 
-「**事件存在 ∧ 帳上沒有**」的事實差集，涵蓋帳上**每一種** kind。**原生、不需要 Editor。**
+「**事件存在 ∧ 帳上沒有**」的事實差集，涵蓋帳上**每一種** kind。**本地跑**（不經 Server）。
 
 ```bash
 senate cmd bank-reconcile [--arg days=7 | --arg from=2026-09-18 --arg to=…]
@@ -413,7 +413,7 @@ senate cmd bank-reconcile --arg op=daily                   # 今天沒跑過才�
 #### 錯誤報告（TASK-0104）
 
 Cmd 失敗時 CLI 印三行固定形狀：**哪一格不成立**（Cmd 自己的 Fail 訊息）／`📄 錯誤報告：<路徑>`／`🔢 exit_code = n`。
-報告形狀沿 Editor 的 `_cmd_errors/<id>.md`：cmd 名、exit code、時間（local＋UTC）、**執行位置**（local／server pid）、
+報告 `_cmd_errors/<id>.md` 的內容：cmd 名、exit code、時間（local＋UTC）、**執行位置**（local／server pid）、
 build id、client、例外型別與訊息、Cmd 說了什麼、Args 全列（單一值超過 20 行截斷並標原長）、stack trace。
 
 | exit | 寫不寫 | 落點 |
@@ -454,11 +454,11 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 
 ### `server start` / `server stop` / `server status`
 
-常駐 Server 的生命週期（TASK-0102）。它是 TASK-0100「單一寫入端」那條線的容器：酒館 seq／銀行 ledger
-之後搬進 Senate 的前提是**只有一顆 process 在寫**。⚠ 目前只跳心跳，**還不執行任何 Cmd**（執行器是 TASK-0103）。
+常駐 Server 的生命週期（TASK-0102）。它是「單一寫入端」的容器：酒館 seq、銀行 ledger、任務單都由它寫，
+前提是**只有一顆 process 在寫**。執行器見下方「執行器（TASK-0103）」。
 
-Tim 2026-09-02 拍板三格：**前景**（掛在終端機，Ctrl+C 停，log 就在眼前）、**永駐**（不 idle 自退）、
-**手動啟動**（CLI 不自動 spawn；委派 Cmd 撞到沒 Server 只印怎麼啟動）。
+`start` 是**前景**（掛在終端機，Ctrl+C 停，log 就在眼前）、**永駐**（不 idle 自退）；
+啟動 senate.exe 時會自動拉起（見下方 TASK-0329）。
 
 | 子指令 | 做什麼 | exit |
 |---|---|---|
@@ -483,7 +483,7 @@ Tim 2026-09-02 拍板三格：**前景**（掛在終端機，Ctrl+C 停，log �
 
 **執行器（TASK-0103）**：Server 是 Senate **自己那棵資料根**（`SenateData/runtime/server/`）的 Watcher，
 版面跟 AgentCommands 一樣（`queues/<lane>/queue.json`＋`pending.trigger`、`_cmd_results/<id>.json`），
-client 半邊直接重用 `AgentCmdClient`。**同 lane 串行、跨 lane 並行**（照 Editor Runner）；OneShot 成功與失敗都出隊，
+client 半邊直接重用 `AgentCmdClient`。**同 lane 串行、跨 lane 並行**；OneShot 成功與失敗都出隊，
 verdict 在 result 檔。啟動時把上一顆留下的 `.running` 翻回 pending 續跑（孤兒鎖自救）。
 ⚠ 它**只接 `⤷Server` 的 Cmd**（`ServerDelegateCmd`）；別的型別送進來會 Failed 並說「直接 `senate cmd` 跑」。
 探針：`senate cmd server-ping --arg echo=hi`（回 Server 的 pid／build／thread）。

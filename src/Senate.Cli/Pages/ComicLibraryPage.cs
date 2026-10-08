@@ -1,12 +1,11 @@
 // 區塊職責：**漫畫庫頁**（TASK-0402）—— 外部漫畫庫的作品清單、卷話明細，以及把未建檔的作品初始化成 Library media。
-// 物理意義：Unity `UCL_LibraryManagePage` 漫畫區的對應。資料全部來自 `SCP_LibraryComics.ScanExternalComics`
+// 物理意義：資料全部來自 `SCP_LibraryComics.ScanExternalComics`
 //           （與 `senate cmd library op=comics` 同一支）；漫畫庫根走 `SenateModel.ComicRoot`（`SCP_PathId.ComicRoot`，
 //           與指令同一個解析入口）。⛔ 本頁**不存路徑**：路徑設定只住路徑管理頁（TASK-0400 的設定格），這裡只讀、只導過去。
 // 數值影響：掃描結果在開頁／按「重新掃描」時載一次，⛔ 不每幀掃碟。唯一的寫入是「初始化 Library media」
 //           （`SCP_LibraryInit.MediaInit`，與 `op=media_init` 同一支），而且**先預覽、確認才寫**。
 // 🩸 守衛：
 //   ① 初始化的 persona 要**明確選**（工具列），⛔ 不代取；期待度固定 3（中性 —— 工具不替本人表態）。
-//      （Unity 版寫死 persona＝apex-one、期待度＝5，兩個值都是替人表態，這裡刻意不沿用。）
 //   ② 顯式 key 一律帶 `comics/` 前綴；掃描／根的錯誤要**照實說**（連同「舊快照有值」那句提示），⛔ 不畫成空清單。
 //   ③ 「未建檔」「來源失聯」「已同步」三態處置不同，狀態要寫在每一列上。
 // @doc-sync: <SCP_Core>/Docs~/Library.md（頁面段）

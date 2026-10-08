@@ -1,8 +1,8 @@
 // 區塊職責：**Discord Gateway 連線**（TASK-0316 ④）—— 讓 Bot 在 Discord 上**顯示上線**，狀態欄列出**現在在線的 persona**，
 //           並在接了的頻道有新訊息時叫 Inbound 立刻輪那個頻道。
 // 物理意義：
-//   · 上線綠點是 Gateway 專屬功能：REST 再勤，Bot 在 Discord 上永遠是離線（Unity 版同一條，2026-07-28）。
-//   · Tim 2026-09-28：「Inbound 開啟時復刻之前 Unity 端功能 —— Bot 顯示上線，同時資訊欄顯示當前上線的所有 persona」。
+//   · 上線綠點是 Gateway 專屬功能：REST 再勤，Bot 在 Discord 上永遠是離線。
+//   · Inbound 開啟時 Bot 顯示上線，同時資訊欄顯示當前上線的所有 persona（Tim 2026-09-28）。
 //     ⇒ 生命週期跟 Inbound 開關連動：開 ⇒ 連、關 ⇒ **主動斷**（不斷的話 Discord 要等心跳逾時才標離線，綠點會殘留幾十秒）。
 //   · 在線名單：信件夾每個 persona 的 lock（`SCP_PersonaLetters.ReadPersonaLock`，⛔ 不另立規則）。
 //     讀不到或沒人 ⇒ 顯示橋名 `ChatTavern ⇄ Discord`（⛔ 不顯示「無人在線」—— 讀不到不等於沒人）。
@@ -208,7 +208,7 @@ public static class SenateDiscordGateway
         p.Set("since", iUpdate ? SCP_JsonData.NewNull() : (SCP_JsonData)0);
         var a = SCP_JsonData.NewObject();
         a.Set("name", iText);
-        a.Set("type", 3);   // Watching —— 「正在觀看 gura, basecamp」（同 Unity 版）
+        a.Set("type", 3);   // Watching —— 「正在觀看 gura, basecamp」
         var arr = SCP_JsonData.NewArray(); arr.Add(a);
         p.Set("activities", arr);
         return SCP_JsonWriter.Write(p);

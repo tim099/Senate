@@ -1,10 +1,10 @@
 // 區塊職責：**書籍編輯頁**（TASK-0403）—— 編輯全文書 `Books/<slug>/NNN.txt` 的章節、新增章節。
-// 物理意義：Unity `UCL_BookEditPage` 的對應。不列進入口選單（`MenuGroup => null`），由「書店」頁的「編輯書籍」帶 slug 進來。
+// 物理意義：不列進入口選單（`MenuGroup => null`），由「書店」頁的「編輯書籍」帶 slug 進來。
 // 數值影響：唯一的寫入是章節 `.txt`（存檔／新增空章）。
 // 🩸 守衛：
 //   ① **行尾保留原檔的**：IMGUI／ImGui 的多行輸入只產生 `\n`；原檔是 CRLF 的話存回要還原，
 //      否則「內容一樣、逐位元組不同」會讓整章在 git 裡翻紅，而沒有任何一層會喊（同 SCP_Core 規範 §8）。
-//   ② **不覆寫既有章**（新增章撞名 ⇒ 拒絕並說出來）；**有未存改動時不准換章**（Unity 版只印 warning 然後吞掉改動）。
+//   ② **不覆寫既有章**（新增章撞名 ⇒ 拒絕並說出來）；**有未存改動時不准換章**（⛔ 不准只印 warning 然後吞掉改動）。
 //   ③ TextArea 的值會被同 id 的輸入覆寫 ⇒ id 含 slug＋章名；「還原」用 `SetField` 把輸入欄位寫回原文。
 //   ④ slug 只能是 `Books/` 底下的一層資料夾名（擋 `..`／路徑分隔符），⛔ 不讓頁面被帶去編輯別處的檔。
 #nullable enable
@@ -117,7 +117,7 @@ public sealed class BookEditPage : SCP_GuiToolPage
 
         if (aPick != m_Selected)
         {
-            // ② 有未存改動就不准換章 —— Unity 版只印 warning，然後那份改動就沒了
+            // ② 有未存改動就不准換章 —— 只印 warning 的話，那份改動就沒了
             if (aDirty)
             {
                 m_Status = $"⚠ 《{m_Selected}》有未存的改動：先存檔或還原再換章（已留在原章）";

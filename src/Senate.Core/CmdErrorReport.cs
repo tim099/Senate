@@ -1,7 +1,6 @@
-// 區塊職責：**SCP 原生 Cmd 的錯誤報告落檔** —— 形狀沿 Editor 端的 `_cmd_errors/<id>.md`（TASK-0104，Tim ⑥）。
+// 區塊職責：**SCP 原生 Cmd 的錯誤報告落檔** —— `_cmd_errors/<id>.md`（TASK-0104，Tim ⑥）。
 // 物理意義：CLI 只印得下幾行，而 stack／全部 Args／執行位置定語是查錯時真正要看的東西。
-//           Editor 端早就有這份檔（本 root 360 份），SCP 原生 Cmd 之前**零報告** —— 失敗只剩 stderr 幾行，
-//           agent 讀完 chat 就沒有第二個地方可以回頭看。
+//           沒有這份檔，失敗只剩 stderr 幾行 —— agent 讀完 chat 就沒有第二個地方可以回頭看。
 //           ⇒ 一份檔、CLI 三行指向它：哪一格不成立／📄 錯誤報告：<路徑>／🔢 exit_code。
 // 數值影響：只在 <see cref="ShouldReport"/> 為真時寫；exit 2（用法錯）刻意不寫 ——
 //           打錯字配一份 stack 只會訓練人忽略這個目錄。落點由呼叫端傳根（不推導）：

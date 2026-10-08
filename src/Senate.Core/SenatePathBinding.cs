@@ -24,7 +24,7 @@ public static class SenatePathBinding
                 return HostRepoRoot.Length == 0
                     ? SCP_PathStoredValue.Unavailable("宿主沒有宣告 Senate 專案根（SenatePathBinding.HostRepoRoot 沒設）")
                     : SCP_PathStoredValue.Of(HostRepoRoot);
-            // 資料根／詞典根／漫畫庫根：全域 `paths` 區塊（TASK-0390）—— ⛔ 不再住在 Unity 專案上，沒有專案也解得出來。
+            // 資料根／詞典根／漫畫庫根：全域 `paths` 區塊（TASK-0390）。
             case SCP_PathId.AgentCommandsRoot:
                 return SCP_PathStoredValue.Of(iConfig.Paths.AgentCommandsRoot ?? "");
             case SCP_PathId.LettersRoot:

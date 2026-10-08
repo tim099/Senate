@@ -55,7 +55,7 @@ public static partial class SelfTest
                 if (!aDoc.RootElement.TryGetProperty("paths", out _)) aFails.Add("存回去後應有 paths 區塊");
             }
 
-            // 🔴 反向：舊的 "auto" 是「從 Unity 專案推」—— 不搬（新架構沒有那條路），留空讓人明說
+            // 🔴 反向：舊設定的 "auto"（從專案推資料根）不搬 —— 現在沒有那條路，留空讓人明說
             File.WriteAllText(aLegacyPath, "{\"schemaVersion\":1,\"projects\":[{\"name\":\"Bar\",\"root\":\"D:/x/Bar\",\"agentCommandsRoot\":\"auto\",\"enabled\":true}]}");
             SenateConfig aAuto = SenateConfig.Load(aLegacyPath)!;
             if (aAuto.Paths.AgentCommandsRoot.Length != 0) aFails.Add($"舊的 auto 不該被搬成資料根（得 {aAuto.Paths.AgentCommandsRoot}）");

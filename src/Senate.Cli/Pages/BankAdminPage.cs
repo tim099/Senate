@@ -1,5 +1,5 @@
 ﻿// 區塊職責：**新銀行後台頁** —— 查帳戶／查餘額／開戶／入帳／扣款。
-// 物理意義：TASK-0223。形狀參考 Unity 那側的 `UCL_BankAdminPage`，但**只做基礎功能**
+// 物理意義：TASK-0223。**只做基礎功能**
 //           （⛔ 孤兒歸戶／跨 bank 轉帳／繪圖券／酒館券都不在這裡，Tim 2026-09-16 拍板）。
 //           帳號來源是**跟舊系統共用的那一份綁定** `letters/<persona>/bank/<region>.md`，
 //           ⛔ 本頁不另建綁定表 —— 第二份綁定表可以跟第一份說不一樣的話，而兩邊都不報錯。
@@ -72,7 +72,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
 
     // ===========================================================
     // 區塊職責：**釘在最上面的那兩格選單**（Tim 2026-09-17：「Persona 選單也是 override TopBarButtons
-    //          後放在最上方」）—— 對應 Unity `UCL_BankAdminPage.TopBarButtons` 的 persona 下拉。
+    //          後放在最上方」）。
     // 物理意義：工具列住在 `TopBar()` 裡 ⇒ **不跟內容一起捲**。
     //          🩸 這一頁很長（帳戶表 22 列＋審批區）⇒ 沒釘住的話，
     //            「我現在在對誰動錢」這個讀數會在你捲下去按鈕的那一刻離開畫面。
@@ -94,7 +94,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
         if (aPickP != aSelP && aPickP.Length > 0)
         {
             iUi.SetField(PersonaId, aPickP);
-            // 選 persona → 帳戶跟著同步（同 Unity 那頁的手勢）。⚠ 二段確認要清掉：
+            // 選 persona → 帳戶跟著同步。⚠ 二段確認要清掉：
             //   換了人還留著上一個人的「待確認」，下一次按下去動的是**新選到的那一戶**。
             iUi.SetField(AccountId, AccountOfPersona(aPickP));
             iUi.SetField(PendingId, "");
@@ -156,7 +156,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     //   🩸 舊版的症狀：漏按一個區，跟「那一區沒有人」在畫面上完全同形。
 
     // ===========================================================
-    // 區塊職責：上方那兩格選單的**選取值**（形狀取自 Unity 的 `UCL_BankAdminPage`：persona 下拉 ＋ 帳戶下拉）。
+    // 區塊職責：上方那兩格選單的**選取值**（persona 下拉 ＋ 帳戶下拉）。
     // 物理意義：選 persona ⇒ 帳戶跟著同步到他在本區 resolve 到的那一個；⇒ 底下每個動作都吃這兩格。
     // ⚠ 兩格都有**明確的空值**：沒有選到時回空字串，而動作那側會擋下來並說「先選一個」——
     //   ⛔ 不要在沒選的時候偷偷用第一列：那會讓「我沒選」與「我選了第一個」同形，而它們動的是不同人的錢。
@@ -380,9 +380,9 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     }
 
     // ===========================================================
-    // 區塊職責：上方的 **Persona 選單 ＋ 帳戶（Agent）選單**，形狀取自 Unity 的 `UCL_BankAdminPage`
+    // 區塊職責：上方的 **Persona 選單 ＋ 帳戶（Agent）選單**
     //          （Tim 2026-09-17：「其他操作都是根據選取的 Persona & Bank 操作」）。
-    // 物理意義：選 persona ⇒ 帳戶**自動同步**到他在本區 resolve 到的那一個（同 Unity 那頁的手勢）。
+    // 物理意義：選 persona ⇒ 帳戶**自動同步**到他在本區 resolve 到的那一個。
     // ⚠ 下拉走 `SCP_GuiWidgets.Dropdown`（可搜尋＋分頁；Tim 指路 `SCP_GuiHomePage` 那頁的用法）。
     //   🩸 我第一版寫成「一排選鈕」，理由是我斷定「`SCP_Ui` 沒有下拉」——
     //     而那個結論來自**只 grep 了 `SCP_Ui.cs` 一個檔**，下拉其實是 `SCP_GuiWidgets.cs` 的擴充方法。
@@ -447,8 +447,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             }
             else
             {
-                // ⚠ 收合時**仍然要看得出「這裡有沒有事」**（形狀取自 Unity `UCL_BankAdminPage`
-                //   的 FoldHeader：標題列即使收合也帶摘要）——
+                // ⚠ 收合時**仍然要看得出「這裡有沒有事」**（標題列即使收合也帶摘要）——
                 //   否則使用者得先展開才知道要不要展開。
                 int aNoAcct = 0;
                 for (int i = 0; i < m_Rows.Count; ++i) if (FindAcct(m_Rows[i].AccountId) == null) ++aNoAcct;
@@ -526,7 +525,6 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     }
 
     // ── 帳號操作：開戶 / 打款 / 轉帳（三格**各自摺疊**）────────────
-    // 形狀取自 Unity 的 `UCL_BankAdminPage.DrawTokenOpsPanel`（Tim 2026-09-17）。
     // ⚠ 為什麼三格各自一個 Fold 而不是一個大 Fold 包三段：三件事的**危險程度不一樣**
     //   （開戶不動錢／打款單向動一戶／轉帳同時動兩戶），而摺疊是使用者對「我現在要做哪一件」
     //   的宣告 —— 合成一格就等於每次打開都把另外兩件的按鈕也擺到手邊。
@@ -553,7 +551,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
             string aId = g.TextField("帳號 id（寫入端會正規化成小寫）", g.FieldValue("bank/f/openid", ""), "bank/f/openid");
             string aName = g.TextField("顯示名（可以有大小寫與空白，⛔ 不當 id）",
                                        g.FieldValue("bank/f/name", ""), "bank/f/name");
-            // ⭐ 種子額度（Tim 2026-09-18，形狀取自 Unity 那頁的「種子」欄）。
+            // ⭐ 種子額度（Tim 2026-09-18）。
             // ⚠ **帶了它，開戶就不再是「不動錢」的操作** —— 所以它有自己的二段確認，
             //   而帳號那格的自由輸入只在**種子 ＝ 0** 時才是無害的。
             // 🩸 種子是**憑空增發**（`system_init`），⛔ 不是從央行撥 ——
@@ -841,7 +839,7 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     string? m_RegionWhy;
 
     // ===========================================================
-    // 區塊職責：🎟 **券** —— 查／發（TASK-0243）。形狀取自 Unity `UCL_BankAdminPage` 的券區塊。
+    // 區塊職責：🎟 **券** —— 查／發（TASK-0243）。
     // 物理意義：券**不是錢**：不同資源、不同帳、不同 Cmd（`voucher` ⛔ 不是 `bank`）。
     //          放在本頁是因為兩者都是「這個人有多少可用資源」，⛔ 而它們的數字**不可以相加**。
     // 🩸 券綁 **persona** 不綁帳戶 ⇒ 本格只吃上面那格 persona 下拉。
@@ -1026,15 +1024,10 @@ public sealed class BankAdminPage : SCP_GuiToolPage
 
     // ===========================================================
     // 區塊職責：🔗 **換綁** —— 這個 persona 在**本區**的錢進哪一戶。
-    // 物理意義：Tim 2026-09-18：「原本在 `UCL_PersonaAgentAdminPage` 的換綁功能整合進來，
-    //          因為這屬於銀行帳戶操作」⇒ 本格改的是 `letters/<p>/bank/<本區>.md`。
-    // ⚠ **`agent` 欄與銀行帳戶早就合一了**（Tim 2026-08-20 拍板；2026-09-18 我量過才確認）：
+    // 物理意義：換綁屬於銀行帳戶操作（Tim 2026-09-18）⇒ 本格改的是 `letters/<p>/bank/<本區>.md`。
+    // ⚠ **`agent` 欄與銀行帳戶是同一件事**（Tim 2026-08-20 拍板）：
     //   `profile/` 底下**沒有** `agent.md` —— 那一欄是 `SCP_PersonaProfile.BuildRaw` 拿
     //   `GetBankAccount()` **推導**出來的 ⇒ 一個來源（`bank/<區>.md`）、兩個名字。
-    // 🩸 所以 UCL 那一頁（`UCL_PersonaAgentAdminPage`）的換綁**今天已經寫不進去**：
-    //   它呼叫 `UCL_PersonaProfile.SetField(persona,"agent",…)`，而那支對 `agent` 是 fail-loud
-    //   （「不由本入口寫 —— 走 `Cmd_PersonaProfile op=set_bank`」）。
-    //   ⇒ 本格不是「把另一個受詞搬過來」，是**把唯一還有效的那條路放到它該在的地方**。
     // 📌 我第一版把這兩者寫成「不同的東西」—— 那是**從檔案位置推的，沒有量**。
     //   Tim 一句「agent 欄應該已經跟銀行帳戶合併了？」才讓我去讀 `BuildRaw`。
     //   ⇒ 形狀記著：**同一件事有兩個名字時，它看起來就像兩件事。**
@@ -1103,16 +1096,15 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     }
 
     // ===========================================================
-    // 區塊職責：📨 **請款審批** ＋ 💸 **轉帳審批**（把 Unity 端那兩格搬過來）。
+    // 區塊職責：📨 **請款審批** ＋ 💸 **轉帳審批**。
     // 物理意義：兩者**同形狀、不同語意**：請款是**央行撥款**（消耗公庫），
     //          轉帳是 A→B（**總量守恆**）。⛔ 合成一格的話，「錢從哪來」這一欄會消失。
     // 🩸 **三本帳分開結算**：單據（這裡）／錢（`cmd bank`，Server）／結果（回讀餘額）。
     //   ⇒ 順序寫死：**先動錢、成功了才寫裁決欄**。
     //   反過來的話，中途失敗留下的是「單子寫著 approved、而錢沒撥」——
     //   ⚠ 而那張單**不會再出現在待審清單裡**，所以沒有人會回來看它。
-    // ⚠ 這兩個資料夾**有第二個寫入端**（Unity 端那一頁也能批）。今天靠的是
-    //   「同時只有一個人在批」這個營運前提，⛔ 不是機械 ——
-    //   所以 `SCP_TreasuryRequests.Decide` 每次都先回讀狀態，不是 pending 就拒絕。
+    // ⚠ 兩個人同時批同一張單，靠的是 `SCP_TreasuryRequests.Decide` 每次都先回讀狀態，
+    //   不是 pending 就拒絕。
     // ===========================================================
     void DrawApprovalPanel(SCP_Ui g)
     {
@@ -1256,16 +1248,13 @@ public sealed class BankAdminPage : SCP_GuiToolPage
     }
 
     // ===========================================================
-    // 區塊職責：🏦 **央行 / 政策參數** —— 從 Unity 那頁遷過來（Tim 2026-09-18：UCL 那邊要廢棄）。
-    // 物理意義：這幾個數字原本寫死在 `UCL_BartenderDaemon` 的 const 裡 ——
-    //          它們是**經濟政策參數不是實作細節**，決定權該在後台。
+    // 區塊職責：🏦 **央行 / 政策參數**。
+    // 物理意義：這幾個數字是**經濟政策參數不是實作細節**，決定權該在後台。
     //          改完**立刻生效**（收保管費那支每輪重讀），不必重編、不必重啟。
     // ⚠ **刻意沒有「立刻結算一次」** —— 保管費是每日一次的跨日事件，
     //   手動觸發會讓人以為扣了兩次而去查一個不存在的 bug。
     // 🩸 **央行帳戶與費率分開**：前者決定**錢從哪來**（換掉它，所有撥款換一個來源）⇒ 二段確認；
     //   後者只改數字 ⇒ 不必。⛔ 兩者合成一顆「儲存」鈕的話，改費率的人會順手改掉錢的來源。
-    // ⚠ 過渡期：Unity 那頁**還在，而且也寫得動同一個檔** ⇒ 改參數**只從這一邊改**，
-    //   否則「誰是權威」在畫面上看不出來（退場排在 TASK-0242）。
     // ===========================================================
     void DrawPolicyPanel(SCP_Ui g)
     {

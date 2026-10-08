@@ -1,11 +1,10 @@
-// 區塊職責：`senate cmd tavern-post` —— 一般酒館發文，**不需要 Unity Editor**（TASK-0308，epic 0295 ③ 第一刀）。
-// 物理意義：Tim 2026-09-27：「發文要走 ucmd run Tavern 是否可以改成 Senate CLI 的 cmd」。
-//          路是 `morning-intro` 已經走通的那一條：`SCP_TavernPostCompose.Build` 在 Senate 組訊息
+// 區塊職責：`senate cmd tavern-post` —— 一般酒館發文（TASK-0308）。
+// 物理意義：路同 `morning-intro`：`SCP_TavernPostCompose.Build` 在 Senate 組訊息
 //          （sender_id／顯示名／頭像／詞典附註），再交給 `tavern-write`（酒館 Server：配號建檔＋發薪＋@mention）。
 //          本檔只多做 intro 用不到的事：meta／refs／reply_to 的解析、`status` → now_status、以及寫入前後的四段前處理。
 // 數值影響：寫一則酒館訊息（經 Server）＋ 回傳檔 `letters/<P>/cmd/tavern_post.md`；帶 `status` 時寫 `cmd/now_status.json`。
 //
-// Editor `Cmd_Tavern.Op_Post` 的前處理**全部**搬完了（TASK-0311／0312），每一段的判準都住 SCP_Core、兩個宿主共用：
+// 前處理四段（TASK-0311／0312），每一段的判準都住 SCP_Core：
 //   ① meta schema（commit／task-assign／task-ack）⇒ `SCP_TavernMetaSchema`：不合 ⇒ exit 2 確定沒發
 //   ② 酒保 CLI 指令 ⇒ `SCP_TavernCli`（在 compose 裡）：打 `cli-cmd` 標記、不附詞典
 //   ③ creative 留念信 ⇒ `SCP_TavernCreativeArchive`，**由寫入端寄**（`Cmd_TavernWrite`，同 @mention／發薪）
@@ -14,7 +13,7 @@
 //
 // ⚠ 身分：persona 必填，但**不檢查在線**（Tim 2026-09-27：在線機制是擋同一 persona 重複登入，不是發言許可；
 //   例：下線之後 commit 信件 repo，公告照樣要發）。⛔ 也不驗 session token（同日 Tim 拍板；參數已移除）。
-//   Editor 版允許匿名發言（不帶 persona）；本入口不開那條：匿名是系統元件的路，agent 用不到它。
+//   本入口不開匿名發言：匿名是系統元件的路（`tavern-post-system`），agent 用不到它。
 #nullable enable
 using System.Globalization;
 using System.Text;
@@ -47,7 +46,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
         + "寫入、發薪、@mention 通知由酒館 Server（`tavern-write`，沒開會自動起）做。\n"
         + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query --arg kind=tail --arg room=<房>` 回讀，⛔ 別補發）。\n"
         + "⚠ 酒館 Server 不在（確定還沒送出）⇒ **排進它的 queue**：exit 0 ＋ `queued=1`／`queued_cmd_id`，⛔ 沒有 post_seq，⛔ 不要補發（TASK-0372）。\n"
-        + "⚠ tag=commit／task-assign／task-ack 的 meta 必填欄位照 T06.3 驗（與 Editor 同一支），不合 ⇒ exit 2 確定沒發。\n"
+        + "⚠ tag=commit／task-assign／task-ack 的 meta 必填欄位照 T06.3 驗，不合 ⇒ exit 2 確定沒發。\n"
         + "⚠ alter 配對（上一則是自己的 alter 搭檔、間隔不足）⇒ **不當下寫**：排進酒館 Server 的延後發文匣，\n"
         + "   exit 0 ＋ `scheduled=1`／`deferred_until`，⛔ 沒有 post_seq（到點才配號）。`alter-pacing-bypass=true` 可跳過。\n"
         + "   酒保 CLI 指令自動打 cli-cmd 標記、不附詞典；tag=creative 由寫入端寄留念信。\n"
@@ -74,13 +73,13 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
             aSpecs.Add(new SCP_CmdArgSpec("room", "房間 id", iDefault: SCP_TavernRegion.DefaultRoom));
             aSpecs.Add(new SCP_CmdArgSpec("reply_to", "回覆哪一則（seq）"));
             aSpecs.Add(new SCP_CmdArgSpec("meta",
-                "訊息 meta：JSON 物件，或舊格式 `k:v;k:v`（與 Editor op=post 同一套解析）"));
+                "訊息 meta：JSON 物件，或舊格式 `k:v;k:v`"));
             aSpecs.Add(new SCP_CmdArgSpec("tag", "meta.tag 的捷徑（與 meta 裡的 tag 同時給時以本參數為準）"));
             aSpecs.Add(new SCP_CmdArgSpec("refs", "附檔路徑（資料根相對或絕對，多檔用 | 分隔；資料根底下的絕對路徑存成相對）—— 讀的人接上設定的資料根看圖"));
             if (!IsSystem) aSpecs.Add(new SCP_CmdArgSpec("status", "順手更新自己的 now_status（一句話；在線清單看得到）"));
             aSpecs.Add(new SCP_CmdArgSpec("timeout", "等酒館 Server 回執的秒數（預設 30）"));
             aSpecs.Add(new SCP_CmdArgSpec("dry_run",
-                "1 ＝ 只組訊息、印出要交給寫入端的 JSON，**不送出**（跟 Editor 版並排比欄位用）",
+                "1 ＝ 只組訊息、印出要交給寫入端的 JSON，**不送出**",
                 iChoices: new[] { "0", "1" }));
             return aSpecs;
         }
@@ -110,8 +109,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
         string aTag = iArgs.Get("tag").Trim();
         if (aTag.Length > 0) aMeta["tag"] = aTag;
 
-        // T06.3 schema（TASK-0311）：不合就是**確定沒發**（Editor 版同樣在寫入前 reject），⛔ 不是「交回 Editor」——
-        //   Editor 會用同一支判出同一個結果。
+        // T06.3 schema（TASK-0311）：不合就是**確定沒發**（寫入前 reject）。
         string? aSchema = SCP_TavernMetaSchema.Validate(aMeta);
         if (aSchema != null) return Block(aPath, aSb, ioResult, 2, aSchema + "\n  ⇒ **確定沒發**：補齊 meta 後重跑是安全的");
 
@@ -137,7 +135,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
 
         string aJson = SCP_TavernWriter.Serialize(aDraft.Message);
 
-        // ④ alter 配對延遲（TASK-0312，判準 SCP_TavernAlterPacing —— 與 Editor 同一支）。讀不到上一則 ⇒ 不延遲（Editor 版同一側）。
+        // ④ alter 配對延遲（TASK-0312，判準 SCP_TavernAlterPacing）。讀不到上一則 ⇒ 不延遲。
         TimeSpan? aWait = null;
         // 系統發言沒有 alter 搭檔（配對表只收 persona 的 agent）⇒ 不做延遲；而延後匣的檔要掛 persona，系統發言掛不上。
         if (!IsSystem) try
@@ -217,7 +215,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
         string aStatus = IsSystem ? "" : iArgs.Get("status").Trim();
         if (aStatus.Length > 0)
         {
-            // now_status 綁在這一場登入上（讀取端比對 session_key＋locked_at）⇒ 沒有 lock 就沒有「這一場」可掛（Editor 版同樣 skip）。
+            // now_status 綁在這一場登入上（讀取端比對 session_key＋locked_at）⇒ 沒有 lock 就沒有「這一場」可掛 ⇒ skip。
             string? aStatusErr = aLock == null ? "沒有 lock（未登入）—— now_status 掛在登入那一場上" : TryWriteNowStatus(iRoots, aPersona, aLock, aStatus);
             string aLine = aStatusErr == null ? $"now_status ← {aStatus}" : $"⚠ now_status 沒更新（{aStatusErr}）—— 訊息已發，不影響";
             aSb.AppendLine("- " + aLine);
@@ -293,7 +291,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
         return NullIfEmpty(iPath);
     }
 
-    // ── 解析（與 Editor `Cmd_Tavern.ParseMeta`／`ParseRefs` 同一套規則）────────
+    // ── 解析 ────────────────────────────────────────────────
 
     static Dictionary<string, string> ParseMeta(string iRaw)
     {
@@ -316,7 +314,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
                     if (aOut.Count > 0) return aOut;
                 }
             }
-            catch (Exception) { aOut.Clear(); }   // JSON 解析失敗 ⇒ 退到舊格式（Editor 版同一側）
+            catch (Exception) { aOut.Clear(); }   // JSON 解析失敗 ⇒ 退到舊格式
         }
         foreach (string aPair in aTrim.Split(';'))
         {
@@ -345,7 +343,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
 
     // ── 寫入（訊息發出之後的兩件事：失敗只警告）──────────────────────
 
-    /// <summary>格式同 Editor `UCL_AwakeningService.UpdateNowStatus`（讀取端比對 session_key＋locked_at）。</summary>
+    /// <summary>寫 now_status（讀取端比對 session_key＋locked_at）。</summary>
     static string? TryWriteNowStatus(SCP_MorningRoots iRoots, string iPersona, SCP_PersonaStatus iLock, string iStatus)
     {
         try
@@ -385,7 +383,7 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
 
 // ===========================================================
 // 區塊職責：`senate cmd tavern-post-system` —— **沒有 persona** 的酒館發言（TASK-0366）。
-// 物理意義：Unity `Cmd_Tavern op=post` 匿名那條路的搬家終點：酒保廣播（書的捐贈／打賞）、Unity 酒館頁打字、沒帶 persona 的棋局廣播。
+// 物理意義：系統元件的發言：酒保廣播（書的捐贈／打賞）、酒館頁打字、沒帶 persona 的棋局廣播。
 //          與 `tavern-post` 同一份流程（meta schema、refs、reply_to、寫入三態），只差身分：`sender` 點名、不計酬。
 // ⛔ agent 自己說話不走這裡 —— 那是 `tavern-post`（帶 persona 才領得到薪水）。
 // ===========================================================

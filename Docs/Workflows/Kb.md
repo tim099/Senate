@@ -104,7 +104,7 @@ senate cmd kb --arg op=eval --arg mode=compare    # 三種排序各跑「不衰�
 
 ## 7. 後台「知識庫」頁（TASK-0381）
 
-`senate ui --page kb`（或後台首頁 ▸ 設定 ▸ 知識庫）。Unity 的 `UCL_KnowledgeBaseAdminPage` 已於 2026-10-03 廢棄，功能搬到這裡。
+`senate ui --page kb`（或後台首頁 ▸ 設定 ▸ 知識庫）。
 
 - 頁面**不自己算任何東西**：狀態、重建、檢索、評估、常駐程序的起停全走 `senate cmd kb`（同一套實作）。
   狀態與檢索讀 `format=json`（`status` 的 JSON：`sidecar{running,pid,device,loaded_ms,served}`＋每個 target 的 `state／files／chunks／built_at／detail`；

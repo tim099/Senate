@@ -49,7 +49,7 @@ src/
 共用碼必須是 **Unity 編得過的子集**：
 
 - `SCP_Core.csproj` 釘 `<LangVersion>9.0</LangVersion>` ⇒ 檔案級 namespace、`record`、
-  raw string literal 這些**在 .NET 這側就編不過**，不會等到搬進 Unity 才發現。
+  raw string literal 這些**在 .NET 這側就編不過**，不會等到 Unity 編它時才發現。
   🩸 實測（2026-08-22）：塞一個檔案級 namespace 進去 →
   `error CS8773: Feature 'file-scoped namespace' is not available in C# 9.0`。護欄有咬。
 - `Runtime/SCP_Core.asmdef` 帶 `"noEngineReferences": true` ⇒ **Unity 那側**擋下任何 `UnityEngine` 引用。
@@ -82,8 +82,8 @@ D25 把它升成**整個 repo 的規則**：`src/Senate.Core` / `Senate.Desktop`
 2026-09-14 要把常駐 Server 拆成獨立 exe 時，卡住它們往下搬進 `SCP_Core` 的正是 `System.Text.Json`。
 ⇒ §2.1 自己那句「**搬家時才換等於把移植成本延後並放大**」，應驗在寫它的人身上。
 
-第二個理由跟依賴無關：**同一批磁碟檔同時被 Unity（`SCP_Json`）與 python 讀寫**，
-兩套 writer 的跳脫／數字格式／鍵序不保證同形，而**位元組漂掉不會報錯**。
+第二個理由跟依賴無關：**同一批磁碟檔同時被 SCP_Core（`SCP_Json`）與 python 讀寫**，
+宿主再換一套 writer 的話，跳脫／數字格式／鍵序不保證同形，而**位元組漂掉不會報錯**。
 
 📌 射程、逐檔讀數、以及 `SenateConfig.cs` 那三處 `[JsonExtensionData]` 為什麼**不是機械替換** → 見 [D25](../Logs/Decisions.md)。
 ⚠ 規則已立，**程式碼尚未遷移**（7 檔 ~70 處）。新寫的碼從現在起就照這條。

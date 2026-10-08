@@ -442,7 +442,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     //           篩選：帳號正規化後逐字比、`since_ts` **嚴格大於**（Ordinal）；
     //           順序＝`SCP_BankLedger.EnumerateEntries`（日期夾、檔名 Ordinal）。
     // 數值影響：唯讀。
-    // ⚠ 跟 Unity 那支**刻意不同**的一格：帳號沒開過戶 ⇒ 失敗，⛔ 不回「0 筆」——
+    // ⚠ 帳號沒開過戶 ⇒ 失敗，⛔ 不回「0 筆」——
     //   打錯帳號與「這個帳號沒有交易」在 0 筆上同形（同 `balance` 的判準）。
     // ===========================================================
     static SCP_CmdResult OpEntries(string iRoot, SCP_CmdArgs iArgs)
@@ -484,7 +484,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：`op=closing_list` —— 已結帳日期與**暖啟動基準**（TASK-0331 ②，對應 Unity `closing_list`）。
+    // 區塊職責：`op=closing_list` —— 已結帳日期與**暖啟動基準**（TASK-0331 ②）。
     // ⚠ 「有結帳檔」與「暖啟動用得上」是兩件事 —— 鏈驗不過時後者是 null，⛔ 兩者不可同形。
     // 數值影響：唯讀。
     // ===========================================================
@@ -518,7 +518,7 @@ public sealed class Cmd_Bank : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：`op=closing_generate` —— 手動補結（TASK-0331 ③，對應 Unity `closing_generate`）。
+    // 區塊職責：`op=closing_generate` —— 手動補結（TASK-0331 ③）。
     // 物理意義：救援路徑 —— 平時由 `SenateOvernightJob` 在跨日後自動跑；「一個不可手動觸發的機制既難驗證也難救援」。
     //           ⭐ 與 `SenateOvernightJob` 呼叫**同一支** `SCP_BankClosing.GenerateMissing`，⛔ 不另寫一份。
     //           ⭐ 本 Cmd 跑在 Server 裡 ⇒ 跟每日結算是同一個 process，寫結帳檔的仍只有一個寫入端。

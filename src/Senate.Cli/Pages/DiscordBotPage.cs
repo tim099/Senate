@@ -1,7 +1,7 @@
 // 區塊職責：**Discord Bot 設定頁**（TASK-0319）—— Bot 憑證、Bot 加入的 Server／頻道、Discord 頻道 → 酒館頻道對應、Inbound 白名單。
-// 物理意義：概念取自 Unity `UCL_PlurkAdminPage`（Tim 2026-09-28）：在後台直接貼憑證，⛔ 不再手動編檔。
+// 物理意義：在後台直接貼憑證，⛔ 不手動編檔（Tim 2026-09-28）。
 //           讀寫全走 `SCP_DiscordBot`／`SCP_DiscordInboundConfig`（與 `cmd discord-bot` 同一份）⇒ 本頁只畫與收輸入。
-//           Unity 端 Inbound 已廢棄（Tim 2026-09-28：之後只維護 Senate 版）；Inbound 本身的 Senate 版是 TASK-0316 ④。
+//           Inbound 本身是 TASK-0316 ④。
 // 數值影響：
 //   · 「加密並安裝」：一步寫出 `discord_bot_token.enc` ＋ 本機明文（Tim：不用跑兩遍）。密碼欄遮罩、不落盤、按完清空。
 //   · 「測試連線」「重新整理 Server 清單」會連 Discord ⇒ 丟背景執行緒跑（最多幾十秒，⛔ 不卡畫面）；結果下一幀才出現。
@@ -112,7 +112,6 @@ public sealed class DiscordBotPage : SCP_GuiToolPage
     protected override void DrawContent(SCP_Ui g)
     {
         g.Title("【Discord Bot】");
-        g.Note("Unity 端的 Discord Inbound 已廢棄，之後只維護 Senate 這一套。Inbound 本身搬到 Senate 之前（TASK-0316），Discord 的訊息不會進酒館。");
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot))
         {
             g.Note($"[錯誤] 找不到 AgentCommands 資料根（{m_DataRoot}）—— 到「路徑管理」頁設定");

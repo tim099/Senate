@@ -1,8 +1,6 @@
-// 區塊職責：`senate cmd glossary` —— 新詞辭典的唯一入口（register／lookup／detect／attach／list），**不需要 Unity Editor**。
-// 物理意義：TASK-0313。Tim 2026-09-27「glossary 功能遷移到 Senate CLI」、2026-09-28「詞典根留在 senate.local.json，
-//          Unity 端相關功能也遷到 Senate CLI」「Unity 端應該不用呼叫到 Glossary」。
-//          ⇒ 詞典根只有 Senate 讀（`SCP_PathId.GlossaryRoot`）；邏輯在 SCP_Core `SCP_Glossary`（唯一一份）。
-//          Editor 的 `ucmd run Glossary` 已退場；Editor 發的文由寫入端 `tavern-write` 補附註。
+// 區塊職責：`senate cmd glossary` —— 新詞辭典的唯一入口（register／lookup／detect／attach／list）。
+// 物理意義：TASK-0313。詞典根只有 Senate 讀（`SCP_PathId.GlossaryRoot`，落在 senate.local.json）；
+//          邏輯在 SCP_Core `SCP_Glossary`（唯一一份）。酒館發文的附註由寫入端 `tavern-write` 補。
 // 數值影響：register 寫一個 .md（詞典根底下）；其餘純讀。attach 帶 `out` 時把結果**逐位元組**寫進那個檔
 //          （給要拿回原文的呼叫端 —— ⛔ 不要從 stdout 拼回來：換行與行首縮排在那條路上不保證逐字）。
 #nullable enable
@@ -56,7 +54,7 @@ public sealed class Cmd_Glossary : SCP_Cmd
         if (SenateConfigSource.Provider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（SenateConfigSource.Provider）—— 程式錯誤，不是用法錯");
         (SenateConfig? aConfig, _) = SenateConfigSource.Provider();
-        // 顯示基準＝Senate 專案根（詞典是 Senate 的 submodule，TASK-0390）。🩸 原本要一個啟用的 Unity 專案才肯動。
+        // 顯示基準＝Senate 專案根（詞典是 Senate 的 submodule，TASK-0390）。
         string aProjectRoot = SenatePathBinding.HostRepoRoot;
 
         // 詞典根：唯一真相源是 senate.local.json 那一格。解不出來 ⇒ ⛔ 不猜一個預設（register 會寫錯樹、讀取會安靜地回 0 命中）。
@@ -143,7 +141,7 @@ public sealed class Cmd_Glossary : SCP_Cmd
     {
         string aText = iArgs.Get("text");
         if (aText.Length == 0) return SCP_CmdResult.Fail(2, "✗ attach 缺少 text");
-        // op=attach 是「使用者要看附註長什麼樣」⇒ 已含 marker 也重附（同 Editor 版 forceReattach: true）
+        // op=attach 是「使用者要看附註長什麼樣」⇒ 已含 marker 也重附（iForce: true）
         string aAttached = SCP_Glossary.AppendRefs(aText, iRoot, iPrefix, Cap(iArgs, SCP_Glossary.AutoAttachCap), iForce: true);
         string aOutPath = iArgs.Get("out").Trim();
         var aOut = SCP_CmdResult.Success();

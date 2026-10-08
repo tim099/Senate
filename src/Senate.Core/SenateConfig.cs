@@ -1,5 +1,5 @@
 // 區塊職責：Senate 的本機設定 —— 這台機器上的路徑、介面、喚醒、銀行、安裝設定。
-// 物理意義：Senate 是**專案外部**的獨立 repo（不住在任何 Unity 專案裡），
+// 物理意義：Senate 是獨立 repo，
 //           所以路徑必須是資料，不能寫死。
 //           ⇒ 設定檔分兩份，職責不同：
 //             · SenateData/config/senate.local.example.json —— **入版控**的樣板（沒有機器路徑）
@@ -112,7 +112,7 @@ public sealed class InstallSettings
 }
 
 /// <summary>
-/// 這台機器上 Senate 的**全域路徑**（TASK-0390，Tim 2026-10-07：Senate＝Server、Valhalla＝資料 repo，不依賴 Unity）。
+/// 這台機器上 Senate 的**全域路徑**（TASK-0390，Tim 2026-10-07：Senate＝Server、Valhalla＝資料 repo）。
 /// <para>值的意義與解析在 <c>SCP_PathRegistry</c>；本類只負責「存在檔裡哪一格」—— 讀寫一律經 <see cref="SenatePathBinding"/>。</para>
 /// </summary>
 public sealed class SenatePathsSettings
@@ -138,7 +138,7 @@ public sealed class SenateConfig
     /// <summary>設定格式版本。讀到未知版本要**擋下並說出來**，不要盡力而為。</summary>
     public int SchemaVersion { get; set; } = 1;
 
-    /// <summary>全域路徑（資料根／詞典根／漫畫庫根）。⚠ 不屬於任何專案 —— 沒有 Unity 專案也要解得出來。</summary>
+    /// <summary>全域路徑（資料根／詞典根／漫畫庫根）。⚠ 不屬於任何專案。</summary>
     public SenatePathsSettings Paths { get; set; } = new();
 
     /// <summary>

@@ -1,8 +1,8 @@
-// 區塊職責：TASK-0354（課程筆記／好感度／persona 設定的寫入搬到 Senate）的自我對拍。
-// 物理意義：三支寫入端是從 Editor 版逐位元組移植的 ⇒ 驗兩件事：
+// 區塊職責：TASK-0354（課程筆記／好感度／persona 設定的寫入端）的自我對拍。
+// 物理意義：三支寫入端的輸出要與既有檔逐位元組相容 ⇒ 驗兩件事：
 //           ① 淨室：寫出來的形狀、去重、閘（反向對照：該擋的零寫入）。
-//           ② 真實資料：每一份 Editor 寫的 `_current.md`，用新的重算邏輯從同一批事件再算一次，數字要逐格相同
-//              —— 那是「搬家沒有悄悄改掉任何人的好感度」唯一拿得到的讀數。
+//           ② 真實資料：每一份既有的 `_current.md`，用現在的重算邏輯從同一批事件再算一次，數字要逐格相同
+//              —— 那是「重算沒有悄悄改掉任何人的好感度」唯一拿得到的讀數。
 // 數值影響：淨室在 temp 目錄裡寫、跑完刪；真實資料那一列**只讀**。
 #nullable enable
 using System.Globalization;
@@ -163,7 +163,7 @@ public static partial class SelfTest
     }
 
     /// <summary>
-    /// 真實資料：每一份 Editor 寫的 `_current.md`，由同一批 events/ 用新邏輯重算 ⇒ 八軸／分數／tier／事件數要逐格相同。
+    /// 真實資料：每一份既有的 `_current.md`，由同一批 events/ 用現在的邏輯重算 ⇒ 八軸／分數／tier／事件數要逐格相同。
     /// <para>⚠ 有 `opening_balance`（遷移反推的期初餘額）的那幾份跳過並照實計數 —— 新寫入端不產生它，重算也拿不到它。</para>
     /// </summary>
     static IEnumerable<CheckRow> RealRelationshipRecomputeMatchesEditor(IReadOnlyList<SelfTestTarget> iTargets)

@@ -1,5 +1,5 @@
 // 區塊職責：**閱讀心得頁**（TASK-0401）—— 全庫瀏覽（媒材 kind → 作品 → persona）、作品入口搜尋、追回檢視與產生追回檔。
-// 物理意義：Unity `UCL_ReadingNotesManagePage` 的對應。數字與文字全部來自 SCP_Library*（與 `senate cmd library` 同源）：
+// 物理意義：數字與文字全部來自 SCP_Library*（與 `senate cmd library` 同源）：
 //           追回檢視＝`SCP_LibraryRecall.RenderRecall`（op=recall 的渲染本體）；產生追回檔＝`WriteRecallBrief`（op=recall 寫的同一個檔）。
 //           ⇒ 頁面與指令不可能對同一份讀者資料說出兩種話。
 // 數值影響：檢視純讀；唯一的寫入是「產生追回檔」（覆寫該 persona 的 `cmd/reading_recall_<media>.md`，機械產物本來就每次重生成）。

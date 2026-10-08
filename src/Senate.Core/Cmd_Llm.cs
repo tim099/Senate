@@ -1,5 +1,5 @@
 // 區塊職責：`senate cmd llm` —— 本地大語言模型（ollama）的狀態／目錄／安裝／解除安裝／顯存卸載／試跑（TASK-0383）。
-//           「AI 模型」後台頁走這一支；移植自 UCL_Core `llm_admin.py`（Unity 頁 UCL_LLMModelAdminPage 之後廢棄）。
+//           「AI 模型」後台頁走這一支。
 // 物理意義：真正持有模型的是 **ollama**（下載、量化、磁碟位置、載入卸載都是它的事），本檔不重造那一層，只做 ollama 沒有的兩件事：
 //           ① 目錄（哪些模型適合這個專案、要多少顯存 —— 策展知識）；② 結構化輸出（後台頁讀 `format=json`）。
 //           ⭐ ollama 與它的模型**不進安裝系統**（Tim 2026-10-05 拍板）：狀態住在 ollama 服務裡，誰去讀 `ollama list` 都是同一份。
@@ -10,7 +10,7 @@
 //   · 顯存偵測失敗 ⇒ 門檻來源標 fallback，⛔ 不假裝是量到的。
 //   · 試跑撞到生成上限 ⇒ ok=false＋truncated（半句話不是回答）。
 // ⚠ exit code：0 成功；1 擋下（零變動）；2 用法錯；4 量不到（找不到 ollama／服務打不到）；5 動手了但沒成功。
-// ⚠ 酒保（TASK-0365）走本檔的 Chat，不再經過 llm_admin.py；那支 python 目前只剩 Unity 的 UCL_LLMModelAdminPage 在用。
+// ⚠ 酒保（TASK-0365）走本檔的 Chat。
 #nullable enable
 using System.Diagnostics;
 using System.Globalization;
@@ -283,7 +283,7 @@ public sealed class Cmd_Llm : SCP_Cmd
         new SCP_CmdArgSpec("num_predict", "test：生成上限（token，預設 120）", iDefault: "120"),
         new SCP_CmdArgSpec("keep_alive", "test：用完幾秒後把模型從顯存卸載（-1＝用 ollama 預設 5 分鐘）", iDefault: "-1"),
         new SCP_CmdArgSpec("timeout", "test：等待上限（秒，預設 60）—— 逾時不代表它死了，用 op=ps 看、op=stop 卸載", iDefault: "60"),
-        new SCP_CmdArgSpec("data_root", "test：試跑紀錄寫到 <資料根>/LLMAdmin/test_log.jsonl（沒給 ⇒ 用設定檔那一格；與 Unity 頁同一份）"),
+        new SCP_CmdArgSpec("data_root", "test：試跑紀錄寫到 <資料根>/LLMAdmin/test_log.jsonl（沒給 ⇒ 用設定檔那一格）"),
     };
 
     public const string DefaultPrompt = "用繁體中文說一句吧檯招呼，20 字以內。";
@@ -477,7 +477,7 @@ public sealed class Cmd_Llm : SCP_Cmd
 
     // ── test：走 HTTP API（逾時、生成上限、思考段都拿得回來）─────────────────
 
-    /// <summary>試跑結果。欄位名逐字對應 Unity `LLMTestResult`（紀錄檔兩邊共用）。</summary>
+    /// <summary>試跑結果。欄位名就是紀錄檔 jsonl 的欄位名。</summary>
     public sealed record TestResult(bool ok, bool truncated, string model, string prompt, double seconds, int eval_count, double tokens_per_sec,
                                     string output, string thinking, string note, string error);
 
@@ -581,7 +581,7 @@ public sealed class Cmd_Llm : SCP_Cmd
     public static string TestJson(TestResult t, string iLogError)
         => JsonSerializer.Serialize(new { t.ok, t.truncated, t.model, t.prompt, t.seconds, t.eval_count, t.tokens_per_sec, t.output, t.thinking, t.note, t.error, log_error = iLogError }, s_Json);
 
-    /// <summary>試跑落一行到 jsonl（append-only；跟 Unity 頁同一份）。失敗只回原因、不擋 —— 試跑本身比紀錄重要，但要出聲。</summary>
+    /// <summary>試跑落一行到 jsonl（append-only）。失敗只回原因、不擋 —— 試跑本身比紀錄重要，但要出聲。</summary>
     public static string? AppendTestLog(string iDataRoot, TestResult t, string iSystem, out string oPath)
     {
         oPath = "";

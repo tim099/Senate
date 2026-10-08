@@ -1,4 +1,4 @@
-// 區塊職責：`cmd demurrage` —— 跨日存款保管費的扣繳（TASK-0278 把它從 Unity 那側整段搬過來）。
+// 區塊職責：`cmd demurrage` —— 跨日存款保管費的扣繳（TASK-0278）。
 // 物理意義：它**會動錢**（debit 繳費者＋credit 央行）⇒ 跟 `cmd bank` 同族，走 `ServerDelegateCmd`
 //           ⇒ 一律在常駐 Server 裡跑。那正是 `SCP_BankLedger` 那把 debit 鎖成立的前提：
 //           **只有一顆 process 在寫**。⛔ 在 CLI process 裡直接算完扣掉＝安靜地多一個寫入端。
@@ -159,7 +159,7 @@ public sealed class Cmd_Demurrage : ServerDelegateCmd
         }
 
         // ── TASK-0272 ②：發完券**接著刷新匯率**（Tim 2026-09-28：定時同步綁在扣管理費、剛好發完券之後，
-        //    觸發直接綁在 Senate 端，不透過 Unity；平常不手動跑 sync）─────────────────────────
+        //    平常不手動跑 sync）─────────────────────────
         //   ⚠ 放在發券**之後**是刻意的：錢與券是這一趟的本體，匯率是順路 —— 它失敗**不改**前兩段的結果。
         //   ⚠ 每個 UTC 日只刷一版：當天已經有 `origin=sync` 的版本就跳過並說出來。
         //     ⛔ 不靠 TTL 判：TTL 是「距上次幾分鐘」，而每天扣繳的時刻會漂 —— 今天早 2 分鐘跑，

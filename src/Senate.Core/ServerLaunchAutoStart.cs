@@ -3,7 +3,7 @@
 //           （假如尚未啟動的話），設定預設開啟；ServerAdminPage 開著時一定間隔刷新 Server 狀態（預設 1 秒）」。
 //           🩸 起因：TASK-0315 把每日結算搬進 main Server 之後，第一次真跑（2026-09-29）晚了 13 小時 ——
 //             半夜**沒有任何一顆 Server 在跑**，要等到早上第一則需要它的發文 autostart 才補結算。
-//             「Editor 沒開也照跑」的實際前提變成「有人先叫醒過 Server」。
+//             每日結算的實際前提是「有人先叫醒過 Server」。
 //           ⚠ 本設定**只縮短**那段空窗（任何一次 senate.exe 啟動都會叫醒它），⛔ 不是常駐保證 ——
 //             一整晚沒有人跑 senate.exe 的話，它照樣不會自己起來。
 // 數值影響：`EnsureOnLaunch` 最多替每一顆常駐 Server 各 spawn 一次（走 `ServerSpawn.TrySpawn` 那條唯一咽喉，

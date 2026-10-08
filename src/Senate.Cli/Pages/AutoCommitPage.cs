@@ -1,5 +1,5 @@
 // 區塊職責：**自動 Commit 頁** —— 把機器自動生成的檔分群，勾選後每群各自成一筆 commit，訊息自動生成。
-// 物理意義：移植自 Unity 端的 UCL_AutoCommitPage（TASK-0340）。規則與引擎下沉到 SCP_Core
+// 物理意義：TASK-0340。規則與引擎在 SCP_Core
 //           （SCP_AutoCommitRules／SCP_AutoCommitConfig／SCP_AutoCommit），本頁只剩「畫、勾、按」；
 //           `senate cmd auto-commit` 走同一支引擎 ⇒ 同一個檔在頁面與 Cmd 被分到同一群，這是結構不是巧合。
 //           ⭐ Tim 2026-09-30 兩條拍板：
@@ -10,7 +10,7 @@
 //           掃描與提交都丟背景 job（會重畫的宿主）或就地跑完（純文字／指令驅動的宿主）。
 //           持久化只有一格：「具名群的預設勾選」，顯式按「儲存預設勾選」才寫（SenatePageStore）。
 // ⚠ 勾選的 id 帶**掃描戳記**（`autocommit/<stamp>/<repo>/<key>`）：CLI 每次呼叫都是新 process、勾選住 session，
-//   而 Unity 版的語意是「特殊群的一次性勾選，掃描一次用完即棄」（預設值是裝填好的槍）。
+//   而語意是「特殊群的一次性勾選，掃描一次用完即棄」（預設值是裝填好的槍）。
 //   沒有 SetToggle 可以把它清掉 ⇒ 換一個戳記，舊勾選就自然失效；具名群的預設由存檔值重新給。
 // ⚠ 提交走**兩段式確認**（共用層沒有 modal；兩段式用既有節點組出來 ⇒ 四種驅動方式天生就會，CLI 可重放）。
 // @doc-sync: <SCP_Core>/Docs~/AutoCommit.md（本頁的操作與設定編輯區）

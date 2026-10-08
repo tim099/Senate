@@ -1,6 +1,6 @@
 // 區塊職責：inbox 歸檔（`tavern-inbox-ack`，TASK-0409 取代 python `inbox_ack.py`）的自我對拍。
 // 物理意義：每一格驗一個「錯了也不會叫」的地方：
-//           ① 檔頭提示指向現在能跑的指令（⛔ 不再是已刪的 `tavern_query.py`／UCL 那支 `inbox_ack.py`）
+//           ① 檔頭提示指向現在能跑的指令（⛔ 不是已刪的 `tavern_query.py`／`inbox_ack.py`）
 //           ② 歸檔：條目進 `_archive.md`、讀回 inbox 剩 0 筆；重跑是 no-op（archive 位元組不變）；
 //              清空後檔頭照樣在，舊檔頭（python 指路）在歸檔時換成現役指令
 //           ③ 打錯 owner ⇒「沒有這份 inbox」，⛔ 不說成「已清空」；歸檔後再被 @ 照常附加

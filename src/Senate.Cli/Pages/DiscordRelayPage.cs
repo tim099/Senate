@@ -1,6 +1,5 @@
 // 區塊職責：**Discord 轉發設定頁**（TASK-0320）—— In／Out 開關、頻道分類 → webhook（可多條）、persona 頭像網址。
-// 物理意義：概念取自 Unity `UCL_ChatTavernAdminPage` 與 `UCL_ControlPanelPage` 的酒館後台（Tim 2026-09-28）。
-//           讀寫全走 `SCP_DiscordConfigStore`；webhook 本身的新增／刪除在「Discord Webhook」頁。
+// 物理意義：讀寫全走 `SCP_DiscordConfigStore`；webhook 本身的新增／刪除在「Discord Webhook」頁。
 // 數值影響：
 //   · 開關寫 `discord_config.json`，由酒館 Server 讀（Tim：簡易開關，不處理啟動）。
 //   · 分類的勾選欄 key 帶世代號 ⇒ 每次重新讀取都對齊檔案現值（🩸 欄位倉會跨次保存，不對齊的話按儲存會把舊勾選寫回去）。

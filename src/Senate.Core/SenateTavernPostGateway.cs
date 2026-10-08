@@ -2,7 +2,7 @@
 // 物理意義（TASK-0311，epic 0295 ③ 第二刀）：**先走 Senate 那條管線**——
 //           `SCP_TavernPostCompose` 組訊息 → 酒館 Server `tavern-write`（配號建檔＋發薪＋@mention）——
 //           跟 `senate cmd tavern-post`（TASK-0308）同一條路；前處理全部在 SCP_Core（TASK-0311／0312）。
-//           TASK-0366 起**沒有** Editor 退路（`Tavern op=post` 已退場）：TASK-0390 起不再找「資料根對應的 Unity 專案」—— 顯示基準是 Senate 專案根，沒有 Unity 專案也照發。
+//           顯示基準是 Senate 專案根（TASK-0390）。
 //           ⚠ 本閘不做 alter 配對延遲（呼叫端是公告不是對話，見 `PostViaSenate`）。
 //           ⚠ 寫入端只有一個：酒館 Server 的 `tavern-write`（TASK-0341）⇒ 這裡管的是「誰組訊息」，⛔ 不是多開一個寫入端。
 // 數值影響：一次 Server round-trip。
@@ -53,8 +53,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
         string? aSchema = SCP_TavernMetaSchema.Validate(iMeta);
         if (aSchema != null) return SCP_TavernPostVerdict.Bad("meta 不合 T06.3 schema：" + aSchema);
 
-        // 前處理全部在 Senate 做得完（TASK-0312）。詞典附註的顯示基準是 **Senate 專案根**（詞典是 Senate 的 submodule）——
-        //   🩸 TASK-0390：原本要在設定檔裡找「資料根對得上的 Unity 專案」，找不到就**確定沒發** ⇒ 沒有 Unity 專案就不能發文。
+        // 前處理全部在 Senate 做得完（TASK-0312）。詞典附註的顯示基準是 **Senate 專案根**（詞典是 Senate 的 submodule）。
         if (SenatePathBinding.HostRepoRoot.Length == 0)
             return SCP_TavernPostVerdict.Bad("宿主沒有宣告 Senate 專案根（SenateHostPaths.Install 沒跑）—— 程式錯誤，**確定沒發**");
         return PostViaSenate(iSenderPersona, iBody, iMeta, SenatePathBinding.HostRepoRoot, oLines);
@@ -63,7 +62,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
     // ===========================================================
     // 區塊職責：Senate 管線 —— 組訊息 → `tavern-write`。
     // ⚠ 刻意**不做 alter 配對延遲**：本閘的呼叫端是 commit 公告與小歇廣播 —— 那是公告不是對話，
-    //   延後它只會讓「commit 已提交」與「公告」脫鉤（呼叫端要的是 seq）。Editor 的 `op=share` 同一個判斷（帶 alter-pacing-bypass）。
+    //   延後它只會讓「commit 已提交」與「公告」脫鉤（呼叫端要的是 seq）。
     // ===========================================================
     SCP_TavernPostVerdict PostViaSenate(string iPersona, string iBody, IReadOnlyDictionary<string, string> iMeta,
                                         string iProjectRoot, List<string> oLines)

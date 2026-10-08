@@ -1,16 +1,16 @@
 // 區塊職責：**persona 管理頁**（TASK-0424）—— 先在 TopBar 選一位既有的 persona，再看／改她的設定。
-// 物理意義：取代 Unity 的 UCL_PersonaAgentAdminPage 與舊的 persona 顯示資料頁（PersonaDisplayPage，本頁吸收）。
+// 物理意義：身分欄與顯示資料都在這一頁。
 //   ⛔ 本頁**不建 persona、不建 agent**：建立一律走 `senate cmd persona-create`（Tim 2026-10-06）——
-//      頁面另組一份身分欄就是第二份實作（Unity 那頁當年就是這樣）。
+//      頁面另組一份身分欄就是第二份實作。
 //   讀寫全走 SCP_Core：身分欄 `SCP_PersonaProfileWrite`、顯示資料 `SCP_PersonaDisplay`、
-//   型號與信箱的解析 `SCP_AgentModelRegistry`／`SCP_AgentEmail` ⇒ 本頁只畫與收輸入，不需要 Unity Editor。
+//   型號與信箱的解析 `SCP_AgentModelRegistry`／`SCP_AgentEmail` ⇒ 本頁只畫與收輸入。
 // 數值影響：
 //   · 身分欄：寫 `letters/<p>/profile/<欄>.md`＋一行審計（`AwakenInit/_persona_write_audit.jsonl`，署名＝「署名」欄）；值清空＝unset（刪檔）。
 //   · actual_agent：在線時同一步改 lock 與 profile（`SetLockActualAgent`），離線時只改 profile。
 //   · 顯示資料：`color.md`／`avatar_url.md`／`avatar.png`。**已有頭像時換頭像要二段確認**。
 //   · 推導欄（status／wake_count／agent…）與結構欄（vector、lineage）只讀 —— 前者真相源在別處，後者不該手改。
 //   · 信件：只讀。列選中那位的自寫信（`SCP_WakeLetters.RecentSelfLetters`，與 brief 見樹同一支：頂層＋wakes/＋rests/），
-//     每封可開 Markdown 檢視頁（TASK-0447，取代 Unity 的 UCL_PersonaInspectorPage 信件清單）。
+//     每封可開 Markdown 檢視頁（TASK-0447）。
 // ⚠ 視窗文字不放 emoji（字型沒有那些字 ⇒ 方框）。
 #nullable enable
 using SCP.Core.Bank;

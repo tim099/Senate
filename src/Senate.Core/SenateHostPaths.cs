@@ -54,7 +54,6 @@ public static class SenateHostPaths
         };
 
         // 工作記憶 related_docs 的具名根：沒前綴＝資料根；`senate:`／`scp_core:` 錨在 exe 所在的 repo。
-        //   ⛔ 沒有 `ucl_core:` —— 那是 Unity 專案裡的檔，Senate 不讀。
         SCP.Core.WorkMemory.SCP_WorkMemory.HostNamedRoots = () => new Dictionary<string, string>
         {
             ["senate"] = aRepo,

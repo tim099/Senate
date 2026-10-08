@@ -1,7 +1,7 @@
 ﻿// 區塊職責：Git Submodule 狀態頁 —— **唯讀**，但把「這一輪打算怎麼做」完整表達得出來：
 //           哪些 submodule 納入、每一顆的目標 branch 是哪條（以及那個目標是哪一層解析出來的）、
 //           要不要含 root、要不要推所有 remote，最後**組出一條可以直接照抄去跑的指令**。
-// 物理意義：概念取自 Unity 端的 UCL_GitSubmoduleSyncPage —— 逐項設定 ＋ 工具列上會動手的三顆鈕。
+// 物理意義：逐項設定 ＋ 工具列上會動手的三顆鈕。
 //           🩸 **這一頁曾經刻意不放寫入鈕**，理由是宿主形狀：一輪 fetch＋pull＋push 跨十幾顆
 //             submodule 是**分鐘級**的事，而純文字那側畫幾趟就結束 process ⇒
 //             丟到背景等於什麼都不會發生，同步跑又會凍住視窗。
@@ -912,7 +912,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
 
     /// <summary>
     /// 掃哪個 repo —— **一個可以直接打路徑的欄位**（預設 Senate 自己）。
-    /// <para>形狀取自 UCL 端那頁（路徑欄 ＋「本專案」鈕）。這頁最常見的用途本來就是
+    /// <para>路徑欄 ＋「本專案」鈕。這頁最常見的用途本來就是
     /// 操作**別的** repo（Senate 是後台，Unity 專案才是要整理的那個），
     /// 所以「只能從設定檔的清單裡挑」等於把主要用途擋在設定之後。</para>
     /// <para>⚠ 沒有「…」瀏覽鈕：開資料夾對話框要碰 OS，而共用層零依賴、
@@ -979,7 +979,7 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
 
     /// <summary>
     /// 兩個路徑指不指同一個 repo。
-    /// <para>🩸 取自 UCL 端那頁：純字串比對會把 <c>D:/Unity/LY</c>、<c>D:\Unity\LY</c>、
+    /// <para>🩸 純字串比對會把 <c>D:/Unity/LY</c>、<c>D:\Unity\LY</c>、
     /// <c>D:/Unity/LY/</c> 判成三個不同的 repo，於是「改回自己」那顆鈕會對著同一個 repo
     /// 一直出現 —— 而假訊號會訓練人忽略訊號。</para>
     /// <para>⚠ 不用 <c>Path.GetFullPath</c>：它對不存在的路徑會丟例外，而這一欄是使用者隨手打的。</para>

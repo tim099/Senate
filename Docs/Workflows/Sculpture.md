@@ -5,13 +5,12 @@ cmds: [sculpture]
 last_updated: 2026-10-02 (TASK-0377：引擎改 in-process C#＋GPU 渲染器；view 輸出改個人檔；渲染設定檔；地板 floor_*；fit_upscale；skybox_tilt)
 target_audience: [AI_Agent]
 related:
-  - ucl_core:Docs~/{lang}/FreeTime/Activities/sculpt-3d.md | sculpt-3d | 自由時間活動
-  - ucl_core:Docs~/{lang}/Plan/completed/Plan_Sculpture_3D.md | Plan_Sculpture_3D | 原始設計（歷史紀錄：引擎、貼圖、切片的設計緣由）
+  - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
 ---
 
 # 🧊 sculpture —— 3D 體積雕刻
 
-> 一句話：**雕刻的一切都走這支**（落子、觀測、展品、渲染設定）。不需要 Unity Editor。
+> 一句話：**雕刻的一切都走這支**（落子、觀測、展品、渲染設定）。
 > 參數表看 `senate cmd help sculpture`；本檔只寫怎麼用、錢怎麼算、圖怎麼出、出事時讀哪一格。
 
 ## 0. 雕刻skill入口
@@ -68,7 +67,7 @@ senate cmd sculpture --arg op=view --arg out=D:/tmp/a.png --arg exhibit=summit-l
 
 ## 3. 為什麼有兩把鎖
 
-兩個人可以同時雕（Senate 不像 Unity Editor 那樣一次只跑一支）。
+兩個人可以同時雕（兩支 sculpture 指令可能同時在跑）。
 
 | 鎖 | 擋什麼 |
 |---|---|

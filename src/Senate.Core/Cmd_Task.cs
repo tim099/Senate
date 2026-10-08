@@ -1,13 +1,11 @@
 // 區塊職責：`senate cmd task` —— 任務單**寫入**的入口（TASK-0349）。讀取（list／show／kanban）走 `senate cmd tasks`。
-// 物理意義：Tim 2026-09-30「349 全包 GO」：任務單寫入整格搬到 Senate —— 形狀照酒館那條走過的路
-//           （`tavern-post` 組訊息 → `tavern-write` 寫入）：
+// 物理意義：形狀同酒館那條（`tavern-post` 組訊息 → `tavern-write` 寫入）：
 //             ① 本入口：驗參數（每個 op 的必填＋白名單）、claim 帶 scope 時先開 Coding 場
 //             ② `task-write`（Senate Server，唯一寫入端）：配號、讀改寫、閘與狀態機（`SCP_TaskOps`）
 //             ③ 本入口：落回傳檔、發酒館通知（`SCP_ITavernPostGateway`）、wrapup 的 why 寫進工作記憶（`SCP_WorkMemory`）
-//           ⇒ `senate cmd commit` 推單、晚安寫 skip、Unity Editor（`Cmd_Task` 寫入 op／後台頁）全部走這一支，
-//             **Editor 關著也能寫單**。
+//           ⇒ `senate cmd commit` 推單、晚安寫 skip、後台頁全部走這一支。
 // 數值影響：一次呼叫 ＝ 一次 Server round-trip ＋ 每則通知一次酒館寫入 ＋（有 why 時）一筆工作記憶。
-//           回傳檔 `letters/<P>/cmd/task_<op>.md`（與 Unity 版同一個落點 —— 讀的人不必知道是誰寫的）。
+//           回傳檔 `letters/<P>/cmd/task_<op>.md`。
 //
 // ⚠ 結果四態（照 `tavern-post`）：exit 0 已寫（或 dry-run／冪等零寫入，看 `🔢 wrote`）／
 //   exit 1 被閘擋下（**零寫入**，原因在回傳檔）／exit 6 **確定沒寫**（寫入端沒收到，重跑安全）／
@@ -242,7 +240,7 @@ public sealed class Cmd_Task : SCP_Cmd
     }
 
     // ===========================================================
-    // 區塊職責：claim 帶 scope ⇒ 開一場新的，或綁到現有那一場（UCL `TryStartOrBindCodingSession` 的搬家）。
+    // 區塊職責：claim 帶 scope ⇒ 開一場新的，或綁到現有那一場。
     // 物理意義：每人一場 ⇒ 已經有場的人**補綁**，⛔ 不開第二場；⛔ 也不自動擴大現有場的範圍
     //           （靜默擴大會擋掉別人，而被擋的人看到的是一個我從來沒宣告過的路徑）。
     //           開新場走 `coding op=start`（守衛與被擋時的出口都在那一支，⛔ 不在這裡重造）。
@@ -387,8 +385,6 @@ public sealed class Cmd_Task : SCP_Cmd
             ioResult.AddValue("memory", "failed");
         }
     }
-
-    // ⛔ 2026-10-07（TASK-0390）刪掉 `UclCoreTool`（讀 Unity 專案的 .gitmodules 找 UCL_Core 底下的工具檔）：知識庫定義檔搬進 Senate（描述表 KbTargetsFile）。
 
     static string Value(SCP_CmdResult r, string k)
     {

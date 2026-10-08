@@ -7,7 +7,7 @@
 // 數值影響：不碰 queue、不碰 ledger；只建目錄、設 registry 路徑、掛 RepoRootProvider。
 //
 // ⚠ 這裡**刻意只做 Server 需要的那幾格**，不是 Program.cs 的複製：
-//   資料搬遷、GUI 宿主能力、Unity 委派設定、coding 退場閘……那些是 CLI 的事。
+//   資料搬遷、GUI 宿主能力、coding 退場閘……那些是 CLI 的事。
 //   🩸 抄一份完整前置過來的失效樣子是**兩份會漂**，而漂掉時兩邊都不報錯 ——
 //     症狀是「同一個動作在 CLI 跑跟在 Server 跑，結果不一樣」。
 //   ⇒ 少即是可維護：Server 需要什麼就加什麼，而每加一格都要說得出「Server 為什麼需要它」。

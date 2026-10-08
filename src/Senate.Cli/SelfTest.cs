@@ -1,6 +1,6 @@
 // 區塊職責：自我對拍 —— 這套東西自己的讀數（不是「應該會動」）。
 // 物理意義：SCP_Core 的 JSON 層是共用碼，它的第一個責任是**讀得懂既有資料**：
-//           那些 json 是 Unity 端的 UCL JsonData 寫出來的，所以「能不能讀」不是單元測試問題，
+//           那些 json 不是本程式寫的，所以「能不能讀」不是單元測試問題，
 //           是拿真檔案去試的問題。⇒ 每一項都印出**讀到什麼**，不是只印 ✓。
 // 數值影響：純讀。找不到樣本檔時回報「跳過（沒有樣本）」，**不當成通過** ——
 //           「沒測」與「測過而且對」同形是這個 repo 最貴的錯誤形狀。
@@ -405,9 +405,9 @@ public static partial class SelfTest
     }
 
     // 區塊職責：T06.3 meta schema（SCP_TavernMetaSchema）＋ 發文閘的分流判準（TASK-0311）。
-    // 物理意義：commit／task-assign／task-ack 不合 ⇒ 擋（兩個入口共用這一支）；合 ⇒ 放行，而且**不再被當成
-    //          「還沒搬」交回 Editor**；creative 仍然交回 Editor（④ 反向對照：沒搬的不准靜默略過）。
-    // 數值影響：純函式，零 IO（NotPortedReason 的 CLI 前綴那格讀不到設定就不擋 ⇒ 給一個不存在的資料根）。
+    // 物理意義：commit／task-assign／task-ack 不合 ⇒ 擋（兩個入口共用這一支）；合 ⇒ 放行；
+    //          其他 tag（例如 creative）不歸 schema 管。
+    // 數值影響：純函式，零 IO。
     static CheckRow TavernMetaSchemaAndRouting()
     {
         const string aName = "酒館 meta schema：commit／task-assign／task-ack 驗證＋發文閘分流（TASK-0311）";
@@ -452,7 +452,7 @@ public static partial class SelfTest
     }
 
     // 區塊職責：詞典根可設定（Tim 2026-09-27，PathsPage 那一格）—— 解析與附註路徑前綴。
-    // 物理意義：預設值必須逐字印 `docs/Glossary`（Editor `Cmd_Glossary` 同形）；自訂在專案內印相對、專案外印絕對
+    // 物理意義：預設值必須逐字印 `docs/Glossary`；自訂在專案內印相對、專案外印絕對
     //          ⇒ 讀的人拿那個路徑 Read 得到檔（🔴 反向：不准印一個指不到檔的相對路徑）。
     // 數值影響：純字串／記憶體，零 IO。
     static CheckRow GlossaryRootResolution()
@@ -461,7 +461,7 @@ public static partial class SelfTest
         var aFails = new List<string>();
         const string P = "D:/proj";
         var aRoots = new SCP_MorningRoots { ProjectRoot = P };
-        // TASK-0390：沒設 ⇒ 空字串（＝沒有詞典），⛔ 不再從 Unity 專案根自己推第二份算式
+        // TASK-0390：沒設 ⇒ 空字串（＝沒有詞典），⛔ 不從專案根自己推第二份算式
         if (aRoots.GlossaryRoot != "")
             aFails.Add("沒設時應是空字串、不從 Unity 專案根推（得 " + aRoots.GlossaryRoot + "）");
         aRoots.GlossaryRoot = "E:/elsewhere/glo";
@@ -1165,10 +1165,10 @@ public static partial class SelfTest
 
     // 區塊職責：逾時的成因描述必須**跟著 lane 的現況變**，三態各自不同形。
     // 物理意義：逾時本身分不出「宿主不在」「宿主在跑」「跑完了我沒接到」，而這三種的下一步互斥
-    //          （開 Editor ／ 等它 ／ 去讀 result 檔）。三句話塌成一句的症狀是：讀的人照著
+    //          （開 Server ／ 等它 ／ 去讀 result 檔）。三句話塌成一句的症狀是：讀的人照著
     //          一句已知為假的診斷，去檢查一個沒有問題的宿主（2026-09-04／09-05 兩次血證）。
     // 🩸 為什麼要這一格（TASK-0227）：`running` 與 `pending` 兩支我用活體對照驗過
-    //   （指向沒有 Editor 的空樹／trigger 出現後造 .running），⛔ 而 **`idle` 那一支造不出乾淨的活體**
+    //   （指向沒有宿主的空樹／trigger 出現後造 .running），⛔ 而 **`idle` 那一支造不出乾淨的活體**
     //   —— 它要求「lane 空了而我沒接到 result」，那是一個競態。
     //   ⇒ 沒有活體就把它做成可重跑的讀數；把空白留著才是讓「沒驗」跟「驗過」同形。
     // 數值影響：純建／刪暫存檔＋字串比對，不派任何 Cmd、不碰真的資料根。
@@ -1665,8 +1665,8 @@ public static partial class SelfTest
     /// <summary>
     /// 下拉選單（複合元件）：收合時不建子節點、搜尋是**關鍵字不是 regex**、分頁邊界、
     /// 以及選了之後有沒有把選擇寫回去。
-    /// <para>⚠ 第三項（regex）是刻意跟 UCL 那側不同的一格：UCL 用 <c>new Regex(input)</c>，
-    /// 編譯失敗就退回「不篩」—— 於是打一個 <c>(</c> 會讓清單看起來全部符合。
+    /// <para>⚠ 第三項（regex）：⛔ 不用 <c>new Regex(input)</c> ——
+    /// 編譯失敗就退回「不篩」的話，打一個 <c>(</c> 會讓清單看起來全部符合。
     /// 這裡驗的是「打 <c>(</c> 應該是 0 筆」，因為使用者打的是關鍵字。</para>
     /// </summary>
     static CheckRow DropdownWidget()
@@ -1692,7 +1692,7 @@ public static partial class SelfTest
         // ③ 搜尋：空白分隔的關鍵字要**每一個都命中**（AND）——
         //    "項目 1" ＝ 兩個關鍵字，所以 1／10-19／**21** 共 12 筆（不是 11：「項目 21」兩個字串都含）。
         //    🩸 我第一版把答案寫成 11，紅燈的是斷言不是程式 —— AND 語意本來就會多命中 21。
-        //    ／regex 字元不是樣式而是字面（"(" ⇒ 0 筆，UCL 那側會退回「不篩」⇒ 30 筆）
+        //    ／regex 字元不是樣式而是字面（"(" ⇒ 0 筆，⛔ 不是退回「不篩」的 30 筆）
         int aHitsKeyword = SCP_GuiWidgets.Filter(aOptions, "項目 1").Count;
         int aHitsParen = SCP_GuiWidgets.Filter(aOptions, "(").Count;
         bool aSearchOk = aHitsKeyword == 12 && aHitsParen == 0;
@@ -2161,7 +2161,7 @@ public static partial class SelfTest
             string aBack = File.ReadAllText(aPath);
 
             bool aRootNote = aBack.Contains("手寫註解", StringComparison.Ordinal);
-            bool aNoProjects = !aBack.Contains("\"projects\"", StringComparison.Ordinal);   // 舊的 Unity 專案清單：讀入就拿掉
+            bool aNoProjects = !aBack.Contains("\"projects\"", StringComparison.Ordinal);   // 舊的 projects 清單：讀入就拿掉
             bool aFuture = aBack.Contains("未來版本的欄位", StringComparison.Ordinal);
             bool aUi = SenateConfig.Load(aPath)?.Ui.Scale == 1.75f;
 
@@ -2357,7 +2357,7 @@ public static partial class SelfTest
         bool aQuietOnOne = new SCP_GuiPageCatalog().AutoRegisterTypes(
             new Type?[] { typeof(ProbeDupA) }, aModel, iIncludeIgnored: true).Count == 0;
 
-        // ④ ctor 形狀不符要被點名，⛔ 不是靜默跳過（UCL 那版是 LogWarning + continue）
+        // ④ ctor 形狀不符要被點名，⛔ 不是靜默跳過
         List<string> aBad = new SCP_GuiPageCatalog().AutoRegisterTypes(
             new Type?[] { typeof(ProbeBadCtorPage) }, aModel, iIncludeIgnored: true);
         bool aNamesBadCtor = false;
@@ -2674,8 +2674,7 @@ public static partial class SelfTest
     // ═══════════════════════════════════════════════════════════
     // 區塊職責：閱讀庫 JSON 版面的兩格 —— ① writer 的固定點（真閘）② 與磁碟的相符份數（讀數）。
     //
-    // 物理意義：寫入端從 Unity 端搬進 SCP_Core 時，遷移期間**兩個寫入端並存**，
-    //           而「搬對了」的唯一可信讀數是同輸入兩邊輸出**逐位元組**相同。
+    // 物理意義：寫入端的輸出要跟既有檔的版面（`UclLegacy`）**逐位元組**相同。
     //           版面不同的失敗樣子是「內容逐鍵相同、整批翻紅」—— 沒有任何一層會喊。
     //
     // ⚠ 為什麼 ② 是讀數不是閘：**磁碟不是規格。**（2026-09-14 calli 逐位元組量的）
@@ -2708,7 +2707,7 @@ public static partial class SelfTest
         aData.Set("facts", SCP_JsonData.NewArray());
         aData.Set("schema_version", 2);
 
-        // 期望值＝`UCL_JsonData.SerializeValueBeautify` 的形狀，逐字抄自它
+        // 期望值＝`UclLegacy` 版面的形狀
         // （⛔ 不是抄磁碟上某一份檔 —— 那份檔的行尾是 git 給的）。
         string aExpect = string.Join("\n", new[]
         {
@@ -2766,11 +2765,10 @@ public static partial class SelfTest
     /// 與磁碟相符的份數（行尾無關）。
     /// </summary>
     /// <remarks>⚠ 相符份數是**讀數不是閘** —— 理由見本區塊上方註解（磁碟不是規格）。</remarks>
-    // 區塊職責：搬進 SCP_Core 的追回檔渲染層（`SCP_LibraryRecall`），與 **Editor 端真產物**逐位元組對拍。
+    // 區塊職責：追回檔渲染層（`SCP_LibraryRecall`），與**磁碟上既有的產物**逐位元組對拍。
     // 物理意義：受測體是磁碟上那些 `letters/<p>/cmd/reading_recall_<media>.md` ——
-    //          它們是 `UCL_ReadingLibraryIO.RenderRecall`（另一份實作、另一個 process）寫出來的，
-    //          ⇒ 對照組**不同源**，這正是 TASK-0166 ③ 要的那種讀數。
-    // ⚠ 而它們是**快照**：資料後來被改過的話，重新渲染出來不一樣是**合理的**，不是移植壞了。
+    //          它們不是本程式這一輪寫的 ⇒ 對照組**不同源**，這正是 TASK-0166 ③ 要的那種讀數。
+    // ⚠ 而它們是**快照**：資料後來被改過的話，重新渲染出來不一樣是**合理的**，不是渲染壞了。
     //   🩸 拿它整批當閘的下場是「永遠紅，而紅得沒有資訊」（calli 2026-09-14 在隔壁那格踩過同一隻）。
     //   ⇒ 判準：只有**檔比它全部來源都新**（mtime ≥ reader 目錄／media.json／work.json 的最大值）
     //     那幾份才當閘；其餘只當讀數，並且把兩個數字**分開印**。
@@ -2837,8 +2835,8 @@ public static partial class SelfTest
                 "找不到任何 `reading_recall_*.md` ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
     }
 
-    // 區塊職責：搬進 SCP_Core 的閱讀卡渲染（`SCP_LibraryBookshelf.RenderCard`），
-    //          與 **Editor 端真產物** `Library/media/<id>/readers/<p>/bookshelf.md` 逐位元組對拍。
+    // 區塊職責：閱讀卡渲染（`SCP_LibraryBookshelf.RenderCard`），
+    //          與**磁碟上既有的產物** `Library/media/<id>/readers/<p>/bookshelf.md` 逐位元組對拍。
     // ⚠ 新鮮度判準跟追回檔那格**不一樣，而且要更窄**：閱讀卡只由 reader.json／media.json／work.json
     //   三個檔決定（章節與人物**不影響**它）⇒ 拿整個 reader 目錄當來源會把「讀了新的一章」
     //   誤判成「卡片過期」，而那是一個假的不新鮮。
@@ -2904,15 +2902,13 @@ public static partial class SelfTest
                 "找不到任何 `bookshelf.md` ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
     }
 
-    // 區塊職責：建檔層（`SCP_LibraryInit` 的三個 Build）產出的形狀，與磁碟上 Editor 建的那些逐位元組對拍。
+    // 區塊職責：建檔層（`SCP_LibraryInit` 的三個 Build）產出的形狀，與磁碟上既有的那些逐位元組對拍。
     // ⚠ **這把尺量不到什麼，先講**（本格最重要的一行）：
     //   輸入是**從輸出讀回來的** —— 我拿 work.json 裡的 title/author/aliases 去重建 work.json。
     //   ⇒ 它驗得到：鍵序、JSON 版面（UclLegacy）、schema_version、陣列渲染、`SaveJson` 的結尾換行。
     //   ⛔ 它**驗不到**：alias 合併語意（「title 有沒有被收進 aliases」那一格，因為輸入裡它已經在了）。
     //     那一格結構上同源，要驗它得有一份「原始輸入」，而磁碟上沒有留。
-    // ⚠ 為什麼不開 clean room 對照 Editor：Editor 端的路徑寫死 `UCL_RepoPath.AgentCommandsDir`，
-    //   **吃不了 data_root** ⇒ 讓它寫進暫存樹這條路不存在，而讓它寫進真樹是污染。
-    // 🩸 受測體的判準落在**來源**不是**結果**（2026-09-16 第一次跑 work 29 相符／10 不符，而移植沒錯）：
+    // 🩸 受測體的判準落在**來源**不是**結果**（2026-09-16 第一次跑 work 29 相符／10 不符，而 builder 沒錯）：
     //   那 10 份的**鍵集合**根本不同（6 份只有 4 個鍵、1 份多 `relations`/`_note`、
     //   1 份是寫書線的 `author_persona`/`publish_status`…）⇒ 它們不是這支 builder 寫的。
     //   ⇒ 判準：鍵**集合**（無序）相同才算受測體；⛔ 而**順序仍在受測範圍內** ——
@@ -3074,7 +3070,7 @@ public static partial class SelfTest
     // 區塊職責：建檔層三個 builder 的**逐位元組定值** —— 鍵序、版面、結尾換行全部釘死。
     // 物理意義：語料那一格的閘是**語意相等**（它必須如此：磁碟是多支 writer 的沉積），
     //          ⇒ 鍵序與版面在那裡是**不受測的**。這一格補上它們。
-    // ⭐ 而這些定值**不是我自己編的**：三段都逐位元組取自磁碟上 Editor 真產物
+    // ⭐ 而這些定值**不是我自己編的**：三段都逐位元組取自磁碟上的既有產物
     //   （`works/kotoko-lamp-and-ledger`／`media/book-kotoko-lamp-and-ledger`／
     //    該 media 底下 `readers/Sirius`，2026-09-16 取樣）⇒ 對照組仍然不同源。
     // ⭐ 它還補上語料閘量不到的那一格：**alias 自動合併** ——
@@ -3125,11 +3121,9 @@ public static partial class SelfTest
 
     // 區塊職責：`SCP_LibraryNote.NoteChapter` 的 **clean room** —— 在暫存樹上真的跑一遍寫入，
     //          把 chapter.json 的逐位元組形狀、續寫（segments）行為、與兩道拒絕寫入的閘全部釘住。
-    // ⭐ 為什麼這一支驗得比前幾刀好：`SCP_LibraryNote` **吃 iDataRoot**，所以它跑得進暫存樹；
-    //   而 Editor 那側的路徑寫死 `UCL_RepoPath.AgentCommandsDir`，同樣的事它做不到。
-    //   ⇒ 移植到 SCP_Core 這件事本身，讓這一層第一次有了「不污染真資料的實跑」。
+    // ⭐ `SCP_LibraryNote` **吃 iDataRoot**，所以它跑得進暫存樹 ⇒ 不污染真資料的實跑。
     // ⭐ chapter.json 的期望值**不是我編的**：形狀逐位元組取自
-    //   `media/anim-apocalypse-hotel/readers/basecamp/chapters/0001/chapter.json`（Editor 真產物）。
+    //   `media/anim-apocalypse-hotel/readers/basecamp/chapters/0001/chapter.json`（磁碟上的既有產物）。
     // 🩸 而續寫那一段**全庫零活體**（2026-09-16 實測：沒有任何一份 chapter.json 帶 `segments`）
     //   ⇒ TASK-0121 的那條路從落地到今天沒有任何產物驗證過它。這一格是它的第一份讀數。
     // 數值影響：只在暫存目錄建檔，跑完刪掉；⛔ 不碰任何真的資料樹。
@@ -3214,7 +3208,7 @@ public static partial class SelfTest
     }
 
     // 區塊職責：人物（facts／view 版本史）與書籤那一批的 clean room —— 暫存樹實跑。
-    // ⭐ view 檔的期望值取自 Editor 真產物的形狀
+    // ⭐ view 檔的期望值取自磁碟上既有產物的形狀
     //   （`characters/Mujina/v1_2026-08-25.md`，2026-09-16 取樣）⇒ 對照組不同源。
     // ⚠ 本格最該守的不是「寫得出來」，是**寫不進去的那兩格**：
     //   人物已存在時 add_character 必須拒絕（覆寫 v1 抹掉的是「我當時還不知道」，事後補不回來），
@@ -3442,7 +3436,7 @@ public static partial class SelfTest
     static string Eol(string iS) { return iS.Replace("\r\n", "\n"); }
 
     /// <summary>
-    /// 拿**真的、由 Unity 端 UCL JsonData 寫出來的檔**過一遍：讀 → 寫 → 再讀，
+    /// 拿**磁碟上真的檔**過一遍：讀 → 寫 → 再讀，
     /// 兩次的樹必須等價（逐 key 比較），而且第一次就要讀得到預期的欄位。
     /// </summary>
     static IEnumerable<CheckRow> RealFileRoundTrip(IReadOnlyList<SelfTestTarget> iTargets)
@@ -3572,7 +3566,7 @@ public static partial class SelfTest
             bool aCloseOk = aCloseSaid && aClosedBack != null && !aClosedBack.active
                             && aClosedBack.end_reason == "selftest" && aClosedBack.ended_at.Length > 0;
 
-            // ⑤ 觀影 kind 也一樣就地關（原本它是唯一要委派 Editor 結算的那種）—— 🔴 反向對照：寫不進去 ⇒ 回 false，不冒充關成
+            // ⑤ 觀影 kind 也一樣就地關 —— 🔴 反向對照：寫不進去 ⇒ 回 false，不冒充關成
             var aWatch = new SCP_ActivitySession { persona = "probe2", kind = SCP_ActivitySessionKind.StreamWatch,
                 session_id = "sw-z", active = true, end_ts = "2000-01-01T00:00:00.000Z" };
             SCP_ActivitySessionStore.Save(aRoot, "probe2", aWatch, SCP_ActivitySessionKind.StreamWatch);
@@ -3603,9 +3597,8 @@ public static partial class SelfTest
 
     // ===========================================================
     // 區塊職責：**子類別** round-trip —— 各 kind 的宿主用 typed 子類別讀寫同一份檔（TASK-0127 ⑦ 的機制）。
-    // 物理意義：⑦ 把 UCL 那側的 typed model（`UCL_FreeTimeSession` / `UCL_StreamWatchSession`）
-    //          的基底換成 `SCP_ActivitySession`，於是那 33 個 typed 欄位由 `SCP_JsonMapper` 進出。
-    //          這一格要擋的是**那個換基底如果錯了會怎麼死**：不是編譯錯，是欄位安靜消失。
+    // 物理意義：⑦ kind 專屬的 typed model 以 `SCP_ActivitySession` 為基底，typed 欄位由 `SCP_JsonMapper` 進出。
+    //          這一格要擋的是**基底如果錯了會怎麼死**：不是編譯錯，是欄位安靜消失。
     // 🩸 為什麼它值一格永久的驗收：2026-09-04 上午的活體就是「讀成比檔案窄的型別 → 改幾欄 → 寫回」
     //    吃掉 `rounds`／`activity`，而工具回 `closed=1`、零紅字。⇒ 那條路現在有機器在看。
     // 數值影響：寫在暫存根，跑完刪掉；不碰任何真資料。
@@ -3619,7 +3612,7 @@ public static partial class SelfTest
             Directory.CreateDirectory(SCP_ActivitySessionStore.Dir(aRoot));
 
             // ① 子類別寫出去 ⇒ 專屬欄位**真的落在檔案裡**，而且 bool 是**原生 bool** 不是 "True" 字串。
-            //    （UCL 那側原本為此各寫一個 SerializeToJson override；換基底之後由函式庫滿足，
+            //    （這由函式庫滿足，
             //      而「由誰滿足」如果沒有人在量，下一個人會以為它從來沒有人在意過。）
             var aWrite = new ProbeKindSession
             {
@@ -3668,8 +3661,8 @@ public static partial class SelfTest
         }
     }
 
-    /// <summary>假的 kind 專屬子類別 —— 模仿 UCL 那側的 <c>UCL_FreeTimeSession</c>（rounds/activity）
-    /// 與 <c>UCL_StreamWatchSession</c>（bool 欄位）各取一格，欄位形狀與真的那兩個同族。</summary>
+    /// <summary>假的 kind 專屬子類別 —— 模仿 <c>SCP_FreeTimeSession</c>（rounds/activity）
+    /// 與觀影 kind（bool 欄位）各取一格，欄位形狀與真的同族。</summary>
     sealed class ProbeKindSession : SCP_ActivitySession
     {
         public int rounds = 0;
@@ -3762,10 +3755,10 @@ public static partial class SelfTest
 
     // 區塊職責：發文判定的**三態不同形**（`SCP_TavernPostVerdict`）。
     // 物理意義：🩸 TASK-0134 QA（summit 2026-09-05）拿到「廣播沒發」而**廣播其實成功了**
-    //          （Editor 開著、post_seq 19082）—— 真實語意是「CLI 沒等到回執」。
+    //          （post_seq 19082）—— 真實語意是「CLI 沒等到回執」。
     //          兩者的處置**相反**：真沒發要補發；沒等到去補發＝在全域遞增的 seq 上多出第二則。
     // ⚠ 本格量的是**型別層**（三態分不分得開），不是活體。活體那格要真的讓廣播逾時，
-    //   而那需要關 Editor ⇒ 它是 QA 的事，⛔ 這裡不假裝量到了。
+    //   而那需要讓酒館 Server 不回應 ⇒ 它是 QA 的事，⛔ 這裡不假裝量到了。
     static CheckRow TavernPostVerdictThreeStates()
     {
         var aGood = SCP_TavernPostVerdict.Good("seq=1", "1");
@@ -3802,7 +3795,7 @@ public static partial class SelfTest
     }
 
     // 區塊職責：拿**真的** session 檔跑 round-trip —— 讀得回來、而且寫回去不會吃掉別人的欄位。
-    // 物理意義：這些檔是 Unity 那側寫的（TASK-0127 之後兩邊共用同一份）。
+    // 物理意義：這些檔不是本程式這一輪寫的。
     //          「能不能讀」不是單元測試問題，是拿真檔案去試的問題 —— 找不到樣本回**跳過**，不是通過。
     // ⚠ 純讀：複製到暫存根再寫，**絕不碰原檔**。
     // 區塊職責：拿**真的**實錄台帳跑一次 C# 版讀取（TASK-0143 ⑤ 的移植第一刀）。
@@ -4470,7 +4463,7 @@ public static partial class SelfTest
             string aCfgDir = Path.Combine(aTmp, "SenateData", "config");
             Directory.CreateDirectory(aCfgDir);
             string aProjRoot = aTmp.Replace(Path.DirectorySeparatorChar, '/');
-            // TASK-0390：資料根是全域 `paths` 那一格（⛔ 不再從 Unity 專案推 `<專案>/AgentCommands`）
+            // TASK-0390：資料根是全域 `paths` 那一格（⛔ 不從專案推 `<專案>/AgentCommands`）
             File.WriteAllText(Path.Combine(aCfgDir, "senate.local.json"),
                 "{\n  \"schemaVersion\": 1,\n  \"paths\": {\n    \"agentCommandsRoot\": \"" + aProjRoot + "/AgentCommands\"\n  },\n"
                 + "  \"awakening\": {\n    \"lettersRoot\": \"auto\"\n  }\n}\n");
@@ -4827,7 +4820,7 @@ public static partial class SelfTest
     // 區塊職責：酒館寫入臨界區（`SCP_TavernWriter`）的兩格 —— TASK-0106
     // ⚠ 這兩格量的是**不同的東西**，⛔ 不要把它們合成一格：
     //   · 淨室那格量「撞檔時會怎樣」—— 那是行為，臨時目錄就夠。
-    //   · 真檔那格量「寫出來的位元組跟 Editor 一不一樣」—— 那只有真語料答得出來。
+    //   · 真檔那格量「寫出來的位元組跟磁碟上既有的一不一樣」—— 那只有真語料答得出來。
     // ===========================================================
 
     /// <summary>
@@ -4969,8 +4962,8 @@ public static partial class SelfTest
 
     /// <summary>
     /// 真語料：把每一則落盤訊息讀回來、用 `SCP_TavernWriter.Serialize` 重寫一次，**逐位元組比**。
-    /// <para>⚠ 閘只押在「**現行 Editor writer 寫的那一段**」：2026-05-16 之前那段是遷移工具
-    /// 與幾支繞道寫入端（python 排版、BOM、尾端換行）的產物 —— 它們本來就不是這支移植要復刻的對象。
+    /// <para>⚠ 閘只押在「**2026-05-16 之後那一段**」：之前那段是遷移工具
+    /// 與幾支繞道寫入端（python 排版、BOM、尾端換行）的產物 —— 它們本來就不是這支 writer 要復刻的對象。
     /// ⛔ 而它們**不靜默排掉**：每一桶的數字都印出來，否則「驗過 19,884 則」與「驗過 20,434 則」同形。</para>
     /// </summary>
     static IEnumerable<CheckRow> RealTavernSerializerMatchesEditor(IReadOnlyList<SelfTestTarget> iTargets)
@@ -5173,8 +5166,8 @@ public static partial class SelfTest
 
     /// <summary>
     /// 寫入端的詞典附註（TASK-0313）—— 暫存詞典根，⛔ 不碰真的詞典、不寫任何訊息。
-    /// <para>🔴 本格的閘是「沒帶請求鍵 ⇒ 一個字都不動」：Editor 有 20 處直接寫訊息（酒保、Discord 進站…），
-    /// 以前都不附 ⇒ 這一格壞掉的樣子是它們某一天突然長出附註，而那不會報錯。</para>
+    /// <para>🔴 本格的閘是「沒帶請求鍵 ⇒ 一個字都不動」：直接寫訊息的呼叫端（酒保、Discord 進站…）
+    /// 不附 ⇒ 這一格壞掉的樣子是它們某一天突然長出附註，而那不會報錯。</para>
     /// </summary>
     static CheckRow WriterGlossaryAttach()
     {
@@ -5199,7 +5192,7 @@ public static partial class SelfTest
             string r1 = Cmd_TavernWrite.AttachGlossary(m1, aTmp, "");
             bool aOk1 = r1 == "attached" && m1.Body.Contains("/personas/probe.md)") && !m1.Meta.ContainsKey(Key);
 
-            // 🔴 ② 沒請求（Editor 那 20 處直接寫）⇒ 一個字都不動
+            // 🔴 ② 沒請求（直接寫訊息的那些呼叫端）⇒ 一個字都不動
             var m2 = Msg("今天用了 ProbeWord 一次");
             string r2 = Cmd_TavernWrite.AttachGlossary(m2, aTmp, "");
             bool aOk2 = r2 == "not_requested" && m2.Body == "今天用了 ProbeWord 一次";
@@ -5533,7 +5526,7 @@ public static partial class SelfTest
 
             // 🔴 ⑥ **子分道的路徑兩邊要一樣** —— 這一格是本測試真正的閘。
             //   🩸 第一版只比了 queue.json 的內容、兩邊又都餵沒有子分道的 lane
-            //   ⇒ 它對「Unity 版自己拼了一套路徑」完全無感（實際發生過，2026-09-21）。
+            //   ⇒ 它對「`SCP_ServerCmdClient` 自己拼了一套路徑」完全無感（實際發生過，2026-09-21）。
             //   協議的子分道住在**檔名**裡（`queues/<folder>/queue-<lane>.json`），⛔ 不是另一個資料夾。
             const string aSub = "tavern/my-room";
             bool aOkLane = SCP_ServerCmdClient.QueuePath(aRootB, aSub)
@@ -5939,7 +5932,7 @@ public static partial class SelfTest
             bool aStopOk = aBroken.Count == 2 && aBroken[0].Success && !aBroken[1].Success;
 
             // 🔴 反向格：變數表**跑完就沒** —— 分兩次 Run 不得共用。
-            //    （CLI 每次呼叫都是新 process；照 Unity 那側的 static 字典寫法會讓 $var 永遠找不到，
+            //    （CLI 每次呼叫都是新 process；用 static 字典的寫法會讓 $var 永遠找不到，
             //     而失敗訊息會長得像「變數名打錯了」。）
             IReadOnlyList<SCP_InvokeResult> aSecond = SCP_Invoker.Run(new[] { aS3 }, out _);
             bool aNoLeak = aSecond.Count == 1 && !aSecond[0].Success
@@ -6030,7 +6023,7 @@ public static partial class SelfTest
         }
     }
 
-    // 區塊職責：**開單 → 審批端讀得到 → 撤單**的淨室往返（TASK-0325：開單從 Unity 搬到 SCP_Core）。
+    // 區塊職責：**開單 → 審批端讀得到 → 撤單**的淨室往返（TASK-0325）。
     // 物理意義：開單端（CreatePayout／CreateTransfer）與審批端（LoadPending*）是兩支程式碼 ⇒ 要量「寫出來的單審批端認得」，
     //          ⛔ 不是只量「寫得出檔」。並驗三道擋（缺理由／自轉／已撤回再撤）都是零寫入或零動作。
     // TASK-0347／0333：掛號信的讀取端（到期規則／送達章冪等／ack 回寫寄件者副本）＋ brief 端上桌後才蓋章。
@@ -6146,7 +6139,7 @@ public static partial class SelfTest
     }
 
     /// <summary>
-    /// doc-edit（TASK-0367，Unity Cmd_DocEdit 搬家）：「本場改過沒」三態 ＋ 最新信的挑法 ＋ 擋下的三種。
+    /// doc-edit（TASK-0367）：「本場改過沒」三態 ＋ 最新信的挑法 ＋ 擋下的三種。
     /// ⚠ 判定那半格（yes／no）真實資料上要有人正在自由時間才量得到 ⇒ 這裡用暫存樹造一場進行中的 FreeTime。
     /// </summary>
     static CheckRow DocEditCleanRoom()

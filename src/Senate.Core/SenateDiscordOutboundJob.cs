@@ -3,7 +3,6 @@
 //   · 開關：`discord_config.json` 的 `outbound.enabled`，每一圈讀（Tim 2026-09-28：簡易開關）。
 //   · 每 `IntervalSec` 秒一輪：所有「沒封存、有分類、分類綁了 webhook」的頻道各跑一次 `SCP_DiscordOutbound.SendNew`
 //     —— 游標、第一次接上不回放、爆量保護、⛔ 不 @ 人、⛔ 不回送 Discord 轉進來的，都在那一層。
-//   · ⛔ 與 Unity 的 `UCL_DiscordMirrorDaemon` 不能同時開（會雙發）—— Unity 那套在同一個 commit 系列裡退場（TASK-0316 ⑦）。
 // 數值影響：網路在背景執行緒 ⇒ ⛔ 不擋心跳；POST 之間的節流與 429 退避在 SCP 層。同一個錯誤只印一次。
 #nullable enable
 using SCP.Core.Discord;

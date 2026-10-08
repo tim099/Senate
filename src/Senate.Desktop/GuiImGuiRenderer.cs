@@ -181,7 +181,7 @@ public sealed class GuiImGuiRenderer
     }
 
     // ⭐ **釘住的那幾塊先畫，其餘的畫在一個會捲的子區域裡**（Tim 2026-09-17）。
-    //   概念同 Unity 的 `UCL_EditorPage`：TopBar 在 ScrollView 外面、ContentOnGUI 在裡面
+    //   TopBar 在捲動區外面、內容在裡面
     //   ⇒ 捲到第 200 行時返回鈕還在原地。
     public void Render(SCP_GuiNode iRoot, SCP_GuiContentScroll iScroll = SCP_GuiContentScroll.None)
     {
@@ -371,8 +371,7 @@ public sealed class GuiImGuiRenderer
             case SCP_GuiNodeKind.Toggle:
             {
                 bool aOn = Toggles.TryGetValue(iNode.Id, out bool v) ? v : iNode.On;
-                // ⭐ 勾選框畫在**左邊**、標籤跟在框右邊（＝ ImGui 原生 Checkbox 的版位，
-                //   也是 UCL 那側的形狀）：框的 X 與標籤長度無關 ⇒ 一疊勾選由上往下有一條直線可掃。
+                // ⭐ 勾選框畫在**左邊**、標籤跟在框右邊（＝ ImGui 原生 Checkbox 的版位）：框的 X 與標籤長度無關 ⇒ 一疊勾選由上往下有一條直線可掃。
                 // 🩸 2026-09-01 讀數（scale=1，submodule 頁三顆）：舊版走 LabelLeft(標籤) 再畫
                 //   "##id" 的無名框，把框推到文字右邊。而 LabelLeft 只在「標籤寬 < LabelWidth」
                 //   （150px）時才對齊到欄位線，否則退回 SameLine() 緊貼排 ——
@@ -466,7 +465,7 @@ public sealed class GuiImGuiRenderer
                 //    那不疊了，但也放棄了 ImGui **做得到**的東西：`BeginGroup` 會把游標的 X
                 //    當成群組的新左緣，群組裡的每一行都從那裡開始。
                 //    ⇒ 正解是**包成群組**而不是換行：一顆鈕旁邊放一整塊垂直內容，
-                //    而那塊內容的左緣對齊它自己的起點（＝ Unity 端 GUILayout 的手感）。
+                //    而那塊內容的左緣對齊它自己的起點。
                 bool aFirst = true;
                 foreach (var c in iNode.Children)
                 {
@@ -598,7 +597,7 @@ public sealed class GuiImGuiRenderer
     /// <summary>
     /// 等寬群組要用的寬度 ＝ **直接子節點裡最寬的那顆鈕**（沒宣告等寬 ⇒ 0，各自照自然寬度）。
     /// <para>為什麼要等寬：一排寬度不一的選項，眼睛沒有一條可以往下掃的直線 ——
-    /// 那不是美觀問題，是「要看第幾項」每一次都得重新對焦。（形狀取自 Unity 端的 PopupSearch。）</para>
+    /// 那不是美觀問題，是「要看第幾項」每一次都得重新對焦。</para>
     /// </summary>
     float UniformWidthOf(SCP_GuiNode iNode)
     {

@@ -1,12 +1,10 @@
 // 區塊職責：知識庫的**目標清單**（TASK-0378）—— 每個 target 收哪些檔。
-// 物理意義：⭐ 讀的是 UCL_Core 裡**同一份** `Tools~/AgentCommands/kb_targets.json`（舊 knowledge_base.py 也讀它），
-//           ⛔ 不在 Senate 另抄一份：新舊兩套並存的這段期間，兩份清單一漂就是「同一個 target 新舊收的檔不一樣」，
-//           而評估讀數會把那個差別誤讀成檢索品質的差別。舊版退場時這個檔再搬過來。
-//           前綴語意照舊：無前綴＝Unity 專案根、`core:`＝UCL_Core 根、`data:`＝AgentCommands 資料根；`expand` 逐 persona 展開。
+// 物理意義：定義檔是 `kb_targets.json`（位置走描述表 `KbTargetsFile`）。
+//           前綴語意：無前綴＝Senate 專案根、`scp_core:`＝SCP_Core 根、`data:`＝資料根；`expand` 逐 persona 展開。
 // 數值影響：純讀（列目錄）。
 // ⚠ glob 自己寫（`**`／`*`／`?`／`[!_]`／`[abc]`）：.NET 內建的不支援 `[!_]`，而清單靠它排除 `_root_index.md` 那類機械產物。
 // ⚠ 去重用正規化後的真實路徑（不分大小寫）：Windows 上 `Lessons/**` 與 `lessons/**` 回同一批檔、字串不同
-//   ⇒ 只用字串去重的話每一塊被索引兩次（舊版 2026-10-02 量到 312 塊＝2×156，UCL_Core 9cc004f2 修過同一隻）。
+//   ⇒ 只用字串去重的話每一塊被索引兩次（2026-10-02 量到 312 塊＝2×156）。
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -19,7 +17,7 @@ public sealed record KbTarget(string Name, string Desc, string Kind, IReadOnlyLi
 public sealed record KbSources(KbTarget Target, List<string> Files, List<string> Bases);
 
 /// <summary>
-/// 知識庫的三個 glob 基準＋定義檔位置（TASK-0390：全部跟著 Senate＋Valhalla，⛔ 不讀 Unity 專案）。
+/// 知識庫的三個 glob 基準＋定義檔位置（TASK-0390：全部跟著 Senate＋Valhalla）。
 /// 無前綴＝<see cref="RepoRoot"/>（Senate 專案根）、`scp_core:`＝<see cref="ScpCoreRoot"/>、`data:`＝<see cref="DataRoot"/>。
 /// </summary>
 public sealed class KbRoots
@@ -114,7 +112,7 @@ public static class KbTargets
 
     /// <summary>
     /// glob 的前綴不是「無／scp_core:／data:」⇒ 回那個前綴名；否則 null。
-    /// 🩸 TASK-0390：舊的 `core:`（Unity 專案裡的 UCL_Core）搬家後若留著，會被當成 repo 相對的字面路徑、安靜地匹配 0 檔。
+    /// 🩸 不認得的前綴（例：已不支援的 `core:`）若不擋，會被當成 repo 相對的字面路徑、安靜地匹配 0 檔。
     /// </summary>
     static string? UnknownPrefix(string iGlob)
     {

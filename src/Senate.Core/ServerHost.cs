@@ -9,7 +9,7 @@
 //
 // 🩸 三格血證決定了形狀：
 //   ① **身分不是 pid 檔**：pid 會被 OS 回收再發 ⇒ 認人一律走 SCP_ProcessRegistry 三重身分（pid＋name＋start time），
-//      「pid 檔存在」與「Server 活著」是兩件事（UCL 2026-07-27 那套的理由，這裡照用）。
+//      「pid 檔存在」與「Server 活著」是兩件事。
 //   ② **兩顆 exe 長得一模一樣**：Server 是舊 exe、CLI 是新 exe 時，兩本帳在畫面上同形（Setup_And_Build §「先 build 再對 exe」）。
 //      ⇒ 心跳裡帶 build id，status 對不上就明說「先 stop 再 start」，不照跑。
 //   ③ **exe 會被常駐的自己鎖住**（D10：覆寫 publish 出來的 exe 撞鎖）⇒ build 腳本 publish 前先 `server stop`。
@@ -129,7 +129,7 @@ public static class ServerHost
 
     public const int HeartbeatIntervalMs = 500;
 
-    /// <summary>心跳超過這個秒數視為停了（對照 Unity 那側 `_heartbeat.txt` 的 4 秒判準）。</summary>
+    /// <summary>心跳超過這個秒數視為停了。</summary>
     public const double HeartbeatStaleSeconds = 4.0;
 
     /// <summary>stop 請求送出後等 Server 自己退的時間；等不到才 kill。</summary>
@@ -382,13 +382,12 @@ public static class ServerHost
              + (aOrphans > 0 ? $"　⚠ 翻回 {aOrphans} 條孤兒 lane" : ""));
 
         // ── 名片：往「我服務的那棵資料根」留下 server_root／心跳路徑（TASK-0106 第 4 步）──
-        // 🩸 為什麼要這一步：Unity Editor 那側**不知道 Senate 在哪**（UCL_Core 全樹零個 Server 根參照），
-        //    而委派需要一個可寫的 queue 目錄。⇒ 由知道答案的一方把答案寫到兩邊都看得到的地方。
-        // ⚠ 名片寫不出去**不擋啟動** —— Server 本身仍然是好的，只是 Editor 那側會判成「沒有 Server」。
+        // 🩸 為什麼要這一步：只看得到資料根的一方不知道 Senate 在哪 ⇒ 由知道答案的一方（Server）把答案寫進資料根。
+        // ⚠ 名片寫不出去**不擋啟動** —— Server 本身仍然是好的，只是讀名片的一方會判成「沒有 Server」。
         //   ⇒ 那時候要大聲說，⛔ 不可以靜默：靜默的話症狀會長成「委派一直說沒有 Server」，而 Server 明明開著。
         string? aEndpointDataRoot = TryResolveDataRoot(iRepoRoot);
         if (aEndpointDataRoot == null)
-            iErr("⚠ 解析不出 AgentCommands 資料根 ⇒ **沒有留名片**：Editor 那側會判成「這棵樹沒有 Server」。");
+            iErr("⚠ 解析不出 AgentCommands 資料根 ⇒ **沒有留名片**：讀名片的一方會判成「這棵樹沒有 Server」。");
         else
         {
             var aCard = new SCP_ServerEndpointInfo
@@ -402,7 +401,7 @@ public static class ServerHost
                 StaleSeconds = HeartbeatStaleSeconds,
             };
             (bool aCardOk, string aCardMsg) = SCP_ServerEndpoint.Write(aEndpointDataRoot, aCard);
-            if (aCardOk) iOut("· 名片：" + aCardMsg + "（Editor 那側靠它找到執行器與心跳）");
+            if (aCardOk) iOut("· 名片：" + aCardMsg + "（讀名片的一方靠它找到執行器與心跳）");
             else iErr("⚠ " + aCardMsg);
         }
 
@@ -515,8 +514,8 @@ public static class ServerHost
     /// <summary>
     /// 這顆 Server 服務的 AgentCommands 資料根。<c>null</c> ＝ 解析不出來（沒設定／目錄不存在）。
     /// <para>⚠ **資料根只有一組**（Tim 2026-08-31）⇒ 這裡不挑、不猜，解析不出來就回 null 讓呼叫端出聲。</para>
-    /// <para>走唯一入口 `SenatePathBinding.ResolveDataRoot`（TASK-0390）—— 🩸 原本要求一個啟用的 Unity 專案，
-    /// 沒有專案時 Server 拿不到資料根：沒有端點卡、夜間結算／Discord／酒保全停。</para>
+    /// <para>走唯一入口 `SenatePathBinding.ResolveDataRoot`（TASK-0390）。
+    /// 拿不到資料根的話：沒有端點卡、夜間結算／Discord／酒保全停。</para>
     /// </summary>
     static string? TryResolveDataRoot(string iRepoRoot)
     {

@@ -1,5 +1,5 @@
 // 區塊職責：**酒保後台頁**（TASK-0365）—— 開關、回應設定（模型／思考段／上限／冷卻）、人設、罐頭句、辨認的名稱（別名）、試回一句。
-//           取代 Unity `UCL_BartenderAdminPage` 的「常駐酒保」與「回應來源」兩塊（遠端喚醒、酒館 CLI、派工單不搬；定時提醒在 TASK-0393）。
+//           定時提醒不在本頁（TASK-0393）。
 // 物理意義：真正回應的是酒館 Server 裡的 SenateBartenderJob（每一輪重讀設定檔）⇒ 本頁存檔後**不必重啟 Server**。
 //           狀態與試回走 `senate cmd bartender`；存檔直接走 SenateBartender／SCP_TavernMentionAliases 的 TrySave（檢查 → 寫 → 讀回）。
 // 數值影響：**按頂欄「存檔設定」才寫檔，⛔ 不自動存**（Tim 2026-10-05，跟 AI 模型頁同一個規矩）。
@@ -327,7 +327,7 @@ public sealed class BartenderPage : SCP_GuiToolPage
             g.TextField("等待上限（秒；超過就退回罐頭句）", m_Saved.TimeoutSeconds.ToString(CultureInfo.InvariantCulture), Id("timeout"));
             g.TextField("冷卻（秒；兩次 @ 回覆的最短間隔）", m_Saved.CooldownSeconds.ToString(CultureInfo.InvariantCulture), Id("cooldown"));
             g.TextField("每日上限（則；0＝今天不回 @）", m_Saved.DailyCap.ToString(CultureInfo.InvariantCulture), Id("cap"));
-            g.Note("生成上限太小時 thinking 模型會在思考段被截斷、退回罐頭句（Unity 版 120 token 幾乎每次都是這樣）。");
+            g.Note("生成上限太小時 thinking 模型會在思考段被截斷、退回罐頭句（120 token 幾乎每次都是這樣）。");
         }
     }
 

@@ -261,7 +261,7 @@ static class ServerCommand
         return 0;
     }
 
-    /// <summary>Server 根底下每條 lane 的 trigger 狀態（idle／pending／running）與殘量 —— 對應 `ucmd status` 那張表。</summary>
+    /// <summary>Server 根底下每條 lane 的 trigger 狀態（idle／pending／running）與殘量。</summary>
     static void PrintLanes(string iRepoRoot, string iServerId)
     {
         string aServerRoot = SenatePaths.ServerRoot(iRepoRoot, iServerId);

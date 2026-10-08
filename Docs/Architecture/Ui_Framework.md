@@ -124,7 +124,7 @@ CLI `--set` 與常駐窗的 set 請求各算一次完成（跟 click 一樣只�
 | 判準 | 而不是 |
 |---|---|
 | ImGui：群組用 `BeginGroup` 排到右邊 | 直接 `SameLine` —— 群組會往下長，結果是**疊在前一項上面** |
-| ImGui：第一版修法是「跟文字模式一樣換行」，後來改掉 | 那不疊了，但**放棄了 ImGui 做得到的事**（一顆鈕旁邊放一整塊垂直內容 ＝ Unity GUILayout 的手感） |
+| ImGui：第一版修法是「跟文字模式一樣換行」，後來改掉 | 那不疊了，但**放棄了 ImGui 做得到的事**（一顆鈕旁邊放一整塊垂直內容） |
 | 文字：換行 ＋ **印一行註記**說「視窗那側是排在右邊的」 | 靜默換行 —— 讀文字輸出的人會以為版面真的是上下排的（我就是這樣漏掉那次重疊的） |
 | 文字：**不模擬** ImGui 的水平版位 | 自己再寫一套排版引擎去「預測」另一個 renderer —— 那是第二份產線，而它會漂 |
 | 規則不同，但**分類只寫一份** | 各自判斷一次（D14 同一條：分類分岔的症狀不會報錯） |
@@ -155,28 +155,27 @@ CLI `--set` 與常駐窗的 set 請求各算一次完成（跟 click 一樣只�
   這條規則**兩個 renderer 共用**，而「誰算 inline」只有一份：`SCP_GuiNode.IsInline`。
 - ⚠ **已知缺口**：表格還不吃 `--width`（欄寬取自然寬度，窄視窗會超出）。
 
-## 跨輪狀態住在哪（對照 Unity 端的 `UCL_ObjectDictionary`）
+## 跨輪狀態住在哪：`SCP_GuiInput` / `SCP_GuiState`
 
-UCL 那側的 `UCL_GUILayout.PopupSearch` 把自己的內部狀態（開闔 `_Show`、搜尋字 `_Search`、
-分頁子 dict）塞進呼叫端傳進來的 `UCL_ObjectDictionary`。這裡有對應的東西，但**形狀刻意不同**：
+複合元件（例如下拉選單）的內部狀態 —— 開闔、搜尋字、第幾頁 —— 跟使用者的欄位值住在同一處，
+而且**刻意住在驅動端，不住在頁面物件裡**：
 
-| | UCL：`UCL_ObjectDictionary` | 這裡：`SCP_GuiInput` / `SCP_GuiState` |
-|---|---|---|
-| 誰持有 | **頁面自己**的欄位（`readonly UCL_ObjectDictionary m_Dic`） | **驅動端**：renderer 的三個字典，或 `SenateData/runtime/ui_session.json` |
-| 命名 | 呼叫端自己給的 dict ＋ 字串 key（＋ `GetSubDic` 巢狀） | **全域 id 命名空間** —— 跟 `--click` / `--set` / `--fold` 是同一組字 |
-| 型別 | 任意 `object` | 只有 `string`（Fields）與 `bool`（Toggles / Folds） |
-| 活多久 | 頁面物件活著的期間（記憶體） | 跨 process（存進 session 檔） |
-| 外部能不能看／改 | 不能 | 能：`--list` 看得到、`--set` 改得動、檔案可 diff |
+| | 規格 |
+|---|---|
+| 誰持有 | **驅動端**：renderer 的三個字典，或 `SenateData/runtime/ui_session.json` |
+| 命名 | **全域 id 命名空間** —— 跟 `--click` / `--set` / `--fold` 是同一組字 |
+| 型別 | 只有 `string`（Fields）與 `bool`（Toggles / Folds） |
+| 活多久 | 跨 process（存進 session 檔） |
+| 外部能不能看／改 | 能：`--list` 看得到、`--set` 改得動、檔案可 diff |
 
 ⇒ 換來的是「元件的內部狀態也有讀數」：下拉選單開著沒開著、搜尋打了什麼、停在第幾頁，
 全部是可以被別人檢查的資料，而不是某個頁面物件裡的私有欄位。
 **代價要說**：這些內部狀態跟使用者的資料混在同一個 `Fields` 字典裡，
-session 檔會看到 `home/page/open` 這種「不是資料的資料」。UCL 那側因為 dict 是頁面私有的，沒有這個問題。
+session 檔會看到 `home/page/open` 這種「不是資料的資料」。
 
-### 缺的那一半：`SCP_Ui.SetField` / `FieldWrites`
+### 頁面自己寫欄位：`SCP_Ui.SetField` / `FieldWrites`
 
-`UCL_ObjectDictionary` 是**讀寫**的，元件可以隨手 `SetData`。而這裡原本只有單向：
-使用者打字 → renderer 寫 → 頁面讀。於是「頁面自己想改一個欄位」沒有落點 ——
+只有「使用者打字 → renderer 寫 → 頁面讀」這個方向的話，「頁面自己想改一個欄位」沒有落點 ——
 清空搜尋框、下拉選了一項要記起來、翻頁，全都做不到。
 
 ```csharp
@@ -242,7 +241,7 @@ bool aOn = g.ToggleValue("submodule/only/SCP_Core", iFallback: true);   // 讀�
 
 ## 下拉選單（可搜尋）：`SCP_Ui.Dropdown`
 
-概念取自 `UCL_GUILayout.PopupSearch`：一顆顯示現值的鈕 → 點開 → 搜尋框 ＋ 分頁的選項列。
+一顆顯示現值的鈕 → 點開 → 搜尋框 ＋ 分頁的選項列。
 
 ```csharp
 string aPick = g.Dropdown("頁面", aOptions, aDefaultKey, "home/page");
@@ -265,7 +264,7 @@ if (g.Button("開啟", "home/open")) Open(aPick);
 
 | 判準 | 而不是 |
 |---|---|
-| 搜尋是**空白分隔的關鍵字，每個都要命中**（子字串、忽略大小寫） | regex —— UCL 那側編譯失敗時退回「不篩」，於是打一個 `(` 會讓清單看起來全部符合，而使用者以為自己在搜尋 |
+| 搜尋是**空白分隔的關鍵字，每個都要命中**（子字串、忽略大小寫） | regex —— 編譯失敗時退回「不篩」的話，打一個 `(` 會讓清單看起來全部符合，而使用者以為自己在搜尋 |
 | **預設摺疊**（`iDefaultOpen: false`） | 一進來就攤開 —— 那是替使用者決定他想選東西，而清單會把版面吃光 |
 | 展開時把**頭與選項包成同一個等寬群組** | 頭在外、清單在內 —— 清單就得去對齊「別人的位置」，而它不知道別人在哪 |
 | 收合時**子節點根本不建** | 畫了再隱藏（同 `Fold` 的判準） |
@@ -339,12 +338,12 @@ SCP_GuiPage（abstract）
 
 | 為什麼這樣 | 而不是 |
 |---|---|
-| **一個 Window 一套 controller** | UCL 的 `Ins` 單例 —— 開第二個視窗會互相蓋，而畫面只像「那頁跑到別的窗去了」 |
+| **一個 Window 一套 controller** | 全域單例 —— 開第二個視窗會互相蓋，而畫面只像「那頁跑到別的窗去了」 |
 | 同一個 page 實例 push 兩次 ⇒ **丟例外** | 安靜接受 —— stack 裡兩個相同引用會讓 `Pop`／`Remove` 移掉哪一個變成看運氣 |
 | 導覽路徑存進 session（`nav`） | 只放記憶體 —— CLI 每次都是新 process，兩步操作會變成「按了進去又跳回首頁」 |
 | 復原不了的 key **停手並回報** | 悄悄退回根頁 —— 「那頁不存在了」會長得像「你本來就在首頁」 |
 | 空堆疊畫一行說明 | 留白 —— 分不出「沒有頁面」與「頁面畫不出來」 |
-| 「回首頁」＝ `PopToRoot`（留最底層那頁） | UCL 的 Close ＝ `PopAll` —— 這裡最底層就是入口頁，清空的結果不是關閉是空白畫面 |
+| 「回首頁」＝ `PopToRoot`（留最底層那頁） | `PopAll` —— 最底層就是入口頁，清空的結果不是關閉是空白畫面 |
 | 頁面可宣告 `OwnsNavBar` ⇒ controller 不再自動畫返回鈕 | 兩邊都畫 —— 不會報錯，只會多一顆 id 是 `page/back#2` 的返回鈕，而 agent 照 `--list` 抄到的就是那顆 |
 
 ⚠ **兩側的導覽時序不同**：CLI 是兩趟繪製 ⇒ push／pop 同一次呼叫就看得到；
@@ -363,26 +362,23 @@ SCP_GuiToolPage : SCP_GuiPage
   ├── MenuGroup (string?)    ← 入口頁清單的 opt-in ＋ 分組名（null ＝ 不列；"" ＝ 列但沒分組）
   │                             ⚠ 什麼時候該回 null、以及它跟 [SCP_PageIgnore] 的界線見下方
   ├── DrawTopBar(ui)        ← ◀ 返回｜⌂ 首頁｜<子類的鈕>｜page key
-  │     ├── TopBarButtons(ui)   ← 子類的擴充點（＝ UCL 的 TopBarButtons）
+  │     ├── TopBarButtons(ui)   ← 子類的擴充點
   │     └── ShowBackButton / ShowHomeButton / ShowKeyHint
-  ├── DrawContent(ui)        ← 子類實作（＝ UCL 的 ContentOnGUI）
+  ├── DrawContent(ui)        ← 子類實作
   └── Draw(ui)  **sealed**   ← 工具列 ＋ 內容，不給覆寫
 ```
 
-概念取自 Unity 端的 `UCL_EditorPage`（TopBar：Back／Close／Help ＋ TopBarButtons ＋ ContentOnGUI）
-與 `UCL_CommonEditorPage`（`ShowInPageMenu` 決定要不要列進選單）。**四格刻意不照抄：**
-
-| 這裡 | UCL | 為什麼 |
-|---|---|---|
-| **一層**（`SCP_GuiToolPage`） | 兩層（`UCL_EditorPage` ＋ `UCL_CommonEditorPage`） | 兩層都只有同一批消費端；分兩層只多一個「該繼承哪一個」的問題 |
-| `MenuGroup`（**string?**） | `ShowInPageMenu`（bool） | bool 只能答「要不要出現」，清單一長就是一坨沒結構的鈕；字串同時答「要不要」與「跟誰一國」⇒ 入口頁可以先篩分組。⚠ 空字串 ≠ null：空字串是「列進去、沒有分組名」 |
-| `Draw` 是 **sealed** | `OnGUI()` 可覆寫 | 覆寫掉的話返回鈕會不見，而那個症狀看起來像框架壞了，不像自己少呼叫一行 |
-| 工具列尾巴印 **page key** | 印類名 ＋ Copy 鈕 | 類名對使用者沒用途，page key 才是 `--page`／session `nav`／麵包屑共用的那個字。沒有 Copy 鈕：共用層碰不到剪貼簿，而「一顆按了沒事的鈕」比沒有那顆鈕糟 |
+| 規格 | 為什麼 |
+|---|---|
+| **一層**（`SCP_GuiToolPage`），不分「基底頁 ＋ 選單頁」兩層 | 兩層都只有同一批消費端；分兩層只多一個「該繼承哪一個」的問題 |
+| `MenuGroup`（**string?**），不是 bool | bool 只能答「要不要出現」，清單一長就是一坨沒結構的鈕；字串同時答「要不要」與「跟誰一國」⇒ 入口頁可以先篩分組。⚠ 空字串 ≠ null：空字串是「列進去、沒有分組名」 |
+| `Draw` 是 **sealed** | 覆寫掉的話返回鈕會不見，而那個症狀看起來像框架壞了，不像自己少呼叫一行 |
+| 工具列尾巴印 **page key**，不印類名、沒有 Copy 鈕 | 類名對使用者沒用途，page key 才是 `--page`／session `nav`／麵包屑共用的那個字。沒有 Copy 鈕：共用層碰不到剪貼簿，而「一顆按了沒事的鈕」比沒有那顆鈕糟 |
 
 ### 工具列上的「原始碼」鈕
 
-打開這一頁的 `.cs` 所在資料夾（Windows 會**選取**那個檔）。它是 UCL 那顆 Help 鈕的同一格 ——
-位置也一樣：導覽鈕之後、子類的自訂鈕之前。
+打開這一頁的 `.cs` 所在資料夾（Windows 會**選取**那個檔）。
+位置：導覽鈕之後、子類的自訂鈕之前。
 
 路徑**雙軌**，因為單軌會安靜地壞：
 
@@ -425,7 +421,7 @@ class NoCtor   : B { }                                      // F = null
 ⚠ `DrawTopBar` **先收集動作、離開 `Row` 之後才執行** —— handler 裡的 push／pop 會改變
 `ShowBackButton` 的答案，在同一輪的 Row 中途改變版面會讓後面幾顆鈕的 id 跟著漂。
 
-⚠ 工具列**不 try/catch**。UCL 那側包了 `Debug.LogException` 吞得起來，共用層沒有 logger ——
+⚠ 工具列**不 try/catch**。共用層沒有 logger ——
 吞了就是真的沒有讀數（「那顆鈕沒反應」變成沒人查得到的事）。
 
 ---
@@ -748,7 +744,7 @@ Senate 的第一個消費者是 `SettingsPage`（`ui --click doctor/open-setting
 ```
 SCP_GuiStyle
   ├── Scale（0.5〜4，**預設 1.0**）＋ 四段預設 小1× / 中1.5× / 大2× / 特大2.5×
-  ├── Scaled(n) / ScaledInt(n)        ← 等同 UCL_GUIStyle.GetScaledSize
+  ├── Scaled(n) / ScaledInt(n)        ← 基準值 × Scale
   ├── FontSize / TitleFontSize / ItemSpacing* / FramePadding* / CellPadding*
   │   IndentSpacing / ScrollbarSize / ButtonMinWidth / WindowWidth …（＝基準值 × Scale）
   ├── NoteColor / BackgroundColor      ← renderer 無關的顏色（不碰 Vector4 / UnityEngine.Color）

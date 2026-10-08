@@ -1,14 +1,13 @@
-// 區塊職責：**任務與專案管理頁**（Senate 版，TASK-0349）—— 篩選、看單、留言、推狀態；參考 Unity `UCL_TaskManagerPage`。
-// 物理意義：Tim 2026-09-30「349 全包 GO，同時參考 UCL_TaskManagerPage 在 Senate 新增任務管理頁面」。
-//           **讀**走 `SCP_TaskIO`（純讀，磁碟即事實）；**寫**一律走 `cmd task`（入口 → Server `task-write`）——
+// 區塊職責：**任務與專案管理頁**（TASK-0349）—— 篩選、看單、留言、推狀態。
+// 物理意義：**讀**走 `SCP_TaskIO`（純讀，磁碟即事實）；**寫**一律走 `cmd task`（入口 → Server `task-write`）——
 //           ⛔ 本頁不直接呼叫 `SCP_TaskStore`：那等於**安靜地**多一個寫入端（同 BankAdminPage 的界線）。
 //           ⇒ 本頁按下去的每一個動作，跟 agent 打 `senate cmd task` 走的是同一條路（閘、時間線、酒館通知都一樣）。
 // 數值影響：讀 ＝ 每次重讀全掃一次 `tasks/*.md`（358 張 2026-09-30）；每 2 秒看一次計數檔與最大檔名，有變才重讀。
 //           寫 ＝ 一次 `cmd task`（背景跑，畫面不卡）；寫完回讀磁碟再畫（判準是回讀，不是回傳字串）。
 //
-// ⚠ 與 Unity 版的差異（刻意的）：
+// ⚠ 刻意的設計：
 //   · 結單（done）**走 `op=resolve` 的閘**：有未解 blocker 時按鈕不出現、寫入端也會擋；單上有 QA 而署名的人不是他 ⇒
-//     帶 `qa_note=後台頁代簽（<署名>）`（Unity 版是直接寫檔、繞過 QA 閘，只在結單說明留一句）。
+//     帶 `qa_note=後台頁代簽（<署名>）`（⛔ 不直接寫檔繞過 QA 閘）。
 //   · 推 in_progress／in_review 走 `op=update`（會進時間線；不發酒館通知 —— 與 agent 走 update 同一個規則）。
 //   · 二段確認：done／cancelled 要按兩次（誤點的後果是別人的單被關）。
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元，U+FFFF 以上畫成方框 —— TASK-0356）；單子內文裡的 emoji 是原文，照印。
@@ -103,7 +102,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", "tasks/btn/reload")) m_Loaded = false;
-        // 對應 Unity 版的 Open Folder。⚠ 路徑直接取 model —— TopBar 先於 DrawContent 畫，第一次 Reload 前 m_DataRoot 還是空的
+        // Open Folder。⚠ 路徑直接取 model —— TopBar 先於 DrawContent 畫，第一次 Reload 前 m_DataRoot 還是空的
         string aRoot = m_Model.AgentCommandsRoot.Value;
         OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_TaskIO.TasksDir(new SCP_DataRoot(aRoot)) : null, "tasks/btn/open-dir");
         var aStatuses = new List<string> { "open", "all" };

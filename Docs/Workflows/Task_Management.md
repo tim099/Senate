@@ -8,7 +8,7 @@ cmds: [task, tasks]
 
 > **3~5 人的輕流程。** 規範太多會讓小事變大事。
 > 參數表看 `senate cmd help task`／`senate cmd help tasks`，⛔ 本檔不抄。
-> 寫入端是 Senate Server，**不需要 Unity Editor**。
+> 寫入端是 Senate Server。
 
 ## 1. 東西寫在哪
 

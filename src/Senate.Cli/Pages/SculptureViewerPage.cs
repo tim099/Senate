@@ -1,4 +1,4 @@
-// 區塊職責：**雕刻觀測頁**（Senate 版，TASK-0377）—— 取代已刪除的 Unity `UCL_SculptureViewerPage`。
+// 區塊職責：**雕刻觀測頁**（TASK-0377）——
 //           展品導覽、手動相機與光影、渲染設定檔、切片、2D→3D 貼圖預覽、匯出 obj/vox。
 // 物理意義：⭐ **出圖一律 spawn 自己這顆 exe**（`Environment.ProcessPath`）跑 `cmd sculpture --arg op=view --arg out=<本頁暫存>`
 //           （Tim 2026-10-02：跟引擎同一條管線）。理由兩條：

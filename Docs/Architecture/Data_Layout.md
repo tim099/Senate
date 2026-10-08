@@ -41,7 +41,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
     ├─ ui_session.json             ❌ CLI 跨呼叫的 UI session
     ├─ _server_heartbeat.json      ❌ 常駐 Server 的心跳（pid／build id／時間戳，每 0.5 秒覆寫）
     ├─ _server_stop.request        ❌ `senate server stop` 留給 Server 的停止請求（Server 看到就自退並刪掉）
-    ├─ _cmd_errors/                ❌ CLI 直跑的 SCP Cmd 失敗報告（exit 1／70；委派 Unity 的不在這，在該專案資料根）
+    ├─ _cmd_errors/                ❌ CLI 直跑的 SCP Cmd 失敗報告（exit 1／70）
     └─ server/                     ❌ Server 自己的資料根（版面同 AgentCommands：queues/<lane>/、_cmd_results/、_cmd_errors/）
 ```
 
@@ -135,7 +135,7 @@ SenatePaths.ServerRoot(iRepoRoot)        // SenateData/runtime/server/（底下�
 要新落點就往 `SenatePaths` 加一支具名成員。
 
 📌 這一層**刻意不進 SCP_Core**：SCP_Core 管的是跨端契約的版面，而 `SenateData/`
-只有 Senate 這一個宿主會用（Unity 那側沒有這個東西）。
+只有 Senate 這一個宿主會用。
 規則是「一個路徑只能有一個決定點」，不是「路徑一定要在 Core 算」。
 
 ## ⛔ 改路徑 ＝ 同時要做 migration

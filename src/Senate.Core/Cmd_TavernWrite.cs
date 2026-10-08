@@ -1,6 +1,5 @@
 // 區塊職責：`tavern-write` —— 酒館訊息的**寫入臨界區**那一格，由 Senate Server 執行（TASK-0106）。
-// 物理意義：D20 那句「只有一顆 process 在寫」落到酒館身上就是這一支 —— **酒館訊息唯一的寫入端**
-//           （TASK-0341，2026-09-30：Editor 本地寫入與 `tavern.writer` 開關都已刪除）。
+// 物理意義：D20 那句「只有一顆 process 在寫」落到酒館身上就是這一支 —— **酒館訊息唯一的寫入端**。
 //           配號 → 建檔 → 寫 `_seq.txt` → 刷索引在臨界區裡；寫完再做 @ 通知、發薪、詞典附註、創作留念信。
 //
 // 閘：Server 沒跑 ⇒ 基底類別回 exit 3 並印啟動指令（委派端會 autostart），本檔不必處理；
@@ -66,7 +65,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     ///   lane 名 ＝ 目錄名，它只看 <c>pending.trigger</c>，⛔ 不看 <c>pending-&lt;lane&gt;.trigger</c>。
     /// <br/>⇒ 2026-09-21 端到端實測：queue 落在對的地方、JSON 合法、trigger 也寫了，
     ///   而 15 秒之後等不到判定 —— **沒有任何一層說「我不認得這個形狀」**。
-    /// <br/>📌 ⇒ 子分道是 **Editor Runner 有、Server 執行器沒有**的能力。要它就得改執行器，
+    /// <br/>📌 ⇒ 子分道是 **Server 執行器沒有**的能力。要它就得改執行器，
     ///   而那不在本單射程（見 TASK-0106 留言）。
     /// <br/>⚠ 這一格在 A 之下**沒有消失，只是碰不到** —— 常數是寫死的，所以現在沒有人能把 `/` 餵進來。
     ///   哪天改回 B（房名接在後面）那個坑原地回來，所以讀數留著。</para>
@@ -90,7 +89,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
                 new SCP_CmdArgSpec("room", "房間 id", iRequired: true),
                 new SCP_CmdArgSpec("msg_json",
                     "整則訊息的 JSON（落盤同形）。長內容走 `--arg-file`", iRequired: true),
-                // TASK-0313：詞典附註改由寫入端補（Unity 端不碰詞典）。兩格由 CLI 宿主照 senate.local.json 自動填，
+                // TASK-0313：詞典附註由寫入端補。兩格由 CLI 宿主照 senate.local.json 自動填，
                 //   ⛔ 呼叫端不必給 —— 沒有它們（例如 in-process 呼叫、沒帶）⇒ 不附，照寫。
                 new SCP_CmdArgSpec("glossary_root", "詞典根（宿主自動填；不帶 ⇒ 不補附註）"),
                 new SCP_CmdArgSpec("repo_root", "Senate 專案根（附註路徑顯示用；宿主自動填）"),
@@ -154,9 +153,9 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：**寫入前補詞典附註**（TASK-0313）—— Editor 發的文不再自己附（Tim 2026-09-28：Unity 端不碰詞典）。
-    // 物理意義：**只有帶了請求鍵的才附**（`SCP_Glossary.AttachRequestMetaKey`，Editor `Op_Post` 會帶）——
-    //          Editor 另有 20 處直接寫訊息，以前都不附；預設全附會讓它們突然長出附註（Discord 進站的人話也會被附）。
+    // 區塊職責：**寫入前補詞典附註**（TASK-0313）。
+    // 物理意義：**只有帶了請求鍵的才附**（`SCP_Glossary.AttachRequestMetaKey`）——
+    //          直接寫進來的訊息預設不附；全附的話 Discord 進站的人話也會長出附註。
     //          判準與 Senate 組訊息端同一支（`ShouldAutoAttach`：系統元件／CLI 指令／顯式 opt-out 不附）；
     //          已含 marker 的原樣放行 ⇒ 每一則最多附一次。
     // 數值影響：改 Body、拿掉請求鍵（⛔ 它不落進訊息檔）。回傳 `🔢 glossary`：
@@ -176,9 +175,9 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：**寫完就寄 creative 留念信**（TASK-0312）—— 判準與信文在 SCP_TavernCreativeArchive（與 Editor 本地寫那條同一支）。
+    // 區塊職責：**寫完就寄 creative 留念信**（TASK-0312）—— 判準與信文在 SCP_TavernCreativeArchive。
     // 物理意義：掛在寫入端（同 @mention／發薪）而不是發文前處理：留念信要 seq，而 alter 延後發文排程時還沒有 seq；
-    //          放這裡 ⇒ Senate 路、Editor 路（writer=server 時也委派這裡）、延後發文都恰好寄一封。
+    //          放這裡 ⇒ 即時發文、延後發文都恰好寄一封。
     // 數值影響：寫兩份信件檔。失敗只寫進回傳值 —— 訊息已經落檔、seq 已經給出去了，⛔ 不讓寫入回報失敗。
     // ===========================================================
     static void AppendCreativeArchive(string iDataRoot, string iRoom, int iSeq, SCP_TavernMessage iMsg, SCP_CmdResult ioResult)
@@ -202,9 +201,9 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：**寫完就通知 @ 到的人**（TASK-0299）—— 規則在 SCP_TavernMentions（與 Editor 本地寫那條同一支）。
+    // 區塊職責：**寫完就通知 @ 到的人**（TASK-0299）—— 規則在 SCP_TavernMentions。
     // 物理意義：通知是寫入不變量（任何進到房間的訊息都該觸發），⇒ 掛在寫入端；直打本支的訊息以前沒人通知。
-    //          這裡拿得到**真的訊息檔路徑**（Editor 在 server 模式委派之後拿不到）⇒ 截斷的條目會指出全文在哪。
+    //          這裡拿得到**真的訊息檔路徑** ⇒ 截斷的條目會指出全文在哪。
     // 數值影響：通知失敗不讓寫入失敗；逐人回報。路徑印成「相對資料根」（TASK-0390，
     //          不在資料根底下的檔才印絕對路徑，⛔ 不影響通知本身）。
     // ===========================================================
@@ -230,7 +229,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
     }
 
     // ===========================================================
-    // 區塊職責：**寫完就發薪**（TASK-0296）—— 規則在 SCP_TavernPayroll（與 Editor 本地寫那條同一支），入帳交銀行那顆。
+    // 區塊職責：**寫完就發薪**（TASK-0296）—— 規則在 SCP_TavernPayroll，入帳交銀行那顆。
     // 物理意義：發薪掛在寫入端而不是 `op=post` ⇒ 任何入口寫進來的訊息都照同一套規則付
     //          （TASK-0106 #24：直打本支的 4 則以前不付，照構造就不付）。
     //          `bank` 的 ServerId 是 main、本 process 是 tavern ⇒ ServerDelegateCmd 會**委派**過去，

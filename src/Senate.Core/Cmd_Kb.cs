@@ -1,8 +1,7 @@
 // 區塊職責：`senate cmd kb` —— 知識庫（語意檢索）的 Senate 版（TASK-0378）：status／reindex／search／eval／sidecar。
-// 物理意義：取代 UCL_Core 的 knowledge_base.py（那支在新版能取代它之前照常可用；兩邊讀**同一份** kb_targets.json、
-//           同一批文件，⛔ 不搬舊的向量檔 —— Tim：新架構要兼容舊資料，而資料本來就是文件）。
+// 物理意義：目標清單讀 kb_targets.json（KbTargets），索引從文件本身重建 —— 資料本來就是文件。
 //           嵌入由常駐程序（KbSidecar）做 ⇒ 模型只載一次；索引是二進位（KbIndex）；切塊依標題（KbChunker）。
-// 數值影響：status／search 純讀（search 預設會先把過期的 target 重建，跟舊版同一個預設；`auto_reindex=0` 關掉）；
+// 數值影響：status／search 純讀（search 預設會先把過期的 target 重建；`auto_reindex=0` 關掉）；
 //           reindex 寫 `<資料根>/_kb/<target>/`；sidecar 起／停常駐程序。
 // ⚠ exit：0 成功／1 擋下／2 用法錯／3 **缺相依**（照 Install §6 問使用者）／4 **量不到**（⛔ 不當成缺）／5 動手了但沒成功。
 using System.Diagnostics;
@@ -20,7 +19,7 @@ public sealed class Cmd_Kb : SCP_Cmd
     public override string Summary => "知識庫語意檢索（Senate 版）：status／reindex／search／eval／sidecar —— 模型常駐只載一次";
 
     public override string Details =>
-        "目標清單讀專案 UCL_Core 的 `Tools~/AgentCommands/kb_targets.json`；索引在 `<資料根>/_kb/<target>/`。\n"
+        "目標清單讀 `SenateData/config/kb_targets.json`（描述表 KbTargetsFile）；索引在 `<資料根>/_kb/<target>/`。\n"
         + "⚠ 輸入形狀是**一句話**不是關鍵字（語意檢索）。預設 `mode=hybrid`（dense＋sparse）；`rerank` 再交給重排模型。\n"
         + "⚠ 第一次檢索要拉起常駐嵌入程序（冷啟動約 1 分多鐘），之後一句約 0.1 秒；閒置 30 分它自己退。\n"
         + "⚠ 缺套件或模型 ⇒ exit 3，照 `senate cmd doc --arg op=show --arg name=Install` §6 問使用者，同意了才裝。";

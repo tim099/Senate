@@ -1,6 +1,5 @@
 // 區塊職責：CLI 入口 —— `senate init` / `doctor` / `ui`。
-// 物理意義：**headless 優先**。這套後台的第一個實用價值是「Unity Editor 關著也能做事」，
-//           所以入口是命令列；ImGui 視窗是同一份頁面碼的第二個 renderer，不是唯一入口。
+// 物理意義：**headless 優先**：入口是命令列；ImGui 視窗是同一份頁面碼的第二個 renderer，不是唯一入口。
 // 數值影響：唯讀的指令不動任何檔（doctor / ui）；init 只在檔案**不存在**時建立，絕不覆寫。
 // exit code 語意（刻意分開，讓腳本分辨得出「壞了」與「還沒設定」）：
 //   0 = 一切正常   1 = 環境或設定有問題（doctor 判定不通過）
@@ -121,7 +120,7 @@ public static class Program
         // 文件根／資料根／信件根／詞典根／工作記憶與閱讀線的根／本地 Cmd 殼：全在最上面的 SenateHostPaths.Install。
         ServerDelegateCmd.RepoRootProvider = () => aRepoRoot;
 
-        // 宿主能力③：畫布閘（付款／自由時間資格／分享）——本宿主的實作是「派給 Unity Editor」。
+        // 宿主能力③：畫布閘（付款／自由時間資格／分享）—— 錢與券串 Server、資格就地讀、分享走 `tavern-post`。
         // ⚠ 工廠吃資料根當參數，**不自己解析** —— Cmd 吃的 `--arg data_root` 與閘用的根若是兩個來源，
         //   不一致時會安靜地把付款派到另一個專案（錢那邊扣、像素這邊落）。
         // ⚠ 定語不由這裡宣告：閘自己從資料根算專案標籤。
@@ -129,22 +128,20 @@ public static class Program
         //   而那是兩個來源拼出來的定語，比沒有定語更毒（它有出處的樣子）。
         SCP.Core.Canvas.SCP_CanvasGatewayHost.Factory = aDataRoot => new SenateCanvasGateway(aDataRoot);
         // 書店閘（TASK-0234 ②的另一半，2026-09-18）：錢與券**直接串 Server**（`bank` / `voucher`）。
-        // ⇒ 裝上它之後，`cmd book op=donate|publish|tip|retry-tips` 與 Editor **共用同一份實作**。
         SCP.Core.Books.SCP_BooksGatewayHost.Factory = aDataRoot => new SenateBooksGateway(aDataRoot);
         // 棋局閘（TASK-0268 ⑥）：廣播走 `tavern-post`、券走 `voucher`。
         SCP.Core.Chess.SCP_ChessGatewayHost.Factory = aDataRoot => new SenateChessGateway(aDataRoot);
-        // Coding 退場的編譯閘（TASK-0058 A2／TASK-0454）：一律 `dotnet build`；範圍碰到 Unity 專案時另外讀那個專案的 Unity 編譯狀態，
-        // ⛔ 兩把**不合成一把**（合了會讓其中一邊量的不是它自己的編譯）—— 各自判、各自報。
+        // Coding 退場的編譯閘（TASK-0058 A2／TASK-0454）：`dotnet build`。
         // ⚠ 沒裝閘不是綠燈 —— `cmd coding --arg op=end` 沒閘時會明說「未驗編譯」。
         SenateCodingExitGate.Install(aRepoRoot);
-        // 宿主能力④：酒館發文閘（`cmd rest` 的廣播那半）—— 同樣是**派給 Editor**：
+        // 宿主能力④：酒館發文閘（`cmd rest` 的廣播那半）—— 走酒館 Server `tavern-write`：
         // seq 是全域遞增的，同時只能有一個寫入端 ⇒ 這一格沒有本地版，也不會有。
         // ⚠ 沒裝閘不是「發出去了」—— `cmd rest` 會明說「本宿主沒有登記發文閘 ⇒ 這一則沒有發出去」。
         SCP.Core.Letters.SCP_TavernPostGatewayHost.Factory =
             aDataRoot => new SenateTavernPostGateway(aDataRoot, Console.WriteLine);
         // 宿主能力⑤：推單閘（`cmd commit` 的 `Fixes/Refs TASK-n` 那半）—— 交給 `cmd task op=commit`（TASK-0349）：
         // 狀態機（有 blocker 不推進／有 QA 推 in_review／沒 QA 才 done）只有一份，在 SCP_Core `SCP_TaskOps`，
-        // 由任務單唯一的寫入端（Server `task-write`）執行 ⇒ Editor 關著也推得動。
+        // 由任務單唯一的寫入端（Server `task-write`）執行。
         // ⚠ 沒裝閘不是「推了」—— `cmd commit` 會明說「沒有登記推單閘 ⇒ 狀態沒有動」並印手動補的指令。
         SCP.Core.Tasks.SCP_TaskCommitGatewayHost.Factory =
             aDataRoot => new SenateTaskCommitGateway(aDataRoot, Console.WriteLine);
@@ -214,7 +211,7 @@ public static class Program
                 "ui" => CmdUi(aRepoRoot, iArgs),
                 SyncWindowExe.Subcommand => CmdSyncWindow(aRepoRoot, iArgs),
                 "submodule" => CmdSubmodule(aRepoRoot, iArgs),
-                "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
+                "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#）
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
                 "pages-check" => CmdPagesCheck(aRepoRoot),   // TASK-0276：page key 撞名在 build 階段就要紅
                 "server" => ServerCommand.Run(aRepoRoot, iArgs),   // 常駐 Server 生命週期（TASK-0102；前景、永駐、手動啟動）
@@ -796,7 +793,7 @@ public static class Program
 
     // ── senate selftest ───────────────────────────────────────
     // 物理意義：共用碼（SCP_Core）的 JSON 層必須讀得懂**既有資料** ——
-    //           那些檔是 Unity 端寫出來的，所以驗收方式是拿真檔案去跑，不是自己造樣本。
+    //           那些檔不是本程式寫的，所以驗收方式是拿真檔案去跑，不是自己造樣本。
     static int CmdSelfTest(string iRepoRoot, string[] iArgs)
     {
         var aModel = new SenateModel(iRepoRoot);
@@ -993,7 +990,7 @@ public static class Program
         bool aDryRun = HasFlag(iArgs, "--dry-run");
 
         // ⚠ 目標 repo：sync **不給預設值**。
-        //   🩸 UCL 那邊的血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
+        //   🩸 血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
         //      回報一整排 ✓，而 B 的 submodule 一個位元組都沒動 —— 綠燈全亮，量到的是別的 repo。
         //   ⇒ 會寫東西的指令必須**顯式**指定對象；唯讀的 status 才給預設（猜錯也不會壞東西）。
         string? aRoot = ResolveSubmoduleRoot(iRepoRoot, iArgs, aWrite, out string aRootWhy);
@@ -1568,8 +1565,7 @@ public static class Program
         // 便利：`data_root` 沒給就用**同一格設定**（`SCP_PathId.AgentCommandsRoot`，＝「路徑管理」頁那一格）。
         // ⚠ 適用範圍是「凡宣告 data_root 的 Cmd」不是某一支 —— 現況 sessions／tasks／canvas 三支
         //   各自要求呼叫端手打絕對路徑，而那是同一個值抄在 N 個呼叫端（含每一份文件範例裡）。
-        //   🩸 手抄的那份會過期：`SCP_Cmd_Sessions` 的用法範例到今天還印著 `D:/Unity/LY/AgentCommands`，
-        //   而那是**另一台**的根。⇒ 唯一那格設定解得出來時，不該逼人重打一次。
+        //   🩸 手抄的那份會過期，而且可能是**另一台**的根。⇒ 唯一那格設定解得出來時，不該逼人重打一次。
         // ⛔ 仍然**印出來、不靜默注入**（同 letters_root 的理由）：
         //   靜默注入的症狀是「我明明沒指定，它卻讀了另一棵資料樹」。
         //   ⚠ 同上，落點是 **stderr**：告示給人，stdout 給程式。
@@ -1594,8 +1590,8 @@ public static class Program
                 //   ⇒ 跟 data_root 走同一支、同一個上游。資料根解不出來時這裡什麼都不填，
                 //     讓 Cmd 用「缺必填參數」擋下 —— ⛔ 不要在資料根壞掉的時候還指得出一個銀行。
                 FillRootArg(aCmd, aRawArgs, aCfg, "bank_root", SCP.Core.Paths.SCP_PathId.BankRoot);
-                // TASK-0313：詞典附註由寫入端補 ⇒ `tavern-write` 宣告了這兩格，Editor 呼叫它時由這裡填
-                //   （詞典根的唯一真相源是 senate.local.json，Unity 端不碰它）。沒宣告的 Cmd 不受影響。
+                // TASK-0313：詞典附註由寫入端補 ⇒ `tavern-write` 宣告了這兩格，呼叫它時由這裡填
+                //   （詞典根的唯一真相源是 senate.local.json）。沒宣告的 Cmd 不受影響。
                 FillRootArg(aCmd, aRawArgs, aCfg, "glossary_root", SCP.Core.Paths.SCP_PathId.GlossaryRoot);
                 // 宿主 repo 根（Senate 專案根，描述表的 Host 格；TASK-0390）：doc-edit 等「文件住在 Senate」的指令用它當基準
                 FillRootArg(aCmd, aRawArgs, aCfg, "repo_root", SCP.Core.Paths.SCP_PathId.HostRepoRoot);

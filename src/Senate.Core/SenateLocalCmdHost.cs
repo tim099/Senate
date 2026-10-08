@@ -2,7 +2,6 @@
 // 物理意義：TASK-0406：那些 Cmd 的殼搬進 SCP_Core 之後，只有 Senate 才有的東西留在這裡：
 //           資料根（唯一入口 SenatePathBinding.ResolveDataRoot，TASK-0390）／詞典根（PathsPage 那一格）／環境標記／
 //           酒館寫入（Server 不在就排隊，TASK-0372）／發文指令的提示（用 `Cmd_TavernPost` 的型別動態組）。
-//           （「Editor 在不在＋把觀影場交給 Editor 結算」那一段 TASK-0448 拔掉：晚安關場就地做。）
 //           「在哪裡執行」那一句也由這裡說 —— 那是宿主的事實，不是共用層的。
 // 數值影響：與搬家前的 `MorningLocalCmd.Execute` 同一套解析；零新增 IO。
 using SCP.Core.Cmd;

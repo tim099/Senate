@@ -1,18 +1,17 @@
 // 區塊職責：**Server 端執行器** —— 沿用 AgentCommand 檔案協議（Tim ③），Server 當 Watcher：
 //           掃 `<Server 根>/queues/<lane>/pending.trigger` → 原子接手成 `.running` → 該 lane 一條 thread
 //           跑完 queue.json 裡的每一筆 → 寫 `_cmd_results/<id>.json` → 出隊 → 刪 `.running`。
-// 物理意義：TASK-0103。形狀照 Editor Runner（UCL_AgentCommandRunner）：**同 lane 串行、跨 lane 並行**、
+// 物理意義：TASK-0103。**同 lane 串行、跨 lane 並行**、
 //           OneShot 成功與失敗都出隊、verdict 一律在 result 檔（「從 queue 消失」只代表結束）。
-//           協議三端（run_cmd.py／AgentCmdClient／UCL_AgentCommandQueue）從此變四端 —— 本檔的路徵常數
-//           **全部走 SCP_DataPaths／AgentCmdClient**，不重拼一次。
-// 數值影響：只動 Server 根（SenateData/runtime/server/）底下的檔；不碰任何 Unity 專案的資料根。
-//           result 檔 schema 與 Editor 端 WriteCmdResult 同形（id/type/mode/result/finished_at/client/
-//           outputs/values/error/error_report），多三欄 host/server_pid/server_build 與 `lines`。
+//           本檔的路徑常數**全部走 SCP_DataPaths／AgentCmdClient**（client 與執行端共用樣板），不重拼一次。
+// 數值影響：只動 Server 根（SenateData/runtime/server/）底下的檔。
+//           result 檔 schema：id/type/mode/result/finished_at/client/outputs/values/error/error_report、
+//           host/server_pid/server_build 與 `lines`。
 //
 // ⚠ 只接 ServerDelegateCmd：別的型別送進來 ⇒ Failed 並說「這支不走 Server」。
 //   Native 的 Cmd 在 Server 裡跑會少掉 CLI 注入的那些便利（letters_root 等），而且它們本來就不需要單一寫入者。
 // ⚠ 孤兒 `.running`：Server 上次沒收乾淨（crash／被 kill）留下的。啟動時把它翻回 pending 續跑 ——
-//   照 Editor Watcher 的自救形狀；不翻的話那條 lane 永遠 busy，而 CLI 只會看到 queue_busy。
+//   不翻的話那條 lane 永遠 busy，而 CLI 只會看到 queue_busy。
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SCP.Core.Cmd;
@@ -172,7 +171,7 @@ public sealed class ServerExecutor
                     ? $"  ✓ {aType} ({aId})"
                     : $"  ✗ {aType} ({aId}) exit={aResult.ExitCode}：{FirstLine(aResult)}");
 
-                // OneShot 成功與失敗都出隊（Tim 2026-08-07 拍板的 Editor 半邊，這裡照用）；verdict 在 result 檔。
+                // OneShot 成功與失敗都出隊（Tim 2026-08-07 拍板）；verdict 在 result 檔。
                 if (aMode == "OneShot") { aCommands.RemoveAt(i); aDoneOneShot.Add(aId); }
                 else
                 {
@@ -234,7 +233,7 @@ public sealed class ServerExecutor
     static string FirstLine(SCP_CmdResult iResult)
         => iResult.Lines.Count > 0 ? iResult.Lines[iResult.Lines.Count == 1 ? 0 : Math.Min(1, iResult.Lines.Count - 1)] : "(no message)";
 
-    // ── result 檔（schema 與 Editor 端 WriteCmdResult 同形）────────────
+    // ── result 檔 ────────────────────────────────────────────
 
     /// <summary>
     /// 寫 `_cmd_results/&lt;id&gt;.json`。成功與失敗都寫 —— 只寫失敗的話「沒有檔」又變回要推論的空白。

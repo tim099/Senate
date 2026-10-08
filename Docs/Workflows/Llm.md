@@ -34,7 +34,7 @@ AI 模型試跑與酒保共用 `Cmd_Llm.Chat`，只設定生成上限 `num_predi
 
 ## 2. 為什麼不走安裝系統（Tim 2026-10-05 拍板）
 
-- 模型的真實狀態住在 **ollama 服務**裡：Senate 頁、Unity 頁、酒保讀的都是同一份 `ollama list` ⇒ 不需要另一層帳。
+- 模型的真實狀態住在 **ollama 服務**裡：AI 模型頁、CLI、酒保讀的都是同一份 `ollama list` ⇒ 不需要另一層帳。
 - 它跟安裝系統管的東西不同種：pip 套件與 HF 模型是「我們下載、我們放進資料夾」；ollama 自己下載、自己存。
 - ollama **本體**也不代裝：官方 Windows 安裝是下載並執行遠端腳本（`irm https://ollama.com/install.ps1 | iex`），頁面只給下載頁與指令的複製鈕。
 - 代價：skill 的 `requires_install` 管不到 ollama 模型；缺模型時由本頁／本 Cmd 提示。
@@ -62,7 +62,7 @@ AI 模型試跑與酒保共用 `Cmd_Llm.Chat`，只設定生成上限 `num_predi
 - 走 HTTP API（`127.0.0.1:11434/api/chat`），拿得回逾時、生成上限、思考段。第一次會把模型載進顯存（冷啟動可能幾十秒）。
 - 逾時不代表它死了：thinking 模型可能還在想 ⇒ `op=ps` 看它在不在顯存、`op=stop` 卸載。殺掉發問的那一方**不會**讓模型離開顯存。
 - 頁面上下載與試跑都能「中斷」：下載 ＝ 殺掉 `ollama pull`（ollama 保留已下載的部分，下次接著下）；試跑 ＝ 關掉連線（ollama 才會停止生成 —— 只按 `stop` 的話它會等這次請求跑完才卸載）。下載不設時間上限，要停就按中斷。
-- 頁面的試跑預設 `keep_alive=120`（用完兩分鐘卸載，跟 Unity 頁一樣）；CLI 預設 -1（ollama 自己的 5 分鐘）。
+- 頁面的試跑預設 `keep_alive=120`（用完兩分鐘卸載）；CLI 預設 -1（ollama 自己的 5 分鐘）。
 
 ## 5.5 頁面設定（Tim 2026-10-05）
 
@@ -70,7 +70,7 @@ AI 模型試跑與酒保共用 `Cmd_Llm.Chat`，只設定生成上限 `num_predi
 - 存在 `SenateData/config/llm_page.json`（本機設定，不入版控）。沒存過 ⇒ 用初始值：`qwen3:0.6b`／「跟剛進門的客人打個招呼」／system「你是傲嬌的貓娘」／開思考段／上限 4096／卸載 120 秒／等 60 秒。
 - 設定檔讀不了 ⇒ 用初始值，但頁面明講「讀不了、按存檔會覆蓋它」（⛔ 不說成「還沒存過」）；舊檔少欄位逐格補初始值。
 - 只是頁面的初值 —— CLI `senate cmd llm --arg op=test` 的預設不變（120 token、不開思考段）。
-- 每次試跑 append 一行到 `<資料根>/LLMAdmin/test_log.jsonl`（欄位與 Unity `LLMTestResult` 相同，多 `ts`／`system`）；寫不進去只警告、不擋。
+- 每次試跑 append 一行到 `<資料根>/LLMAdmin/test_log.jsonl`（欄位：`ok`／`model`／`prompt`／`seconds`／`eval_count`／`tokens_per_sec`／`output`／`thinking`／`note`／`error`／`ts`／`system`）；寫不進去只警告、不擋。
 
 ## 6. exit code
 

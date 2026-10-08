@@ -126,7 +126,7 @@ senate cmd install --arg op=install --arg ids=<那幾個 id> --arg confirm=1
 
 ## 7. 不在這裡的
 
-- 影音套件與權重的安裝併進觀影重做：TASK-0450（知識庫頁已搬，TASK-0381）。Unity 的影音管理頁與 `media_admin.py` 已刪（TASK-0449）。
+- 影音套件與權重的安裝：TASK-0450（併進觀影重做）。
 - 三個特例還沒收進清單，TASK-0450 收：
   - **onnxruntime-gpu**：`onnxruntime` 與 `onnxruntime-gpu` 兩個 dist 共用同一個 `onnxruntime/` 目錄，疊裝會混成 providers 只剩 CPU 的嵌合體。
     做法：兩個 dist 反覆 uninstall 到 user／system site 都不見 → 清掉殘留的 `onnxruntime/` 目錄 → 裝 `onnxruntime-gpu` → 子行程實測 providers 含 `CUDAExecutionProvider` 才算成功。

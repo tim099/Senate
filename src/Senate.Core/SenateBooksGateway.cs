@@ -7,7 +7,7 @@
 //   ① **失敗一律 throw**（介面判準②）。吞掉的話留下的是「書登記了、錢沒扣」，
 //      而那張登記之後沒有人會回來看。
 //   ② **`DeliverDossier` 誠實回「這個宿主沒有這一步」**，⛔ 不回一句假裝成功的話 ——
-//      續寫包寫進 `letters/` 的版面只有 Editor 那側有，
+//      Senate 沒有續寫包投遞（寫進 `letters/` 的版面），
 //      而「沒有這一步」與「做了但失敗」在回報上要分得開（本體會把理由原樣印出來）。
 //   ③ 取值一律讀 result 的 **values 欄**，⛔ 不 regex 人讀輸出
 //      （那種失配的樣子跟「查不到」一模一樣）。
@@ -97,7 +97,7 @@ public sealed class SenateBooksGateway : SCP_IBooksGateway
     // 判準②：誠實說「這個宿主沒有這一步」。
     public string? DeliverDossier(string iBook, string iAuthorPersona, SCP_JsonData iEntry, out string oError)
     {
-        oError = "Senate 這一側沒有續寫包投遞（它寫進 `letters/` 的版面只有 Editor 那側有）"
+        oError = "Senate 沒有續寫包投遞"
                  + " —— ⛔ 這不是失敗，是這個宿主沒有這一步";
         return null;
     }

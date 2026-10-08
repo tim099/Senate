@@ -1,10 +1,9 @@
 // 區塊職責：純邏輯 markdown parser —— 把 raw .md 字串切成 block list（frontmatter／heading／paragraph／
 //          code fence／bullet／quote／hr／empty／table／mermaid），給 MarkdownViewerPage 渲染。
-// 物理意義：移植自 Unity 端 `UCL_MarkdownParser`（UCL_Core EditorCore）的**解析那一半**；
-//          反向輸出（Render）沒搬 —— Senate 這側沒有「結構化建檔再寫成 .md」的呼叫端，搬了是死碼。
-//          frontmatter `related:` 的解析也一起收在這裡（Unity 端放在 viewer 頁裡）：它同樣是純字串處理。
+// 物理意義：只做**解析**；沒有反向輸出（Render）—— Senate 沒有「結構化建檔再寫成 .md」的呼叫端。
+//          frontmatter `related:` 的解析也收在這裡：它同樣是純字串處理。
 // 數值影響：line-based 掃描；純函式、零 IO。
-// ⚠ 支援範圍與 Unity 版相同：不支援 setext heading、巢狀清單、HTML 區塊、腳註、複雜 mermaid。
+// ⚠ 支援範圍：不支援 setext heading、巢狀清單、HTML 區塊、腳註、複雜 mermaid。
 #nullable enable
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,7 +12,7 @@ namespace Senate.Cli.Pages;
 
 public enum MdBlockType { Heading, Paragraph, CodeFence, Bullet, Quote, HorizontalRule, Empty, Table, Mermaid }
 
-/// <summary>一個 block。欄位有沒有意義看 <see cref="Type"/>（同 Unity 版 `UCL_MdBlock`）。</summary>
+/// <summary>一個 block。欄位有沒有意義看 <see cref="Type"/>。</summary>
 public sealed class MdBlock
 {
     public MdBlockType Type;
@@ -206,7 +205,7 @@ public static class MarkdownDoc
         return cells;
     }
 
-    // ── mermaid（簡化版，同 Unity 版：graph/flowchart 方向＋三種 shape＋-->|label|）──────
+    // ── mermaid（簡化版：graph/flowchart 方向＋三種 shape＋-->|label|）──────
 
     static readonly Regex s_RxDir = new(@"^(?:graph|flowchart)\s+(\w+)", RegexOptions.Compiled);
     static readonly Regex s_RxEdge = new(
@@ -260,7 +259,7 @@ public static class MarkdownDoc
 
     /// <summary>
     /// 解析 frontmatter 的 `related:` 區塊：`related:` 之後連續的 `- <url> | <label> [| <desc>]`。
-    /// 缺欄位的那一行**記進 <paramref name="oSkipped"/>**（Unity 版丟 Debug.LogWarning；這裡沒有 logger，丟了就是沒讀數）。
+    /// 缺欄位的那一行**記進 <paramref name="oSkipped"/>**（這裡沒有 logger，丟了就是沒讀數）。
     /// </summary>
     public static List<MdRelatedDoc> ParseRelated(string? iFrontmatter, List<string> oSkipped)
     {
@@ -296,7 +295,7 @@ public static class MarkdownDoc
 
     /// <summary>
     /// inline 標記 → 純文字：圖 → `[圖：alt]`、粗體／斜體 → 拿掉星號、連結 → 只留文字；**反引號裡的不動**。
-    /// <para>⚠ 與 Unity 版不同：不認 `_斜體_` —— 純文字顯示時它最常咬到的是 `snake_case` 識別字，
+    /// <para>⚠ 刻意不認 `_斜體_` —— 純文字顯示時它最常咬到的是 `snake_case` 識別字，
     /// 拿掉底線會把名字改掉，而且看起來像原文就長那樣。</para>
     /// </summary>
     public static string Inline(string? iText)

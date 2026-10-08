@@ -1,10 +1,7 @@
-// 區塊職責：畫布閘的 **CLI／Server 實作** —— 四格宿主能力**全部不經 Unity Editor**：
+// 區塊職責：畫布閘的 **CLI／Server 實作** —— 四格宿主能力：
 //           token 與券串 Server（`bank` / `voucher`）、在場資格就地讀 session 檔、分享走 `tavern-post`（TASK-0366）。
-// 物理意義：原本券／session／酒館發文的權威實作只有 Editor 那側有（Tim 2026-09-03「內部串 ucmd，不移植」）；
-//           一格一格搬走之後：token 2026-09-18（TASK-0216 ⑨）、券同日（TASK-0243）、在場資格 2026-10-01（TASK-0360）、
-//           分享 2026-10-01（TASK-0366）。⇒ 本檔已經沒有 AgentCommand 檔案協議 round-trip。
-//           🩸 Tim 那句「Senate 端的金流直接串到 Server，不用走 ucmd 再繞一圈」的理由對每一格都成立：
-//           繞 Editor 多出來的那一段**不增加任何保證，只多一個會逾時的地方**。
+// 物理意義：每一格都就地做或直連 Server，⛔ 不多繞一段行程 ——
+//           多出來的那一段**不增加任何保證，只多一個會逾時的地方**。
 // 數值影響：取值一律讀 Cmd 結果的 **values 欄**，⛔ 不 regex stdout（字串會因人讀輸出改版而靜默失配）。
 // 設計取捨：② 查詢類逾時回「不知道」（Unknown／-1），寫入類逾時回**失敗** ——
 //              兩者方向相反是刻意的：查不到可以再問，而「不確定有沒有扣到錢」只能當沒扣，
@@ -33,10 +30,9 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
                                Action<string>? iLog = null, double iQueryTimeoutSec = 20)
     {
         m_DataRoot = iDataRoot;
-        // 🩸 專案標籤**從資料根自己算**（資料根的上一層目錄名 —— 與地理定語的寫入端同一條規則）。
-        //    2026-09-03 實測：原本吃宿主傳進來的 repo 根 basename ⇒ 印出
-        //    「⤷ 錢與資格由 Unity Editor 執行 @ Senate（<另一棵資料樹>）」——
-        //    定語與它描述的那棵樹**是兩個來源**，於是定語自己說了謊。
+        // 🩸 專案標籤**從資料根自己算**（`SCP_DataPaths.ProjectNameOf` —— 與地理定語的寫入端同一條規則）。
+        //    吃宿主傳進來的 repo 根 basename 的話，定語與它描述的那棵樹**是兩個來源**，
+        //    定語會自己說謊（2026-09-03 實測）。
         //    ⇒ 定語必須從被描述的那個東西身上長出來，不能由呼叫端另外宣告。
         //    （呼叫端仍可顯式覆寫，但那是刻意行為，不是預設。）
         m_ProjectLabel = iProjectLabel ?? DeriveProjectLabel(iDataRoot);
@@ -44,12 +40,7 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         m_QueryTimeoutSec = iQueryTimeoutSec;
     }
 
-    // ⚠ 2026-09-18 **同一天改了兩次**，而中間那一版的定語當天就過期了：
-    //   ① 早上：token 切到 Server ⇒ 寫成「token 走 Server／**券**與資格走 Editor」
-    //   ② 下午：券也切到 Server（`voucher`）⇒ 上面那句的「券」當場變成假的
-    //   ⇒ 那時只剩**在場資格**（自由時間／session）還在 Editor。
-    //   ③ 2026-10-01（TASK-0360）：自由時間搬進 Senate ⇒ 在場資格改讀 session 檔（就地），這裡跟著改第三次。
-    // 🩸 記著這個形狀：**定語是跟著實作走的，而它不會自己跟** ——
+    // 🩸 **定語是跟著實作走的，而它不會自己跟** —— 任何一格改了走法，這行要一起改；
     //   一句半對的定語比沒有定語貴，因為讀它的人會去錯的地方查為什麼沒扣到。
     public string HostQualifier
         => $"⤷ token 與券由 Senate Server 執行（`bank` / `voucher`）／"
@@ -57,14 +48,13 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
 
     /// <summary>
     /// 資料根 → 定語標籤：走 `SCP_DataPaths.ProjectNameOf`（唯一一份，＝資料根完整路徑，TASK-0390）。
-    /// 🩸 原本自己取「上一層目錄名」—— 資料根搬到 `D:/Unity/Valhalla` 之後印成 `@ Unity`。
+    /// 🩸 ⛔ 不自己取「上一層目錄名」：資料根在 `D:/Unity/Valhalla` 時會印成 `@ Unity`。
     /// </summary>
     static string DeriveProjectLabel(string iDataRoot) => SCP.Core.Paths.SCP_DataPaths.ProjectNameOf(iDataRoot);
 
     // ───────────────────────────── 查詢（逾時 ⇒ 不知道）─────────────────────────────
 
-    // TASK-0360：自由時間搬進 Senate 之後，在場資格**就地讀 session 檔**（判準 `IsRunningAt` —— 與 `free-time` 同一支），
-    //   ⛔ 不再派 Unity 的 `SessionStatus`（那條路要 Editor 開著，關著時畫布的 freetime 付款就判不出來）。
+    // TASK-0360：在場資格**就地讀 session 檔**（判準 `IsRunningAt` —— 與 `free-time` 同一支）。
     public SCP_CanvasTriState QueryInFreeTime(string iPersona, out string oDetail)
     {
         try
@@ -99,13 +89,10 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     }
 
     // ===========================================================
-    // 區塊職責：券的查與扣 —— **直接串 Server 的 `voucher`**（TASK-0243），⛔ 不再派 ucmd 繞 Editor。
-    // 物理意義：券已於 2026-09-18 遷進 `letters/<persona>/vouchers/<券名>.json`，
+    // 區塊職責：券的查與扣 —— **直接串 Server 的 `voucher`**（TASK-0243）。
+    // 物理意義：券住在 `letters/<persona>/vouchers/<券名>.json`，
     //          而**寫入端只有 Server**（券不記歷史 ⇒ 那是它成立的唯一前提）。
-    // 🩸 為什麼一定要跟著切：遷移那一刻起，舊系統每扣一張券，兩本帳就差一張 ——
-    //   而遷移的冪等鍵是**區名**，已經寫進去了 ⇒ **不能靠「再遷一次」把差額補回來**。
-    //   ⇒ 消費端不切，差額只會單調變大，而兩邊各自都是合法數字。
-    // ⚠ 券名是 `canvas`（＝檔名）—— 與 2026-09-18 那次遷移落的檔同名，⛔ 不另取。
+    // ⚠ 券名是 `canvas`（＝檔名），⛔ 不另取。
     // ===========================================================
     const string k_CanvasVoucher = "canvas";
 
@@ -141,7 +128,7 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     int QueryVoucherField(string iPersona, string iField, out string oDetail,
                           string iVoucher = k_CanvasVoucher)
     {
-        // ⛔ 舊版在這裡試三種欄名（Editor 那側欄名沒被驗過）。新的 `voucher` 有**宣告過的**
+        // `voucher` 有**宣告過的**
         //   `permanent` / `expiring` 兩欄 ⇒ 只讀那一個名字；讀不到就是「不知道」，
         //   ⛔ 不再猜第二、第三個名字 —— 猜中了也不知道自己讀的是哪一欄。
         SCP_CmdResult aRes = DispatchVoucher("balance",
@@ -164,18 +151,13 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
     }
 
     // ===========================================================
-    // 區塊職責：token 的讀與寫 —— **直接串 Server**（`bank`），⛔ 不再派 ucmd 繞 Editor。
-    // 物理意義：Tim 2026-09-18：「Senate 端的金流直接串到 Server，不用走 ucmd 再繞一圈。」
-    //          權威切到新銀行之後（TASK-0216 ⑨），繞 Editor 那條是
-    //          **CLI → 檔案協議 → Editor → 再 spawn 一顆 senate → Server**：
-    //          同一筆錢走兩次行程邊界，而中間那一段**不增加任何保證**。
-    // 🩸 而它不只是慢：多一段就多一個會逾時的地方 ⇒「不知道有沒有扣到」的機會變兩倍，
+    // 區塊職責：token 的讀與寫 —— **直接串 Server**（`bank`，TASK-0216 ⑨）。
+    // 物理意義：多一段行程就多一個會逾時的地方 ⇒「不知道有沒有扣到」的機會變多，
     //   而那個狀態正是這支最貴的失效（逾時一律當沒扣，否則就是白拿像素）。
     // ⚠ `bank` 是 `ServerDelegateCmd` ⇒ 在 CLI 裡被打到會自己委派給 Server
     //   （路由由 `ServerContext.InServer` 決定，**不是由呼叫端記得**）。
-    // ⚠ 參數名跟舊的 `Treasury` 那支**不一樣**：這裡是 `kind` / `ref`，⛔ 不是 `use_kind` / `use_ref`。
-    //   ⭐ 而帶錯的失效樣子也換了：`bank` 有 ArgSpec 預檢**會擋下並說出理由**，
-    //     ⛔ 不再是舊路那種「靜默取預設值、錢照扣、審計欄留白」。
+    // ⚠ 參數名是 `kind` / `ref`，⛔ 不是 `use_kind` / `use_ref`。
+    //   帶錯的話 `bank` 的 ArgSpec 預檢**會擋下並說出理由**。
     // ===========================================================
     string BankRoot()
         => System.IO.Path.Combine(
@@ -233,9 +215,7 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
                                           string iSourceRef, string iDescription)
     {
         if (iCount <= 0) return SCP_CanvasGateResult.Good("amount<=0，無需消券（不必驚動 Server）");
-        // ⚠ 新系統的欄名是 `source` / `ref`，而**帶錯名字的失效樣子換了**：
-        //   舊路（Editor 的 CanvasVoucher）會靜默取預設值、券照扣、審計欄留白；
-        //   `voucher` 有 ArgSpec 預檢 ⇒ 帶錯會被擋下並說出理由。
+        // ⚠ 欄名是 `source` / `ref`；`voucher` 有 ArgSpec 預檢 ⇒ 帶錯會被擋下並說出理由。
         var aArgs = new Dictionary<string, string>
         {
             ["persona"] = iPersona,
@@ -284,12 +264,9 @@ public sealed class SenateCanvasGateway : SCP_ICanvasGateway
         return SCP_CanvasGateResult.Good("扣 " + iAmount + " token（Server 端 bank debit）");
     }
 
-    // 區塊職責：放點分享（含預覽附件）—— `tavern-post`（Senate 組訊息＋酒館 Server 寫入），⛔ 不再派給 Editor（TASK-0366）。
-    // 物理意義：附件**原封不動送絕對路徑**，相對化由 `tavern-post` 對**那個專案的根**做 ——
-    //   🩸 2026-09-07 第一版在這裡相對化，整條路掛不上附件：Senate 的 `Program.RepoRoot()` 永遠是 `D:/Unity/Senate`，
-    //   而預覽圖住在消費端專案 ⇒ `StartsWith` 永遠不成立。當時的結論是「知道那個根的是 Editor」。
-    //   ⭐ TASK-0366 起 `tavern-post` 以 `target_data_root`（＝本閘的資料根）選專案 ⇒ （TASK-0390 起 tavern-post 不再選專案：資料根只有一組，顯示基準是 Senate 專案根）
-    //   📌 一般形照舊成立：路徑相對化要在**知道那個根的那一層**做 —— 只是那一層現在在 Senate。
+    // 區塊職責：放點分享（含預覽附件）—— `tavern-post`（Senate 組訊息＋酒館 Server 寫入，TASK-0366）。
+    // 物理意義：附件**原封不動送絕對路徑**，相對化由 `tavern-post` 做（顯示基準是 Senate 專案根，TASK-0390）——
+    //   📌 路徑相對化要在**知道那個根的那一層**做；🩸 在這裡相對化的話 `StartsWith` 對不上，整條路掛不上附件（2026-09-07 實測）。
     // 數值影響：`iAttachAbsolutePath` 給 null ⇒ 不帶 refs；`iTag` 給值時掛 `tag`（09-06 之前那批是 `canvas-share`）。
     //          分享失敗**不讓放點失敗** —— 像素已經落盤、錢已經扣了，廣播是 best-effort。
     public SCP_CanvasGateResult Share(string iPersona, string iRoom, string iBody,

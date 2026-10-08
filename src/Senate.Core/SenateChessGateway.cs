@@ -1,7 +1,6 @@
 // 區塊職責：`SCP_IChessGateway` 的 **Senate 端實作** —— 棋局本體要的兩格宿主能力（廣播、發券）。
-// 物理意義：TASK-0268 ⑥ —— `chess.py` 原本 `subprocess` 叫 `senate.exe ucmd run Tavern`；
-//           搬進 C# 之後在本 process 內直接派：
-//           · 廣播 ＝ `tavern-post`／`tavern-post-system`（TASK-0366 起不經 Editor；同 `SenateCanvasGateway` 的分享那一格）
+// 物理意義：TASK-0268 ⑥ —— 在本 process 內直接派：
+//           · 廣播 ＝ `tavern-post`／`tavern-post-system`（TASK-0366；同 `SenateCanvasGateway` 的分享那一格）
 //           · 發券 ＝ `SCP_CmdRegistry.Dispatch("voucher")`（同 `SenateBooksGateway.GrantVoucher`）
 // 數值影響：廣播寫一則酒館訊息（經酒館 Server）；券寫 `letters/<persona>/vouchers/canvas.json`。
 //
@@ -25,7 +24,7 @@ public sealed class SenateChessGateway : SCP_IChessGateway
 {
     readonly string m_DataRoot;
 
-    // 廣播要等 Editor 把那一則寫完才算數 —— python 那側給的是 80s（`--timeout 80`），照抄。
+    // 廣播要等寫入端把那一則寫完才算數 —— 上限 80 秒。
     const double k_BroadcastTimeoutSec = 80;
 
     public SenateChessGateway(string iDataRoot) { m_DataRoot = iDataRoot; }
@@ -36,8 +35,8 @@ public sealed class SenateChessGateway : SCP_IChessGateway
     string LettersRoot()
         => SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(m_DataRoot)).Value;
 
-    // 區塊職責：棋局廣播 —— `tavern-post`（有 persona）／`tavern-post-system`（系統代發），⛔ 不再派給 Editor（TASK-0366）。
-    // 物理意義：`iLane`（`chess-<n>`）原本是 Editor 檔案協議的子分道（同一人兩盤棋的廣播不互相排隊）；
+    // 區塊職責：棋局廣播 —— `tavern-post`（有 persona）／`tavern-post-system`（系統代發）（TASK-0366）。
+    // 物理意義：`iLane`（`chess-<n>`）是檔案協議的子分道（同一人兩盤棋的廣播不互相排隊）；
     //          就地呼叫不經 queue ⇒ 沒有分道可排，收下不用（⛔ 不假造一條）。
     // 數值影響：exit 7（不知道有沒有發）照實回 false ＋「別重發」—— 棋步已落盤，廣播是 best-effort。
     public bool Broadcast(string? iSenderPersona, string iLane, string iBody, string iMetaJson, out string oDetail)
