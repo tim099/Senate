@@ -118,39 +118,33 @@ public static partial class SelfTest
                iSel.Count(x => x.S == SelfTestStatus.Closed), iTotal);
 
     /// <summary>
-    /// `Real*` 項目要讀的真資料目標（TASK-0390）。資料根是全域一組（唯一入口），**不屬於任何 Unity 專案** ——
-    /// 🩸 原本只走「探測得到的 Unity 專案」⇒ 拔掉 Unity 專案之後整批 `Real*` 安靜地全跳過、照樣算通過。
-    /// <para>有可用的 Unity 專案讀數就照舊（它的資料根就是全域那一組）；沒有 ⇒ 補一筆「Senate 專案根＋全域資料根」。</para>
+    /// `Real*` 項目要讀的真資料目標：Senate 專案根＋全域資料根（唯一入口 `SenatePathBinding.ResolveDataRoot`）。
+    /// 資料根解不出來 ⇒ 空清單，`Real*` 各自回「跳過」（⛔ 不當成通過）。
     /// </summary>
-    static IReadOnlyList<ProjectReading> RealTargets(IReadOnlyList<ProjectReading> iProjects)
+    static IReadOnlyList<SelfTestTarget> RealTargets()
     {
-        if (iProjects.Any(p => p.State == ProbeState.Ok && p.AgentCommandsRoot != null)) return iProjects;
         SenateConfig? aCfg = null;
         try { aCfg = SenateConfig.Load(SenateConfig.DefaultPath(SenatePathBinding.HostRepoRoot)); } catch (Exception) { }
         string? aData = SenatePathBinding.ResolveDataRoot(aCfg, out _);
-        if (aData == null || SenatePathBinding.HostRepoRoot.Length == 0) return iProjects;
-        var aList = new List<ProjectReading>(iProjects)
-        {
-            new ProjectReading("（資料根）", SenatePathBinding.HostRepoRoot, ProbeState.Ok, null, null, 0,
-                               aData, Directory.Exists(aData), null, true),
-        };
-        return aList;
+        if (aData == null || SenatePathBinding.HostRepoRoot.Length == 0 || !Directory.Exists(aData))
+            return Array.Empty<SelfTestTarget>();
+        return new[] { new SelfTestTarget("（資料根）", SenatePathBinding.HostRepoRoot, aData) };
     }
 
-    public static SelfTestPlan Plan(IReadOnlyList<ProjectReading> iProjects, string iOnly, bool iEverything, SelfTestConfig iCfg)
+    public static SelfTestPlan Plan(string iOnly, bool iEverything, SelfTestConfig iCfg)
     {
-        var aCat = Catalog(RealTargets(iProjects));
+        var aCat = Catalog(RealTargets());
         return PlanOf(Select(aCat, iOnly, iEverything, iCfg), aCat.Count);
     }
 
     /// <summary>登記表裡的項目、群與目前狀態（給 `--list`）。</summary>
-    public static List<(string Key, string Group, SelfTestStatus Status, bool Important)> ListWithStatus(IReadOnlyList<ProjectReading> iProjects, SelfTestConfig iCfg)
-        => Catalog(RealTargets(iProjects)).Select(e => (e.Key, e.Group, iCfg.StatusOf(e.Key, e.Important), e.Important)).ToList();
+    public static List<(string Key, string Group, SelfTestStatus Status, bool Important)> ListWithStatus(SelfTestConfig iCfg)
+        => Catalog(RealTargets()).Select(e => (e.Key, e.Group, iCfg.StatusOf(e.Key, e.Important), e.Important)).ToList();
 
-    public static List<string> CatalogKeys(IReadOnlyList<ProjectReading> iProjects) => Catalog(RealTargets(iProjects)).Select(e => e.Key).ToList();
+    public static List<string> CatalogKeys() => Catalog(RealTargets()).Select(e => e.Key).ToList();
 
-    public static SelfTestRun Run(IReadOnlyList<ProjectReading> iProjects, string iOnly, bool iEverything, SelfTestConfig iCfg)
-        => Execute(Catalog(RealTargets(iProjects)), iOnly, iEverything, iCfg);
+    public static SelfTestRun Run(string iOnly, bool iEverything, SelfTestConfig iCfg)
+        => Execute(Catalog(RealTargets()), iOnly, iEverything, iCfg);
 
     /// <summary>
     /// 引擎本體（吃任意項目清單，給自測用）：先選、再跑，跑完把「新而且真的通過」的項目寫進 disabled。
@@ -240,3 +234,6 @@ public static partial class SelfTest
         return new SelfTestRun(aRows, aClosed);
     }
 }
+
+/// <summary>`Real*` 自測的真資料目標：名字、Senate 專案根、資料根（null ＝ 解不出來）。</summary>
+public sealed record SelfTestTarget(string Name, string Root, string? AgentCommandsRoot);

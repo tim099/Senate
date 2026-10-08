@@ -1,17 +1,9 @@
-// 區塊職責：AgentCommands 檔案協議的 **client 半邊**（＝ UCL_Core `run_cmd.py` 的 C# 對應）。
-// 物理意義：Cmd 派遣從頭到尾是檔案協議 —— client 寫 queues/<persona>/queue.json ＋ pending.trigger，
-//           Unity Editor 端 Watcher 輪詢接手執行、結果落 _cmd_results/<id>.json。
-//           協議雙方誰都不知道對面是誰 ⇒ 用 C# 重做 client 半邊，Editor 端零改動。
-//           這支存在的理由：**沒有 python 的環境（Codex）也要能派 Cmd**。
-// 數值影響：只動目標專案 AgentCommands 底下的 queue/trigger 檔（append ＋ atomic replace）；
-//           不碰 Editor 端任何狀態。exit code 語意與 run_cmd.py 對齊：0 成功／2 失敗／3 逾時。
-// ⚠ **`run_cmd.py` 本身已刪除（2026-09-10 確認：檔案不存在）** —— 本檔通篇「與 run_cmd.py 同形／
-//   同律／對齊」是**出處敘述**，不是一個可以現場比對的活體。要看它去 git history；
-//   而那些樣板的**現行權威**是 Editor 端的 watcher（它掃 `queue*.json` / `pending*.trigger`）。
-//   ⛔ 別因為對不到那支檔就以為樣板沒人管：管它的那一端一直在，只是換了名字。
-// ⚠ 協議樣板（queue 路徑、queue entry 欄位、trigger 內容、result 檔判定）與 run_cmd.py／
-//   UCL_AgentCommandQueue.cs 是**同一份協議的三個端**——任一端改樣板，三端要一起改，
-//   落後的那端症狀是 trigger 寫在對方沒在看的地方，**靜默 pending 到 timeout**。
+// 區塊職責：AgentCommands 檔案協議的 **client 半邊** —— CLI 把 `⤷Server` 那一類 Cmd 派給 Senate Server。
+// 物理意義：派遣是檔案協議 —— client 寫 queues/<lane>/queue.json ＋ pending.trigger，
+//           Server 的執行器（ServerExecutor）輪詢接手、結果落 _cmd_results/<id>.json。
+// 數值影響：只動 Server 根底下的 queue/trigger 檔（append ＋ atomic replace）。exit code：0 成功／2 失敗／3 逾時。
+// ⚠ 協議樣板（queue 路徑、queue entry 欄位、trigger 內容、result 檔判定）由本檔與 ServerExecutor 共用 ——
+//   改樣板兩端一起改，落後的那端症狀是 trigger 寫在對方沒在看的地方，**靜默 pending 到 timeout**。
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -58,18 +50,9 @@ public static class AgentCmdWaitResultX
 
 public static class AgentCmdClient
 {
-    /// <summary>ensure_idle 的預設等待秒數（與 run_cmd.py DEFAULT_ACK_TIMEOUT 對齊）。</summary>
-    public const double DefaultAckTimeoutSec = 180;
-    /// <summary>wait 的預設逾時秒數（與 run_cmd.py 對齊）。</summary>
+    /// <summary>wait 的預設逾時秒數。</summary>
     public const double DefaultWaitTimeoutSec = 120;
     public const double DefaultPollSec = 1.0;
-
-    /// <summary>
-    /// 沒帶身分時的 queue 資料夾名 —— run_cmd.py 的保留字，不可當 persona 用。
-    /// <para>⚠ 值的定義在 <see cref="SCP_DataPaths.AnonymousQueueId"/>（跨端契約的唯一拼字處）；
-    /// 這裡只是既有呼叫端的別名。</para>
-    /// </summary>
-    public const string AnonymousQueueId = SCP_DataPaths.AnonymousQueueId;
 
     /// <summary>
     /// 這個 client 的名字，寫進 `_caller_client` ⇒ 落在判定檔的 `client` 欄。
@@ -104,9 +87,9 @@ public static class AgentCmdClient
     // 物理意義：逾時只說「我等到上限了」，它**分不出**三種完全不同的處境 ——
     //           trigger 沒被取走（宿主真的不在）／取走了還在跑（宿主活著，只是忙）／
     //           lane 已空而我沒接到 result（跑完了，收據落在別處）。
-    //           這三種的下一步互斥：開 Editor ／ 等它 ／ 去讀 result 檔。
+    //           這三種的下一步互斥：啟動 Server ／ 等它 ／ 去讀 result 檔。
     // 🩸 為什麼是共用方法而不是各自寫一句（TASK-0226，2026-09-16）：
-    //   「Editor 沒開？」這句話在 2026-09-04 與 09-05 被判定**已知為假**並修過兩次，
+    //   「宿主沒開？」這句話在 2026-09-04 與 09-05 被判定**已知為假**並修過兩次，
     //   而兩次修的都是 <see cref="Wait"/> **自己印的**那一句。各 gateway 在 Timeout 分支
     //   **另外組的** oWhy 字串一格都沒被改到 —— 本檔 270 行那句「修法只套用在我記得的那半邊」
     //   自己又應驗了一次。⇒ 修法得長在一個**只有一份**的地方，否則第四次還會發生。
@@ -115,7 +98,7 @@ public static class AgentCmdClient
     //   ⛔ 不回答「這一筆有沒有跑完」。後者的唯一憑據是 result 檔，路徑一併印出來給讀的人自己看。
     /// <summary>逾時的成因描述：**量** lane 的現況，⛔ 不猜「宿主沒開？」。</summary>
     public static string DescribeWaitTimeout(string iDataRoot, string? iPersona, string iCmdId,
-        double iTimeoutSec, string iHostLabel = "Editor")
+        double iTimeoutSec, string iHostLabel = "Server")
     {
         string aState = TriggerState(iDataRoot, iPersona);
         string aHead = $"等了 {iTimeoutSec:0.###}s 沒等到 result（本端的等待上限，**不代表 {iHostLabel} 失敗**）";
@@ -124,7 +107,7 @@ public static class AgentCmdClient
             "running" => $"{aHead} —— 而 lane 現在是 'running'：{iHostLabel} **取走了**這一筆、還在跑。"
                          + $"⇒ 等它，⛔ 別重打（會多送一筆），也別去檢查一個沒有問題的 {iHostLabel}",
             "pending" => $"{aHead} —— 而 lane 現在是 'pending'：trigger **還沒被取走**"
-                         + $"（{iHostLabel} 沒開？或 watcher 沒啟用？）",
+                         + $"（{iHostLabel} 沒在跑？）",
             _ => $"{aHead} —— 而 lane 現在是 'idle'：它很可能已經跑完了。"
                  + $"先看 {ResultPath(iDataRoot, iCmdId)} 的 mtime，別重打",
         };
@@ -132,7 +115,7 @@ public static class AgentCmdClient
 
     /// <summary>
     /// 寫新 trigger 前等前一批收乾淨。逾時回 false 並由 <paramref name="oWhy"/> 說明殘留檔在哪 ——
-    /// Editor 沒開／crash 留下 .running 時，永遠等不到，**必須人工介入**，不替人刪。
+    /// Server 沒在跑／crash 留下 .running 時，永遠等不到，**必須人工介入**，不替人刪。
     /// </summary>
     public static bool EnsureIdle(string iDataRoot, string? iPersona, double iTimeoutSec,
         Action<string> iLog, out string oWhy)
@@ -156,8 +139,8 @@ public static class AgentCmdClient
             Thread.Sleep(1000);
         }
         oWhy = $"前一批 {iTimeoutSec:0}s 後仍是 '{TriggerState(iDataRoot, iPersona)}'。\n"
-             + "  - 確認 Unity Editor 開著且 UCL_AgentCommandWatcher 啟用。\n"
-             + "  - Editor crash 或 watcher 關閉時，手動刪掉：\n"
+             + "  - 確認 Senate Server 在跑（`senate server status`）。\n"
+             + "  - Server crash 留下殘檔時，手動刪掉：\n"
              + $"      {TriggerPath(iDataRoot, iPersona)}\n"
              + $"      {RunningPath(iDataRoot, iPersona)}";
         return false;
@@ -256,7 +239,7 @@ public static class AgentCmdClient
         var aTrigger = new JsonObject
         {
             ["createdAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-            ["submittedBy"] = $"senate ucmd run {iCmdType}",
+            ["submittedBy"] = $"senate cmd {iCmdType}",
         };
         File.WriteAllText(TriggerPath(iDataRoot, iPersona),
             aTrigger.ToJsonString(s_JsonOpt) + "\n", System.Text.Encoding.UTF8);
@@ -276,7 +259,7 @@ public static class AgentCmdClient
     /// </param>
     public static AgentCmdWaitResult Wait(string iDataRoot, string? iPersona, string iCmdId,
         double iTimeoutSec, double iPollSec, Action<string> iOut, Action<string> iErr,
-        bool iPrintOutputs = true, string iHostLabel = "Editor")
+        bool iPrintOutputs = true, string iHostLabel = "Server")
     {
         iOut($"Waiting for {iCmdId}...");
         // 🩸 `:0` 會把 0.01 印成 `0s`（TASK-0104 QA 第 3 點）—— 印的是截斷值，而讀的人會拿它當「我設的上限」。
@@ -360,27 +343,10 @@ public static class AgentCmdClient
         //    把人指向一個沒有問題的終端機 —— QA 用 timeout=0.01 造出活體，Server 那邊 result 檔是 Success／exit 0。
         //    ⇒ 逾時是**本端的等待上限**，不是對面失敗；而「逾時後先看 mtime 不要重打」這個手勢原本只住在信裡，
         //    現在把它搬到每個人都會走過的這條通道上。
-        // 🩸 2026-09-05（TASK-0104 QA 複驗，@summit）：上面那筆只改到 `else` 那半 ——
-        //    **`Editor` 那半還留著舊句**「Editor 沒開？或 Watcher 沒啟用？」。
-        //    活體：Editor 全程開著、同一分鐘多支 Cmd 全部 Success，而它照樣印那句。
-        //    ⇒ 那不是「不夠精確」，是**已知為假**；而它跟下一行「它很可能已經跑完了」方向相反。
-        //    📌 修法只套用在我記得的那半邊 —— 兩個分支要同一句話，差異只准出現在**額外**的指路上。
         FailVerdict(iOut,
             iErr,
             $"  ✗ 等了 {iTimeoutSec:0.###}s 沒等到 result —— 這是 CLI 端的等待上限，**不代表 {iHostLabel} 失敗**。");
         iErr($"  下一步：先看 {ResultPath(iDataRoot, iCmdId)} 的 mtime（它很可能已經跑完了），不要重打指令（會多送一筆）。");
-        if (iHostLabel == "Editor")
-        {
-            // ⚠ 順序是判準不是排版：**先看 mtime，再懷疑宿主**。
-            //   反過來的話，第一個動作會是去檢查一個沒有問題的 Editor。
-            iErr("  ⚠ mtime **沒動**才輪到懷疑宿主：Editor 在不在 tick ＝ stat 酒保 daemon 的心跳檔"
-                 + " `<data_root>/ChatTavern/bartender/_heartbeat.txt`（正常節拍 0.5s，>1.5s 未動＝沒在 tick）。");
-            // 🩸 這行原本教 `check_compile.py --editor-alive`，而那支 2026-09-10 整支刪除（TASK-0155）。
-            //   ⚠ 而「沒有替代品」是**窄報** —— 死掉的只是 python 包裝，它量的**資料源一直在**：
-            //   那支的實作是「純 stat 一個檔，不送 Cmd」（實測探針要 2.13s 空閒／13.13s 編譯中，所以才不送）。
-            // ⛔ 邊界照抄原實作，別把它讀成「正在編譯」：心跳停的原因還有 domain reload／
-            //   modal dialog／Editor 掛住／Editor 關閉。它證明的是「**沒在 tick**」而已。
-        }
         iErr("  ⚠ 本筆未完成 ⇒ **回傳檔沒有被更新**。若下一步要讀它，先確認檔頭時間戳。");
         return AgentCmdWaitResult.Timeout;
     }

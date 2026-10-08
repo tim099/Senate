@@ -1,21 +1,16 @@
 {
   "//": "senate.local.json 的樣板。`senate init` 會把本檔複製成同目錄的 senate.local.json（已存在則不覆寫）。",
   "//1": "⚠ 本檔入版控，所以裡面不可以有任何機器絕對路徑；實際路徑填在複製出去的那份（.gitignore 已擋）。",
-  "//2": "agentCommandsRoot: \"auto\" = 先讀 <root>/.agentcommands_root.local pointer 檔，沒有就用 <root>/AgentCommands。",
-  "//3": "enabled=false 的專案仍留在清單裡並顯示為「停用」—— 「我關掉它」與「我沒設定過它」是兩件事。",
-  "//4": "awakening.lettersRoot: persona 信件庫根目錄（後台「登入狀態」頁可以改）。空 = 還沒設定，不是某個猜出來的路徑。",
-  "//5": "persona lock 沒有設定項：它住 <lettersRoot>/<persona>/profile/_session.json，位置由 persona 目錄唯一決定（TASK-0105）。",
+  "//2": "paths.agentCommandsRoot：資料根（絕對路徑，必填，不支援 auto）。paths.glossaryRoot：auto = <Senate 專案根>/Glossary。paths.comicRoot：空 = 沒有外部漫畫庫。",
+  "//3": "awakening.lettersRoot：persona 信件庫根。auto = <資料根>/ChatTavern/baton/letters。",
+  "//4": "persona lock 沒有設定項：它住 <lettersRoot>/<persona>/profile/_session.json，位置由 persona 目錄唯一決定（TASK-0105）。",
   "schemaVersion": 1,
-  "awakening": {
-    "lettersRoot": ""
+  "paths": {
+    "agentCommandsRoot": "",
+    "glossaryRoot": "auto",
+    "comicRoot": ""
   },
-  "projects": [
-    {
-      "name": "範例專案（改成你的，或整個刪掉）",
-      "root": "D:/Path/To/YourUnityProject",
-      "agentCommandsRoot": "auto",
-      "enabled": false,
-      "profile": ""
-    }
-  ]
+  "awakening": {
+    "lettersRoot": "auto"
+  }
 }

@@ -148,9 +148,8 @@ SCP_CmdRegistry.InvocationHint = "senate cmd";
 
 ## 現有指令
 
-`PortStatus` 四態：`Native`（本地跑）／`DelegatedToUnity`（Editor 沒開就跑不完）／
-`DelegatedToServer`（`senate server start` 沒跑就跑不完，**且不降級成本地跑**）／`NotPorted`（登記在案的缺口）。
-`help` 清單行尾標 `⤷Unity`／`⤷Server`／`⛔未實作`，統計行四欄分開印。
+`PortStatus` 三態：`Native`（本地跑）／`DelegatedToServer`（Server 沒在跑就自動拉起一顆，拉不起來就失敗，**不降級成本地跑**）／`NotPorted`（登記在案的缺口）。
+`help` 清單行尾標 `⤷Server`／`⛔未實作`，統計行三欄分開印。
 
 | 名字 | 做什麼 |
 |---|---|

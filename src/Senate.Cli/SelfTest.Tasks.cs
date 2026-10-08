@@ -15,12 +15,12 @@ namespace Senate.Cli;
 
 public static partial class SelfTest
 {
-    static IEnumerable<CheckRow> RealTaskRenderRoundTrip(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealTaskRenderRoundTrip(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             var aRoot = new SCP.Core.Paths.SCP_DataRoot(p.AgentCommandsRoot);
             string aDir = SCP_TaskIO.TasksDir(aRoot);
             if (!Directory.Exists(aDir)) continue;

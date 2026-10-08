@@ -37,7 +37,7 @@ public sealed class Cmd_TavernWait : SCP_Cmd
         "自由時間的對話流引擎：**擋住 turn** 等人回話，等到就提早返回、逾時就照實說 —— 本地跑，不需要 Editor";
 
     public override string Details =>
-        "⭐ **它是唯一擋得住 turn 的那一層。**（Unity 那支 fire-and-forget 的 `ucmd run Tavern op=wait` 已於 2026-10-01 退場，TASK-0364）\n"
+        "⭐ **它是唯一擋得住 turn 的那一層。**\n"
         + "  而 `--wait-reply` 這個旗標在 CLI 上**不存在**（TASK-0160 血證：帶了它只過了 45 秒）。\n"
         + "⚠ 「有人回話」的定義（⛔ 不是「seq 前進了」）：\n"
         + "  ① **不是我自己發的**（sender_persona 不等於 persona）；\n"

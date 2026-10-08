@@ -1,7 +1,7 @@
 ---
 title: senate.local.json 規格
-description: 本機設定檔的欄位、schemaVersion 的處置、AgentCommands 資料根的解析規則、三態不得同形的驗證原則
-last_updated: 2026-10-05 (selftest.json：selftest 預設跑哪些，TASK-0397)
+description: 本機設定檔的欄位、schemaVersion 的處置、資料根的解析規則、讀檔的兩態
+last_updated: 2026-10-08
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -27,34 +27,30 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ```jsonc
 {
   "schemaVersion": 1,
-  "projects": [
-    {
-      "name": "LY",
-      "root": "D:/Unity/Bar",
-      "agentCommandsRoot": "auto",
-      "enabled": true,
-      "profile": ""
-    }
-  ],
-  "ui": {
-    "scale": 1,
-    "textWidth": 96
-  }
+  "paths": {
+    "agentCommandsRoot": "D:/Unity/Valhalla",
+    "glossaryRoot": "auto",
+    "comicRoot": "D:/commic"
+  },
+  "awakening": { "lettersRoot": "auto" },
+  "ui": { "scale": 1, "textWidth": 96 },
+  "install": { "pythonEnvRoot": "", "modelsRoot": "" }
 }
 ```
 
 | 欄位 | 型別 | 規則 |
 |---|---|---|
 | `schemaVersion` | int | 目前只認得 `1`。**讀到未知版本擋下並說出來**，不盡力而為 |
-| `projects[].name` | string | 顯示與 log 的識別鍵。空白或重複 ⇒ `Validate()` 報錯（重複會讓兩個專案的讀數混在一起） |
-| `projects[].root` | string | 專案 git repo 根，**必須絕對路徑** |
-| `projects[].agentCommandsRoot` | string | `"auto"`（預設）或明確路徑；相對路徑以 `root` 為基準 |
-| `projects[].enabled` | bool | `false` ⇒ 仍列出並標「停用」，但**不計入 doctor 的通過條件** |
-| `projects[].profile` | string | 分群規則 profile 名（尚未實作，保留） |
+| `paths.agentCommandsRoot` | string | 資料根，**絕對路徑**。空 ＝ 還沒設定；⛔ 不支援 `auto` |
+| `paths.glossaryRoot` | string | 詞典根。`auto` ＝ `<Senate 專案根>/Glossary` |
+| `paths.comicRoot` | string | 外部漫畫庫根。空 ＝ 沒有外部漫畫庫（不是錯誤） |
+| `awakening.lettersRoot` | string | persona 信件庫根。`auto` ＝ `<資料根>/ChatTavern/baton/letters` |
 | `ui.scale` | float | 介面縮放（0.5〜4，**預設 1.0** —— 實機按過四段之後定的，見 D13）。基準尺寸的唯一來源是 `SCP_GuiStyle`，這裡只存「使用者選了什麼」 |
 | `ui.textWidth` | int | 純文字輸出寬（字元格，預設 96）⚠ **不吃 `ui.scale`** —— 終端機的一格是字元不是像素 |
 | `install.pythonEnvRoot` | string | 安裝系統把 Python 套件裝進哪一份 Python（資料夾：安裝目錄或 venv）。**空白＝自動找系統安裝的 Python**（TASK-0375，見 [`Install`](../Workflows/Install.md)） |
 | `install.modelsRoot` | string | 模型快取根（＝`HF_HOME`）。**空白＝HF 預設**（`%USERPROFILE%/.cache/huggingface`） |
+
+所有路徑格的解析（auto、推導、存不存在）統一走 `senate cmd paths`（描述表 `SCP_PathRegistry`，對映在 `SenatePathBinding`）。
 
 `ui` 區塊是**這台機器的顯示偏好**，所以只住在不入版控的那一份：進了版控就會變成
 「別人的螢幕決定我的字級」。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。
@@ -64,56 +60,24 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 `"//"` 開頭的 key 當註解用（parser 也容忍 `//` 與 `/* */`，但那是給手改檔案的寬容，不是格式的一部分）。
 
+舊檔的 `projects` 區塊讀入時拿掉（下次存檔就不在了）；舊檔沒有 `paths` 而 `projects` 只有一筆啟用的，
+那一筆上的 `agentCommandsRoot`／`glossaryRoot`／`comicRoot` 搬進 `paths`（`auto` 不搬）。
+
 ### 寫回檔案時不會弄丟的東西（D12 的血證）
 
 | 東西 | 寫回後 |
 |---|---|
-| 本版不認得的欄位（含 `"//"` 註解鍵，根層與 `projects[]` 皆然） | **保留**（`[JsonExtensionData]`） |
+| 本版不認得的欄位（含 `"//"` 註解鍵） | **保留**（`[JsonExtensionData]`） |
 | 中文 | **不轉義**（沒設 `Encoder` 會變成 `\uXXXX` —— 合法 JSON，但人看不懂了） |
 | 註解鍵的**位置** | ⚠ 會被移到物件**尾端**（extension data 的寫出順序）—— 內容不丟，位置會變 |
 
-🩸 D11 的第一版把 `"//"` 那行整條吃掉，而 projects 還在 ⇒ 看起來一切正常。
+🩸 D11 的第一版把 `"//"` 那行整條吃掉，而其餘欄位都還在 ⇒ 看起來一切正常。
 現在 `senate selftest` 的「設定檔 round-trip」一項就是守這個。
 
----
+### 讀檔兩態
 
-## AgentCommands 資料根怎麼解析
-
-`agentCommandsRoot: "auto"` 的解析順序：
-
-1. `<root>/.agentcommands_root.local` pointer 檔存在 → 讀第一行非註解內容當資料根
-2. 否則 → `<root>/AgentCommands`
-
-⚠ **只有這兩個位置，不猜第三個。** 猜錯的症狀是寫進另一棵資料樹，而且**不報錯** ——
-那是這個 repo 最貴的錯誤形狀（讀寫都「成功」，只是對象不是你以為的那棵樹）。
-
----
-
-## 驗證原則：三態不得同形
-
-`ProjectProbe` 對每個專案回報四種狀態，**不准壓成兩種**：
-
-| 狀態 | 意思 |
-|---|---|
-| `NotConfigured` | `root` 空白 —— 使用者還沒填 |
-| `Missing` | 填了但那個路徑不存在 —— **設定壞了**，不是「這個專案沒事」 |
-| `NotGitRepo` | 路徑在，但不是 git repo |
-| `Ok` | 可用 |
-
-同理，載入行為也分兩態：
 **檔案不存在 → 回 `null`**（那是「還沒 init」，不是錯誤）；
 **檔在但解析失敗／版本不認得 → 丟例外**（那是真的壞了，不可靜默降級）。
-
----
-
-## 附帶讀數（`Ok` 時才有）
-
-| 欄位 | 來源 | 用途 |
-|---|---|---|
-| `Branch` | `git rev-parse --abbrev-ref HEAD` | `HEAD` ＝ detached，是一種**擋下的理由**不是分支名 |
-| `DirtyCount` | `git status --porcelain -uall` 的行數 | 工作區有多髒 |
-| `StagedCount` | `git diff --cached --name-only` | **非 0 ⇒ 自動提交會跳過這個 repo**（呼叫前已 staged 的東西會被併進第一個群） |
-| `EditorHeartbeat` | stat `<資料根>/ChatTavern/bartender/_heartbeat.txt` | mtime ≤ 4 秒 ＝ Unity Editor 在 tick ⇒ 不動它的 index |
 
 ---
 
@@ -121,7 +85,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 與 `senate.local.json` 刻意分開的另一份本機檔（同樣不入版控）：
 **各頁面「儲存本頁設定」的落點**（目前：`submodule` 區塊）。分開的理由 ——
-頁面每存一次就動一次主設定檔的 diff，而人開 diff 想看的是專案清單有沒有變。
+頁面每存一次就動一次主設定檔的 diff，而人開 diff 想看的是路徑設定有沒有變。
 
 - 讀寫走 **SCP_Core 自帶的 JSON**（`SCP_JsonParser` / `SCP_JsonMapper` / `SCP_JsonWriter`，
   Tim 2026-08-28 指定）—— 讀寫端在 `Senate.Core/SenatePageStore`。
@@ -151,4 +115,3 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ## 相關文件
 
 - 指令 → [Cli_Reference](Cli_Reference.md)
-- 為什麼要看心跳 → [../Architecture/Overview](../Architecture/Overview.md#unity-的位置從宿主降級成-client)

@@ -3,11 +3,8 @@
 //           頁面與 `senate cmd paths` 都走本檔 ⇒ 兩邊不可能對同一格給出不同的值。
 // 數值影響：純讀寫記憶體中的 config 物件（落檔由呼叫端決定）。
 //
-// ⚠ **資料根只有一組**（Tim 2026-08-31）。所以「哪個專案」不是一個選項：
-//   酒館 `_seq.txt`、任務 `_index.txt`、`_session` lock 全都假設只有一棵資料樹 ——
+// ⚠ **資料根只有一組**（Tim 2026-08-31）：酒館 `_seq.txt`、任務 `_index.txt`、`_session` lock 全都假設只有一棵資料樹 ——
 //   兩棵就是兩份序號、兩份計數、persona 被切成兩半，而**沒有任何一層會喊**。
-//   ⇒ 有兩個啟用專案時本檔回 **Unavailable（附理由）**，不替人挑一個。
-//   🩸 「靜默挑一個」的症狀是「路徑全對，只是屬於別的專案」—— 那比解不出來難查得多。
 using SCP.Core.Paths;
 
 namespace Senate.Core;
@@ -16,26 +13,6 @@ public static class SenatePathBinding
 {
     /// <summary>Senate 專案根（exe 所在那棵 repo）—— 啟動時由宿主設一次；`SCP_PathId.HostRepoRoot` 的值。</summary>
     public static string HostRepoRoot { get; set; } = "";
-
-    /// <summary>
-    /// 那個唯一的專案。<c>oError</c> 有值 ＝ 不唯一（0 個或 &gt;1 個啟用），**呼叫端不准自己挑**。
-    /// </summary>
-    public static SenateProject? SingleProject(SenateConfig iConfig, out string? oError)
-    {
-        var aEnabled = new List<SenateProject>();
-        foreach (SenateProject p in iConfig.Projects) if (p.Enabled) aEnabled.Add(p);
-        if (aEnabled.Count == 1) { oError = null; return aEnabled[0]; }
-        if (aEnabled.Count == 0)
-        {
-            oError = "沒有啟用的 Unity 專案 —— Unity 專案根沒有人說過（選填：只有 Unity CLI 串接要它）";
-            return null;
-        }
-        var aNames = new List<string>();
-        foreach (SenateProject p in aEnabled) aNames.Add(p.Name.Length > 0 ? p.Name : "（未命名）");
-        oError = $"有 {aEnabled.Count} 個啟用的專案（{string.Join("、", aNames)}）——"
-                 + " **資料根只有一組**，所以這裡不替你挑。停用其餘的，只留一個。";
-        return null;
-    }
 
     /// <summary>描述表要的「這個 Id 存起來的原始值」。Derived 的格子不會走到這裡。</summary>
     public static SCP_PathStoredValue StoredOf(SenateConfig iConfig, SCP_PathId iId)
@@ -47,13 +24,6 @@ public static class SenatePathBinding
                 return HostRepoRoot.Length == 0
                     ? SCP_PathStoredValue.Unavailable("宿主沒有宣告 Senate 專案根（SenatePathBinding.HostRepoRoot 沒設）")
                     : SCP_PathStoredValue.Of(HostRepoRoot);
-            case SCP_PathId.UnityProjectRoot:
-            {
-                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
-                return aProj == null
-                    ? SCP_PathStoredValue.Unavailable(aErr!)
-                    : SCP_PathStoredValue.Of(aProj.Root);
-            }
             // 資料根／詞典根／漫畫庫根：全域 `paths` 區塊（TASK-0390）—— ⛔ 不再住在 Unity 專案上，沒有專案也解得出來。
             case SCP_PathId.AgentCommandsRoot:
                 return SCP_PathStoredValue.Of(iConfig.Paths.AgentCommandsRoot ?? "");
@@ -82,8 +52,6 @@ public static class SenatePathBinding
 
     /// <summary>
     /// **資料根的唯一入口**（TASK-0390）：走描述表的 `AgentCommandsRoot`。回 null ＝ 解不出來（原因在 <paramref name="oError"/>）。
-    /// <para>⛔ 不再經 `ProjectProbe.ResolveAgentCommandsRoot`／pointer 檔／`&lt;專案&gt;/AgentCommands` —— 那是第二份算式，
-    /// 而且要求有一個 Unity 專案才解得出來。</para>
     /// </summary>
     public static string? ResolveDataRoot(SenateConfig? iConfig, out string? oError)
     {
@@ -140,13 +108,6 @@ public static class SenatePathBinding
         oError = null;
         switch (iId)
         {
-            case SCP_PathId.UnityProjectRoot:
-            {
-                SenateProject? aProj = SingleProject(iConfig, out string? aErr);
-                if (aProj == null) { oError = aErr; return false; }
-                aProj.Root = iValue;
-                return true;
-            }
             case SCP_PathId.AgentCommandsRoot:
                 iConfig.Paths.AgentCommandsRoot = iValue;
                 return true;

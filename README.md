@@ -80,7 +80,7 @@ senate doctor
 | 區塊 | 做什麼 |
 |---|---|
 | 介面尺寸 | 四顆按鈕（小／中／大／特大）—— 按了會記住（寫回設定檔）。⚠ 字要等**重開視窗**才會跟著變大，間距則是馬上變 |
-| 頁面 | 進到別的頁：「Senate 環境檢查」看各專案狀態、「專案關聯」管理要管哪些專案、「Submodule 狀態」看與同步各專案的 submodule、「Process 管理」看本程式開了哪些外部 process（kill 前三重身分驗證，防誤殺）、「設定」改整份設定檔、「介面尺寸」有比較詳細的說明。頁面多的時候可以用上面的下拉選單（可以打字搜尋） |
+| 頁面 | 進到別的頁：「Senate 環境檢查」看環境讀數、「Submodule 狀態」看與同步 repo 的 submodule、「Process 管理」看本程式開了哪些外部 process（kill 前三重身分驗證，防誤殺）、「設定」改整份設定檔、「介面尺寸」有比較詳細的說明。頁面多的時候可以用上面的下拉選單（可以打字搜尋） |
 
 進到別的頁之後，左上角有「◀ 返回」；旁邊的「原始碼」會在檔案總管裡打開**這一頁的程式碼**
 （給要改東西的人用的；開不起來時畫面上會寫原因，不會沒反應）。
@@ -142,34 +142,22 @@ senate cmd wake-brief --arg persona=Template --arg wake=4
 
 ---
 
-## 設定要管哪些專案
+## 設定路徑
 
-最順的路是開視窗、進「**專案關聯**」頁：
+開視窗、進「**路徑管理**」頁，把**資料根**（AgentCommands 資料樹，例：`D:/Unity/Valhalla`）填好就能用；
+詞典根、信件庫根預設是 `auto`（自動推導），外部漫畫庫沒有就留空。每一格都會顯示解析結果與「存不存在」。
 
-1. 在「＋ 新增專案」貼上專案資料夾路徑（直接用檔案總管「複製路徑」貼過來也行，引號會自己去掉）
-2. 按「加入草稿」—— 每一列會**當場顯示探測結果**（路徑在不在、是不是 git 專案、
-   資料根找不找得到、Unity 有沒有開），打錯馬上看得到
-3. 按「**儲存**」才會真的寫進設定檔（存之前都只是草稿，按「放棄改動」可以反悔）
-
-> 探測讀數是快取的 —— 改了路徑或想看 Unity 現在開著沒，按「🔄 重新探測全部」。
-
-不想開視窗的話，直接編輯 **`SenateData/config/senate.local.json`**（`setup` 會幫你建好一份範本）：
+不想開視窗的話，直接編輯 **`SenateData/config/senate.local.json`**（`senate init` 會從範本建一份）：
 
 ```jsonc
 {
   "schemaVersion": 1,
-  "projects": [
-    { "name": "LY", "root": "D:/Unity/LY", "agentCommandsRoot": "auto", "enabled": true, "profile": "" }
-  ]
+  "paths": { "agentCommandsRoot": "D:/Unity/Valhalla", "glossaryRoot": "auto", "comicRoot": "" },
+  "awakening": { "lettersRoot": "auto" }
 }
 ```
 
-| 欄位 | 意思 |
-|---|---|
-| `name` | 你自己看的名字（會出現在畫面上） |
-| `root` | 專案資料夾的完整路徑（用 `/` 或 `\\`） |
-| `agentCommandsRoot` | 填 `"auto"` 就好，它會自己找 |
-| `enabled` | `false` ＝ 暫時不管這個專案（**還是會列出來，標成「停用」**） |
+想確認每一格解析到哪：`senate cmd paths`。
 
 > 這個檔案裡有你電腦的路徑，所以**不會**被上傳到 GitHub。要分享設定請改 `SenateData/config/senate.local.example.json`。
 

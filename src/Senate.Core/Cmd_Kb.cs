@@ -51,9 +51,9 @@ public sealed class Cmd_Kb : SCP_Cmd
 
     public override SCP_CmdResult Execute(SCP_CmdArgs iArgs)
     {
-        if (UnityDelegateCmd.ConfigProvider == null || ServerDelegateCmd.RepoRootProvider == null)
+        if (SenateConfigSource.Provider == null || ServerDelegateCmd.RepoRootProvider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源／repo 根 —— 這是程式錯誤不是用法錯");
-        (SenateConfig? aConfig, _) = UnityDelegateCmd.ConfigProvider();
+        (SenateConfig? aConfig, _) = SenateConfigSource.Provider();
         string aRepo = ServerDelegateCmd.RepoRootProvider();
         string aData = iArgs.Get("data_root");
         if (aData.Length == 0) return SCP_CmdResult.Fail(2, "✗ 解不出資料根（設定檔那一格）—— 用 `senate cmd paths` 看");

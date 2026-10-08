@@ -12,8 +12,8 @@
 // 數值影響：純字串組裝，不碰磁碟（`EnsureDirectories` 例外，且只建目錄不寫檔）。
 //
 // ⚠ 這是 Senate **宿主**的版面，刻意不進 SCP_Core：
-//   SCP_Core 管的是跨端契約的版面（`SCP_ProjectPaths` / `SCP_DataPaths` / `SCP_LettersPaths`），
-//   而 `SenateData/` 只有 Senate 這一個宿主會用 —— Unity 那側沒有這個東西。
+//   SCP_Core 管的是資料樹的版面（`SCP_DataPaths` / `SCP_LettersPaths`），
+//   而 `SenateData/` 是 Senate 自己的東西。
 //   規則是「一個路徑只能有一個決定點」，不是「路徑一定要在 Core 算」
 //   （見 <SCP_Core>/Docs~/Coding_Standards.md §4）。
 //

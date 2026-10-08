@@ -12,21 +12,21 @@ namespace Senate.Core;
 
 public sealed class SenateLocalCmdHost : ISCP_LocalCmdHost
 {
-    public string WhereLine => "⤷ Senate 就地執行（不需要 Unity Editor）";
+    public string WhereLine => "⤷ Senate 就地執行";
 
     public string HostId => "senate";
 
-    public bool TryResolve(string iProject, string iTargetDataRoot, out SCP_LocalTarget oTarget, out string oError, out string oHint)
+    public bool TryResolve(string iTargetDataRoot, out SCP_LocalTarget oTarget, out string oError, out string oHint)
     {
         oTarget = new SCP_LocalTarget();
         oError = ""; oHint = "";
-        if (UnityDelegateCmd.ConfigProvider == null)
+        if (SenateConfigSource.Provider == null)
         {
-            oError = "宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯";
+            oError = "宿主沒有裝上設定來源（SenateConfigSource.Provider）—— 程式錯誤，不是用法錯";
             return false;
         }
-        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
-        // 資料根：**唯一入口**（TASK-0390）。🩸 原本走 UnityTargetResolver ⇒ 沒有啟用的 Unity 專案時早安／晚安／酒館發文全擋。
+        (SenateConfig? aConfig, string aConfigPath) = SenateConfigSource.Provider();
+        // 資料根：**唯一入口**（TASK-0390）。
         string? aConfigured = SenatePathBinding.ResolveDataRoot(aConfig, out string? aDataErr);
         if (aConfigured == null)
         {
@@ -43,11 +43,9 @@ public sealed class SenateLocalCmdHost : ISCP_LocalCmdHost
             oHint = "確認呼叫端帶的 data_root，或到「路徑管理」頁改設定";
             return false;
         }
-        if (iProject.Trim().Length > 0)
-            oTarget.SelectionNote = $"`project={iProject}` 不再選資料根（資料根只有一組，在設定檔）—— 已忽略";
         oTarget.ProjectName = SCP.Core.Paths.SCP_DataPaths.ProjectNameOf(aDataRoot);
         oTarget.DataRoot = aDataRoot;
-        // 這一格只是詞典附註等顯示路徑的基準 ⇒ Senate 專案根（詞典是 Senate 的 submodule），⛔ 不是 Unity 專案
+        // 這一格只是詞典附註等顯示路徑的基準 ⇒ Senate 專案根（詞典是 Senate 的 submodule）
         oTarget.ProjectRoot = SenatePathBinding.HostRepoRoot;
         oTarget.Describe = $"資料根 {aDataRoot}";
         oTarget.GlossaryRoot = SenatePathBinding.ResolveGlossaryRoot(aConfig, out string? aGlossaryErr);

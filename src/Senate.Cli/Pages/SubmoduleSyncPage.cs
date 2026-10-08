@@ -960,34 +960,6 @@ public sealed class SubmoduleSyncPage : SCP_GuiToolPage
                 m_PasteMessage = aRead.Message;
             }
 
-            // 設定檔裡的專案 —— 有才畫。沒有 senate.local.json 時畫一個只有一個選項的下拉
-            // 是純雜訊（那個選項就是上面欄位的現值）。
-            var aOptions = new List<SCP_GuiOption>();
-            foreach (var aProject in m_Model.Projects)
-            {
-                if (aProject.Root.Length == 0) continue;
-                // ⚠ 停用／路徑壞掉的**照樣列出來並標原因** ——
-                //   「我關掉它」「設定壞了」「沒設定過」是三件事，消失掉會讓人以為是第三種。
-                string aLabel = aProject.State switch
-                {
-                    ProbeState.Ok => aProject.Enabled ? aProject.Name : $"{aProject.Name}（停用）",
-                    ProbeState.Missing => $"{aProject.Name}（路徑不存在）",
-                    ProbeState.NotGitRepo => $"{aProject.Name}（非 git repo）",
-                    _ => $"{aProject.Name}（未設定）",
-                };
-                aOptions.Add(new SCP_GuiOption(aProject.Root, aLabel));
-            }
-            if (aOptions.Count > 0)
-            {
-                // current 一律傳空字串：這個下拉是**動作**不是狀態（選了就填進欄位），
-                // 傳現值會讓它看起來像第二個真相源。
-                string aPick = g.Dropdown("設定檔的專案", aOptions, "", "submodule/project");
-                if (aPick.Length > 0 && !SameRepo(aPick, iAppliedRoot))
-                {
-                    g.SetField(RootFieldId, aPick);
-                    oApplyRoot = aPick;   // 點選 ⇒ 立即生效
-                }
-            }
         }
 
         if (m_PasteMessage != null) g.Note($"　{m_PasteMessage}");

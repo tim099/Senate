@@ -7,8 +7,8 @@
 //           而且走 SenateConfig.Save ⇒ 未知欄位與 "//" 註解照樣保留（D12）。
 // ⚠ 這一頁刻意**不自動存**：自動存會讓「打字打到一半」變成落地的設定值，
 //   而字級這種東西改壞了會讓人看不見畫面上的還原按鈕。
-// ⚠ 多層巢狀在這裡是真的（config → projects[] → 每個專案的欄位），
-//   所以每一層都用 Fold 收得起來（`--fold settings/Projects` 之類）。
+// ⚠ 多層巢狀在這裡是真的（config → paths／awakening／bank… → 欄位），
+//   所以每一層都用 Fold 收得起來（`--fold settings/Paths` 之類）。
 using SCP.Core.Gui;
 using Senate.Core;
 
@@ -103,14 +103,6 @@ public sealed class SettingsPage : SCP_GuiToolPage
     void Save()
     {
         if (m_Draft == null) return;
-
-        // 設定本身先驗一遍 —— 存一份自己知道有問題的設定，等於把問題延後到下次啟動才爆
-        var aErrors = m_Draft.Validate();
-        if (aErrors.Count > 0)
-        {
-            m_Message = "⚠ 沒有儲存 —— 設定有問題：" + string.Join("；", aErrors);
-            return;
-        }
 
         try
         {

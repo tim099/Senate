@@ -287,7 +287,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
     {
         string aGiven = iArgs.Get("data_root").Trim();
         if (aGiven.Length > 0) return aGiven;
-        return SenatePathBinding.ResolveDataRoot(UnityDelegateCmd.ConfigProvider?.Invoke().Item1, out _) ?? "";
+        return SenatePathBinding.ResolveDataRoot(SenateConfigSource.Provider?.Invoke().Item1, out _) ?? "";
     }
 
     static string? LogFlow(SCP_LettersRoot iLetters, SCP_CmdArgs iArgs, string iPersona, string iVoucher,

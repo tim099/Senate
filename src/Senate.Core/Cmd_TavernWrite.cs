@@ -93,7 +93,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
                 // TASK-0313：詞典附註改由寫入端補（Unity 端不碰詞典）。兩格由 CLI 宿主照 senate.local.json 自動填，
                 //   ⛔ 呼叫端不必給 —— 沒有它們（例如 in-process 呼叫、沒帶）⇒ 不附，照寫。
                 new SCP_CmdArgSpec("glossary_root", "詞典根（宿主自動填；不帶 ⇒ 不補附註）"),
-                new SCP_CmdArgSpec("project_root", "Unity 專案根（附註路徑顯示用；宿主自動填；沒有 Unity 專案時附註印絕對路徑）"),
+                new SCP_CmdArgSpec("repo_root", "Senate 專案根（附註路徑顯示用；宿主自動填）"),
             };
             aSpecs.AddRange(CommonSpecs());
             return aSpecs;
@@ -121,7 +121,7 @@ public class Cmd_TavernWrite : ServerDelegateCmd
             return SCP_CmdResult.Fail(2, "✗ msg_json 解出來是空的（body 與 kind 都沒有）——"
                                          + " ⛔ 寧可拒絕，也不要落一則沒有內容的訊息。");
 
-        string aGlossaryNote = AttachGlossary(aMsg, iArgs.Get("glossary_root").Trim(), iArgs.Get("project_root").Trim());
+        string aGlossaryNote = AttachGlossary(aMsg, iArgs.Get("glossary_root").Trim(), iArgs.Get("repo_root").Trim());
 
         // ── 閘③：封存的頻道不寫（TASK-0318）─────────────────────────
         // 🩸 不擋的話：寫入端會在 `rooms/` 自己建一個同名新房（CreateDirectory），而記憶體裡的訊息數還是舊房的

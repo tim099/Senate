@@ -90,7 +90,7 @@ public static partial class SelfTest
 
     // ⚠ 這張表就是「有哪些項目」的唯一來源 —— `--list` 印它、`--only` 篩它、`Run` 跑它。
     //   三個消費端吃同一份，⛔ 不要在別處再抄一份清單。
-    static List<Entry> Catalog(IReadOnlyList<ProjectReading> iProjects) => new()
+    static List<Entry> Catalog(IReadOnlyList<SelfTestTarget> iTargets) => new()
     {
         One(nameof(MissingSemantics), "core", MissingSemantics),
         One(nameof(SelfTestSelectionAndAutoClose), "core", SelfTestSelectionAndAutoClose, iImportant: true),
@@ -99,7 +99,7 @@ public static partial class SelfTest
         One(nameof(PrefsThreeStates), "core", PrefsThreeStates),
         One(nameof(PrefsKeepsOtherSections), "core", PrefsKeepsOtherSections),
         One(nameof(PathsSingleSource), "core", PathsSingleSource),
-        One(nameof(StandaloneWithoutUnityProject0390), "core", StandaloneWithoutUnityProject0390),
+        One(nameof(LegacyProjectsMigration0390), "core", LegacyProjectsMigration0390),
         One(nameof(LetterDayIsLocalDay), "core", LetterDayIsLocalDay),
         One(nameof(BankArrivalOpensAndBinds), "morning", BankArrivalOpensAndBinds),
         One(nameof(PathRegistryShape), "core", PathRegistryShape),
@@ -115,7 +115,6 @@ public static partial class SelfTest
         One(nameof(QueueAppendSurvivesConcurrency), "core", QueueAppendSurvivesConcurrency),
         One(nameof(QueueCommitKeepsEntriesAppendedDuringBatch), "core", QueueCommitKeepsEntriesAppendedDuringBatch),
         One(nameof(VanishedCmdIsUnknownNotSuccess), "core", VanishedCmdIsUnknownNotSuccess),
-        One(nameof(UnityCompileStatusShape), "core", UnityCompileStatusShape),
         One(nameof(QueueForLaterWhenServerUnavailable), "core", QueueForLaterWhenServerUnavailable),
         One(nameof(ServerBuildKnownClassification), "core", ServerBuildKnownClassification),
         One(nameof(ServerConsolePrefLayers), "core", ServerConsolePrefLayers),
@@ -179,7 +178,7 @@ public static partial class SelfTest
         One(nameof(RelationshipStoreCleanRoom), "letters", RelationshipStoreCleanRoom),
         One(nameof(PersonaProfileWriteCleanRoom), "letters", PersonaProfileWriteCleanRoom),
         Many(nameof(RealRelationshipRecomputeMatchesEditor), "letters",
-             () => RealRelationshipRecomputeMatchesEditor(iProjects)),
+             () => RealRelationshipRecomputeMatchesEditor(iTargets)),
         // 自由時間搬到 Senate（TASK-0360）：本體在 SelfTest.FreeTime0360.cs
         One(nameof(FreeTimeSettingsCleanRoom), "freetime", FreeTimeSettingsCleanRoom),
         One(nameof(FreeTimeActivityMdCleanRoom), "freetime", FreeTimeActivityMdCleanRoom),
@@ -232,7 +231,6 @@ public static partial class SelfTest
         One(nameof(SealedLetterCleanRoom), "letters", SealedLetterCleanRoom),
         // skill 入口化（TASK-0406）：本體在 SelfTest.Skill0406.cs
         One(nameof(SkillEntryCleanRoom), "skills", SkillEntryCleanRoom),
-        Many(nameof(RealSkillAntigravityParity), "skills", () => RealSkillAntigravityParity(iProjects)),
         // 酒館 Server 不在時發文排進它的 queue（TASK-0372）：本體在 SelfTest.TavernQueue0372.cs
         One(nameof(TavernQueueWhenServerDownCleanRoom), "tavern", TavernQueueWhenServerDownCleanRoom),
         // 安裝系統（TASK-0375）：本體在 SelfTest.Install0375.cs
@@ -262,11 +260,11 @@ public static partial class SelfTest
         One(nameof(BartenderProcessBatch), "bartender", BartenderProcessBatch),
         One(nameof(BartenderSettingsStore), "bartender", BartenderSettingsStore),
         // 任務單寫入端（TASK-0349）：本體在 SelfTest.Tasks.cs
-        Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iProjects)),
+        Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iTargets)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
         One(nameof(TaskOpsGatesCleanRoom), "tasks", TaskOpsGatesCleanRoom),
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
-             () => RealTavernSerializerMatchesEditor(iProjects)),
+             () => RealTavernSerializerMatchesEditor(iTargets)),
 
         One(nameof(BankIdRules), "bank", BankIdRules),
         One(nameof(BankAccountCleanRoom), "bank", BankAccountCleanRoom),
@@ -277,18 +275,18 @@ public static partial class SelfTest
         One(nameof(ReconcileSettledRefsCleanRoom), "bank", ReconcileSettledRefsCleanRoom),
 
         // ── 以下都會去讀**真專案的真檔案** ⇒ 慢的那一份都在這裡 ──
-        Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iProjects)),
-        Many(nameof(RealPersonaScan), "real", () => RealPersonaScan(iProjects)),
-        Many(nameof(RealActivitySessionRoundTrip), "real", () => RealActivitySessionRoundTrip(iProjects)),
-        Many(nameof(RealWatchLedgerRead), "watch", () => RealWatchLedgerRead(iProjects)),
-        Many(nameof(RealWatchResolveFingerprint), "watch", () => RealWatchResolveFingerprint(iProjects)),
-        Many(nameof(RealWatchChapterRebuild), "watch", () => RealWatchChapterRebuild(iProjects)),
+        Many(nameof(RealFileRoundTrip), "real", () => RealFileRoundTrip(iTargets)),
+        Many(nameof(RealPersonaScan), "real", () => RealPersonaScan(iTargets)),
+        Many(nameof(RealActivitySessionRoundTrip), "real", () => RealActivitySessionRoundTrip(iTargets)),
+        Many(nameof(RealWatchLedgerRead), "watch", () => RealWatchLedgerRead(iTargets)),
+        Many(nameof(RealWatchResolveFingerprint), "watch", () => RealWatchResolveFingerprint(iTargets)),
+        Many(nameof(RealWatchChapterRebuild), "watch", () => RealWatchChapterRebuild(iTargets)),
         One(nameof(WatchIdentityGuard), "watch", WatchIdentityGuard),
-        Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iProjects)),
-        Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iProjects)),
-        Many(nameof(RealRecallPortMatchesEditor), "library", () => RealRecallPortMatchesEditor(iProjects)),
-        Many(nameof(RealBookshelfPortMatchesEditor), "library", () => RealBookshelfPortMatchesEditor(iProjects)),
-        Many(nameof(RealLibraryInitMatchesDisk), "library", () => RealLibraryInitMatchesDisk(iProjects)),
+        Many(nameof(WatchWriteCleanRoom), "watch", () => WatchWriteCleanRoom(iTargets)),
+        Many(nameof(RealLibraryByteRoundTrip), "library", () => RealLibraryByteRoundTrip(iTargets)),
+        Many(nameof(RealRecallPortMatchesEditor), "library", () => RealRecallPortMatchesEditor(iTargets)),
+        Many(nameof(RealBookshelfPortMatchesEditor), "library", () => RealBookshelfPortMatchesEditor(iTargets)),
+        Many(nameof(RealLibraryInitMatchesDisk), "library", () => RealLibraryInitMatchesDisk(iTargets)),
         One(nameof(LibraryBuilderGolden), "library", LibraryBuilderGolden),
         One(nameof(LibraryNoteCleanRoom), "library", LibraryNoteCleanRoom),
         One(nameof(LibraryCharacterCleanRoom), "library", LibraryCharacterCleanRoom),
@@ -662,89 +660,6 @@ public static partial class SelfTest
             $"不帶 lane 原樣={aPlain}／帶 lane 同資料夾異檔名={aLaned}／**兩條分道 trigger 不同檔**={aIsolated}／"
             + $"**身分只取 folder**={aIdentity}／不合法整筆退回 anonymous={aGuard}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
-    }
-
-    // 區塊職責：Unity 編譯狀態讀取層的**反向對照** —— 那三種「看起來像綠燈的沒有讀數」。
-    // 物理意義：這一支的價值全在它**不會**說什麼：檔不在時不可以印 0 errors、
-    //          找不到第二來源時不可以說「一致」、tracker 說 0 而 ErrorLog 有錯時要以 ErrorLog 為準。
-    //          🩸 這三格都不是假想：`check_compile.py --watch` 就是在「沒有讀數」那一格印了綠燈
-    //          （TASK-0154，2026-09-07 實測印出三天前的快照）。
-    // ⚠ 用暫存根，不碰任何真專案 —— 驗一個「讀狀態」的東西時去動真的狀態，是把受測體污染掉。
-    static CheckRow UnityCompileStatusShape()
-    {
-        string aRoot = Path.Combine(Path.GetTempPath(), "senate_selftest_compile_" + Guid.NewGuid().ToString("N")[..8]);
-        try
-        {
-            Directory.CreateDirectory(aRoot);
-
-            // ① 檔不在 ⇒ 沒有讀數，且那句話不可以長得像「沒有錯誤」
-            var aMissing = SCP.Core.Compile.SCP_UnityCompile.Read(aRoot);
-            bool aMissingOk = !aMissing.Found && aMissing.Status == null
-                              && aMissing.Error.Contains("沒有讀數", StringComparison.Ordinal)
-                              && aMissing.Path.EndsWith(SCP.Core.Compile.SCP_UnityCompile.StatusFileName, StringComparison.Ordinal);
-
-            // ② 壞 JSON ⇒ 帶原因回來，⛔ 不可以靜默變成「空的狀態」
-            string aPath = Path.Combine(aRoot, SCP.Core.Compile.SCP_UnityCompile.StatusFileName);
-            File.WriteAllText(aPath, "{ 這不是 json", Encoding.UTF8);
-            var aBroken = SCP.Core.Compile.SCP_UnityCompile.Read(aPath.Length > 0 ? aRoot : aRoot);
-            bool aBrokenOk = !aBroken.Found && aBroken.Error.Length > 0;
-
-            // ③ 正常讀 ＋ 已知答案：兩顆錯、一顆警告 ⇒ 去重後錯誤剩兩顆
-            File.WriteAllText(aPath, """
-{
-  "tracker": "UCL_CompileErrorTracker",
-  "timestamp": "2026-09-07T09:01:13",
-  "duration_seconds": 1.8,
-  "in_progress": false,
-  "total_errors": 2,
-  "total_warnings": 1,
-  "total_messages": 4,
-  "messages": [
-    {"assembly":"A","file":"X.cs","line":1,"column":2,"type":"Error","message":"error CS0128: 甲"},
-    {"assembly":"A","file":"X.cs","line":1,"column":2,"type":"Error","message":"error CS0128: 甲"},
-    {"assembly":"A","file":"Y.cs","line":9,"column":1,"type":"Error","message":"error CS8603: 乙"},
-    {"assembly":"A","file":"Z.cs","line":3,"column":1,"type":"Warning","message":"warning CS0168: 丙"}
-  ]
-}
-""", Encoding.UTF8);
-            var aRead = SCP.Core.Compile.SCP_UnityCompile.Read(aRoot);
-            bool aReadOk = aRead.Found && aRead.Status != null && aRead.Status.total_errors == 2
-                           && aRead.Status.messages.Count == 4
-                           && SCP.Core.Compile.SCP_UnityCompile.ErrorsOf(aRead.Status).Count == 2;   // 去重把重複那顆吃掉
-
-            // ④ 新鮮度：mtime **等於**基準要算新（tracker 只有秒精度，同一秒觸發會等於而不是大於
-            //    —— 判成「還沒跑」就是永遠等下去）
-            DateTime aStamp = aRead.WriteTimeUtc;
-            bool aFreshOk = SCP.Core.Compile.SCP_UnityCompile.IsFresherThan(aRead, aStamp)
-                            && SCP.Core.Compile.SCP_UnityCompile.IsFresherThan(aRead, aStamp.AddSeconds(-1))
-                            && !SCP.Core.Compile.SCP_UnityCompile.IsFresherThan(aRead, aStamp.AddSeconds(1));
-
-            // ⑤ 找不到第二來源 ⇒ **NoSecondSource**，⛔ 不可以退化成 AgreeClean
-            var aCross = SCP.Core.Compile.SCP_UnityCompile.Crosscheck(aRoot, aRead.Status!);
-            bool aCrossOk = aCross.Verdict == SCP.Core.Compile.SCP_UnityCompile.SCP_CrosscheckVerdict.NoSecondSource;
-
-            // ⑥ tracker 說 0 而 ErrorLog 有錯 ⇒ 以 ErrorLog 為準（這格是本層存在的理由）
-            string aLogDir = Path.Combine(aRoot, "Assets", "DebugLogs~");
-            Directory.CreateDirectory(aLogDir);
-            File.WriteAllText(Path.Combine(aLogDir, "Errors_latest.log"),
-                "[09:05:00] Foo.cs(1,1): error CS0246: 找不到型別\n", Encoding.UTF8);
-            var aZero = new SCP.Core.Compile.SCP_UnityCompileStatus { timestamp = "2026-09-07T09:01:13", total_errors = 0 };
-            var aMissed = SCP.Core.Compile.SCP_UnityCompile.Crosscheck(aRoot, aZero);
-            bool aMissedOk = aMissed.Verdict == SCP.Core.Compile.SCP_UnityCompile.SCP_CrosscheckVerdict.TrackerMissedErrors
-                             && aMissed.LogCount == 1;
-
-            // ⑦ 射程那句話必須真的印在輸出裡（它是結論的一部分，不是說明文件）
-            List<string> aRender = SCP.Core.Compile.SCP_UnityCompile.Render(aRead, aRoot, true, 20);
-            bool aScopeOk = aRender.Exists(l => l.Contains("不涵蓋 `senate.exe`", StringComparison.Ordinal));
-
-            bool aOk = aMissingOk && aBrokenOk && aReadOk && aFreshOk && aCrossOk && aMissedOk && aScopeOk;
-            return new CheckRow("Unity 編譯狀態讀取（反向對照）",
-                $"檔不在≠0錯={aMissingOk}／壞 JSON 帶原因={aBrokenOk}／讀回＋去重={aReadOk}／"
-                + $"**mtime 等於基準算新**={aFreshOk}／無第二來源≠一致={aCrossOk}／"
-                + $"**tracker 說 0 而 ErrorLog 有錯**={aMissedOk}／射程有印={aScopeOk}",
-                aOk ? CheckResult.Pass : CheckResult.Fail);
-        }
-        finally { try { if (Directory.Exists(aRoot)) Directory.Delete(aRoot, true); } catch { } }
     }
 
     // 區塊職責：`cmd book op=add` 的產物，與 `library.py add-book` 的**真實輸出**逐位元組對拍。
@@ -2223,7 +2138,7 @@ public static partial class SelfTest
     /// <summary>
     /// 設定檔 round-trip **不可以吃掉本版不認得的欄位**（含使用者手寫的 <c>"//"</c> 註解鍵）。
     /// <para>🩸 這一項是為一隻真的 bug 立的：2026-08-23 介面尺寸寫回設定檔的第一版，
-    /// 把 <c>"//"</c> 那行整條吃掉 —— projects 還在，所以看起來一切正常。</para>
+    /// 把 <c>"//"</c> 那行整條吃掉 —— 其餘欄位都還在，所以看起來一切正常。</para>
     /// </summary>
     static CheckRow ConfigRoundTripKeepsUnknownKeys()
     {
@@ -2247,13 +2162,13 @@ public static partial class SelfTest
             string aBack = File.ReadAllText(aPath);
 
             bool aRootNote = aBack.Contains("手寫註解", StringComparison.Ordinal);
-            bool aProjNote = aBack.Contains("專案層註解", StringComparison.Ordinal);
+            bool aNoProjects = !aBack.Contains("\"projects\"", StringComparison.Ordinal);   // 舊的 Unity 專案清單：讀入就拿掉
             bool aFuture = aBack.Contains("未來版本的欄位", StringComparison.Ordinal);
             bool aUi = SenateConfig.Load(aPath)?.Ui.Scale == 1.75f;
 
             return new CheckRow("設定檔 round-trip",
-                $"根層註解保留={aRootNote}／專案層註解保留={aProjNote}／未知欄位保留={aFuture}／ui.scale 回讀={aUi}",
-                aRootNote && aProjNote && aFuture && aUi ? CheckResult.Pass : CheckResult.Fail);
+                $"根層註解保留={aRootNote}／未知欄位保留={aFuture}／舊 projects 存檔後消失={aNoProjects}／ui.scale 回讀={aUi}",
+                aRootNote && aNoProjects && aFuture && aUi ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow("設定檔 round-trip", $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }
         finally { try { File.Delete(aPath); } catch { /* 暫存檔刪不掉不影響判定 */ } }
@@ -2398,30 +2313,10 @@ public static partial class SelfTest
         bool aLettersAgrees = SCP_WakeLetters.ConstitutionPath(aLetters.Value, "basecamp")
                               == SCP_LettersPaths.ConstitutionPath(aLetters, "basecamp");
 
-        // ⑥ 資料根三種來源不得同形（Configured / Pointer / Convention）
-        string aTmpProj = Path.Combine(Path.GetTempPath(), "senate_selftest_proj");
-        bool aOriginOk;
-        try
-        {
-            Directory.CreateDirectory(aTmpProj);
-            var aProj = new SCP_ProjectRoot(aTmpProj);
-            var aConv = SCP_ProjectPaths.ResolveDataRoot(aProj, "auto");
-            File.WriteAllText(SCP_ProjectPaths.DataRootPointer(aProj),
-                "# 註解行（pointer 檔允許註解與空行，解析要跳過）\n\nD:/別的地方/AgentCommands\n");
-            var aPtr = SCP_ProjectPaths.ResolveDataRoot(aProj, "auto");
-            var aCfg = SCP_ProjectPaths.ResolveDataRoot(aProj, "D:/顯式指定");
-            aOriginOk = aConv.Origin == SCP_ProjectPaths.DataRootOrigin.Convention
-                        && aPtr.Origin == SCP_ProjectPaths.DataRootOrigin.Pointer
-                        && aPtr.Root.Value == "D:/別的地方/AgentCommands"
-                        && aCfg.Origin == SCP_ProjectPaths.DataRootOrigin.Configured;
-        }
-        catch (Exception e) { return new CheckRow("路徑單一落點", $"pointer 那格例外：{e.Message}", CheckResult.Fail); }
-        finally { try { Directory.Delete(aTmpProj, true); } catch { /* 暫存目錄刪不掉不影響判定 */ } }
-
-        bool aOk = aQueueAgrees && aQueuesDirAgrees && aTraversalBlocked && aNormalised && aLettersAgrees && aOriginOk;
+        bool aOk = aQueueAgrees && aQueuesDirAgrees && aTraversalBlocked && aNormalised && aLettersAgrees;
         return new CheckRow("路徑單一落點",
             $"queue 舊新一致={aQueueAgrees}／status 掃的是父層={aQueuesDirAgrees}／穿越擋回 anonymous={aTraversalBlocked}"
-            + $"／根正規化={aNormalised}／letters 舊新一致={aLettersAgrees}／資料根三來源可分={aOriginOk}",
+            + $"／根正規化={aNormalised}／letters 舊新一致={aLettersAgrees}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 
@@ -2882,12 +2777,12 @@ public static partial class SelfTest
     //     那幾份才當閘；其餘只當讀數，並且把兩個數字**分開印**。
     // ⚠ `generated_at:` 那一行逐次不同（本機時間）⇒ 比對時排除它，而**排除這件事要印出來**：
     //   不說的話，「我比了全部」與「我比了除了那一行之外的全部」在畫面上同形。
-    static IEnumerable<CheckRow> RealRecallPortMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealRecallPortMatchesEditor(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aLetters = SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(p.AgentCommandsRoot)).Value;   // 唯一入口（TASK-0390）
             if (!Directory.Exists(aLetters)) continue;
             string[] aFiles = Directory.GetFiles(aLetters, "reading_recall_*.md", SearchOption.AllDirectories);
@@ -2951,12 +2846,12 @@ public static partial class SelfTest
     // ⚠ 本格**不排除任何行**（卡片裡沒有逐次變動的時戳；`updated_at` 來自 reader.json）。
     //   ⛔ 例外：reader.json 缺 `updated_at` 時渲染會落 `Today()` ⇒ 那種卡片跨日必然不符。
     //   它會落在「不符」那一欄，而不是被悄悄排掉。
-    static IEnumerable<CheckRow> RealBookshelfPortMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealBookshelfPortMatchesEditor(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aLibrary = Path.Combine(p.AgentCommandsRoot, "BookNotes", "Library");
             if (!Directory.Exists(aLibrary)) continue;
             string[] aFiles = Directory.GetFiles(aLibrary, "bookshelf.md", SearchOption.AllDirectories);
@@ -3024,12 +2919,12 @@ public static partial class SelfTest
     //   ⇒ 判準：鍵**集合**（無序）相同才算受測體；⛔ 而**順序仍在受測範圍內** ——
     //     集合是出身、順序是行為，把順序也排掉的話，一個把鍵寫反的移植 bug 會被判成「不是我寫的」。
     //   ⚠ 而受測體數**要印出來**：它掉下去就是射程縮了，那件事必須看得見。
-    static IEnumerable<CheckRow> RealLibraryInitMatchesDisk(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealLibraryInitMatchesDisk(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aLibrary = Path.Combine(p.AgentCommandsRoot, "BookNotes", "Library");
             if (!Directory.Exists(aLibrary)) continue;
             aAny = true;
@@ -3504,12 +3399,12 @@ public static partial class SelfTest
         catch { return false; }   // 判不出來就**不當閘**（⛔ 不把「不知道」算成新鮮）
     }
 
-    static IEnumerable<CheckRow> RealLibraryByteRoundTrip(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealLibraryByteRoundTrip(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aLibrary = Path.Combine(p.AgentCommandsRoot, "BookNotes", "Library");
             if (!Directory.Exists(aLibrary)) continue;
             aAny = true;
@@ -3551,12 +3446,12 @@ public static partial class SelfTest
     /// 拿**真的、由 Unity 端 UCL JsonData 寫出來的檔**過一遍：讀 → 寫 → 再讀，
     /// 兩次的樹必須等價（逐 key 比較），而且第一次就要讀得到預期的欄位。
     /// </summary>
-    static IEnumerable<CheckRow> RealFileRoundTrip(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealFileRoundTrip(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aFile = Path.Combine(p.AgentCommandsRoot, "commands_schema.json");
             if (!File.Exists(aFile)) continue;
             aAny = true;
@@ -3598,12 +3493,12 @@ public static partial class SelfTest
     // ⚠ 找不到樣本回 Skipped **不是 Pass** —— 「沒測」與「測過而且對」同形是這裡最貴的錯。
     // 📌 三態那條也在這裡驗：掃到 0 個人 ⇒ Fail（信件庫應該有人），
     //    而「量不到」要能從 Problems 看出來，不可以靜靜變成「全體離線」。
-    static IEnumerable<CheckRow> RealPersonaScan(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealPersonaScan(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             var aLetters = SCP_DataPaths.Letters(new SCP_DataRoot(p.AgentCommandsRoot));
             if (!Directory.Exists(aLetters.Value)) continue;
             aAny = true;
@@ -3926,12 +3821,12 @@ public static partial class SelfTest
     // ⭐ 為什麼用指紋而不是逐筆比：指紋讓「哪裡不一樣」變成一個**必須去查**的問題，
     //   而逐筆比很容易被寫成「差異只有 N 筆，看起來還好」。⇒ 它只有兩種答案。
     // ⚠ 純讀。反查一個位元組都不寫（寫入端是 AppendExportEvents，不在本格）。
-    static IEnumerable<CheckRow> RealWatchResolveFingerprint(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealWatchResolveFingerprint(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             if (!File.Exists(SCP_WatchLedger.SessionsLogPath(p.AgentCommandsRoot))) continue;
             aAny = true;
 
@@ -4027,12 +3922,12 @@ public static partial class SelfTest
     // ⭐ 判準只認**最新那一章**：舊章可能是更早版本的 python 排出來的，
     //   它們不符不代表移植錯（那是「舊快照」不是「壞掉」）。⇒ 其餘章只報數字不判定。
     // ⚠ 純讀：重出的結果只留在記憶體裡比對，**一個位元組都不寫回 Books/**。
-    static IEnumerable<CheckRow> RealWatchChapterRebuild(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealWatchChapterRebuild(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aBooks = Path.Combine(p.AgentCommandsRoot, "Books");
             if (!Directory.Exists(aBooks)) continue;
 
@@ -4274,12 +4169,12 @@ public static partial class SelfTest
         finally { try { if (Directory.Exists(aTmp)) Directory.Delete(aTmp, true); } catch { /* 清不掉不影響判定 */ } }
     }
 
-    static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> WatchWriteCleanRoom(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aSrc = p.AgentCommandsRoot;
             string aBooksSrc = Path.Combine(aSrc, "Books");
             if (!Directory.Exists(aBooksSrc)) continue;
@@ -4515,12 +4410,12 @@ public static partial class SelfTest
         return aHex.ToString();
     }
 
-    static IEnumerable<CheckRow> RealWatchLedgerRead(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealWatchLedgerRead(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aPath = SCP_WatchLedger.SessionsLogPath(p.AgentCommandsRoot);
             if (!File.Exists(aPath)) continue;
             aAny = true;
@@ -4564,12 +4459,12 @@ public static partial class SelfTest
                 CheckResult.Skipped);
     }
 
-    static IEnumerable<CheckRow> RealActivitySessionRoundTrip(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealActivitySessionRoundTrip(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             var aSrcRoot = new SCP_DataRoot(p.AgentCommandsRoot);
             string aDir = SCP_ActivitySessionStore.Dir(aSrcRoot);
             if (!Directory.Exists(aDir)) continue;
@@ -5177,14 +5072,14 @@ public static partial class SelfTest
     /// 與幾支繞道寫入端（python 排版、BOM、尾端換行）的產物 —— 它們本來就不是這支移植要復刻的對象。
     /// ⛔ 而它們**不靜默排掉**：每一桶的數字都印出來，否則「驗過 19,884 則」與「驗過 20,434 則」同形。</para>
     /// </summary>
-    static IEnumerable<CheckRow> RealTavernSerializerMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealTavernSerializerMatchesEditor(IReadOnlyList<SelfTestTarget> iTargets)
     {
         // 現行 writer 的起點：全庫最後一筆「不同」落在 2026-05-15T15:52Z（2026-09-21 實測）。
         const string aCutoff = "2026-05-16";
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             List<string> aRooms = SCP_TavernRead.EnumerateRoomIds(p.AgentCommandsRoot);
             if (aRooms.Count == 0) continue;
             aAny = true;

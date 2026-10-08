@@ -17,7 +17,7 @@ public sealed class Cmd_Glossary : SCP_Cmd
     public override string Name => "glossary";
     public override string Category => SCP_CmdCategory.Reading;
 
-    public override string Summary => "新詞辭典：register／lookup／detect／attach／list —— **不需要 Unity Editor**";
+    public override string Summary => "新詞辭典：register／lookup／detect／attach／list";
 
     public override string Details =>
         "詞典根＝PathsPage 的 `glossaryRoot`（senate.local.json；auto ＝ <Senate 專案根>/Glossary）。\n"
@@ -36,7 +36,6 @@ public sealed class Cmd_Glossary : SCP_Cmd
     {
         new SCP_CmdArgSpec("op", "操作", iRequired: true,
                            iChoices: new[] { "register", "lookup", "detect", "attach", "list" }),
-        new SCP_CmdArgSpec("project", "哪個專案（senate.local.json 的 projects[].name）。只有一個啟用專案時可省略"),
         new SCP_CmdArgSpec("term", "register：詞本身／lookup：詞、slug 或 alias"),
         new SCP_CmdArgSpec("slug", "register：檔名 slug（`<slug>.md`）"),
         new SCP_CmdArgSpec("aliases", "register：別名，逗號分隔"),
@@ -54,9 +53,9 @@ public sealed class Cmd_Glossary : SCP_Cmd
 
     public override SCP_CmdResult Execute(SCP_CmdArgs iArgs)
     {
-        if (UnityDelegateCmd.ConfigProvider == null)
-            return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯");
-        (SenateConfig? aConfig, _) = UnityDelegateCmd.ConfigProvider();
+        if (SenateConfigSource.Provider == null)
+            return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（SenateConfigSource.Provider）—— 程式錯誤，不是用法錯");
+        (SenateConfig? aConfig, _) = SenateConfigSource.Provider();
         // 顯示基準＝Senate 專案根（詞典是 Senate 的 submodule，TASK-0390）。🩸 原本要一個啟用的 Unity 專案才肯動。
         string aProjectRoot = SenatePathBinding.HostRepoRoot;
 

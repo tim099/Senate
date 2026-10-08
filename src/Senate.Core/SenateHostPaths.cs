@@ -36,7 +36,7 @@ public static class SenateHostPaths
         SenatePathBinding.HostRepoRoot = aRepo;
 
         // 設定檔來源：委派型 Cmd 與各個解析器都從這裡拿 senate.local.json（⛔ 不由下層自己找）。
-        UnityDelegateCmd.ConfigProvider = () =>
+        SenateConfigSource.Provider = () =>
         {
             string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
             return (SenateConfig.Load(aCfgPath), aCfgPath);

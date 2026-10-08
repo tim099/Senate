@@ -40,10 +40,10 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
 
     protected override bool AcceptsTargetDataRoot => true;
 
-    public override string Summary => "酒館發文（組訊息在 Senate，寫入交給酒館 Server）—— **不需要 Unity Editor**";
+    public override string Summary => "酒館發文（組訊息在 Senate，寫入交給酒館 Server）";
 
     public override string Details =>
-        "取代 `senate ucmd run Tavern --arg op=post` 的一般發文。身分／顯示名／頭像／詞典附註由本 Cmd 補，\n"
+        "一般發文。身分／顯示名／頭像／詞典附註由本 Cmd 補，\n"
         + "寫入、發薪、@mention 通知由酒館 Server（`tavern-write`，沒開會自動起）做。\n"
         + "⚠ 發文結果三態：exit 0 已發／exit 6 **確定沒發**（補發安全）／exit 7 **不知道**（先 `tavern-query --arg kind=tail --arg room=<房>` 回讀，⛔ 別補發）。\n"
         + "⚠ 酒館 Server 不在（確定還沒送出）⇒ **排進它的 queue**：exit 0 ＋ `queued=1`／`queued_cmd_id`，⛔ 沒有 post_seq，⛔ 不要補發（TASK-0372）。\n"
@@ -67,7 +67,6 @@ public class Cmd_TavernPost : SCP_LocalRootsCmd
             {
                 aSpecs.Add(new SCP_CmdArgSpec("sender", "系統發言的身分（例 `tavern-keeper`、後台頁選的身分）—— **必填**，⛔ 不猜", iRequired: true));
                 aSpecs.Add(new SCP_CmdArgSpec("sender_name", "顯示名（不給 ⇒ 新銀行帳戶的顯示名 ⇒ 都沒有就顯示 id）"));
-                aSpecs.Add(new SCP_CmdArgSpec("project", "哪個專案（senate.local.json 的 projects[].name）。只有一個啟用專案時可省略"));
             }
             else aSpecs.AddRange(MorningSpecs());
             aSpecs.Add(TargetDataRootSpec());
@@ -401,7 +400,7 @@ public sealed class Cmd_TavernPostSystem : Cmd_TavernPost
         "身分由 `sender` 點名（⛔ 不猜）；顯示名：`sender_name` → 新銀行帳戶顯示名 → id。沒有 persona ⇒ 寫入端不計酬。\n"
         + "與 tavern-post 共用：meta schema（exit 2 確定沒發）、refs、reply_to、CLI 指令判定、寫入三態（0 已發／6 確定沒發／7 不知道）。\n"
         + "不做的：alter 延遲（系統發言沒有搭檔）、now_status、回傳檔（沒有信件夾）。\n"
-        + "Unity Editor 呼叫時帶 `target_data_root=<它自己的資料根>` ⇒ 落在同一個專案（比不到就擋）。";
+        + "內部呼叫端（畫布／棋局／後台頁）帶 `target_data_root=<資料根>` ⇒ 必須是設定的那一組（比不到就擋）。";
 
     public override string Example =>
         SCP_CmdRegistry.Invoke("tavern-post-system --arg sender=tavern-keeper --arg-file body=D:/tmp/msg.md");

@@ -11,9 +11,7 @@
 //     lock 也在舊樹上 ⇒「誰在線」跟真實脫鉤，而每一頁看起來都正常。
 //   ⇒ 判準：**能被推導的路徑不准被儲存。** 存了就是給漂移一個住的地方。
 //
-// ⚠ 與「專案關聯」頁的分工：那頁管 projects[] 的**增刪**與逐列探測；
-//   本頁管**路徑本身**（含全域那格 `lettersRoot`，那格不屬於任何專案）。
-//   兩頁寫同一份檔、同一支 Save，改完互相看得到（都在 OnPush 重讀）。
+// ⚠ 與「設定」頁寫同一份檔、同一支 Save，改完互相看得到（都在 OnPush 重讀）。
 using SCP.Core.Gui;
 using SCP.Core.Paths;
 using Senate.Core;
@@ -111,9 +109,6 @@ public sealed class PathsPage : SCP_GuiToolPage
         g.Note($"本頁由 `SCP_PathRegistry` 描述表生成（共 {SCP_PathRegistry.All.Count} 條）——"
                + "**加一條路徑＝加一個 enum 成員 ＋ 一筆 descriptor，本頁不用改**。"
                + $"寫的是 `{Path.GetFileName(m_ConfigPath)}`（與「設定」頁同一份檔），按「儲存」才寫回。");
-
-        // ⛔ 2026-10-07（Tim）廢掉「唯一的專案」那一格：資料根已是全域設定（TASK-0390），不住在任何專案上；
-        //   Unity 專案只是選填的施工目標（清單裡的 UnityProjectRoot），Senate 專案根是清單裡的 HostRepoRoot。
 
         // ── 描述表逐條 ─────────────────────────────────────────────
         foreach (SCP_PathDescriptor aD in SCP_PathRegistry.All)

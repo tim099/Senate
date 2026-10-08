@@ -21,7 +21,6 @@ public sealed class SenateModel : ISCP_GuiAppContext
     readonly string m_RepoRoot;
 
     public EnvReading Env { get; private set; }
-    public List<ProjectReading> Projects { get; private set; }
     public bool ConfigBroken { get; private set; }
 
     /// <summary>刷新過幾次（含建構那次）。給「按了到底有沒有生效」一個可讀的證據。</summary>
@@ -77,7 +76,6 @@ public sealed class SenateModel : ISCP_GuiAppContext
 
     /// <summary>
     /// Senate 自己 —— skill 的預設安裝對象（早安流程之後要在**這裡**跑）。
-    /// <para>⚠ EditorRunning 給 null：這不是 Unity 專案，「量不到」比「沒在跑」誠實。</para>
     /// </summary>
     public SCP_GuiProjectRef HostProject => new SCP_GuiProjectRef("Senate（本專案）", m_RepoRoot);
 
@@ -85,7 +83,6 @@ public sealed class SenateModel : ISCP_GuiAppContext
     {
         m_RepoRoot = iRepoRoot;
         Env = null!;
-        Projects = new List<ProjectReading>();
         // 「哪個 section 住哪個檔」是**宿主的決定** —— 頁面只看得到 ISCP_Prefs。
         // awakening 走轉接頭而不是直接寫 senate.local.json：那個檔的寫入端只能有一個
         //（SenateConfig.Save 有它的 Extra 欄位保留，兩個寫入端會互相吃掉對方的東西）。
@@ -130,8 +127,6 @@ public sealed class SenateModel : ISCP_GuiAppContext
     //   而同一台的 CLI 解得出真正的路徑（兩邊都不報錯）。
     public SCP_PathResolution LettersRoot => ResolvePath(SCP_PathId.LettersRoot);
 
-    // TASK-0360：自由時間後台頁找活動 md 用 —— 與 CLI `FillRootArg(project_root)` 同一個 SCP_PathId。
-    public SCP_PathResolution UnityProjectRoot => ResolvePath(SCP_PathId.UnityProjectRoot);
     public SCP_PathResolution FreeTimeActivitiesRoot => ResolvePath(SCP_PathId.FreeTimeActivitiesRoot);
 
     /// <summary>
@@ -192,14 +187,6 @@ public sealed class SenateModel : ISCP_GuiAppContext
         Env = new EnvReading(DotnetCli.SdkVersion(), DotnetCli.RuntimeVersion,
             SCP_Git.Version(), aCfgPath, File.Exists(aCfgPath));
 
-        var aList = new List<ProjectReading>();
-        if (aCfg != null)
-        {
-            foreach (string err in aCfg.Validate()) Console.Error.WriteLine($"⚠ 設定：{err}");
-            string? aDataRoot = SenatePathBinding.ResolveDataRoot(aCfg, out _);   // 資料根全域一組，唯一入口（TASK-0390）
-            foreach (var p in aCfg.Projects) aList.Add(ProjectProbe.Probe(p, aDataRoot));
-        }
-        Projects = aList;
         RefreshCount++;
     }
 }

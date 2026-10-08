@@ -14,7 +14,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 - 本機裝了 CLI（`unity --version`）；目標專案裝了 `com.unity.pipeline`（看 `Packages/manifest.json`）。
 - **Editor 要開著** —— CLI 經 Pipeline 的 7800 埠問正在跑的 Editor，⛔ 它不是 headless。
-- `--project-path` 是 Unity 專案的 repo 根：`senate cmd paths` 的 `UnityProjectRoot` 那一格（`senate.local.json` 的 `projects[].root`）。
+- `--project-path` 是 Unity 專案的 repo 根（例：`D:/Unity/LY`）。Senate 不存這一格 —— 要操作哪個專案就給哪個。
 - 每次呼叫約 1～1.5 s 啟動成本 ⇒ ⛔ 不放進每次刷新都跑的路徑。
 - 機器讀一律帶 `--json --no-banner`；結果在 `data.result`，CLI 自己的錯誤在頂層 `errors[]`。
 

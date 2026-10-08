@@ -34,7 +34,7 @@ public sealed class Cmd_Task : SCP_Cmd
 
     public override string Summary =>
         "任務單寫入（create／claim／assign／unassign／update／comment／check／link／resolve／commit／sweep／wrapup）"
-        + "—— 寫入端是 Senate Server，**不需要 Unity Editor**；讀取走 `tasks`";
+        + "—— 寫入端是 Senate Server；讀取走 `tasks`";
 
     public override string Details =>
         "打錯參數名 ⇒ exit 2 並列出該 op 認得的鍵（⛔ 不靜默吃掉）。\n"
@@ -95,7 +95,6 @@ public sealed class Cmd_Task : SCP_Cmd
             {
                 new SCP_CmdArgSpec("op", "寫入 op", iRequired: true, iChoices: SCP_TaskOps.WriteOps),
                 new SCP_CmdArgSpec("persona", "動手的人。⚠ **一律顯式**（時間線與署名是它）", iRequired: true),
-                new SCP_CmdArgSpec("project", "哪個專案（senate.local.json 的 projects[].name）。只有一個啟用專案時可省略"),
                 new SCP_CmdArgSpec("data_root", "直接指定 AgentCommands 資料根（給了就不解析 project；commit／晚安這類已經知道資料根的呼叫端用）"),
                 new SCP_CmdArgSpec("timeout", "等任務寫入端回執的秒數（預設 60）"),
             };
@@ -132,7 +131,7 @@ public sealed class Cmd_Task : SCP_Cmd
         if (!TryResolveRoots(iArgs, out string aDataRoot, out string aWhere, out SCP_CmdResult? aFail))
             return aFail!;
         var aResult = new SCP_CmdResult();
-        aResult.Lines.Add($"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單（不需要 Unity Editor）@ {aWhere}");
+        aResult.Lines.Add($"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單 @ {aWhere}");
         var aLetters = SCP_DataPaths.Letters(new SCP_DataRoot(aDataRoot));
         string aPayload = SCP_LettersPaths.CmdPayload(aLetters, aPersona, "task_" + aOp);
 
@@ -219,8 +218,6 @@ public sealed class Cmd_Task : SCP_Cmd
 
     // ===========================================================
     // 區塊職責：資料根 —— 給了 `data_root` 就直接用；沒給 ⇒ **唯一入口** `SenatePathBinding.ResolveDataRoot`（TASK-0390）。
-    // 🩸 原本沒給時走 UnityTargetResolver（要一個啟用的 Unity 專案），還另外反查「這個資料根是哪個專案的」
-    //   給工作記憶用 —— 工作記憶早已不吃 Unity 專案根，那條反查是死路。
     // ===========================================================
     static bool TryResolveRoots(SCP_CmdArgs iArgs, out string oDataRoot, out string oWhere, out SCP_CmdResult? oFail)
     {
@@ -233,9 +230,9 @@ public sealed class Cmd_Task : SCP_Cmd
             oWhere = "資料根 " + oDataRoot;
             return true;
         }
-        if (UnityDelegateCmd.ConfigProvider == null)
-        { oFail = SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）—— 程式錯誤，不是用法錯"); return false; }
-        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
+        if (SenateConfigSource.Provider == null)
+        { oFail = SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（SenateConfigSource.Provider）—— 程式錯誤，不是用法錯"); return false; }
+        (SenateConfig? aConfig, string aConfigPath) = SenateConfigSource.Provider();
         string? aRoot = SenatePathBinding.ResolveDataRoot(aConfig, out string? aErr);
         if (aRoot == null)
         { oFail = SCP_CmdResult.Fail(2, "✗ 資料根解不出來：" + aErr, "  到 `senate ui` 的「路徑管理」頁設定 AgentCommands 資料根（" + aConfigPath + "）"); return false; }

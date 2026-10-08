@@ -38,7 +38,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     public override string Category => SCP_CmdCategory.Game;
 
     public override string Summary =>
-        "3D 雕刻：共用展區按落地收費；work 個人作品64³建立10單位、續雕免費、匯入按落地收費；觀測免費（不需要 Unity Editor）";
+        "3D 雕刻：共用展區按落地收費；work 個人作品64³建立10單位、續雕免費、匯入按落地收費；觀測免費";
 
     public override string Details =>
         "落子類（box／carve／stamp2d／stampimg）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
@@ -92,7 +92,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     };
 
     /// <summary>render-profile set 除了設定鍵以外還吃的（路由／身分）。其餘顯式給的參數 ⇒ 擋（⛔ 不靜默忽略）。</summary>
-    static readonly string[] s_ProfileSetMetaKeys = { "op", "sub", "scope", "name", "persona", "project", "data_root", "letters_root" };
+    static readonly string[] s_ProfileSetMetaKeys = { "op", "sub", "scope", "name", "persona", "data_root", "letters_root" };
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
@@ -100,7 +100,6 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（Senate CLI 從設定自動補）", iRequired: true),
         new SCP_CmdArgSpec("letters_root", "信件夾根（Senate CLI 從設定自動補；都沒有 ⇒ 資料根的慣例位置）"),
         new SCP_CmdArgSpec("persona", "誰（落子類**必填** —— 錢記在人頭上；view／slice 沒給 out 時必填；其餘選填）"),
-        new SCP_CmdArgSpec("project", "分享發文用哪個專案（轉給 tavern-post）"),
         new SCP_CmdArgSpec("account", "付 token 的帳號；不給 ⇒ 由 persona 的權威綁定檔解（⛔ 解不出來不猜）"),
         new SCP_CmdArgSpec("pay", "付款方式", iDefault: "auto", iChoices: new[] { "auto", "freetime", "voucher", "token" }),
         new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作獨立 64³ 空間"),
@@ -209,7 +208,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             DataRoot = aDataRoot,
             LettersRoot = aLetters.Length > 0 ? aLetters : SCP_DataPaths.Letters(new SCP_DataRoot(aDataRoot)).Value,
         };
-        aResult.Lines.Add("⤷ Senate 就地執行（不需要 Unity Editor）@ data_root=" + aRoots.DataRoot);
+        aResult.Lines.Add("⤷ Senate 就地執行 @ data_root=" + aRoots.DataRoot);
         aResult.AddValue("delegate_host", "senate");
 
         string aOp = iArgs.Get("op").Trim().ToLowerInvariant();
@@ -683,8 +682,6 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 ["tag"] = "sculpt-share",
                 ["refs"] = aShare,
             };
-            string aProject = c.Args.Get("project").Trim();
-            if (aProject.Length > 0) aArgs["project"] = aProject;
             SCP_CmdResult aPost = SharePoster(aArgs);
             string aSeq = ValueOf(aPost, "post_seq");
             c.Report.Append("## share\n- preview: `").Append(aShare).Append("`\n- tavern-post exit: ").Append(aPost.ExitCode).Append('\n');

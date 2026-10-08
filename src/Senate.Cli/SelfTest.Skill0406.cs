@@ -1,13 +1,9 @@
 // 區塊職責：TASK-0406（skill 入口化）的自我對拍。
-// 物理意義：兩支，各驗一個「錯了也不會叫」的地方：
-//           ① 真資料：同一份 SKILL.md，C# 轉出來的 Antigravity 版要跟 **python install_skills.py 已經裝在磁碟上的那份**逐位元組相同。
-//              答案來自另一個實作（python），不是我自己算的 —— 那是這一格算數的理由。
-//              ⚠ 只比「`.claude` 那份跟源檔逐位元組相同」的 skill：那證明 python 是拿**現在的源檔**裝的；
-//                 其餘的磁碟產物可能過期，拿過期的當答案只會量到「源檔改過了」。
-//           ② 淨室：入口模式的源檔 → 內容組合（整份／章節／程式碼區塊裡的 # 不是標題）、缺一份就整份失敗且不給內容、
+// 物理意義：淨室驗「錯了也不會叫」的地方：
+//           入口模式的源檔 → 內容組合（整份／章節／程式碼區塊裡的 # 不是標題）、缺一份就整份失敗且不給內容、
 //              改文件後下一次就是新內容、安裝只落一支 SKILL.md、Antigravity 帶 trigger、鏡像改入口後殘檔被清、
 //              沒有觸發詞時退到 always_on（與 python 同字面）。
-// 數值影響：① 純讀；② 在 temp 造目錄、暫時換掉文件庫的根，跑完還原並刪除。
+// 數值影響：在 temp 造目錄、暫時換掉文件庫的根，跑完還原並刪除。
 #nullable enable
 using SCP.Core.Docs;
 using SCP.Core.Skills;
@@ -17,49 +13,6 @@ namespace Senate.Cli;
 
 public static partial class SelfTest
 {
-    /// <summary>UCL_Core 在消費端可能的掛載位置（ucl-core-paths：各專案不同）—— 只用來找 python 的答案，不當路徑規則。</summary>
-    static readonly string[] s_UclCoreCandidates = { "Assets/Plugins/UCL_Core", "Assets/UCL/UCL_Core" };
-
-    static IEnumerable<CheckRow> RealSkillAntigravityParity(IReadOnlyList<ProjectReading> iProjects)
-    {
-        bool aAny = false;
-        foreach (ProjectReading p in iProjects)
-        {
-            if (p.State != ProbeState.Ok) continue;
-            string? aSkills = null;
-            foreach (string c in s_UclCoreCandidates)
-            {
-                string d = Path.Combine(p.Root, c, "Skills~");
-                if (Directory.Exists(d)) { aSkills = d; break; }
-            }
-            if (aSkills == null) continue;
-            string aClaude = Path.Combine(p.Root, ".claude", "skills");
-            string aAgents = Path.Combine(p.Root, ".agents", "skills");
-            if (!Directory.Exists(aAgents)) continue;
-
-            int aSame = 0, aSkip = 0;
-            var aDiff = new List<string>();
-            foreach (string aName in SCP_SkillSource.Discover(aSkills))
-            {
-                string aSrc = Path.Combine(aSkills, aName, SCP_SkillSource.SkillFileName);
-                string aCl = Path.Combine(aClaude, aName, SCP_SkillSource.SkillFileName);
-                string aAg = Path.Combine(aAgents, aName, SCP_SkillSource.SkillFileName);
-                if (!File.Exists(aCl) || !File.Exists(aAg) || !File.ReadAllBytes(aCl).SequenceEqual(File.ReadAllBytes(aSrc))) { aSkip++; continue; }
-                byte[] aMine = SCP_SkillEntry.SkillFileBytes(File.ReadAllBytes(aSrc), aName, false, true);
-                if (aMine.SequenceEqual(File.ReadAllBytes(aAg))) aSame++; else aDiff.Add(aName);
-            }
-            if (aSame + aDiff.Count == 0) continue;
-            aAny = true;
-            yield return new CheckRow($"Antigravity trigger 注入：C# 與 python 已裝產物逐位元組（{p.Name}）",
-                $"相同 {aSame}／不同 {aDiff.Count}" + (aDiff.Count > 0 ? "（" + string.Join(", ", aDiff) + "）" : "")
-                + $"／略過 {aSkip}（.claude 與源檔不同 ⇒ python 產物可能過期，不當答案）",
-                aDiff.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
-        }
-        if (!aAny)
-            yield return new CheckRow("Antigravity trigger 注入：C# 與 python 已裝產物逐位元組",
-                "沒有任何專案同時有 UCL_Core Skills~ 與 python 裝好的 .agents —— 沒有答案可比（⛔ 不是通過）", CheckResult.Skipped);
-    }
-
     static CheckRow SkillEntryCleanRoom()
     {
         const string aName = "skill 入口化：合併／章節／缺一份整份失敗／改文件即時生效／只裝入口檔／Antigravity trigger／鏡像改入口清殘檔／無觸發詞退 always_on（淨室，TASK-0406）";

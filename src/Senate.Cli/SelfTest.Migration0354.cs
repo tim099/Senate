@@ -166,12 +166,12 @@ public static partial class SelfTest
     /// 真實資料：每一份 Editor 寫的 `_current.md`，由同一批 events/ 用新邏輯重算 ⇒ 八軸／分數／tier／事件數要逐格相同。
     /// <para>⚠ 有 `opening_balance`（遷移反推的期初餘額）的那幾份跳過並照實計數 —— 新寫入端不產生它，重算也拿不到它。</para>
     /// </summary>
-    static IEnumerable<CheckRow> RealRelationshipRecomputeMatchesEditor(IReadOnlyList<ProjectReading> iProjects)
+    static IEnumerable<CheckRow> RealRelationshipRecomputeMatchesEditor(IReadOnlyList<SelfTestTarget> iTargets)
     {
         bool aAny = false;
-        foreach (var p in iProjects)
+        foreach (SelfTestTarget p in iTargets)
         {
-            if (p.State != ProbeState.Ok || p.AgentCommandsRoot == null) continue;
+            if (p.AgentCommandsRoot == null) continue;
             string aLetters = SCP.Core.Paths.SCP_DataPaths.Letters(new SCP.Core.Paths.SCP_DataRoot(p.AgentCommandsRoot)).Value;
             if (!Directory.Exists(aLetters)) continue;
             aAny = true;

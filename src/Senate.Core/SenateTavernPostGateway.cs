@@ -37,9 +37,9 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
     }
 
     /// <summary>整體定語（兩條路各自在 <c>oLines</c> 再印一行實際走了哪一條）。</summary>
-    public string HostQualifier => "⤷ 酒館發文：Senate 組訊息＋酒館 Server 寫入（不經 Unity Editor；資料根 " + m_DataRoot + "）";
+    public string HostQualifier => "⤷ 酒館發文：Senate 組訊息＋酒館 Server 寫入（資料根 " + m_DataRoot + "）";
 
-    string SenateQualifier => "⤷ 酒館發文由 Senate 組訊息、酒館 Server 寫入（不經 Unity Editor，資料根 " + m_DataRoot + "）";
+    string SenateQualifier => "⤷ 酒館發文由 Senate 組訊息、酒館 Server 寫入（資料根 " + m_DataRoot + "）";
 
     public SCP_TavernPostVerdict Post(string iSenderPersona, string iBody,
                                       IReadOnlyDictionary<string, string> iMeta, List<string> oLines)
@@ -75,7 +75,7 @@ public sealed class SenateTavernPostGateway : SCP_ITavernPostGateway
             ProjectRoot = iProjectRoot.Replace('\\', '/'),
         };
         // 詞典根走 PathsPage 那一格（SCP_PathId.GlossaryRoot）；解不出來 ⇒ 說出來、本次不附詞典（TASK-0390：不猜根）。
-        string? aGlossary = SenatePathBinding.ResolveGlossaryRoot(UnityDelegateCmd.ConfigProvider?.Invoke().Item1, out string? aGlossaryErr);
+        string? aGlossary = SenatePathBinding.ResolveGlossaryRoot(SenateConfigSource.Provider?.Invoke().Item1, out string? aGlossaryErr);
         if (aGlossary != null) aRoots.GlossaryRoot = aGlossary;
         else oLines.Add($"⚠ 詞典根解不出來（{aGlossaryErr}）—— 本次不附詞典附註");
         SCP_TavernPostDraft aDraft = SCP_TavernPostCompose.Build(aRoots.DataRoot, aRoots.LettersRoot, aRoots.ProjectRoot,

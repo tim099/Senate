@@ -214,7 +214,6 @@ public static class Program
                 "ui" => CmdUi(aRepoRoot, iArgs),
                 SyncWindowExe.Subcommand => CmdSyncWindow(aRepoRoot, iArgs),
                 "submodule" => CmdSubmodule(aRepoRoot, iArgs),
-                "ucmd" => CmdAgent(aRepoRoot, iArgs),   // Unity 那套（AgentCommand，走檔案協議）
                 "cmd" => CmdScp(aRepoRoot, iArgs),      // SCP_CMD（直接呼叫 C#，不依賴 Unity）
                 "selftest" => CmdSelfTest(aRepoRoot, iArgs),
                 "pages-check" => CmdPagesCheck(aRepoRoot),   // TASK-0276：page key 撞名在 build 階段就要紅
@@ -297,7 +296,7 @@ public static class Program
         {
             File.Copy(aExample, aTarget);
             Console.WriteLine($"✓ 已建立：{aTarget}（樣板：{Rel(iRepoRoot, aExample)}）");
-            Console.WriteLine("  下一步：編輯它的 projects[]，資料根填進 paths.agentCommandsRoot；要串接 Unity 才在 projects[] 填 Unity 專案根。");
+            Console.WriteLine("  下一步：把資料根填進 paths.agentCommandsRoot（或到 `senate ui` 的「路徑管理」頁設定）。");
         }
         else
         {
@@ -312,7 +311,7 @@ public static class Program
     static int CmdDoctor(string iRepoRoot, string[] iArgs)
     {
         var aModel = new SenateModel(iRepoRoot);
-        var (aEnv, aProjects, aCfgBroken) = (aModel.Env, aModel.Projects, aModel.ConfigBroken);
+        var (aEnv, aCfgBroken) = (aModel.Env, aModel.ConfigBroken);
         // ⚠ 順序有意義：旗標的覆寫要在 Draw **之前**套進 style ——
         //   反過來的話畫面上那行「當前尺寸」印的是覆寫前的值（我第一版就是這樣，
         //   `--scale 9` 警告說夾成 4，畫面卻寫 scale=2）。**尺寸的讀數自己也會說謊。**
@@ -331,16 +330,13 @@ public static class Program
 
         foreach (string d in aUi.Diagnostics) Console.Error.WriteLine($"⚠ gui: {d}");
 
-        // 🩸 摘要只能宣告**它真的檢查過的東西**：停用的專案不計入通過條件，
-        //    那就必須在摘要裡說出「跳過幾個」—— 不然畫面上明明有一列紅字、
-        //    結論卻寫「全部通過」，那就是說法比實作大（本工具第一次跑就自己犯了一次）。
-        int aChecked = aProjects.Count(p => p.Enabled);
-        int aSkipped = aProjects.Count - aChecked;
-        int aBad = aProjects.Count(p => p.Enabled && p.State != ProbeState.Ok);
-        bool aOk = aEnv.DotnetSdkVersion != null && aEnv.GitOkForPathspec && !aCfgBroken && aBad == 0;
-        Console.WriteLine(aOk
-            ? $"⇒ 通過：環境 3 項＋啟用的專案 {aChecked} 個（停用未檢查 {aSkipped} 個）"
-            : $"⇒ 不通過：啟用的專案有 {aBad} 個有問題（停用未檢查 {aSkipped} 個）");
+        // 🩸 摘要只能宣告**它真的檢查過的東西** —— 不通過時說出是哪幾項，⛔ 不只印一句「不通過」。
+        var aBad = new List<string>();
+        if (aEnv.DotnetSdkVersion == null) aBad.Add(".NET SDK");
+        if (!aEnv.GitOkForPathspec) aBad.Add("git");
+        if (aCfgBroken) aBad.Add("設定檔壞了");
+        bool aOk = aBad.Count == 0;
+        Console.WriteLine(aOk ? "⇒ 通過：環境 3 項" : $"⇒ 不通過：{string.Join("、", aBad)}");
         return aOk ? 0 : 1;
     }
 
@@ -811,7 +807,7 @@ public static class Program
         try
         {
             aCfg = SelfTestConfig.Load(SelfTestConfig.PathFor(SenatePaths.ConfigDir(iRepoRoot)),
-                SelfTest.CatalogKeys(aModel.Projects), SelfTest.CoreKeys, out bool aSeeded);
+                SelfTest.CatalogKeys(), SelfTest.CoreKeys, out bool aSeeded);
             if (aSeeded) Console.WriteLine($"· 第一次：已播種 {aCfg.Path}（常駐 {aCfg.Enabled.Count}／關閉 {aCfg.Disabled.Count}）");
         }
         catch (InvalidOperationException e) { Console.Error.WriteLine("✗ " + e.Message); return 2; }
@@ -820,7 +816,7 @@ public static class Program
         string aEnable = ArgValue(iArgs, "--enable") ?? "", aDisable = ArgValue(iArgs, "--disable") ?? "";
         if (aEnable.Length > 0 || aDisable.Length > 0)
         {
-            var aKeys = SelfTest.CatalogKeys(aModel.Projects);
+            var aKeys = SelfTest.CatalogKeys();
             var aBad = new List<string>();
             List<string> Resolve(string iCsv)
             {
@@ -849,7 +845,7 @@ public static class Program
         // ── `--list`：只印有哪些項目與狀態，⛔ 一格都不跑 ──────────────────────
         if (HasFlag(iArgs, "--list"))
         {
-            var aCat = SelfTest.ListWithStatus(aModel.Projects, aCfg);
+            var aCat = SelfTest.ListWithStatus(aCfg);
             var aUiL = new SCP_Ui();
             aUiL.Title($"對拍項目（{aCat.Count} 筆；預設跑 {aCat.Count(x => x.Status != SelfTestStatus.Closed)} 筆）");
             using (aUiL.Table("項目（--only／--enable／--disable 吃這個）", "群", "狀態"))
@@ -872,7 +868,7 @@ public static class Program
         //   跑完再把行藏起來是省不到的。
         string aOnly = ArgValue(iArgs, "--only") ?? "";
         bool aEverything = HasFlag(iArgs, "--all");
-        SelfTestPlan aPlan = SelfTest.Plan(aModel.Projects, aOnly, aEverything, aCfg);
+        SelfTestPlan aPlan = SelfTest.Plan(aOnly, aEverything, aCfg);
         int aSelected = aPlan.Selected;
         // 🩸 打錯篩選字的下場如果是「0 格、失敗 0」，那它看起來跟全過一模一樣 ——
         //   而那正是這支工具存在的理由的反面。⇒ 選不到就**擋下並印出有哪些**。
@@ -884,7 +880,7 @@ public static class Program
             Console.Error.WriteLine("  有哪些項目：`senate selftest --list`");
             return 2;
         }
-        SelfTestRun aRun = SelfTest.Run(aModel.Projects, aOnly, aEverything, aCfg);
+        SelfTestRun aRun = SelfTest.Run(aOnly, aEverything, aCfg);
         var aRows = aRun.Rows;
 
         // 剪貼簿 round-trip 是 **opt-in**（`--clipboard`）。
@@ -1124,231 +1120,6 @@ public static class Program
         return aFail > 0 ? 1 : 0;
     }
 
-    // ── senate ucmd ──────────────────────────────────────────
-    // 區塊職責：AgentCommands 派遣的 CLI 入口 —— run / status 兩個子動作。
-    // 物理意義：run_cmd.py 的 C# 對應（協議本體在 Senate.Core/AgentCmdClient.cs）——
-    //           **沒有 python 的環境（Codex）也能派 Cmd**。對象專案由 senate.local.json 的
-    //           projects[] 指定（--project 挑名字；只有一個啟用專案時可省略）。
-    // 數值影響：run 會寫目標專案的 queue/trigger（Editor 端接手執行）；status 唯讀。
-    //           exit code 與 run_cmd.py 對齊：0 成功／2 失敗或用法錯／3 逾時。
-    // ⚠ v1 刻意不做的（跟 run_cmd.py 的差距，別當成壞掉）：
-    //   schema 預檢與 type 別名（fail-open —— 打錯 type 由 Editor 端擋並附 did-you-mean）、
-    //   Tavern wait-reply 握手引擎、op=post 成功後的 catch-up cursor 提交。
-    //   後兩格對「拿 senate 發酒館訊息」的人是真差距 —— 要做的時候去讀 run_cmd.py 對應段。
-    static int CmdAgent(string iRepoRoot, string[] iArgs)
-    {
-        string aSub = iArgs.Length > 1 ? iArgs[1].ToLowerInvariant() : "";
-        if (aSub != "run" && aSub != "status" && aSub != "wait")
-            return AgentUsageError($"cmd 要 run／status／wait（收到 '{(aSub.Length == 0 ? "(空)" : aSub)}'）",
-                "senate ucmd run <CmdType> [--project <名>] [--persona <p>] [--lane <id>] [--arg k=v]… [--arg-file k=<路徑>]…");
-
-        // ── 對象專案解析：--project 名字 ＞ 唯一啟用專案自動選（會說出來）＞ 擋下 ──
-        // ⚠ 解析本體在 UnityTargetResolver（Senate.Core）—— 委派型 SCP_Cmd 問的是同一個問題，
-        //   而**兩份實作會在「多專案時該不該猜」上給出不同答案**，猜錯那次 Cmd 會在別人的
-        //   Editor 上真的執行。這裡只負責把結果轉成 CLI 的輸出形狀。
-        string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
-        UnityTargetResolution aResolved = UnityTargetResolver.Resolve(
-            SenateConfig.Load(aCfgPath), aCfgPath, ArgValue(iArgs, "--project"), ProjectArgSpelling.CliFlag);
-        if (!aResolved.Ok) return AgentUsageError(aResolved.Error, aResolved.Hint);
-        UnityTarget aTarget = aResolved.Target!;
-        if (aTarget.SelectionNote.Length > 0) Console.WriteLine("· " + aTarget.SelectionNote);
-        string aDataRoot = aTarget.DataRoot;
-
-        string? aPersona = ArgValue(iArgs, "--persona");
-
-        if (aSub == "status")
-        {
-            // 唯讀：印 trigger 狀態與 queue 殘量 —— 給「卡住了嗎」這一問一個讀數。
-            Console.WriteLine($"· 專案 {aTarget.ProjectName}　資料根 {aDataRoot}");
-            string aQueuesDir = SCP_DataPaths.Queues(new SCP_DataRoot(aDataRoot));
-            var aFolders = aPersona != null
-                ? new[] { AgentCmdClient.QueueFolder(aDataRoot, aPersona) }
-                : Directory.Exists(aQueuesDir) ? Directory.GetDirectories(aQueuesDir) : Array.Empty<string>();
-            foreach (string aDir in aFolders)
-            {
-                string aWho = Path.GetFileName(aDir);
-                string aState = AgentCmdClient.TriggerState(aDataRoot, aWho);
-                int aCount = 0;
-                string aQp = AgentCmdClient.QueuePath(aDataRoot, aWho);
-                try
-                {
-                    if (File.Exists(aQp) && System.Text.Json.Nodes.JsonNode.Parse(
-                            File.ReadAllText(aQp)) is System.Text.Json.Nodes.JsonObject aQ
-                        && aQ["Commands"] is System.Text.Json.Nodes.JsonArray aArr) aCount = aArr.Count;
-                }
-                catch { aCount = -1; }   // 壞檔要看得出來，不是印 0
-                Console.WriteLine($"  · {aWho}　state={aState}　queue={(aCount < 0 ? "⚠壞檔" : aCount.ToString())}");
-            }
-            return 0;
-        }
-
-        // ── wait <cmd_id> ────────────────────────────────────────────────────
-        // 區塊職責：等一筆**已經送出**的 Cmd 跑完（`ucmd run --no-wait` 印的那個 id）。
-        // 物理意義：submit 與 wait 分開，呼叫端才能在中間做別的事 ——
-        //   `hook_validate_modified.py` 就是這個形狀：一次 submit 一批、之後再逐筆收。
-        //   ⚠ 沒有這一支的時候，那種呼叫端只能改成阻塞式，而那不是「等價寫法」，
-        //   是把它原本重疊掉的等待時間變回序列的。
-        // ⚠ 要知道去**哪條分道**等 —— `--persona` / `--lane` 與 submit 那次必須一致；
-        //   不一致的症狀不是紅燈，是在一條空分道上等到逾時（TriggerState 永遠 idle、
-        //   queue 裡找不到那個 id ⇒ 走「無 result 檔」的推論路）。
-        // 數值影響：純讀（trigger／queue／_cmd_results）。
-        if (aSub == "wait")
-        {
-            string? aWaitId = iArgs.Length > 2 && !iArgs[2].StartsWith("--") ? iArgs[2] : null;
-            if (aWaitId == null)
-                return AgentUsageError("wait 少了 <cmd_id>",
-                                       "senate ucmd wait 20260907-104510-e09b83-tavern --persona summit");
-
-            string? aWaitLane = ArgValue(iArgs, "--lane");
-            string? aWaitQueueId = aPersona;
-            if (!string.IsNullOrWhiteSpace(aWaitLane))
-            {
-                aWaitQueueId = (string.IsNullOrWhiteSpace(aPersona)
-                                ? SCP_DataPaths.AnonymousQueueId : aPersona!.Trim()) + "/" + aWaitLane.Trim();
-                (string aWFolder, string aWLane) = SCP_DataPaths.SplitQueueId(aWaitQueueId);
-                if (aWLane.Length == 0)
-                    return AgentUsageError($"--lane '{aWaitLane}' 不是合法分道名（空／含 .. ／含斜線）",
-                                           "分道名只是檔名後綴，例：chess-5");
-                Console.WriteLine($"  ↪ 等的是子分道：queues/{aWFolder}/queue-{aWLane}.json");
-            }
-
-            double aWaitTimeout = double.TryParse(ArgValue(iArgs, "--timeout"), out var wt)
-                                  ? wt : AgentCmdClient.DefaultWaitTimeoutSec;
-            double aWaitPoll = double.TryParse(ArgValue(iArgs, "--poll-interval"), out var wp)
-                               ? wp : AgentCmdClient.DefaultPollSec;
-            int aRc = (int)AgentCmdClient.Wait(aDataRoot, aWaitQueueId, aWaitId, aWaitTimeout,
-                aWaitPoll, Console.WriteLine, Console.Error.WriteLine);
-
-            // --output-file：**順便**確認產物真的在（run_cmd.py `wait --output-file` 同律）。
-            // ⭐ 它的價值是這一句：「Cmd 回報成功」與「那個檔生出來了」是**兩個讀數**，
-            //   而它們不必然一致 —— 這一行是走另一條路徑的證言，不是裝飾。
-            // ⚠ 刻意**不改 exit code**（與 run_cmd.py 逐位元對齊）：既有呼叫端讀的是 returncode，
-            //   在這裡多回一種碼會讓「產物沒生出來」被讀成「Cmd 失敗」，而那兩件事的處置不同。
-            string? aOutFile = ArgValue(iArgs, "--output-file");
-            if (!string.IsNullOrWhiteSpace(aOutFile))
-                Console.WriteLine(File.Exists(aOutFile)
-                    ? $"  ✓ Output file exists: {aOutFile}"
-                    : $"  ⚠ Output file NOT found: {aOutFile}"
-                      + "（⚠ 這**不影響** exit code —— Cmd 說成功與產物存在是兩個讀數）");
-            return aRc;
-        }
-
-        // ── run ──
-        string? aCmdType = iArgs.Length > 2 && !iArgs[2].StartsWith("--") ? iArgs[2] : null;
-        if (aCmdType == null)
-            return AgentUsageError("run 少了 <CmdType>", "senate ucmd run Recompile --persona <p>");
-
-        var aCmdArgs = new Dictionary<string, string>();
-        foreach (string aPair in ArgValues(iArgs, "--arg"))
-        {
-            int aEq = aPair.IndexOf('=');
-            if (aEq <= 0) return AgentUsageError($"--arg 要 k=v 的形狀（收到 '{aPair}'）", "");
-            aCmdArgs[aPair[..aEq]] = aPair[(aEq + 1)..];
-        }
-        // --arg-file k=<路徑>：長內文不經過 shell（run_cmd.py 同律）—— 讀檔失敗直接擋，不寫 queue。
-        foreach (string aPair in ArgValues(iArgs, "--arg-file"))
-        {
-            int aEq = aPair.IndexOf('=');
-            if (aEq <= 0) return AgentUsageError($"--arg-file 要 k=<路徑> 的形狀（收到 '{aPair}'）", "");
-            string aFile = aPair[(aEq + 1)..];
-            if (!File.Exists(aFile)) return AgentUsageError($"--arg-file 指到不存在的檔：{aFile}", "");
-            aCmdArgs[aPair[..aEq]] = File.ReadAllText(aFile, System.Text.Encoding.UTF8);
-        }
-        double aTimeout = double.TryParse(ArgValue(iArgs, "--timeout"), out var t) ? t : AgentCmdClient.DefaultWaitTimeoutSec;
-        bool aNoWait = iArgs.Contains("--no-wait");
-
-        // ── queue 路由 auto-route（TASK-0107，Tim 2026-09-02 拍板；與 run_cmd.py
-        //    `AUTO_ROUTE_BY_ARG_PERSONA` 同律）────────────────────────────────────
-        // `--arg persona=` 是**身分**、`--persona` 是**路由**，而幾乎所有既有指路字串只帶前者
-        // （Cmd 回傳檔印的那一行就是）⇒ 不推就落 anonymous，而且**回 Success 不會紅**。
-        // 🩸 summit 2026-08-16 親踩：觀影同場四人，兩次 `ensure_idle` 逾時，錯誤訊息裡是
-        //    `queues/anonymous/pending.trigger`，而 `queues/summit/` 好端端空在旁邊。
-        //
-        // ⚠ **為什麼在這裡而不是在 `AgentCmdClient.Submit()` 裡**（summit 2026-09-02 第一版的血證）：
-        //    一次派遣有四個地方吃 persona —— EnsureIdle／Submit／畫面那行／Wait。
-        //    第一版只在 Submit 內部改，於是 **queue 寫進 `queues/summit/`，而 Wait 在
-        //    `queues/anonymous/` 等 result** ⇒ 判定退化成「Cmd disappeared → 推論 Success」。
-        //    那比不修更糟：修之前四個地方一致地錯，修之後它們不一致，而**畫面照樣印綠**。
-        // ⇒ 路由這種東西要嘛在**進入點**改一次讓全鏈吃到，要嘛不要改。
-        if (string.IsNullOrWhiteSpace(aPersona)
-            && aCmdArgs.TryGetValue("persona", out var aRoutedPersona)
-            && !string.IsNullOrWhiteSpace(aRoutedPersona))
-        {
-            aPersona = aRoutedPersona.Trim();
-            Console.WriteLine($"  ↪ queue 路由：由 --arg persona={aPersona} 推得 → queues/{aPersona}/"
-                              + "（未帶 --persona；要走別條通道請顯式帶 --persona）");
-        }
-
-        // ── 子分道 --lane（2026-09-07，TASK-0107 chess.py 轉接的前置）─────────────
-        // 物理意義：**身分是資料夾、通道是檔名後綴** —— `queues/<persona>/queue-<lane>.json`
-        //   ＋ `pending-<lane>.trigger`（與 python `run_cmd.py --lane` 逐字同形；
-        //   Editor 端 watcher 本來就掃 `queue*.json`，所以那半不用動）。
-        // 為什麼需要它：同一個人同時有兩件事在派遣時，`EnsureIdle` 會**等**（每秒輪詢到 timeout），
-        //   而呼叫端的 subprocess timeout 常常更短 ⇒ 後到的那筆被砍掉。
-        //   🩸 chess.py 現場：basecamp 今天同時有兩局在下（#2／#4），走同一條 persona 分道時
-        //   後走的那一步盤面會**靜默**不出現在酒館（broadcast 是 best-effort，失敗被吞掉）。
-        // ⛔ **只在這裡組一次**：一次派遣有四個地方吃 queue id（EnsureIdle／Submit／畫面那行／Wait），
-        //   在下游任何一處補第二次，就會出現「queue 寫進 A、Wait 在 B 等」——
-        //   而那個症狀是判定退化成「推論 Success」，畫面照樣印綠（2026-09-02 血證，見 Submit 檔頭）。
-        string? aLane = ArgValue(iArgs, "--lane");
-        if (!string.IsNullOrWhiteSpace(aLane))
-        {
-            // ⚠ 不強制要 --persona：沒有具名發送者時落 `queues/anonymous/queue-<lane>.json`
-            //   —— 與 python `run_cmd.py --lane` 同形。**刻意不假造一個身分**：
-            //   chess 的系統代發就是這一格（「這局沒有具名發送者」是事實，不是缺漏）。
-            //   ⛔ 而它仍然有自己的分道，否則系統代發會掉回共用 queue 跟所有人擠。
-            string aQueueId = (string.IsNullOrWhiteSpace(aPersona)
-                               ? SCP_DataPaths.AnonymousQueueId : aPersona.Trim()) + "/" + aLane.Trim();
-            // 不合法的組合會被 SplitQueueId 整筆退回 anonymous —— 那是**靜默**掉進共用分道，
-            // 所以在這裡先自己檢查一次並出聲：路由退化不出聲，就跟沒有路由一樣。
-            (string aFolder, string aSafeLane) = SCP_DataPaths.SplitQueueId(aQueueId);
-            if (aSafeLane.Length == 0)
-                return AgentUsageError($"--lane '{aLane}' 不是合法分道名（空／含 .. ／含斜線）",
-                                       "分道名只是檔名後綴，例：chess-5");
-            aPersona = aQueueId;
-            Console.WriteLine($"  ↪ 子分道：queues/{aFolder}/queue-{aSafeLane}.json"
-                              + $"（身分仍是 {aFolder}；同一個人的其他派遣不會互相阻塞）");
-        }
-
-        // --ack-timeout：等**前一批被取走**的上限（不是等自己跑完的那個 --timeout）。
-        // ⚠ 兩者常被混為一談，而混淆的症狀是：以為在等執行、其實在等排隊。
-        //   `hook_validate_modified.py` 兩條路各給不同值（submit 給 5、阻塞式 run 給 30）——
-        //   那是因為 submit 本來就不等執行，排不進去就該早點放棄。
-        double aAckTimeout = double.TryParse(ArgValue(iArgs, "--ack-timeout"), out var at) && at > 0
-                             ? at : AgentCmdClient.DefaultAckTimeoutSec;
-        if (!AgentCmdClient.EnsureIdle(aDataRoot, aPersona, aAckTimeout,
-                Console.WriteLine, out string aIdleWhy))
-        {
-            Console.Error.WriteLine($"✗ {aIdleWhy}");
-            return 2;
-        }
-        string aCmdId = AgentCmdClient.Submit(aDataRoot, aPersona, aCmdType, aCmdArgs, Console.WriteLine);
-        Console.WriteLine($"Submitted: {aCmdId}");
-        Console.WriteLine($"  Type={aCmdType}, Mode=OneShot → {aTarget.ProjectName}:{(string.IsNullOrWhiteSpace(aPersona) ? AgentCmdClient.AnonymousQueueId : aPersona)}");
-        Console.WriteLine("  Trigger written → pending.trigger（Editor 的 Auto-Watcher ~1s 內接手；沒動靜就檢查 Editor 開著沒）");
-        if (aNoWait) return 0;
-        double aRunPoll = double.TryParse(ArgValue(iArgs, "--poll-interval"), out var rp) && rp > 0
-                          ? rp : AgentCmdClient.DefaultPollSec;
-        int aRunRc = (int)AgentCmdClient.Wait(aDataRoot, aPersona, aCmdId, aTimeout,
-            aRunPoll, Console.WriteLine, Console.Error.WriteLine);
-        // 同 `wait --output-file`：「Cmd 說成功」與「產物在」是兩個讀數，⛔ 不改 exit code。
-        string? aRunOutFile = ArgValue(iArgs, "--output-file");
-        if (!string.IsNullOrWhiteSpace(aRunOutFile))
-            Console.WriteLine(File.Exists(aRunOutFile)
-                ? $"  ✓ Output file exists: {aRunOutFile}"
-                : $"  ⚠ Output file NOT found: {aRunOutFile}"
-                  + "（⚠ 這**不影響** exit code —— Cmd 說成功與產物存在是兩個讀數）");
-        return aRunRc;
-    }
-
-    static int AgentUsageError(string iError, string iHint)
-    {
-        Console.Error.WriteLine($"✗ {iError}");
-        if (iHint.Length > 0) Console.Error.WriteLine($"  ↳ {iHint}");
-        Console.Error.WriteLine("  完整說明：senate --help");
-        return 2;
-    }
-
     /// <summary>
     /// 參數少一格／給錯了的出口。
     /// <para>⚠ 刻意**不吐整份 Usage**：40 行說明會把「你少給了 --yes」那一句擠到看不見，
@@ -1365,7 +1136,7 @@ public static class Program
 
     /// <summary>
     /// 決定要對哪個 repo 動手。
-    /// <para>--root 顯式路徑 ＞ --project 設定檔裡的名字 ＞（唯讀時）Senate 自己。</para>
+    /// <para>--root 顯式路徑 ＞（唯讀時）Senate 自己。</para>
     /// </summary>
     static string? ResolveSubmoduleRoot(string iRepoRoot, string[] iArgs, bool iWrite, out string oWhy)
     {
@@ -1377,35 +1148,10 @@ public static class Program
             return aRoot;
         }
 
-        string? aProject = ArgValue(iArgs, "--project");
-        if (aProject != null)
-        {
-            string aCfgPath = SenateConfig.DefaultPath(iRepoRoot);
-            SenateConfig? aCfg = SenateConfig.Load(aCfgPath);
-            // ⚠ 「還沒有設定檔」與「檔在但沒這個專案」是兩件事，訊息必須分得出來：
-            //   前者要跑 senate init，後者要去改 projects[]。壓成同一句會讓人改錯地方。
-            if (aCfg == null)
-            {
-                oWhy = $"還沒有設定檔（{aCfgPath}）—— 先跑 senate init，或直接用 --root";
-                return null;
-            }
-            foreach (var aItem in aCfg.Projects)
-            {
-                if (!string.Equals(aItem.Name, aProject, StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.IsNullOrWhiteSpace(aItem.Root)) { oWhy = $"專案 '{aProject}' 沒有設 root"; return null; }
-                // ⚠ 停用的專案要擋下並說出來 —— 「我關掉它」與「找不到」是兩件事。
-                if (!aItem.Enabled) { oWhy = $"專案 '{aProject}' 在設定檔裡是停用的（enabled=false）"; return null; }
-                oWhy = $"--project {aItem.Name}";
-                return aItem.Root;
-            }
-            oWhy = $"設定檔裡沒有名叫 '{aProject}' 的專案";
-            return null;
-        }
-
         if (iWrite)
         {
             // 見 CmdSubmodule 的血證註解：會寫東西的指令不猜對象。
-            oWhy = "sync 必須顯式指定對象：--root <路徑> 或 --project <設定檔裡的名字>";
+            oWhy = "sync 必須顯式指定對象：--root <路徑>";
             return null;
         }
         oWhy = "預設（Senate 自己）";
@@ -1578,9 +1324,7 @@ public static class Program
                          "--fold", "--list", "--json", "--page", "--seed-session", "--keydebug", "--scroll-probe", "--unpin",
                          "--no-cleanup", "--width", "--scale", "--size", "--win-size", "--local" },
         ["submodule"] = new[] { "--checkout", "--pull", "--push", "--dry-run", "--yes", "--branch", "--fetch",
-                                "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root", "--project" },
-        ["ucmd"] = new[] { "--arg", "--arg-file", "--persona", "--project", "--timeout", "--lane", "--no-wait",
-                           "--output-file", "--ack-timeout", "--poll-interval" },
+                                "--include-root", "--push-all-remotes", "--only", "--set-branch", "--root" },
         // ⚠ `--help` 在名單上是 TASK-0130 的一半：它之前被本閘擋在 `CmdScp` 前面
         //   ⇒ 一個正在找用法的人撞到的是拒絕。⛔ 只加在 `cmd` 底下，不順手做成全域旗標
         //   （那要每支子命令各自處理它，而沒處理的那幾支會回一個看起來像壞掉的答案）。
@@ -1602,13 +1346,12 @@ public static class Program
     static readonly HashSet<string> ValueFlags = new(StringComparer.OrdinalIgnoreCase)
     {
         "--screenshot", "--soak", "--click", "--set", "--toggle", "--fold", "--page",
-        "--width", "--scale", "--size", "--win-size", "--branch", "--only", "--set-branch", "--root", "--project",
-        "--arg", "--arg-file", "--persona", "--timeout", "--lane", "--output-file", "--id",
-        "--ack-timeout", "--poll-interval",
+        "--width", "--scale", "--size", "--win-size", "--branch", "--only", "--set-branch", "--root",
+        "--arg", "--arg-file", "--id",
     };
 
     // 別的 client 有、這顆沒有的旗標 —— 照著舊文件打的人會撞到，所以直接指出對應寫法。
-    // 🩸 TASK-0107 把指令從 `run_cmd.py` 換成 `senate ucmd` 時旗標沒跟著換，
+    // 🩸 TASK-0107 把指令從 `run_cmd.py` 換成 senate.exe 時旗標沒跟著換，
     //   而三份 skill 教的是 `--arg-stdin`：**指路牌比它指的路活得更久。**
     static readonly Dictionary<string, string> ForeignFlagHints = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1676,10 +1419,8 @@ public static class Program
 
     // ── senate cmd ────────────────────────────────────────────
     // 區塊職責：**SCP_CMD 的 CLI 宿主** —— 把命令列的字串交給 SCP_Core 的指令目錄跑。
-    // 物理意義：跟 `senate ucmd`（Unity 的 AgentCommand）是**兩套東西**，刻意不共用動詞：
-    //           那套是「寫檔案 → Unity Editor 接手 → 輪詢結果」，這套是**直接呼叫 C#**，
-    //           沒有 queue、沒有 Watcher、沒有「從 queue 消失代表結束」那套推論。
-    //           ⇒ Editor 沒開它照樣跑，因為它從頭到尾不需要 Editor。
+    // 物理意義：**直接呼叫 C#** —— 沒有 queue、沒有 Watcher、沒有「從 queue 消失代表結束」那套推論
+    //           （`⤷Server` 那一類例外：它們派給 Senate Server，見 ServerDelegateCmd）。
     // 數值影響：exit code 直接沿用 Cmd 的（0 成功／1 Cmd 失敗／2 用法錯／70 例外）。
     static int CmdScp(string iRepoRoot, string[] iArgs)
     {
@@ -1781,8 +1522,8 @@ public static class Program
         //   ⚠ 而「使用者給的」與「宿主補的」**只有在這個位置分得開** —— 再往下一行，
         //     `FillRootArg` 就把它們寫進同一個 dict，Bind 那層看到的是同一種東西。
         // ⛔ 內部呼叫端不受影響：它們走 `SCP_CmdRegistry.Dispatch(name, dict)`，不經過本層。
-        // ⚠ `target_data_root` 不在名單：它不指定路徑，是呼叫端（Editor）宣告「我是哪一棵」，
-        //   由 `UnityTarget` 拿去跟設定檔的專案比對，比不到就擋。
+        // ⚠ `target_data_root` 不在名單：它不指定路徑，是呼叫端宣告「我是哪一棵」，
+        //   由宿主拿去跟設定的資料根比對，比不到就擋。
         if (aCmd != null)
         {
             var aGivenRoots = new List<string>();
@@ -1856,7 +1597,6 @@ public static class Program
                 // TASK-0313：詞典附註由寫入端補 ⇒ `tavern-write` 宣告了這兩格，Editor 呼叫它時由這裡填
                 //   （詞典根的唯一真相源是 senate.local.json，Unity 端不碰它）。沒宣告的 Cmd 不受影響。
                 FillRootArg(aCmd, aRawArgs, aCfg, "glossary_root", SCP.Core.Paths.SCP_PathId.GlossaryRoot);
-                FillRootArg(aCmd, aRawArgs, aCfg, "project_root", SCP.Core.Paths.SCP_PathId.UnityProjectRoot);
                 // 宿主 repo 根（Senate 專案根，描述表的 Host 格；TASK-0390）：doc-edit 等「文件住在 Senate」的指令用它當基準
                 FillRootArg(aCmd, aRawArgs, aCfg, "repo_root", SCP.Core.Paths.SCP_PathId.HostRepoRoot);
                 FillRootArg(aCmd, aRawArgs, aCfg, "activities_root", SCP.Core.Paths.SCP_PathId.FreeTimeActivitiesRoot);   // 自由時間活動（TASK-0390：搬進 Senate）
@@ -1893,8 +1633,7 @@ public static class Program
         //    宣告一份不存在的報告，比沒有報告更糟，它有出處的樣子。判準在 CmdErrorReport.ShouldReport。
         // 落點是 Senate 自己的 runtime（不是某個專案的資料根）：原生 Cmd 不知道「哪個專案」，
         // 拿「唯一啟用的專案」去猜會在多專案時靜默寫到別人那棵樹（路徑不該被推導）。
-        // 委派 Unity 的那批**不在這裡寫**：Editor 端已經有自己那份，AgentCmdClient 會節錄它。
-        if (!aResult.Ok && aCmd != null && aCmd.PortStatus != SCP.Core.Cmd.SCP_CmdPortStatus.DelegatedToUnity)
+        if (!aResult.Ok && aCmd != null)
         {
             string? aCmdId = null;
             foreach (var kv in aResult.Values) if (kv.Key == "cmd_id") aCmdId = kv.Value;
@@ -1988,7 +1727,7 @@ public static class Program
     }
 
     /// <summary>只由宿主照後台設定補上、CLI 不收手給值的路徑參數（擋的理由見 `CmdScp` 裡那段）。</summary>
-    static readonly string[] k_HostOnlyRootArgs = { "data_root", "letters_root", "bank_root", "glossary_root", "project_root", "repo_root", "activities_root" };
+    static readonly string[] k_HostOnlyRootArgs = { "data_root", "letters_root", "bank_root", "glossary_root", "repo_root", "activities_root" };
 
     static bool DeclaresArg(SCP.Core.Cmd.SCP_Cmd iCmd, string iName)
     {
@@ -2053,7 +1792,6 @@ public static class Program
                 --arg-file k=<路徑>  參數值從檔案讀（UTF-8）—— 長內文不經過 shell
               submodule status    列出 submodule 的 branch / 髒不髒 / 領先落後（唯讀）
                 --root <path>     對哪個 repo（status 不給就是 Senate 自己）
-                --project <name>  改用 senate.local.json 裡的專案（停用的會擋下並說原因）
                 --branch <b>      全域預設 branch（解析順序的第三層）
                 --set-branch <path>=<b>  逐項指定目標 branch（解析順序的**最高**層；可重複）
                 --fetch           先逐顆 fetch 再讀 ⇒ ahead/behind 才是即時值
@@ -2065,25 +1803,7 @@ public static class Program
                 --include-root    root 也一起 pull / push（**root 永遠不切 branch**）
                 --only <path>     只處理某幾顆（可重複；指到不存在的會擋下）
                 --dry-run         只印打算做什麼，不動任何東西
-                ⚠ sync **不給預設對象** —— 必須 --root 或 --project（對錯的 repo 動手是最貴的錯）
-              ucmd run <CmdType>  派一筆 AgentCommand 給目標專案的 Unity Editor
-                                  ⚠ 2026-08-29 改名：這套 Unity 專用的從 `cmd` 改叫 `ucmd`，
-                                     `cmd` 讓給不依賴 Unity 的 SCP_CMD（見上）
-                --project <name>  對哪個專案（senate.local.json projects[]；只有一個啟用時可省）
-                --persona <p>     身分（決定 queue 路由並戳進 args；沒給走 anonymous）
-                --lane <id>       子分道：改落 queues/<persona>/queue-<id>.json（身分不變）——
-                                  同一個人同時派多筆而**不想互相排隊**時用（例：一人多局的棋局廣播）
-                --ack-timeout <秒> 等**前一批被取走**的上限（不是等自己跑完的 --timeout）
-                --poll-interval <秒> 輪詢間隔
-                --output-file <路徑> 跑完順便確認那個產物在不在（⚠ 只印，**不改 exit code**）
-              ucmd wait <cmd_id>  等一筆已送出的 Cmd（`ucmd run --no-wait` 印的那個 id）
-                --persona/--lane  **要跟 submit 那次一致** —— 不一致會在一條空分道上等到逾時
-                --timeout / --poll-interval / --output-file  同上
-                --arg k=v         指令參數（可重複）
-                --arg-file k=<路徑>  參數值從檔案讀（長內文不經過 shell）
-                --timeout <秒>    等待逾時（預設 120）；--no-wait 送出就返回
-                ⚠ 需要目標專案的 Unity Editor 開著（Watcher 執行）—— 這是派遣不是代跑
-              ucmd status         看各 persona queue 的 trigger 狀態與殘量（唯讀）
+                ⚠ sync **不給預設對象** —— 必須 --root（對錯的 repo 動手是最貴的錯）
               selftest            SCP_Core 共用碼的自我對拍（拿真檔案跑 JSON round-trip）
               pages-check         頁面目錄的建置期閘：page key 撞名／ctor 形狀不符 ⇒ 非零退出
                                   （`Senate.Cli.csproj` 的 AfterBuild 會跑它 —— 這格要在 build 階段紅）

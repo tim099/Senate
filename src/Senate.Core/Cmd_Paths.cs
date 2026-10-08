@@ -43,17 +43,14 @@ public sealed class Cmd_Paths : SCP_Cmd
     {
         var aResult = new SCP_CmdResult();
 
-        if (UnityDelegateCmd.ConfigProvider == null)
+        if (SenateConfigSource.Provider == null)
             return SCP_CmdResult.Fail(70,
-                "✗ 宿主沒有裝上設定來源（UnityDelegateCmd.ConfigProvider）——",
+                "✗ 宿主沒有裝上設定來源（SenateConfigSource.Provider）——",
                 "  這是程式錯誤不是用法錯：本 Cmd 要讀 senate.local.json 才知道那幾格存了什麼。");
 
-        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
+        (SenateConfig? aConfig, string aConfigPath) = SenateConfigSource.Provider();
         if (aConfig == null)
             return SCP_CmdResult.Fail(2, "✗ 讀不到設定檔：" + aConfigPath, "  先跑 `senate init`");
-
-        // ⛔ 2026-10-07（Tim）拿掉「唯一啟用的專案」那一行：資料根已是全域設定（TASK-0390），不住在任何專案上；
-        //   Unity 專案只是選填的施工目標，它在下面的清單裡（UnityProjectRoot）。Senate 專案根也在清單裡（HostRepoRoot）。
 
         SCP_PathStoredValue StoredOf(SCP_PathId iId) => SenatePathBinding.StoredOf(aConfig, iId);
 

@@ -40,8 +40,8 @@ public sealed class SelfTestConfigPage : SCP_GuiToolPage
         try
         {
             m_Cfg = SelfTestConfig.Load(SelfTestConfig.PathFor(SenatePaths.ConfigDir(m_Model.RepoRoot)),
-                SelfTest.CatalogKeys(m_Model.Projects), SelfTest.CoreKeys, out _);
-            m_Items = SelfTest.ListWithStatus(m_Model.Projects, m_Cfg);
+                SelfTest.CatalogKeys(), SelfTest.CoreKeys, out _);
+            m_Items = SelfTest.ListWithStatus(m_Cfg);
         }
         catch (InvalidOperationException e) { m_Error = e.Message; m_Items = new(); }
     }

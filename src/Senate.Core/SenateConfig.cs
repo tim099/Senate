@@ -1,6 +1,6 @@
-// 區塊職責：Senate 的本機設定 —— 「這台機器上，這套系統管哪些專案」。
+// 區塊職責：Senate 的本機設定 —— 這台機器上的路徑、介面、喚醒、銀行、安裝設定。
 // 物理意義：Senate 是**專案外部**的獨立 repo（不住在任何 Unity 專案裡），
-//           所以「要管誰」必須是資料，不能是寫死的路徑。
+//           所以路徑必須是資料，不能寫死。
 //           ⇒ 設定檔分兩份，職責不同：
 //             · SenateData/config/senate.local.example.json —— **入版控**的樣板（沒有機器路徑）
 //             · senate.local.json               —— **不入版控**的實際設定（有絕對路徑）
@@ -15,38 +15,6 @@ using SCP.Core.Gui;
 using SCP.Core.Reflect;
 
 namespace Senate.Core;
-
-/// <summary>一個被 Senate 管理的專案。</summary>
-public sealed class SenateProject
-{
-    /// <summary>顯示名稱（後台清單與 log 用）。空字串視為未設定。</summary>
-    public string Name { get; set; } = "";
-
-    /// <summary>專案 git repo 的根目錄（絕對路徑）。</summary>
-    public string Root { get; set; } = "";
-
-    // ⛔ 2026-10-07（TASK-0390）：資料根／詞典根／漫畫庫根**不再住在專案上** —— 搬到根物件的 `paths` 區塊
-    //   （SenatePathsSettings）。Senate＋Valhalla 要能在沒有任何 Unity 專案時運作；專案只剩「Unity 開發目標」。
-    //   舊檔的這三格由 SenateConfig.Load 一次搬過去（MigratePaths），之後只有 `paths` 一份。
-
-    /// <summary>停用的專案仍留在清單裡（不是刪掉）—— 「我關掉它」與「我沒設定過它」是兩件事。</summary>
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>分群規則 profile 名（對應 config/profiles/&lt;name&gt;.json）。空 ＝ 用內建預設。</summary>
-    public string Profile { get; set; } = "";
-
-    /// <summary>
-    /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。
-    /// <para>🩸 2026-08-23：介面尺寸寫回設定檔的第一版把使用者手寫的 <c>"//"</c> 註解整行吃掉了。
-    /// 那不是「格式化差異」，是**寫入端省略不可逆**：projects 還在，所以看起來一切正常。
-    /// ⇒ 反序列化丟掉的東西，序列化就再也寫不回來 —— 除非像這樣顯式接住。</para>
-    /// </summary>
-    /// <remarks>⚠ [SCP_Ignore]：自動繪製與自動序列化都跳過它 ——
-    /// 它是「本版不認得的欄位」的收容所，攤到畫面上讓人手改只會把它弄壞。</remarks>
-    [JsonExtensionData]
-    [SCP_Ignore]
-    public Dictionary<string, JsonElement> Extra { get; set; } = new();
-}
 
 /// <summary>
 /// 介面顯示偏好（尺寸／文字寬）。**這台機器的事**，所以住在不入版控的 senate.local.json ——
@@ -76,10 +44,7 @@ public sealed class SenateUiSettings
 
 /// <summary>
 /// 喚醒／登入相關設定 —— **persona 資料在哪台機器的哪個資料夾**。
-/// <para>跟 <see cref="SenateProject"/> 的分工：那邊宣告「Senate 管哪些專案」（cmd 派遣的對象），
-/// 這邊宣告「persona 的信件庫在哪」。今天兩者在同一棵資料樹底下，但**那是巧合不是契約** ——
-/// 信件庫可以被搬走、可以是另一台的網路磁碟，而 cmd 派遣的對象不會跟著動。
-/// ⇒ 顯式一格，不從 projects[] 推導。</para>
+/// <para>信件庫可以被搬走、可以是另一台的網路磁碟 ⇒ 顯式一格。</para>
 /// </summary>
 public sealed class AwakeningSettings
 {
@@ -90,7 +55,7 @@ public sealed class AwakeningSettings
     public string LettersRoot { get; set; } = "";
 
     /// <summary>本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。</summary>
-    /// <remarks>⚠ [SCP_Ignore]：不進畫面、不進自動序列化（同 <see cref="SenateProject.Extra"/>）。</remarks>
+    /// <remarks>⚠ [SCP_Ignore]：不進畫面、不進自動序列化（同 <see cref="SenateConfig.Extra"/>）。</remarks>
     [JsonExtensionData]
     [SCP_Ignore]
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
@@ -184,9 +149,6 @@ public sealed class SenateConfig
     [SCP_Ignore]
     public string PathsMigrationNote { get; set; } = "";
 
-    /// <summary>Unity 開發目標（選填）。⚠ 只給「透過 Unity CLI 操作 Unity 專案」用，Senate 本身的路徑不從這裡推。</summary>
-    public List<SenateProject> Projects { get; set; } = new();
-
     /// <summary>介面顯示偏好。舊設定檔沒有這個區塊 ⇒ 用預設（那是「沒設過」，不是 0）。</summary>
     public SenateUiSettings Ui { get; set; } = new();
 
@@ -261,7 +223,7 @@ public sealed class SenateConfig
         if (aCfg.SchemaVersion != CurrentSchemaVersion)
             throw new InvalidDataException(
                 $"設定檔 schemaVersion={aCfg.SchemaVersion}，本版只認得 {CurrentSchemaVersion}：{iPath}");
-        aCfg.MigratePaths(HasTopLevel(aText, "paths"));
+        aCfg.MigrateLegacyProjects(HasTopLevel(aText, "paths"));
         return aCfg;
     }
 
@@ -278,50 +240,51 @@ public sealed class SenateConfig
         return false;
     }
 
-    // 舊檔（2026-10-07 之前）的三格路徑住在專案上 ⇒ 專案已不認得它們，落在專案的 Extra。
-    static readonly string[] s_LegacyProjectPathKeys = { "agentCommandsRoot", "glossaryRoot", "comicRoot" };
-
     /// <summary>
-    /// 舊檔沒有 `paths` 區塊 ⇒ 從**唯一啟用的專案**把三格搬過來（只在記憶體，Save 才落檔），並把專案上的舊鍵拿掉 ——
-    /// ⛔ 兩邊都留的話就是兩個真相源。有 `paths` 區塊 ⇒ 專案上殘留的舊鍵一律拿掉（`paths` 才是那一份）。
-    /// 啟用專案不唯一 ⇒ 不替人挑，留空並在 <see cref="PathsMigrationNote"/> 說明。
+    /// 舊檔的 `projects`（已移除的 Unity 專案清單）落在 <see cref="Extra"/> ⇒ 拿掉（下次 Save 就不寫回去）。
+    /// 舊檔沒有 `paths` 區塊 ⇒ 先從**唯一啟用的那一筆**把資料根／詞典根／漫畫庫根搬進 <see cref="Paths"/>；
+    /// 啟用的不唯一 ⇒ 不替人挑，留空並在 <see cref="PathsMigrationNote"/> 說明。
     /// </summary>
-    void MigratePaths(bool iHasPathsBlock)
+    void MigrateLegacyProjects(bool iHasPathsBlock)
     {
-        static string? Take(SenateProject iP, string iKey)
+        string? aKey = Extra.Keys.FirstOrDefault(k => string.Equals(k, "projects", StringComparison.OrdinalIgnoreCase));
+        if (aKey == null) return;
+        JsonElement aList = Extra[aKey];
+        Extra.Remove(aKey);
+        PathsMigrationNote = "舊檔的 `projects`（Unity 專案清單）已不再使用 ⇒ 下次存檔拿掉";
+        if (iHasPathsBlock || aList.ValueKind != JsonValueKind.Array) return;
+
+        static string? Str(JsonElement iObj, string iName)
         {
-            foreach (string k in iP.Extra.Keys.ToList())
-            {
-                if (!string.Equals(k, iKey, StringComparison.OrdinalIgnoreCase)) continue;
-                JsonElement v = iP.Extra[k];
-                iP.Extra.Remove(k);
-                return v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-            }
+            foreach (JsonProperty p in iObj.EnumerateObject())
+                if (string.Equals(p.Name, iName, StringComparison.OrdinalIgnoreCase))
+                    return p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString() : null;
             return null;
         }
-
-        if (iHasPathsBlock)
+        static bool Enabled(JsonElement iObj)
         {
-            foreach (SenateProject p in Projects) foreach (string k in s_LegacyProjectPathKeys) Take(p, k);
-            return;
+            foreach (JsonProperty p in iObj.EnumerateObject())
+                if (string.Equals(p.Name, "enabled", StringComparison.OrdinalIgnoreCase)) return p.Value.ValueKind != JsonValueKind.False;
+            return true;
         }
-        var aEnabled = Projects.Where(p => p.Enabled).ToList();
+
+        var aEnabled = aList.EnumerateArray().Where(p => p.ValueKind == JsonValueKind.Object && Enabled(p)).ToList();
         if (aEnabled.Count != 1)
         {
-            if (Projects.Any(p => s_LegacyProjectPathKeys.Any(k => p.Extra.Keys.Any(e => string.Equals(e, k, StringComparison.OrdinalIgnoreCase)))))
+            if (aEnabled.Any(p => Str(p, "agentCommandsRoot") != null || Str(p, "glossaryRoot") != null || Str(p, "comicRoot") != null))
                 PathsMigrationNote = $"舊檔的路徑住在專案上，但啟用的專案有 {aEnabled.Count} 個 ⇒ 不替你挑；到「路徑管理」頁填全域那幾格";
             return;
         }
-        SenateProject aP = aEnabled[0];
-        string? aData = Take(aP, "agentCommandsRoot");
-        string? aGlo = Take(aP, "glossaryRoot");
-        string? aComic = Take(aP, "comicRoot");
-        foreach (SenateProject p in Projects) foreach (string k in s_LegacyProjectPathKeys) Take(p, k);
-        // 舊的 "auto" 是「從 Unity 專案推」—— 新架構沒有那條路 ⇒ 不搬 auto，留空讓人明說
+        JsonElement aP = aEnabled[0];
+        string? aData = Str(aP, "agentCommandsRoot");
+        string? aGlo = Str(aP, "glossaryRoot");
+        string? aComic = Str(aP, "comicRoot");
+        // 舊的 "auto" 是「從 Unity 專案推」—— 那條路不存在 ⇒ 不搬 auto，留空讓人明說
         if (aData != null && !string.Equals(aData.Trim(), "auto", StringComparison.OrdinalIgnoreCase)) Paths.AgentCommandsRoot = aData;
         if (aGlo != null) Paths.GlossaryRoot = aGlo;
         if (aComic != null) Paths.ComicRoot = aComic;
-        PathsMigrationNote = $"舊檔的資料根／詞典根／漫畫庫根住在專案「{aP.Name}」上 ⇒ 已搬進全域 `paths`（下次存檔落盤）";
+        if (aData != null || aGlo != null || aComic != null)
+            PathsMigrationNote = $"舊檔的資料根／詞典根／漫畫庫根住在專案「{Str(aP, "name")}」上 ⇒ 已搬進全域 `paths`（下次存檔落盤）";
     }
 
     public void Save(string iPath)
@@ -329,23 +292,5 @@ public sealed class SenateConfig
         string? aDir = Path.GetDirectoryName(iPath);
         if (!string.IsNullOrEmpty(aDir)) Directory.CreateDirectory(aDir);
         File.WriteAllText(iPath, JsonSerializer.Serialize(this, s_Json) + "\n");
-    }
-
-    /// <summary>逐條檢查，回傳人可讀的問題清單（空 ＝ 沒問題）。⚠ 只驗**設定本身**，不碰磁碟。</summary>
-    public List<string> Validate()
-    {
-        var aErrors = new List<string>();
-        var aSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < Projects.Count; i++)
-        {
-            var p = Projects[i];
-            string aWho = string.IsNullOrWhiteSpace(p.Name) ? $"projects[{i}]" : p.Name;
-            if (string.IsNullOrWhiteSpace(p.Name)) aErrors.Add($"{aWho}: name 空白");
-            if (string.IsNullOrWhiteSpace(p.Root)) aErrors.Add($"{aWho}: root 空白");
-            else if (!Path.IsPathRooted(p.Root)) aErrors.Add($"{aWho}: root 不是絕對路徑（{p.Root}）");
-            if (!string.IsNullOrWhiteSpace(p.Name) && !aSeen.Add(p.Name))
-                aErrors.Add($"{aWho}: name 重複 —— 名字是後台與 log 的識別鍵，重複會讓兩個專案的讀數混在一起");
-        }
-        return aErrors;
     }
 }

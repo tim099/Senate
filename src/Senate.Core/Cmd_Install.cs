@@ -41,9 +41,9 @@ public sealed class Cmd_Install : SCP_Cmd
 
     public override SCP_CmdResult Execute(SCP_CmdArgs iArgs)
     {
-        if (UnityDelegateCmd.ConfigProvider == null || ServerDelegateCmd.RepoRootProvider == null)
+        if (SenateConfigSource.Provider == null || ServerDelegateCmd.RepoRootProvider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源／repo 根 —— 這是程式錯誤不是用法錯");
-        (SenateConfig? aConfig, string aConfigPath) = UnityDelegateCmd.ConfigProvider();
+        (SenateConfig? aConfig, string aConfigPath) = SenateConfigSource.Provider();
         string aRepo = ServerDelegateCmd.RepoRootProvider();
 
         InstallCatalog? aCatalog = InstallCatalog.Load(InstallCatalog.DefaultPath(aRepo), out string? aCatErr);

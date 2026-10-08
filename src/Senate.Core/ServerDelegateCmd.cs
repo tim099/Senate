@@ -3,9 +3,7 @@
 // 物理意義：TASK-0103。Server 存在的理由是「只有一顆 process 在寫」（D20），所以會寫共用狀態的 Cmd
 //           **不准**在 CLI process 裡直接跑 —— 那會長出第二個寫入者，而兩個寫入者的輸出長得一模一樣。
 //           ⇒ 路由由 <see cref="ServerContext.InServer"/> 決定，不是由呼叫端記得。
-//           跟 UnityDelegateCmd 是同族（另一個宿主的委派），刻意**不共用基底**：那邊的目標是「某個專案的
-//           資料根」、要解析 project；這邊的目標是 Senate 自己的 Server 根，沒有 project 這一格。
-//           兩者共用的是**協議**（AgentCmdClient）與**回報**（AppendReport／DescribeStamp），不是類別階層。
+//           協議走 AgentCmdClient（queue／trigger／result 檔），回報走本檔的 AppendReport（回傳檔帶 mtime）。
 // 數值影響：CLI 路徑寫 Server 根的 queue/trigger、等 result 檔；exit 0 成功／1 Server 端回報失敗／
 //           3 沒有結果（not_running／build_mismatch／build_in_progress／queue_busy／timeout，細分走 🔢 delegate_failure）。
 //           ⛔ Server 沒在跑**不降級成本地跑**（Tim 2026-09-02 ⑦）—— 印怎麼啟動，exit 3，到此為止。
@@ -38,7 +36,7 @@ public static class ServerContext
 public abstract class ServerDelegateCmd : SCP_Cmd
 {
     /// <summary>
-    /// repo 根的來源。**由宿主在啟動時裝上**（跟 <see cref="UnityDelegateCmd.ConfigProvider"/> 同形）——
+    /// repo 根的來源。**由宿主在啟動時裝上**（跟 <see cref="SenateConfigSource.Provider"/> 同形）——
     /// Cmd 不知道 Server 根在哪，本層不推導。沒裝上一律 fail loud。
     /// </summary>
     public static Func<string>? RepoRootProvider;
@@ -295,11 +293,47 @@ public abstract class ServerDelegateCmd : SCP_Cmd
                 }
             }
             aResult.AddValue("delegate_failure", "cmd_failed");
-            UnityDelegateCmd.AppendReport(aResult, aServerRoot, aCmdId);
+            AppendReport(aResult, aServerRoot, aCmdId);
             return aResult;
         }
-        UnityDelegateCmd.AppendReport(aResult, aServerRoot, aCmdId);
+        AppendReport(aResult, aServerRoot, aCmdId);
         return aResult;
+    }
+
+    /// <summary>
+    /// 判定完成之後才做的事：把 result 檔的回傳檔／純量併進來，**每個回傳檔一起印 mtime**。
+    /// <para>⚠ 順序寫死：**先確認判定，才准碰回傳檔** —— 逾時時回傳檔沒有被更新，而它格式完整、數字合理。</para>
+    /// <para>⚠ mtime 回答的是「這個檔何時被寫」，不是「內容何時產生」。但在「這份是不是這一輪的」這一問上，它夠用。</para>
+    /// </summary>
+    static void AppendReport(SCP_CmdResult oResult, string iDataRoot, string iCmdId)
+    {
+        (bool aFound, List<string> aOutputs, List<KeyValuePair<string, string>> aValues) =
+            AgentCmdClient.ResultReport(iDataRoot, iCmdId);
+        if (!aFound)
+        {
+            // 「沒有 result 檔」與「有 result 檔但沒有回傳檔」是兩件事 —— 不可同形。
+            oResult.Lines.Add("⚠ 沒有 result 檔（落檔失敗）⇒ 沒有回傳檔清單可以印。");
+            return;
+        }
+        // 路徑本身走 Outputs（宿主會印 📄，那是機器可讀的那一欄）；
+        // 這裡只補**定語**——同一個路徑印兩次的話，讀的人有一半機率引用到沒有 mtime 的那行。
+        foreach (string aPath in aOutputs)
+        {
+            oResult.AddOutput(aPath);
+            oResult.Lines.Add($"  ⏱ {System.IO.Path.GetFileName(aPath)}{DescribeStamp(aPath)}");
+        }
+        foreach (var aKv in aValues) oResult.AddValue(aKv.Key, aKv.Value);
+    }
+
+    /// <summary>回傳檔的時間戳註記；檔案不在就直說 —— 印不出時間跟「時間很舊」是兩件事。</summary>
+    static string DescribeStamp(string iPath)
+    {
+        try
+        {
+            if (!File.Exists(iPath)) return "　⚠ 檔案不存在（Server 說它寫了，而這台看不到）";
+            return $"　（mtime {File.GetLastWriteTime(iPath):yyyy-MM-dd HH:mm:ss}）";
+        }
+        catch (Exception e) { return $"　⚠ 讀不到 mtime：{e.GetType().Name}"; }
     }
 
     // ===========================================================

@@ -1,7 +1,7 @@
 ---
 title: Senate 架構總覽
-description: 五層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli / Senate.Server）、共用碼的邊界與方言限制、Unity 從宿主降級成 client 的過渡規矩
-last_updated: 2026-09-15
+description: 五層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli / Senate.Server）、共用碼的邊界與方言限制、Senate 與 Unity 的關係
+last_updated: 2026-10-08
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -15,7 +15,7 @@ SCP_Core/            submodule —— Unity 與 .NET **共用**（C# 9 / netstan
     ├── Json/        JSON 值樹＋parser＋writer
     └── Gui/         UI 中間層：節點樹、撰寫 API、文字 renderer、非 UI 操控介面
 src/
-├── Senate.Core/     設定、git CLI、專案探測、常駐 Server 本體（零 UI 依賴）
+├── Senate.Core/     設定、git CLI、常駐 Server 本體（零 UI 依賴）
 ├── Senate.Desktop/  ImGui renderer、視窗、字型、截圖（碰得到硬體的那半）
 ├── Senate.Cli/      headless 入口 ＋ 後台頁面（**會拖著 Desktop** ⇒ 含 Silk.NET／cimgui／glfw3）
 └── Senate.Server/   常駐 Server 的**獨立執行檔** —— 只參照 Senate.Core
@@ -90,20 +90,11 @@ D25 把它升成**整個 repo 的規則**：`src/Senate.Core` / `Senate.Desktop`
 
 ---
 
-## Unity 的位置：從宿主降級成 client
+## Senate 與 Unity
 
-Senate 之前的形狀是「Unity Editor 當執行端，檔案匯流排當 RPC」。新形狀反過來：
-
-| 資料 | 過渡期誰寫 | 最終誰寫 |
-|---|---|---|
-| 分群規則（哪個檔進哪一筆 commit） | Senate 的 JSON（Unity 端改成讀它） | Senate |
-| git index / commit | 誰先搶到誰做，但**互斥** | Senate 獨佔 |
-| asset / build / compile | Unity（只有 Editor 有那些 API） | Unity，但被 Senate 呼叫 |
-
-**互斥怎麼做**：`ProjectProbe` stat 專案的 `AgentCommands/ChatTavern/bartender/_heartbeat.txt`，
-mtime 在 4 秒內＝Unity Editor 還在 tick ⇒ Senate 不動那個 repo 的 index。
-一個檔的 stat，不必 round-trip；它擋掉的是「兩個寫入者搶同一個 index」——
-那種錯不會報錯，只會生出混批的 commit。
+Senate 不依賴任何 Unity 專案：設定裡沒有 Unity 專案、不派指令給 Editor、不讀 Unity 專案裡的檔。
+要操作 Unity 專案（重編、讀編譯錯誤、跑 C#）一律用官方 Unity CLI → [`Unity_CLI`](../Workflows/Unity_CLI.md)。
+UCL_Core 也不引用 SCP_Core（各自獨立編譯）。
 
 ---
 

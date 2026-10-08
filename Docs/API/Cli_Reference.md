@@ -170,7 +170,6 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 | 旗標 | 做什麼 |
 |---|---|
 | `--root <path>` | 對哪個 repo 動手。**sync 必填**（見下方安全設計）；status 不給就是 Senate 自己 |
-| `--project <name>` | 改用 `senate.local.json` 裡的專案名（停用／路徑壞掉的會擋下並說原因） |
 | `--branch <b>` | 全域預設 branch —— 目標解析的**第三層** |
 | `--set-branch <path>=<b>` | 逐項指定目標 branch —— 目標解析的**最高層**。可重複 |
 | `--fetch` | 先逐顆 fetch 再讀 ⇒ ahead/behind 才是即時值（只動 remote-tracking ref，不碰工作目錄） |
@@ -201,7 +200,7 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 
 #### 安全設計（三格，都是為了同一件事）
 
-1. **`sync` 不給預設對象** —— 必須 `--root` 或 `--project`。
+1. **`sync` 不給預設對象** —— 必須 `--root`。
    🩸 UCL 那邊的血證（2026-08-11）：設定漂移讓工具在 B 專案裡誠實地對 A 專案動手、
    回報一整排 ✓，而 B 的 submodule 一個位元組都沒動 —— **綠燈全亮，量到的是別的 repo。**
    ⇒ 會寫東西的指令不猜對象；唯讀的 `status` 才給預設（猜錯也不會壞東西）。
@@ -279,29 +278,7 @@ callback 本身**驗 marshalling（UTF-8 編碼／NUL 結尾／記憶體還活�
 ⇒ 那麼這裡的 `sync` 還有什麼用？**腳本與 CI**，以及 `--dry-run`（只有指令這條路有）。
 頁面照舊把等價指令印出來，而兩者吃**同一組設定** ⇒ 畫面上調好的範圍與複製去跑的範圍逐字相同。
 
-### `專案關聯` 頁（`ui --click home/open/projects`）
-
-增刪改 `senate.local.json` 的 projects[]，**逐列附探測讀數**（路徑在不在／git repo 嗎／
-AgentCommands 資料根解析到哪、存不存在／Editor 在不在跑）—— root 打錯當場就紅，
-不必等 cmd 派過去永遠 pending 才發現。貼路徑會自動去掉檔案總管「複製路徑」帶的雙引號。
-
-⚠ 探測讀數走**快取**（key＝root＋enabled；進頁與「🔄 重新探測全部」時重取）——
-🩸 第一版每輪重繪直呼 Probe（一次 3 支 git 子程序），視窗宿主連續重繪 ⇒ 每秒數十×N 支 git，
-整頁卡死；文字宿主畫一輪就結束所以完全測不到。**會重畫的宿主才是這種成本的照妖鏡。**
-代價：Editor 心跳那格在快取裡會過期，要現值按重新探測。
-
-- 與「設定」頁（自動繪製）**寫同一份檔、同一支 Save** ⇒ 未知欄位與 `"//"` 註解照樣保留；
-  本頁只是 projects[] 的窄而順的那條路，不是第二個真相源。
-- 增刪改都是**草稿**，按「儲存」才落檔（回讀驗證專案數）；新增會擋不存在的路徑與重複路徑。
-
-```bash
-./senate.exe ui --click home/open/projects                   # 進頁
-./senate.exe ui --set "projects/new/path=D:/Unity/LY"        # 填新專案路徑
-./senate.exe ui --click projects/new/add                     # 加進草稿（名稱先用資料夾名）
-./senate.exe ui --click projects/save                        # 儲存（寫回 senate.local.json）
-```
-
-### `cmd` —— SCP_CMD（不依賴 Unity）
+### `cmd` —— SCP_CMD
 
 SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**，Editor 沒開照樣跑。
 機制、怎麼寫一支新 Cmd 在
@@ -444,7 +421,6 @@ build id、client、例外型別與訊息、Cmd 說了什麼、Args 全列（單
 | 1／70 | 一律寫 | CLI 直跑 → `SenateData/runtime/_cmd_errors/`；Server 跑的 → `SenateData/runtime/server/_cmd_errors/`（Server 寫，CLI 只指路） |
 | 3 | **不寫**（2026-09-04 拿掉）| 「沒有結果」的四種細分沒有一種代表對面失敗 —— 逾時那筆 Server 的 result 檔是 `Success`／`exit 0`。沒有失敗就沒有報告該存在 |
 | 2 | 不寫 | 打錯字配一份 stack 只會訓練人忽略這個目錄 |
-| `⤷Unity` 的失敗 | 本層不寫 | Editor 端有自己那份（`<專案資料根>/_cmd_errors/`），CLI 節錄它 |
 
 `SCP_FileLockTimeoutException` 是入列前的失敗，沒有 cmd_id，因此另寫
 `SenateData/runtime/_queue_lock_errors/<時間>-<pid>-<唯一碼>.md`；主目錄無法寫入時退到使用者 TEMP 下的
@@ -452,12 +428,11 @@ build id、client、例外型別與訊息、Cmd 說了什麼、Args 全列（單
 呼叫者 pid／build、鎖檔當時的 metadata、可見的 Senate 行程候選與原始 inner exception。
 候選行程與鎖檔存在都**不是持鎖者的證明**；請保留報告以比對下一次現場。
 
-⚠ 落點刻意**不是**「某個專案的資料根」：原生 Cmd 不知道自己屬於哪個專案，拿「唯一啟用的專案」去猜會在多專案時
-靜默寫到別人那棵樹 —— 路徑不該被推導。
+⚠ 落點刻意**不是**資料根：錯誤報告是 Senate 自己的 runtime 產物，不是資料樹上的共用狀態。
 
-#### 執行位置第四態：`⤷Server`
+#### 執行位置：`⤷Server`
 
-`help` 清單行尾多一種標記，統計行變成「本地 ／ ⤷Unity ／ ⤷Server ／ ⛔未實作」。
+`help` 清單行尾標 `⤷Server`／`⛔未實作`，統計行是「本地 ／ ⤷Server ／ ⛔未實作」。
 `⤷Server` 的 Cmd 走 `ServerDelegateCmd`：**同一個類別兩條路** —— 在 Server process 裡被派到就跑本體，
 在 CLI 裡被打到就派給 Server 等結果；路由由 process 旗標決定，不由呼叫端記得。
 
