@@ -35,7 +35,7 @@ related:
 | `view` | 渲染一張圖（region／exhibit／鏡頭／燈／天空） | 免費 | 沒給 `out` 時必填 |
 | `slice` | region 內 voxel 原色壓成 PNG（可原樣貼回） | 免費 | 沒給 `out` 時必填 |
 | `stats` | 總數與使用率 | 免費 | 選填 |
-| `export` | 匯出 `.obj`（＋`.mtl`）或 MagicaVoxel `.vox` | 免費 | 選填 |
+| `export` | 匯出 `.obj`（＋`.mtl`）或 MagicaVoxel `.vox`；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
 | `work` | 個人作品：`sub=create|list|show|update|import` | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |

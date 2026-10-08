@@ -71,6 +71,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     const string FSliceRegion = P + "f/slice_region", FSliceAxis = P + "f/slice_axis";
     const string FStampRegion = P + "f/stamp_region", FStampAt = P + "f/stamp_at", FStampFacing = P + "f/stamp_facing", FStampThick = P + "f/stamp_thickness";
     const string FExportDir = P + "f/export_dir";
+    const string TMerge = P + "t/export_merge";
     // 結果（頁面自己寫的 session 欄位；畫面上沒有元件 ⇒ 不會被 --set 動到）
     const string SViewPath = P + "state/view_path", SViewInfo = P + "state/view_info", SRenderer = P + "state/renderer", SLayers = P + "state/layers";
     const string SSlicePath = P + "state/slice_path", SSliceInfo = P + "state/slice_info";
@@ -948,6 +949,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         if (PersonalSpace(g) && SelectedWork(g).Length == 0) return;
         string aPersona = g.FieldValue(PersonaSel + "/value", None);
         if (aPersona == None) aPersona = "";
+        // 勾＝obj 走 merge=greedy（同色共面合併）；不勾＝merge=none（逐 voxel 面，要 watertight 時用）。vox 不吃。
+        bool aMerge = g.Toggle("obj 合併同色面", true, TMerge);
         foreach (string aFmt in new[] { "obj", "vox" })
         {
             if (!g.Button("匯出 ." + aFmt, P + "btn/export-" + aFmt)) continue;
@@ -958,7 +961,9 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             if (aEx.Length > 0) aArgs["exclude_color"] = aEx;
             if (aDir.Length > 0) aArgs["out_dir"] = aDir;
             if (aPersona.Length > 0) aArgs["persona"] = aPersona;
-            string aLabel = "匯出 ." + aFmt + (aRegion.Length > 0 ? " region " + aRegion : "（全空間）");
+            if (aFmt == "obj") aArgs["merge"] = aMerge ? "greedy" : "none";
+            string aLabel = "匯出 ." + aFmt + (aFmt == "obj" ? (aMerge ? "（合併）" : "（不合併）") : "")
+                            + (aRegion.Length > 0 ? " region " + aRegion : "（全空間）");
             Start(g, aLabel, () =>
             {
                 CliRun r = RunCli(aArgs);
@@ -974,6 +979,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold("匯出設定（按鈕在上方工具列）", P + "fold/export", iDefaultOpen: false);
         if (!aFold.Open) return;
         g.Note("範圍＝手動區的 region／exclude_color（空 region＝全空間）。");
+        g.Note("「obj 合併同色面」勾著＝同色共面合成矩形、頂點共用（面數大減）；不勾＝逐 voxel 面（要 watertight／3D 列印時用）。");
         Field(g, "匯出資料夾（空＝預設）", FExportDir);
         g.Note("預設：" + DefaultExportDir);
         string aPath = g.FieldValue(SExportPath, "");

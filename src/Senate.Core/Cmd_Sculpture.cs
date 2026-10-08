@@ -172,6 +172,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out", "view／slice：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑"),
         new SCP_CmdArgSpec("format", "export：obj|vox", iChoices: new[] { "obj", "vox" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
+        new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sub", "work：create|list|show|update|import；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
                            iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
@@ -1060,6 +1061,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             Out = c.Args.Get("out").Trim(),
             OutDir = c.Args.Get("out_dir").Trim(),
         };
+        string aMerge = c.Args.Get("merge").Trim();
+        if (aMerge.Length > 0) aArgs.Merge = aMerge;
         if (!TryLocked(c, e => e.Export(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
         c.Report.Append("```\n").Append(aRes.Render()).Append("\n```\n");
         if (!aRes.Ok) return EngineFail(c, aRes);
@@ -1069,6 +1072,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         c.Result.AddValue("path", aPath);
         if (aEx.MtlPath.Length > 0) c.Result.AddValue("mtl_path", aEx.MtlPath.Replace('\\', '/'));
         c.Result.AddValue("voxels", aEx.VoxelCount.ToString(CultureInfo.InvariantCulture));
+        if (aEx.Merge.Length > 0)
+        {
+            c.Result.AddValue("merge", aEx.Merge);
+            c.Result.AddValue("faces", aEx.FaceCount.ToString(CultureInfo.InvariantCulture));
+            c.Result.AddValue("vertices", aEx.VertexCount.ToString(CultureInfo.InvariantCulture));
+        }
         c.Result.AddOutput(aPath);
         return Finish(c, 0, "✓ export " + aFormat + " " + aEx.VoxelCount + " voxels → " + aPath);
     }
