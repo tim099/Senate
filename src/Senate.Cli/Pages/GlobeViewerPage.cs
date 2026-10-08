@@ -1,0 +1,260 @@
+// 區塊職責：後台「球面繪製」頁（prototype，TASK-0467）—— 預覽可繪製球面、用經緯度畫點／線／多邊形／油漆桶、Undo、改底色。
+// 物理意義：寫入一律走 `cmd globe`（同一支 Cmd，in-process Dispatch）—— 頁面 ⛔ 不自己改格子；
+//          預覽在 in-process 讀狀態後 CPU 渲染成 PNG（同 `cmd globe --arg op=render` 的同一支渲染）。
+// 數值影響：每次寫入成功、或視角參數變了，就重渲一張；渲染在背景跑，畫面先留上一張。
+#nullable enable
+using System.Globalization;
+using System.Threading.Tasks;
+using Senate.Core;
+using SCP.Core.Cmd;
+using SCP.Core.Globe;
+using SCP.Core.Gui;
+using SCP.Core.Paths;
+
+namespace Senate.Cli.Pages;
+
+public sealed class GlobeViewerPage : SCP_GuiToolPage
+{
+    public const string PageKey = "globe";
+    const float ViewSide = 720f;
+    const string P = "globe/";
+    const string FLat = P + "f/center_lat", FLon = P + "f/center_lon", FZoom = P + "f/zoom", FGrat = P + "f/graticule";
+    const string TSeams = P + "t/seams";
+    const string FColor = P + "f/color", FBase = P + "f/base";
+    const string FPLat = P + "f/p_lat", FPLon = P + "f/p_lon", FRadius = P + "f/radius", FWidth = P + "f/width", FMax = P + "f/max_cells";
+    const string FPoints = P + "f/points", FPersona = P + "f/persona";
+    const string SLog = P + "state/log";
+
+    static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
+    {
+        [FLat] = "23.7", [FLon] = "121", [FZoom] = "1", [FGrat] = "10",
+        [FColor] = "#2E8B57", [FBase] = "#0049AA",
+        [FPLat] = "23.7", [FPLon] = "121", [FRadius] = "0", [FWidth] = "0", [FMax] = "200000",
+        [FPoints] = "", [FPersona] = "Tim",
+    };
+
+    /// <summary>台灣本島輪廓（粗略，逆時針；prototype 試畫用）。</summary>
+    public const string TaiwanOutline =
+        "25.30,121.54;25.15,121.75;25.01,122.00;24.70,121.85;24.58,121.87;23.98,121.62;23.50,121.50;"
+        + "23.10,121.40;22.75,121.17;22.40,120.95;21.90,120.85;21.93,120.72;22.37,120.60;22.62,120.27;"
+        + "23.00,120.10;23.45,120.15;24.00,120.40;24.25,120.52;24.80,120.92;25.05,121.10;25.18,121.40";
+
+    readonly SenateModel m_Model;
+    string? m_Message;
+    string m_Status = "";
+    bool m_Initialized;
+    bool m_Dirty = true;
+    Task<string>? m_Render;
+    string m_RenderedSig = "", m_RenderingSig = "";
+    int m_Version;   // 每次寫入成功 +1 ⇒ 簽名變了 ⇒ 重渲
+
+    public GlobeViewerPage(SenateModel iModel) : base() { m_Model = iModel; }
+
+    public override string Key => PageKey;
+    public override string Title => "球面繪製";
+    public override string? MenuGroup => "內容";
+
+    public override void OnPush() { base.OnPush(); m_Dirty = true; }
+
+    string DataRoot => m_Model.AgentCommandsRoot.Value ?? "";
+    string ViewPng => Path.Combine(SenatePaths.RuntimeDir(m_Model.RepoRoot), "globe_page", "view.png");
+
+    // ── 工具列 ─────────────────────────────────────────────
+    protected override void TopBarButtons(SCP_Ui iUi)
+    {
+        if (iUi.Button("重新讀取", P + "btn/reload")) { m_Dirty = true; m_Version++; }
+        if (iUi.Button("↶ Undo", P + "btn/undo")) Run(iUi, "Undo", new() { ["op"] = "undo", ["persona"] = V(iUi, FPersona) });
+        string aRoot = DataRoot;
+        OpenFolderButton(iUi, aRoot.Length > 0 ? new SCP_GlobePaths(new SCP_DataRoot(aRoot)).Root : null, P + "btn/open-dir");
+    }
+
+    protected override void DrawContent(SCP_Ui g)
+    {
+        if (m_Dirty) ReloadStatus();
+        if (m_Message != null) g.Note(m_Message);
+        if (m_Status.Length > 0) g.Label(m_Status);
+        if (!m_Initialized)
+        {
+            g.Note("球面還沒建立。建立後每面 2048×2048（6 面約 2516 萬格，約 4.9 km／格），沒畫過的格子顯示底色。");
+            if (g.Button("建立球面（N=2048，底色海水藍）", P + "btn/init")) Run(g, "建立球面", new() { ["op"] = "init" });
+            DrawLog(g);
+            return;
+        }
+        DrawView(g);
+        DrawPaint(g);
+        DrawLog(g);
+    }
+
+    void ReloadStatus()
+    {
+        m_Dirty = false;
+        if (DataRoot.Length == 0) { m_Status = "找不到 AgentCommands 資料根 —— 到「路徑管理」頁設定"; m_Initialized = false; return; }
+        SCP_CmdResult r = Dispatch(new() { ["op"] = "status" });
+        m_Initialized = r.ExitCode == 0;
+        m_Status = string.Join("\n", r.Lines.Where(l => l.Trim().Length > 0));
+    }
+
+    // ── 視角與預覽 ─────────────────────────────────────────
+    void DrawView(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("視角", P + "fold/view", iDefaultOpen: false))
+        {
+            if (aFold.Open)
+            {
+                Field(g, "中心緯度", FLat);
+                Field(g, "中心經度", FLon);
+                Field(g, "zoom（1＝整個半球）", FZoom);
+                Field(g, "經緯線間隔（度，0＝關）", FGrat);
+                g.Toggle("疊面接縫", false, TSeams);
+            }
+        }
+        using (g.Row())
+        {
+            if (g.Button("◀ 西 15°", P + "btn/w")) Nudge(g, FLon, -15 / Zoom(g));
+            if (g.Button("東 15° ▶", P + "btn/e")) Nudge(g, FLon, 15 / Zoom(g));
+            if (g.Button("▲ 北 15°", P + "btn/n")) Nudge(g, FLat, 15 / Zoom(g));
+            if (g.Button("▼ 南 15°", P + "btn/s")) Nudge(g, FLat, -15 / Zoom(g));
+            if (g.Button("放大 ×2", P + "btn/zin")) g.SetField(FZoom, F(Zoom(g) * 2));
+            if (g.Button("縮小 ÷2", P + "btn/zout")) g.SetField(FZoom, F(Math.Max(0.5, Zoom(g) / 2)));
+            if (g.Button("台灣特寫", P + "btn/tw")) { g.SetField(FLat, "23.7"); g.SetField(FLon, "121"); g.SetField(FZoom, "12"); }
+            if (g.Button("整顆", P + "btn/whole")) g.SetField(FZoom, "1");
+        }
+        PumpRender(g);
+        string aSig = ViewSig(g);
+        if (aSig != m_RenderedSig && aSig != m_RenderingSig) StartRender(g, aSig);
+        if (m_Render != null) g.Note("渲染中…（畫面是上一張）");
+        if (File.Exists(ViewPng)) g.ImageFit(ViewPng, ViewSide, "球面預覽");
+    }
+
+    string ViewSig(SCP_Ui g) => string.Join("|", V(g, FLat), V(g, FLon), V(g, FZoom), V(g, FGrat), g.ToggleValue(TSeams) ? "1" : "0", m_Version.ToString(CultureInfo.InvariantCulture));
+
+    void StartRender(SCP_Ui g, string iSig)
+    {
+        if (m_Render != null) return;
+        if (!TryD(V(g, FLat), out double la) || !TryD(V(g, FLon), out double lo) || !TryD(V(g, FZoom), out double z) || !TryD(V(g, FGrat), out double gr))
+        { m_Message = "視角欄位要是數字"; m_RenderedSig = iSig; return; }
+        var v = new SCP_GlobeView { CenterLat = Math.Max(-90, Math.Min(90, la)), CenterLon = lo, Zoom = z, Graticule = gr, Seams = g.ToggleValue(TSeams), Size = 720 };
+        string aRoot = DataRoot, aOut = ViewPng;
+        m_RenderingSig = iSig;
+        Func<string> aJob = () =>
+        {
+            var store = new SCP_GlobeStore(new SCP_GlobePaths(new SCP_DataRoot(aRoot)));
+            byte[] png = SCP_GlobeRender.RenderPng(store.Load(), v);
+            Directory.CreateDirectory(Path.GetDirectoryName(aOut)!);
+            string aTmp = aOut + ".tmp";
+            File.WriteAllBytes(aTmp, png);
+            File.Move(aTmp, aOut, true);
+            return "";
+        };
+        if (SCP_GuiHost.RedrawsContinuously) m_Render = Task.Run(aJob);
+        else
+        {
+            try { aJob(); } catch (Exception e) { m_Message = "渲染失敗：" + e.Message; }
+            m_RenderedSig = iSig; m_RenderingSig = "";
+        }
+    }
+
+    void PumpRender(SCP_Ui g)
+    {
+        if (m_Render == null || !m_Render.IsCompleted) return;
+        try { m_Render.Wait(); }
+        catch (Exception e) { m_Message = "渲染失敗：" + (e.InnerException ?? e).Message; }
+        m_Render = null;
+        m_RenderedSig = m_RenderingSig;
+        m_RenderingSig = "";
+    }
+
+    // ── 繪製 ───────────────────────────────────────────────
+    void DrawPaint(SCP_Ui g)
+    {
+        using (var aFold = g.Fold("畫筆", P + "fold/paint", iDefaultOpen: true))
+        {
+            if (aFold.Open)
+            {
+                Field(g, "persona", FPersona);
+                Field(g, "顏色（#RRGGBB 或 r,g,b 全彩；empty＝擦回底色）", FColor);
+                g.Note("點與油漆桶用下面的經緯度；線與多邊形用點列（lat,lon;lat,lon;…，一行一點也可以）。畫錯了按上方 ↶ Undo。");
+                Field(g, "緯度", FPLat);
+                Field(g, "經度", FPLon);
+                Field(g, "點的半徑（格）", FRadius);
+                Field(g, "油漆桶上限（格）", FMax);
+                using (g.Row())
+                {
+                    if (g.Button("畫點", P + "btn/point"))
+                        Run(g, "畫點", Common(g, "point", new() { ["lat"] = V(g, FPLat), ["lon"] = V(g, FPLon), ["radius"] = V(g, FRadius) }));
+                    if (g.Button("油漆桶（從這個經緯度）", P + "btn/fill"))
+                        Run(g, "油漆桶", Common(g, "fill", new() { ["lat"] = V(g, FPLat), ["lon"] = V(g, FPLon), ["max_cells"] = V(g, FMax) }));
+                }
+                g.TextArea("點列", Def(FPoints), FPoints, 6);
+                Field(g, "線寬半徑（格）", FWidth);
+                using (g.Row())
+                {
+                    if (g.Button("畫線", P + "btn/line"))
+                        Run(g, "畫線", Common(g, "line", new() { ["points"] = V(g, FPoints), ["width"] = V(g, FWidth) }));
+                    if (g.Button("多邊形填色", P + "btn/polygon"))
+                        Run(g, "多邊形填色", Common(g, "polygon", new() { ["points"] = V(g, FPoints) }));
+                    if (g.Button("點列＝台灣輪廓", P + "btn/tw-outline")) g.SetField(FPoints, TaiwanOutline.Replace(";", ";\n"));
+                }
+            }
+        }
+        using (var aFold = g.Fold("底色", P + "fold/base", iDefaultOpen: false))
+        {
+            if (aFold.Open)
+            {
+                g.Note("底色＝沒畫過的格子顯示的顏色（海水）。改它不動任何格子。");
+                Field(g, "底色（#RRGGBB）", FBase);
+                if (g.Button("套用底色", P + "btn/base")) Run(g, "改底色", new() { ["op"] = "base", ["color"] = V(g, FBase) });
+            }
+        }
+    }
+
+    Dictionary<string, string> Common(SCP_Ui g, string iOp, Dictionary<string, string> iArgs)
+    {
+        iArgs["op"] = iOp;
+        iArgs["persona"] = V(g, FPersona);
+        iArgs["color"] = V(g, FColor);
+        return iArgs;
+    }
+
+    // ── Cmd ────────────────────────────────────────────────
+    SCP_CmdResult Dispatch(Dictionary<string, string> iArgs)
+    {
+        iArgs["data_root"] = DataRoot;
+        return SCP_CmdRegistry.Dispatch("globe", iArgs);
+    }
+
+    void Run(SCP_Ui g, string iLabel, Dictionary<string, string> iArgs)
+    {
+        SCP_CmdResult r;
+        try { r = Dispatch(iArgs); }
+        catch (Exception e) { r = SCP_CmdResult.Fail(1, "炸了：" + e.GetType().Name + ": " + e.Message); }
+        string aBody = string.Join("\n", r.Lines);
+        g.SetField(SLog, $"[{DateTime.Now:HH:mm:ss} {iLabel}] exit {r.ExitCode}\n{aBody}");
+        m_Message = (r.ExitCode == 0 ? "" : "✗ ") + (r.Lines.FirstOrDefault(l => l.Trim().Length > 0) ?? iLabel);
+        if (r.ExitCode == 0) { m_Version++; m_Dirty = true; }
+    }
+
+    void DrawLog(SCP_Ui g)
+    {
+        string aLog = g.FieldValue(SLog, "");
+        if (aLog.Length == 0) return;
+        using var aFold = g.Fold("紀錄（上一個動作）", P + "fold/log", iDefaultOpen: true);
+        if (aFold.Open) g.Paragraph(aLog);
+    }
+
+    // ── 小工具 ─────────────────────────────────────────────
+    static string Def(string iId) => s_Defaults.TryGetValue(iId, out string? d) ? d : "";
+    static string V(SCP_Ui g, string iId) => g.FieldValue(iId, Def(iId)).Trim();
+    static string Field(SCP_Ui g, string iLabel, string iId) => g.TextField(iLabel, Def(iId), iId).Trim();
+    static bool TryD(string s, out double d) => double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out d) && !double.IsNaN(d) && !double.IsInfinity(d);
+    static double Zoom(SCP_Ui g) => TryD(V(g, FZoom), out double z) && z > 0 ? z : 1;
+    static void Nudge(SCP_Ui g, string iId, double iDelta)
+    {
+        double v = TryD(V(g, iId), out double d) ? d : 0;
+        v += iDelta;
+        if (iId == FLat) v = Math.Max(-89, Math.Min(89, v));
+        else { while (v > 180) v -= 360; while (v < -180) v += 360; }
+        g.SetField(iId, F(v));
+    }
+    static string F(double d) => d.ToString("0.###", CultureInfo.InvariantCulture);
+}

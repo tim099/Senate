@@ -35,6 +35,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Goodnight](Workflows/Goodnight.md) | 晚安入口（`scp-goodnight` skill 的內容）：只有第一步與回傳檔管不到的幾格（persona 顯式、親筆、private_body） |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
 | [Sculpture](Workflows/Sculpture.md) | 3D 體積雕刻 `senate cmd sculpture`：十個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享路徑 |
+| [Globe](Workflows/Globe.md) | 可繪製球面 `senate cmd globe`（prototype）：等角立方體球資料格式（meta 基底、事件正本、分塊快取）、經緯度畫點／線／多邊形／油漆桶、Undo、預覽渲染與後台頁 |
 
 ## API — 介面規格
 
