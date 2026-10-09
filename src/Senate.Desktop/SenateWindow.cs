@@ -36,6 +36,7 @@ public sealed class SenateWindow : IDisposable
     IWindow? m_Window;
     GL? m_Gl;
     SenateTextureCache? m_Textures;
+    SenateGpuViews? m_GpuViews;
     IInputContext? m_Input;
     ImGuiController? m_Controller;
 
@@ -346,6 +347,13 @@ public sealed class SenateWindow : IDisposable
         // 圖片（頭像）—— 貼圖要 GL，所以只能在這裡裝（TASK-0317）。
         m_Textures = new SenateTextureCache(m_Gl);
         m_Renderer.Textures = m_Textures;
+
+        // GPU 即時畫面（TASK-0470）：球面預覽在這顆 context 裡畫進貼圖，不讀回 CPU。
+        // 登記之後頁面才會走 `gpu:`；`SENATE_GLOBE_GPU=off` ⇒ 不登記 ⇒ 頁面退回 CPU（使用者的逃生門，也是退回路徑的活體驗法）。
+        m_GpuViews = new SenateGpuViews(m_Gl);
+        m_Renderer.GpuViews = m_GpuViews;
+        if (!string.Equals(Environment.GetEnvironmentVariable("SENATE_GLOBE_GPU"), "off", StringComparison.OrdinalIgnoreCase))
+            SCP_GuiGpuViews.RegisterPainter(typeof(SCP.Core.Globe.SCP_GlobeGpuScene));
 
         // 視窗 icon —— 必須在窗開好之後（那時才有 HWND）。
         // 🩸 GLFW 撈的是名為 GLFW_ICON 的資源，apphost 埋的是數字 ID 32512 ⇒ 名字對不上，
@@ -699,6 +707,9 @@ public sealed class SenateWindow : IDisposable
         // 貼圖要在 GL context 還活著的時候刪。
         m_Renderer.Textures = null;
         m_Textures?.Dispose();
+        SCP_GuiGpuViews.UnregisterPainter(typeof(SCP.Core.Globe.SCP_GlobeGpuScene));
+        m_Renderer.GpuViews = null;
+        m_GpuViews?.Dispose();
         m_Controller?.Dispose();
         m_Input?.Dispose();
         m_Gl?.Dispose();

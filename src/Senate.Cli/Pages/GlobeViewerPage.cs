@@ -4,6 +4,10 @@
 //          ⛔ 不經過檔案：view.png 被別的程式鎖住（預覽軟體／同步工具／防毒）時，舊做法寫不進去、畫面停在舊圖而沒有任何一層喊。
 // 數值影響：每次寫入成功、或視角參數變了，就重渲一張；渲染在背景跑，畫面先留上一張。
 //          TopBar 的「輸出」也走 `cmd globe op=render export=1`（檔名與資料夾由 SCP_GlobePaths 決定），在背景跑、不擋畫面。
+// GPU（TASK-0470）：視窗宿主登記了球面畫家（SCP_GuiGpuViews.CanPaint）且「GPU 透視」開著 ⇒ 預覽改走 `gpu:`：
+//          頁面只放場景（狀態＋透視鏡頭＋疊圖開關），像素由視窗的 GL 畫、格子快取在 GPU 上（只上傳變了的分塊），⛔ 不讀回 CPU。
+//          宿主不能畫（文字模式、SENATE_GLOBE_GPU=off）或回報失敗 ⇒ 退回上面那條 CPU 預覽，並把原因印在頁面上。
+//          ⚠ CLI 的 render／export 不走這裡，仍是 CPU（格子回讀的正本）。
 #nullable enable
 using System.Globalization;
 using System.Threading.Tasks;
@@ -21,7 +25,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
     const float ViewSide = 720f;
     const string P = "globe/";
     const string FLat = P + "f/center_lat", FLon = P + "f/center_lon", FZoom = P + "f/zoom", FGrat = P + "f/graticule";
-    const string TSeams = P + "t/seams", TGrat = P + "t/graticule", TZones = P + "t/zones";
+    const string TSeams = P + "t/seams", TGrat = P + "t/graticule", TZones = P + "t/zones", TGpu = P + "t/gpu";
     const string FZoneId = P + "f/zone_id", FZoneTitle = P + "f/zone_title", FZoneBbox = P + "f/zone_bbox", FZoneStatus = P + "f/zone_status";
     const string FColor = P + "f/color", FBase = P + "f/base";
     const string FPLat = P + "f/p_lat", FPLon = P + "f/p_lon", FRadius = P + "f/radius", FWidth = P + "f/width", FMax = P + "f/max_cells";
@@ -179,6 +183,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
             g.Toggle("經緯線", true, TGrat);
             g.Toggle("施工區框線", true, TZones);
             g.Toggle("面接縫", false, TSeams);
+            if (GpuPainterAvailable) g.Toggle("GPU 透視（即時）", true, TGpu);
         }
         using (g.Row())
         {
@@ -192,6 +197,7 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
             if (g.Button("整顆", P + "btn/whole")) g.SetField(FZoom, "1");
         }
         g.Note("在圖上拖曳＝轉動地球、滾輪＝縮放（視窗模式）。");
+        if (DrawGpuView(g)) return;
         PumpRender(g);
         if (SCP_GuiImageStore.Has(ViewKey))
         {
@@ -203,11 +209,96 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         if (m_Render != null) g.Note("渲染中…（畫面是上一張）");
     }
 
-    /// <summary>上一次讀好的狀態（版本＝m_Version）；背景渲染執行緒讀寫，⛔ 只整份換、不就地改。</summary>
-    (int Version, SCP_GlobeState State, List<SCP_GlobeZone> Zones)? m_StateCache;
+    /// <summary>
+    /// 上一次讀好的狀態（版本＝m_Version）；背景執行緒寫、繪圖執行緒讀，⛔ 只整份換、不就地改。
+    /// ⚠ 用參考型別而不是 nullable tuple：多欄位的 struct 跨執行緒賦值不保證原子，讀到一半新一半舊的不會報錯。
+    /// </summary>
+    sealed record StateSnap(int Version, SCP_GlobeState State, List<SCP_GlobeZone> Zones);
+    volatile StateSnap? m_StateCache;
 
     /// <summary>拖曳中（低解析度快速重渲）；放開後簽名變了 ⇒ 補一張全解析度。</summary>
     bool m_Dragging;
+
+    // ── GPU 即時預覽（TASK-0470）──────────────────────────
+    public const string GpuKey = "globe/gpu-view";
+    static bool GpuPainterAvailable => SCP_GuiGpuViews.CanPaint(typeof(SCP_GlobeGpuScene));
+    Task? m_StateLoad;
+    string? m_StateLoadError;
+    string m_GpuSig = "";
+    long m_GpuPut;
+
+    /// <summary>
+    /// 走 GPU 就畫完回 true；不走（宿主不能畫／開關關著／這一幀的場景被宿主回報失敗）回 false ⇒ 呼叫端走 CPU 預覽。
+    /// 不走的原因印在頁面上（「GPU 壞了」跟「本來就沒有 GPU」要分得開）。
+    /// </summary>
+    bool DrawGpuView(SCP_Ui g)
+    {
+        if (!GpuPainterAvailable) { g.Note("這個宿主沒有 GPU 畫面（文字模式，或環境變數 SENATE_GLOBE_GPU=off）⇒ 用 CPU 正交預覽。"); return false; }
+        if (!g.ToggleValue(TGpu, true)) { g.Note("GPU 透視關著 ⇒ 用 CPU 正交預覽。"); return false; }
+        EnsureStateLoaded();
+        if (m_StateLoadError != null) { g.Note("讀球面狀態失敗：" + m_StateLoadError); return false; }
+        var aCached = m_StateCache;
+        if (aCached == null) { g.Note("讀取球面狀態中…"); return true; }
+
+        if (!TryD(V(g, FLat), out double la) || !TryD(V(g, FLon), out double lo) || !TryD(V(g, FZoom), out double z) || !TryD(V(g, FGrat), out double gr))
+        { g.Note("視角欄位要是數字"); return true; }
+        var cam = new SCP_GlobeCamera
+        {
+            CenterLat = Math.Max(-89.9, Math.Min(89.9, la)), CenterLon = lo,
+            Zoom = Math.Max(SCP_GlobeCamera.MinZoom, Math.Min(SCP_GlobeCamera.MaxZoom, z)),
+            Width = (int)ViewSide, Height = (int)ViewSide,
+        };
+        bool aZones = g.ToggleValue(TZones, true);
+        double aGrat = g.ToggleValue(TGrat, true) ? gr : 0;
+        bool aSeams = g.ToggleValue(TSeams);
+        string aSig = string.Join("|", F(cam.CenterLat), F(cam.CenterLon), F(cam.Zoom), F(aGrat), aZones ? "1" : "0", aSeams ? "1" : "0", aCached.Version.ToString(CultureInfo.InvariantCulture));
+        if (aSig != m_GpuSig)
+        {
+            var aScene = new SCP_GlobeGpuScene(aCached.State, aCached.Version, cam, aGrat, aSeams,
+                                               aZones ? aCached.Zones : new List<SCP_GlobeZone>());
+            m_GpuPut = SCP_GuiGpuViews.Put(GpuKey, aScene, cam.Width, cam.Height);
+            m_GpuSig = aSig;
+        }
+        // 宿主對**這一版**回報失敗 ⇒ 這一幀退回 CPU，原因照印（換了視角／狀態就會重試）
+        if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus aSt) && aSt.Version == m_GpuPut && aSt.Error != null)
+        {
+            g.Note("GPU 預覽失敗 ⇒ 退回 CPU：" + aSt.Error);
+            return false;
+        }
+        SCP_GuiPointer? aPtr = g.ImageInteractive(SCP_GuiGpuViews.Ref(GpuKey), ViewSide, "球面預覽（GPU）", P + "img/gpu");
+        if (aPtr != null) ApplyPointer(g, aPtr);
+        if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out aSt) && aSt.Error == null) g.Note(aSt.Info);
+        if (m_StateLoad != null) g.Note("重新讀取球面狀態中…（畫面是上一版）");
+        return true;
+    }
+
+    /// <summary>狀態版本變了就在背景重讀（GPU 與 CPU 兩條路共用 m_StateCache；⛔ 只整份換）。</summary>
+    void EnsureStateLoaded()
+    {
+        if (m_StateLoad != null)
+        {
+            if (!m_StateLoad.IsCompleted) return;
+            try { m_StateLoad.Wait(); m_StateLoadError = null; }
+            catch (Exception e) { m_StateLoadError = (e.InnerException ?? e).Message; }
+            m_StateLoad = null;
+        }
+        if (m_StateCache != null && m_StateCache.Version == m_Version) return;
+        if (m_LoadFailedVersion == m_Version) return;   // 同一版讀失敗過 ⇒ 不每幀重試（按「重新讀取」會換版本）
+        int aVersion = m_Version;
+        string aRoot = DataRoot;
+        Action aJob = () =>
+        {
+            var store = new SCP_GlobeStore(new SCP_GlobePaths(new SCP_DataRoot(aRoot)));
+            try { m_StateCache = new StateSnap(aVersion, store.Load(), new SCP_GlobeZones(store.Paths).List()); }
+            catch { m_LoadFailedVersion = aVersion; throw; }
+        };
+        if (SCP_GuiHost.RedrawsContinuously) m_StateLoad = Task.Run(aJob);
+        else
+        {
+            try { aJob(); m_StateLoadError = null; } catch (Exception e) { m_StateLoadError = e.Message; }
+        }
+    }
+    int m_LoadFailedVersion = int.MinValue;
 
     void ApplyPointer(SCP_Ui g, SCP_GuiPointer p)
     {
@@ -256,11 +347,11 @@ public sealed class GlobeViewerPage : SCP_GuiToolPage
         {
             var store = new SCP_GlobeStore(new SCP_GlobePaths(new SCP_DataRoot(aRoot)));
             // 拖曳時每幀都在渲染 ⇒ 狀態只在版本變了（寫入成功／重新讀取）才重讀，其餘沿用上一份（渲染只讀不寫）
-            (int Version, SCP_GlobeState State, List<SCP_GlobeZone> Zones)? aCached = m_StateCache;
-            if (aCached == null || aCached.Value.Version != aVersion)
-                aCached = m_StateCache = (aVersion, store.Load(), new SCP_GlobeZones(store.Paths).List());
-            if (aZones) v.Zones = aCached.Value.Zones;
-            byte[] rgba = SCP_GlobeRender.RenderRgba(aCached.Value.State, v);
+            StateSnap? aCached = m_StateCache;
+            if (aCached == null || aCached.Version != aVersion)
+                aCached = m_StateCache = new StateSnap(aVersion, store.Load(), new SCP_GlobeZones(store.Paths).List());
+            if (aZones) v.Zones = aCached.Zones;
+            byte[] rgba = SCP_GlobeRender.RenderRgba(aCached.State, v);
             SCP_GuiImageStore.Put(ViewKey, rgba, v.Width, v.Height);   // 整份換、不就地改（渲染執行緒與繪圖執行緒各讀各的）
             return "";
         };

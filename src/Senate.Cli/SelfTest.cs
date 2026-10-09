@@ -200,6 +200,10 @@ public static partial class SelfTest
         One(nameof(GlobeRegridCleanRoom), "globe", GlobeRegridCleanRoom),
         One(nameof(GlobeExportCleanRoom), "globe", GlobeExportCleanRoom),
         One(nameof(GlobeZoneCleanRoom), "globe", GlobeZoneCleanRoom),
+        // 球面 GPU 預覽（TASK-0470）：本體在 SelfTest.GlobeGpu.cs
+        One(nameof(GlobeGpuParityCleanRoom), "globe", GlobeGpuParityCleanRoom),
+        One(nameof(GlobeGpuTileSyncCleanRoom), "globe", GlobeGpuTileSyncCleanRoom),
+        One(nameof(GlobeGpuPageFallbackCleanRoom), "globe", GlobeGpuPageFallbackCleanRoom),
         One(nameof(SculptureCommissionCleanRoom), "sculpture", SculptureCommissionCleanRoom),
         // 交易所報酬率／法幣（TASK-0371）：本體在 SelfTest.Portfolio0371.cs
         One(nameof(PortfolioFxParserCleanRoom), "market", PortfolioFxParserCleanRoom),

@@ -32,6 +32,12 @@ public sealed class GuiImGuiRenderer
     /// </summary>
     public SenateTextureCache? Textures { get; set; }
 
+    /// <summary>
+    /// `gpu:` Image 節點的畫家（TASK-0470）。由 <see cref="SenateWindow"/> 在 GL 起來之後塞進來；
+    /// 沒設 ⇒ 畫佔位框並說「這個宿主沒有 GPU 畫面」（頁面另外看 SCP_GuiGpuViews.CanPaint 決定要不要退回 CPU）。
+    /// </summary>
+    public SenateGpuViews? GpuViews { get; set; }
+
     /// <summary>這一幀被按下的按鈕 id（下一幀餵回頁面）。</summary>
     public string? ClickedId { get; private set; }
 
@@ -334,6 +340,28 @@ public sealed class GuiImGuiRenderer
                 // 正方形頭像。非方形的圖**裁中間**（UV 取中間那一塊），⛔ 不壓扁。
                 // 沒有圖／讀不了 ⇒ 灰色佔位框，滑鼠提示說為什麼 —— 「沒有圖」與「圖壞了」要分得開。
                 float aSide = m_Style.Scaled(iNode.ImageSize > 0f ? iNode.ImageSize : 48f);
+                if (SCP_GuiGpuViews.IsGpu(iNode.Value))
+                {
+                    // GPU 即時畫面（TASK-0470）：場景交給 GpuViews 畫進貼圖，整張照比例縮進框；失敗 ⇒ 佔位框＋原因（⛔ 不假裝有圖）
+                    string aGpuKey = SCP_GuiGpuViews.KeyOf(iNode.Value)!;
+                    string aWhy = "這個宿主沒有 GPU 畫面";
+                    if (GpuViews != null && GpuViews.TryPaint(aGpuKey, out uint aGpuTex, out int aGw, out int aGh, out aWhy))
+                    {
+                        float aK = aSide / Math.Max(aGw, aGh);
+                        var aSize = new Vector2(aGw * aK, aGh * aK);
+                        Vector2 aAt = ImGui.GetCursorScreenPos();
+                        ImGui.Image((IntPtr)aGpuTex, aSize);
+                        if (iNode.Interactive && iNode.Id.Length > 0) CapturePointer(iNode.Id, aAt, aSize);
+                    }
+                    else
+                    {
+                        Vector2 aP = ImGui.GetCursorScreenPos();
+                        ImGui.GetWindowDrawList().AddRectFilled(aP, aP + new Vector2(aSide, aSide), ImGui.GetColorU32(new Vector4(0.35f, 0.35f, 0.38f, 1f)), 6f);
+                        ImGui.Dummy(new Vector2(aSide, aSide));
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip(T(iNode.Text) + "（" + aWhy + "）");
+                    }
+                    break;
+                }
                 SenateTextureCache.Entry? aTex = iNode.Value.Length > 0 ? Textures?.Get(iNode.Value, iNode.ImageFit) : null;
                 if (iNode.ImageFit && aTex != null && aTex.Handle != 0)
                 {
