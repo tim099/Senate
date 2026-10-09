@@ -74,6 +74,28 @@ public static partial class SelfTest
             File.Move(Path.Combine(store.Folder("bed"), "work.json"), Path.Combine(store.Folder("bed"), "work.saved"));
             Check(Space("room").Voxels.Count == finalCount && SculptRoom.V(Edit("room", "show"), "credit_count") == "2" && Space("room").Voxels.Get(22, 2, 0) == 77, "刪快取及來源書卡後仍可獨立重播與Credit");
             Check(pay.Consumed == 11 && credit.Total == 10, "除自發建立10與展區匯入1外，組裝移動UndoRedo全免費、不另領薪");
+            // TASK-0473 歷史索引：首讀解析全部、再讀零解析；新事件只解析新的；刪／壞索引重算一致；改過的舊檔從那一筆起重算。
+            var roomPaths = store.SpacePaths("room");
+            static string Sig(SCP_SculptHistory h) => string.Join(";", h.Credits().Select(c => c.work + "|" + c.author + "|" + c.revision)) + "#" + h.Active.Count + "/" + h.Redo.Count;
+            File.Delete(roomPaths.HistoryCacheFile);
+            int total = SCP_SculptStore.ListEvents(roomPaths).Count;
+            var full = SCP_SculptHistory.Read(roomPaths); var again = SCP_SculptHistory.Read(roomPaths);
+            Check(full.Parsed == total && again.Parsed == 0 && Sig(again) == Sig(full) && File.Exists(roomPaths.HistoryCacheFile) && SCP_SculptHistory.Read(roomPaths).Credits().Count == 2, "歷史索引：首讀解析" + full.Parsed + "/" + total + "、再讀解析" + again.Parsed + "且結果相同");
+            Check(Edit("room", "undo").ExitCode == 0, "索引下Undo");
+            var undone = SCP_SculptHistory.Read(roomPaths);
+            Check(undone.Parsed <= 1 && undone.Redo.Count == full.Redo.Count + 1 && Sig(undone) != Sig(full), "新事件最多只解析那一檔（" + undone.Parsed + "），讀到的是新堆疊：" + Sig(undone));
+            Check(Edit("room", "redo").ExitCode == 0 && Sig(SCP_SculptHistory.Read(roomPaths)) == Sig(full), "索引下Redo回到原堆疊與Credit");
+            string expect = Sig(SCP_SculptHistory.Read(roomPaths)); total = SCP_SculptStore.ListEvents(roomPaths).Count;
+            File.WriteAllText(roomPaths.HistoryCacheFile, "{壞掉");
+            var rebuilt = SCP_SculptHistory.Read(roomPaths);
+            Check(rebuilt.Parsed == total && Sig(rebuilt) == expect, "壞索引全重算且結果一致");
+            var files = SCP_SculptStore.ListEvents(roomPaths);
+            File.SetLastWriteTimeUtc(files[2].Full, DateTime.UtcNow.AddMinutes(5));
+            bool? known = SCP_SculptHistoryIndex.KnownReadable(roomPaths, files[2]);
+            var touched = SCP_SculptHistory.Read(roomPaths);
+            Check(known == null && touched.Parsed == files.Count - 2 && Sig(touched) == expect && SCP_SculptHistoryIndex.KnownReadable(roomPaths, files[2]) == true, "改過的舊檔從那一筆起重算（解析" + touched.Parsed + "／應" + (files.Count - 2) + "）");
+            File.Delete(roomPaths.CacheFile);
+            Check(Space("room").Voxels.Count == finalCount && Space("room").Voxels.Get(22, 2, 0) == 77, "索引在場時voxel快取重建與水位比對結果不變");
             // 固定時鐘連續落子仍需嚴格排序，否則刪快取會交換同毫秒的填與挖。
             var engine = store.Engine(store.Load("leg"), room.Data); engine.Clock = () => new DateTime(2026, 1, 1);
             engine.Box(new SCP_SculptBoxArgs { X1 = 0, X2 = 0, Y1 = 0, Y2 = 0, Z1 = 0, Z2 = 0, Color = 19 });

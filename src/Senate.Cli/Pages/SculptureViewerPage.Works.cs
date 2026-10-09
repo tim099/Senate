@@ -16,12 +16,17 @@ public sealed partial class SculptureViewerPage
     const string SubjectWork = "work:";
     List<SCP_SculptWork> m_Works = new();
     readonly Dictionary<string, (string Notes, string Todo)> m_WorkTexts = new();
-    readonly Dictionary<string, List<SCP_SculptCredit>> m_WorkCredits = new();
+    Dictionary<string, List<SCP_SculptCredit>> m_WorkCredits = new();
+    Dictionary<string, string> m_WorkCreditErrors = new();
+    Task<(Dictionary<string, List<SCP_SculptCredit>> Credits, Dictionary<string, string> Errors)>? m_CreditJob;
+    string m_WorksRoot = "\0";
     string m_WorksError = "";
 
     void ReloadWorks(SCP_DataRoot data)
     {
-        m_Works = new(); m_WorkTexts.Clear(); m_WorkCredits.Clear(); m_WorksError = "";
+        m_WorksRoot = data.Value;
+        m_Works = new(); m_WorkTexts.Clear(); m_WorkCredits = new(); m_WorkCreditErrors = new(); m_WorksError = ""; m_CreditJob = null;
+        var paths = new List<(string Id, SCP_SculptPaths Paths)>();
         try
         {
             var store = new SCP_SculptWorks(data);
@@ -29,10 +34,30 @@ public sealed partial class SculptureViewerPage
             foreach (var card in m_Works)
             {
                 m_WorkTexts[card.id] = (store.ReadText(card.id, false), store.ReadText(card.id, true));
-                m_WorkCredits[card.id] = SCP_SculptHistory.Read(store.SpacePaths(card.id)).Credits();
+                paths.Add((card.id, store.SpacePaths(card.id)));
             }
         }
-        catch (Exception e) { m_WorksError = "作品讀取失敗：" + e.Message; }
+        catch (Exception e) { m_WorksError = "作品讀取失敗：" + e.Message; return; }
+        // Credit 走歷史索引（TASK-0473）：命中只 stat；第一次讀大作品要解析事件檔 ⇒ 會重畫的宿主丟背景，畫面先寫「計算中」。
+        var job = () =>
+        {
+            var credits = new Dictionary<string, List<SCP_SculptCredit>>(); var errors = new Dictionary<string, string>();
+            foreach (var (id, p) in paths)
+            {
+                try { credits[id] = SCP_SculptHistory.Read(p).Credits(); }
+                catch (Exception e) { errors[id] = e.Message; }   // 一件壞掉不拖垮整份清單
+            }
+            return (credits, errors);
+        };
+        if (SCP_GuiHost.RedrawsContinuously) m_CreditJob = Task.Run(job);
+        else (m_WorkCredits, m_WorkCreditErrors) = job();   // 不會重畫的宿主（CLI 單次 render）：背景算等於把答案丟掉
+    }
+    void PumpCredits()
+    {
+        if (m_CreditJob == null || !m_CreditJob.IsCompleted) return;
+        try { (m_WorkCredits, m_WorkCreditErrors) = m_CreditJob.Result; }
+        catch (Exception e) { m_WorksError = "Credit 計算失敗：" + (e.InnerException ?? e).Message; }
+        m_CreditJob = null;
     }
     static bool PersonalSpace(SCP_Ui g) => g.FieldValue(SpaceSel + "/value", "shared") == "work";
     string SelectedWork(SCP_Ui g)
@@ -104,7 +129,10 @@ public sealed partial class SculptureViewerPage
         g.Label(card.title + "｜" + selected + "｜作者 " + card.owner + "｜" + card.Dimensions);
         if (card.commission.Length > 0) g.Note("委託：" + card.commission + "｜來源 " + card.commission_ref + "｜建立免費、報酬10 token（" + card.status + "）");
         if (card.parent_work.Length > 0) g.Note("任務子作品｜父作品 " + card.parent_work + "｜建立免費，不另領薪");
-        if (m_WorkCredits.TryGetValue(selected, out var credits) && credits.Count > 0)
+        PumpCredits();
+        if (m_CreditJob != null) g.Note("Credit 計算中…（第一次讀大作品要解析事件檔，之後走本機快取）");
+        else if (m_WorkCreditErrors.TryGetValue(selected, out string? creditError)) g.Note("Credit 讀取失敗：" + creditError);
+        else if (m_WorkCredits.TryGetValue(selected, out var credits) && credits.Count > 0)
         {
             g.Label("Credit（自動）");
             foreach (var credit in credits) g.Note(credit.title + "（" + credit.work + "）｜by " + credit.author + "｜版本 " + credit.revision);

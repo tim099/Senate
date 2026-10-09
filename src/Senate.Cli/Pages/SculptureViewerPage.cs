@@ -195,6 +195,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     // ===========================================================
     void Reload(string iPersona, string iScope)
     {
+        // 作品清單與 persona／層無關：只換 persona（進頁第二幀下拉補上預設值就是這種）⛔ 不重讀作品（TASK-0473 第二次凍結）
+        bool aWorks = m_Dirty || m_WorksRoot != (m_Model.AgentCommandsRoot.Value ?? "");
         m_Dirty = false;
         m_LoadedPersona = iPersona;
         m_LoadedScope = iScope;
@@ -209,7 +211,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             return;
         }
         var aData = new SCP_DataRoot(m_DataRoot);
-        ReloadWorks(aData);
+        if (aWorks) ReloadWorks(aData);
         try
         {
             foreach (var kv in new SCP_SculptEngine(aData).LoadExhibits()) m_Exhibits.Add((kv.Key, kv.Value));
