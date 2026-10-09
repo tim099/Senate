@@ -2,9 +2,10 @@
 // 物理意義：這幾格錯了都不會叫：
 //           ① 法幣匯率表解析：方向反了（沒取倒數）、底幣不是 USD、表裡沒這個幣 —— 前兩種出來的數字都「合理」。
 //           ② 平均成本重算：成本、已實現、報酬率；開帳快照不准重拍；帳上多出來的數量不准被當成 0 成本算進報酬。
-//           ③ 兌換溢位：法幣單位極小，目標券永久券超過 int 上限時 AddE8 會靜默繞成負數 ⇒ 必須在落盤前擋下。
+//           ③ 兌換溢位：法幣單位極小（200 BTC→KRW 兩百多億張）⇒ 永久券是 long（TASK-0476 由 int 放寬）；超過 long 上限仍在落盤前擋下。
 // 數值影響：只在 temp 目錄建假的資料根與 letters 根，跑完刪；⛔ 不碰真實資料。
 #nullable enable
+using SCP.Core.Cmd;
 using SCP.Core.Market;
 using SCP.Core.Paths;
 using SCP.Core.Voucher;
@@ -110,7 +111,7 @@ public static partial class SelfTest
 
     static CheckRow PortfolioSwapOverflowGuardCleanRoom()
     {
-        const string aName = "兌換溢位守衛：目標券永久券會超過 int 上限 ⇒ 落盤前拒絕、兩個券檔都不動（淨室）";
+        const string aName = "大額貨幣券（TASK-0476）：200 BTC→KRW 兩百多億張成功並逐位落盤、大額扣券；目標券簿會超過 long 上限 ⇒ 落盤前拒絕、兩個券檔都不動（淨室）";
         string aTmp = Path.Combine(Path.GetTempPath(), "senate_swapovf_" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
@@ -126,16 +127,50 @@ public static partial class SelfTest
             DateTime aT0 = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
             SaveBook(aLetters, "probe", "BTC", 200, aT0);
 
-            // 200 BTC × 100000 / 0.0007 ≈ 2.86e10 KRW > int.MaxValue
+            // 200 BTC × 100000 / 0.0007 ＝ 28,571,428,571.43 KRW（int 上限的 13 倍）⇒ 現在要成功，而且讀回逐位相同（TASK-0476）
             var aBig = SCP_VoucherSwap.ExecuteSwap(aLetters, aData, "probe", "btc", "krw", 200, aT0.AddMinutes(1));
-            var aBtcAfter = SCP_VoucherStore.Load(aLetters, "probe", "btc", out _);
-            bool aRejected = !aBig.Success && (aBig.Error ?? "").Contains("上限") && aBtcAfter.Permanent == 200;
-            // 對照組：1 BTC ≈ 1.43 億 KRW，在上限內 ⇒ 要成功
-            var aSmall = SCP_VoucherSwap.ExecuteSwap(aLetters, aData, "probe", "btc", "krw", 1, aT0.AddMinutes(2));
-            bool aSmallOk = aSmall.Success && aSmall.ToNewPermanent > 0;
+            var aKrw = SCP_VoucherStore.Load(aLetters, "probe", "krw", out _);
+            bool aBigOk = aBig.Success && aKrw.Permanent == 28_571_428_571L && aKrw.FractionalE8 == 42_857_142L
+                          && SCP_VoucherStore.Load(aLetters, "probe", "btc", out _).Permanent == 0;
+            // 大額扣券：扣 250 億張，存檔讀回
+            bool aConsumed = SCP_VoucherStore.TryConsume(aKrw, 25_000_000_000L, aT0.AddMinutes(2), out string? aWhy)
+                             && SCP_VoucherStore.Save(aLetters, aKrw, aT0.AddMinutes(2), "TEST", out _, out _)
+                             && SCP_VoucherStore.Load(aLetters, "probe", "krw", out _).Permanent == 3_571_428_571L;
+            // 🔴 守衛仍在：目標券簿已接近 long 上限 ⇒ 再換 1 BTC（≈1.43 億張）要擋下，BTC 與 KRW 都不動
+            SaveBook(aLetters, "probe", "BTC", 1, aT0.AddMinutes(3));
+            SaveBook(aLetters, "probe", "KRW", long.MaxValue - 10, aT0.AddMinutes(3));
+            var aOver = SCP_VoucherSwap.ExecuteSwap(aLetters, aData, "probe", "btc", "krw", 1, aT0.AddMinutes(4));
+            bool aRejected = !aOver.Success && (aOver.Error ?? "").Contains("上限")
+                             && SCP_VoucherStore.Load(aLetters, "probe", "btc", out _).Permanent == 1
+                             && SCP_VoucherStore.Load(aLetters, "probe", "krw", out _).Permanent == long.MaxValue - 10;
+            // 指令層：`voucher` 的 amount 走 long 解析 —— 30 億張永久券發得進、扣得掉；限時券單批超過 int ⇒ exit 2、一張都不發
+            SCP_Cmd aCmd = SCP_CmdRegistry.Find("voucher") ?? throw new InvalidOperationException("找不到 voucher Cmd");
+            int Run(params (string K, string V)[] iArgs)
+            {
+                var a = new Dictionary<string, string> { ["letters_root"] = aLettersDir.Replace('\\', '/'), ["persona"] = "probe", ["voucher"] = "jpy", ["region"] = "TEST" };
+                foreach (var (k, v) in iArgs) a[k] = v;
+                (SCP_CmdArgs? aBound, List<string> aErr) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, a);
+                if (aBound == null) throw new InvalidOperationException("Bind：" + string.Join("；", aErr));
+                return aCmd.Execute(aBound).ExitCode;
+            }
+            // voucher 是 ⤷Server 指令 ⇒ 就地跑本體（同 SelfTest.BankArrival0441）：⛔ 不碰線上 Server、不碰真實資料樹
+            bool aWasIn = Senate.Core.ServerContext.InServer; string aWasId = Senate.Core.ServerContext.ServerId;
+            int aGrant, aUse, aExp; long aLeft;
+            try
+            {
+                Senate.Core.ServerContext.InServer = true;
+                Senate.Core.ServerContext.ServerId = SCP.Core.Proc.SCP_ServerIds.Default;
+                aGrant = Run(("op", "grant"), ("amount", "3000000000"));
+                aUse = Run(("op", "consume"), ("amount", "2500000000"));
+                aLeft = SCP_VoucherStore.Load(aLetters, "probe", "jpy", out _).Permanent;
+                aExp = Run(("op", "grant"), ("amount", "3000000000"), ("expires_at", "2099-01-01T00:00:00Z"));
+            }
+            finally { Senate.Core.ServerContext.InServer = aWasIn; Senate.Core.ServerContext.ServerId = aWasId; }
+            int aBatches = SCP_VoucherStore.Load(aLetters, "probe", "jpy", out _).Expiring.Count;
+            bool aCliOk = aGrant == 0 && aUse == 0 && aLeft == 500_000_000L && aExp == 2 && aBatches == 0;
             return new CheckRow(aName,
-                $"🔴 200 BTC→KRW 拒絕且 BTC 仍 {aBtcAfter.Permanent} 張={aRejected}（{aBig.Error}）／對照 1 BTC→{aSmall.ToNewPermanent} KRW 成功={aSmallOk}",
-                aRejected && aSmallOk ? CheckResult.Pass : CheckResult.Fail);
+                $"CLI 發 30 億 exit {aGrant}／扣 25 億 exit {aUse}／剩 {aLeft}／限時券超 int exit {aExp}（批次 {aBatches}）={aCliOk}／200 BTC→KRW 成功={aBigOk}（{aKrw.Permanent} 張＋{aKrw.FractionalE8}/1e8；{aBig.Error}）／扣 250 億讀回={aConsumed}（{aWhy}）／🔴 近 long 上限再換 拒絕且兩檔不動={aRejected}（{aOver.Error}）",
+                aCliOk && aBigOk && aConsumed && aRejected ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
         finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
@@ -210,7 +245,7 @@ public static partial class SelfTest
         finally { try { Directory.Delete(aTmp, true); } catch (Exception) { } }
     }
 
-    static void SaveBook(SCP_LettersRoot iLetters, string iPersona, string iVoucher, int iPermanent, DateTime iNow)
+    static void SaveBook(SCP_LettersRoot iLetters, string iPersona, string iVoucher, long iPermanent, DateTime iNow)
     {
         var aBook = SCP_VoucherStore.Load(iLetters, iPersona, iVoucher, out string? aProblem);
         if (aProblem != null) throw new Exception("load: " + aProblem);

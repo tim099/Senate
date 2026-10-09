@@ -586,7 +586,8 @@ public sealed class Cmd_Bank : ServerDelegateCmd
             return SCP_CmdResult.Fail(1, "✗ 錢包讀不了（" + aVoucherProblem + "）⇒ **這筆沒有付**"
                                        + "　⛔ 讀不到券不等於沒有券");
         DateTime aNow = DateTime.UtcNow;
-        int aWalletBalance = aBook.Spendable(aNow);
+        // 券簿的數量是 long（TASK-0476：給貨幣券用）；這裡是**酒館券**，系統內一律在 int 範圍 ⇒ 鉗位收窄（不會繞成負數）。
+        int aWalletBalance = (int)Math.Min(aBook.Spendable(aNow), int.MaxValue);
         int aTokenBalance = SCP_BankLedger.GetBalance(iRoot, aAcct);
 
         if (!SCP_SpendPolicy.TryPlan(aAmount, aWalletBalance, aTokenBalance, aActive,

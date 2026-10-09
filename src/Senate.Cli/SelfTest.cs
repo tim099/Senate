@@ -4773,7 +4773,7 @@ public static partial class SelfTest
                     throw new Exception(aErr2);
                 SCP_VoucherBook aBack = SCP_VoucherStore.Load(aLetters, iPersona, "canvas", out _);
                 bool aFound = aBack.TryUsageByRef("ft-probe", iReadAt, out int g, out int r, out int a);
-                return (g, r, a, aFound, aBack.Spendable(iReadAt));
+                return (g, r, a, aFound, (int)aBack.Spendable(iReadAt));   // 繪圖券在 int 範圍（TASK-0476 券簿改 long）
             }
 
             var aAll = Run("all", 10, aSettle);

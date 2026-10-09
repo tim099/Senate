@@ -179,7 +179,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         if (aFrom.Length == 0) return SCP_CmdResult.Fail(2, "✗ op=swap 缺 `from`（或 `voucher`）");
         if (aTo.Length == 0) return SCP_CmdResult.Fail(2, "✗ op=swap 缺 `to`");
 
-        if (!int.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int aAmount) || aAmount <= 0)
+        if (!long.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out long aAmount) || aAmount <= 0)
             return SCP_CmdResult.Fail(2, $"✗ amount 必須是正整數（收到 '{iArgs.Get("amount")}'）");
 
         string aData = DataRootOf(iArgs);
@@ -312,7 +312,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
     {
         string? aWhy = RequireRegion(iArgs, out string aRegion);
         if (aWhy != null) return SCP_CmdResult.Fail(2, aWhy);
-        if (!int.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int aAmount)
+        if (!long.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out long aAmount)
             || aAmount <= 0)
             return SCP_CmdResult.Fail(2, $"✗ `amount` 必須是正整數（收到 '{iArgs.Get("amount")}'）");
 
@@ -322,11 +322,14 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
         DateTime aNow = DateTime.UtcNow;
         string aExpires = iArgs.Get("expires_at").Trim();
         if (aExpires.Length == 0) aBook.Permanent += aAmount;
+        else if (aAmount > int.MaxValue)
+            // 限時券的批次是 int（繪圖券這類一律在 int 範圍；TASK-0476 只放寬永久券給貨幣券用）⇒ 明說拒絕，⛔ 不繞成負數
+            return SCP_CmdResult.Fail(2, $"✗ 限時券單批最多 {int.MaxValue} 張（收到 {aAmount}）—— 大額請發永久券（不給 expires_at）");
         else
             aBook.Expiring.Add(new SCP_VoucherBatch
             {
-                Amount = aAmount,
-                Granted = aAmount,   // ⚠ 發放量，⛔ 之後不再變動（`op=usage` 靠它答「用了幾張」）
+                Amount = (int)aAmount,
+                Granted = (int)aAmount,   // ⚠ 發放量，⛔ 之後不再變動（`op=usage` 靠它答「用了幾張」）
                 ExpiresAtUtc = aExpires,
                 GrantedAtUtc = aNow.ToString("o", CultureInfo.InvariantCulture),
                 Source = iArgs.Get("source"),
@@ -350,7 +353,7 @@ public sealed class Cmd_Voucher : ServerDelegateCmd
     {
         string? aWhy = RequireRegion(iArgs, out string aRegion);
         if (aWhy != null) return SCP_CmdResult.Fail(2, aWhy);
-        if (!int.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int aAmount)
+        if (!long.TryParse(iArgs.Get("amount"), NumberStyles.Integer, CultureInfo.InvariantCulture, out long aAmount)
             || aAmount <= 0)
             return SCP_CmdResult.Fail(2, $"✗ `amount` 必須是正整數（收到 '{iArgs.Get("amount")}'）");
 
