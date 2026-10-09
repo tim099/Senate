@@ -58,6 +58,36 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     IGLContext? m_Context;
     GL? m_Gl;
     string? m_InitError;
+    /// <summary>
+    /// 外部 GL（TASK-0472：視窗的 context，觀測頁即時預覽）。非 null ⇒ 不建隱藏視窗、不 MakeCurrent／Clear ——
+    /// 呼叫端保證那顆 context 在這個執行緒是 current，並負責保存／還原 GL 狀態（SenateGpuViews）。
+    /// </summary>
+    readonly GL? m_External;
+
+    public SenateSculptRenderer() { }
+    public SenateSculptRenderer(GL iExternal) { m_External = iExternal; }
+
+    // ── 網格快取（TASK-0472）：同一份 voxel（清單物件＋顆數＋內容雜湊）＋同一組 AO／合併旗標 ⇒ 不重建、不重傳 ──
+    Mesh? m_Mesh;
+    object? m_MeshList;
+    int m_MeshCount;
+    ulong m_MeshHash;
+    bool m_MeshAo, m_MeshMerge;
+    uint m_MeshVao, m_MeshVbo, m_MeshIbo;
+
+    /// <summary>最近一次畫的讀數（觀測頁印出來；selftest 讀它判斷網格有沒有重建）。</summary>
+    public sealed class Reading
+    {
+        public bool MeshRebuilt;
+        public double MeshMs, DrawMs;
+        public int Faces, Quads, Triangles, Voxels;
+        public override string ToString() =>
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}）｜這一幀 {DrawMs:0.0} ms";
+    }
+    public Reading LastReading { get; private set; } = new();
+
+    /// <summary>selftest 反向對照用：合併時**不看**四角 AO（⛔ 正式路徑永遠 false；selftest 在另一個組件 ⇒ 只能 public）。</summary>
+    public static bool DebugMergeIgnoreAo;
     string m_GlInfo = "";
     int m_MaxSamples;
     int m_MaxRbSize;
@@ -92,18 +122,10 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             if (!EnsureContext(out oError)) return false;
             try
             {
-                m_Context!.MakeCurrent();
-                SkyTexture? aSky = null;
-                if (!IsSkyNone(iParams.Skybox) && !ResolveSky(iParams.Skybox, out aSky, out oError)) return false;
-                FloorTexture? aFloorTex = null;
-                if (iParams.Floor?.Texture != null && !ResolveFloorTexture(iParams.Floor.Texture, out aFloorTex, out oError)) return false;
-                var aMesh = BuildMesh(iVoxels, iParams.AmbientOcclusion);
-                FloorSetup? aFloor = SolveFloor(aMesh, iParams, aFloorTex);
-                if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError)) return false;
-                var aLights = SolveLights(aMesh, aFloor, iParams);
-                oRgba = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView);
-                var aErr = m_Gl!.GetError();
-                if (aErr != GLEnum.NoError) { oRgba = Array.Empty<byte>(); oError = "OpenGL 錯誤：" + aErr; return false; }
+                if (m_External == null) m_Context!.MakeCurrent();
+                byte[]? aPixels = RenderCore(iVoxels, iParams, 0, out oError);
+                if (aPixels == null) return false;
+                oRgba = aPixels;
                 return true;
             }
             catch (Exception e)
@@ -114,9 +136,127 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             }
             finally
             {
-                try { m_Context?.Clear(); } catch (Exception) { /* 釋放 context 失敗不影響這張圖 */ }
+                if (m_External == null)
+                    try { m_Context?.Clear(); } catch (Exception) { /* 釋放 context 失敗不影響這張圖 */ }
             }
         }
+    }
+
+    /// <summary>
+    /// 畫進呼叫端給的 FBO（TASK-0472，視窗即時預覽）：⛔ 不讀回 CPU。只能在外部 GL 模式用（那顆 context 由呼叫端讓它 current）。
+    /// <para>⚠ 輸出是 GL 慣例（第 0 列在畫面**最下面**）⇒ 顯示時要上下翻（ImGui uv 用 (0,1)-(1,0)）。</para>
+    /// </summary>
+    public bool TryRenderToFbo(IReadOnlyList<SCP_SculptVoxel> iVoxels, SCP_SculptRenderParams iParams, uint iTargetFbo, out string oError)
+    {
+        oError = "";
+        if (m_External == null) { oError = "TryRenderToFbo 只給外部 GL 模式用"; return false; }
+        if (iTargetFbo == 0) { oError = "目標 FBO 是 0"; return false; }
+        if (iVoxels == null || iParams == null) { oError = "voxel 清單或參數是 null"; return false; }
+        if (!Validate(iParams, out oError)) return false;
+        lock (m_Lock)
+        {
+            if (!EnsureContext(out oError)) return false;
+            try { return RenderCore(iVoxels, iParams, iTargetFbo, out oError) != null; }
+            catch (Exception e) { oError = "GPU 渲染失敗（" + e.GetType().Name + "）：" + e.Message; return false; }
+        }
+    }
+
+    /// <summary>共用的一趟：資源 → 網格（快取）→ 地板／鏡頭／燈 → GPU。<paramref name="iTargetFbo"/>＝0 ⇒ 讀回並回傳 RGBA（由上到下）；否則 blit 進那個 FBO、回空陣列。</summary>
+    byte[]? RenderCore(IReadOnlyList<SCP_SculptVoxel> iVoxels, SCP_SculptRenderParams iParams, uint iTargetFbo, out string oError)
+    {
+        oError = "";
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        SkyTexture? aSky = null;
+        if (!IsSkyNone(iParams.Skybox) && !ResolveSky(iParams.Skybox, out aSky, out oError)) return null;
+        FloorTexture? aFloorTex = null;
+        if (iParams.Floor?.Texture != null && !ResolveFloorTexture(iParams.Floor.Texture, out aFloorTex, out oError)) return null;
+        var aReading = new Reading();
+        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, aReading);
+        FloorSetup? aFloor = SolveFloor(aMesh, iParams, aFloorTex);
+        if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError)) return null;
+        var aLights = SolveLights(aMesh, aFloor, iParams);
+        byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo);
+        var aErr = m_Gl!.GetError();
+        if (aErr != GLEnum.NoError) { oError = "OpenGL 錯誤：" + aErr; return null; }
+        aReading.DrawMs = sw.Elapsed.TotalMilliseconds;
+        LastReading = aReading;
+        return aOut;
+    }
+
+    /// <summary>
+    /// 網格：同一份 voxel ＋ 同旗標 ⇒ 沿用（含 GPU buffer）；否則重建並重傳。
+    /// <para>鍵 ＝ 清單物件 ＋ 顆數 ＋ 內容雜湊 —— 只比物件的話，呼叫端改了同一個清單再畫會拿到舊網格而不報錯。</para>
+    /// </summary>
+    Mesh GetMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge, Reading ioReading)
+    {
+        ulong aHash = ContentHash(iVoxels);
+        if (m_Mesh != null && ReferenceEquals(m_MeshList, iVoxels) && m_MeshCount == iVoxels.Count && m_MeshHash == aHash
+            && m_MeshAo == iAo && m_MeshMerge == iMerge)
+        {
+            FillReading(ioReading, m_Mesh, false, 0);
+            return m_Mesh;
+        }
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Mesh aMesh = BuildMesh(iVoxels, iAo, iMerge);
+        UploadMesh(aMesh);
+        m_Mesh = aMesh; m_MeshList = iVoxels; m_MeshCount = iVoxels.Count; m_MeshHash = aHash; m_MeshAo = iAo; m_MeshMerge = iMerge;
+        FillReading(ioReading, aMesh, true, sw.Elapsed.TotalMilliseconds);
+        return aMesh;
+    }
+
+    static void FillReading(Reading r, Mesh m, bool iRebuilt, double iMs)
+    {
+        r.MeshRebuilt = iRebuilt; r.MeshMs = iMs;
+        r.Faces = m.FaceCount; r.Quads = m.QuadCount; r.Triangles = m.IndexCount / 3; r.Voxels = m.VoxelCount;
+    }
+
+    static ulong ContentHash(IReadOnlyList<SCP_SculptVoxel> iVoxels)
+    {
+        ulong h = 1469598103934665603UL;
+        for (int i = 0; i < iVoxels.Count; i++)
+        {
+            var v = iVoxels[i];
+            h = (h ^ (uint)v.X) * 1099511628211UL;
+            h = (h ^ (uint)v.Y) * 1099511628211UL;
+            h = (h ^ (uint)v.Z) * 1099511628211UL;
+            h = (h ^ v.Color) * 1099511628211UL;
+        }
+        return h;
+    }
+
+    unsafe void UploadMesh(Mesh iMesh)
+    {
+        var gl = m_Gl!;
+        DeleteMeshBuffers();
+        if (iMesh.IndexCount == 0) return;
+        m_MeshVao = gl.GenVertexArray();
+        gl.BindVertexArray(m_MeshVao);
+        m_MeshVbo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, m_MeshVbo);
+        gl.BufferData<float>(BufferTargetARB.ArrayBuffer, iMesh.Vertices.AsSpan(), BufferUsageARB.StaticDraw);
+        m_MeshIbo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, m_MeshIbo);
+        gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, iMesh.Indices.AsSpan(), BufferUsageARB.StaticDraw);
+        const uint aStride = 7 * sizeof(float);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, aStride, (void*)0);
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, aStride, (void*)(3 * sizeof(float)));
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, aStride, (void*)(6 * sizeof(float)));
+        gl.BindVertexArray(0);
+        // ⚠ CPU 端的頂點／索引陣列上傳後就不需要了（框景只用 Centers）—— 119 萬顆的作品這兩份有數百 MB
+        iMesh.Vertices = Array.Empty<float>();
+        iMesh.Indices = Array.Empty<uint>();
+    }
+
+    void DeleteMeshBuffers()
+    {
+        var gl = m_Gl!;
+        if (m_MeshVbo != 0) gl.DeleteBuffer(m_MeshVbo);
+        if (m_MeshIbo != 0) gl.DeleteBuffer(m_MeshIbo);
+        if (m_MeshVao != 0) gl.DeleteVertexArray(m_MeshVao);
+        m_MeshVao = m_MeshVbo = m_MeshIbo = 0;
     }
 
     static bool Finite(double iV) => !double.IsNaN(iV) && !double.IsInfinity(iV);
@@ -137,6 +277,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
                           iP.Distance ?? 1, iP.Zoom ?? 1 };
         foreach (double v in aAll) if (!Finite(v)) { oError = "參數含 NaN／無限大"; return false; }
         if (iP.Lights == null) { oError = "Lights 是 null（只要環境光請給空清單）"; return false; }
+        if (!Finite(iP.ViewScale) || iP.ViewScale <= 0 || iP.ViewScale > 1000) { oError = "ViewScale 需在 (0, 1000]：" + iP.ViewScale; return false; }
         if (iP.Lights.Count > SCP_SculptRenderParams.MaxLights)
         { oError = $"光源 {iP.Lights.Count} 盞，超過上限 {SCP_SculptRenderParams.MaxLights}"; return false; }
         int aCasters = 0;
@@ -190,6 +331,26 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         oError = "";
         if (m_Gl != null) return true;
         if (m_InitError != null) { oError = m_InitError; return false; }
+        if (m_External != null)
+        {
+            try
+            {
+                m_Gl = m_External;
+                m_GlInfo = (m_Gl.GetStringS(StringName.Version) ?? "?") + "｜" + (m_Gl.GetStringS(StringName.Renderer) ?? "?");
+                m_MaxSamples = m_Gl.GetInteger((GetPName)GLEnum.MaxSamples);
+                m_MaxRbSize = m_Gl.GetInteger(GetPName.MaxRenderbufferSize);
+                m_MaxAniso = QueryMaxAnisotropy(m_Gl);
+                CreateStaticResources();
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_InitError = "雕刻 GPU 在視窗 context 裡初始化失敗（" + e.GetType().Name + "：" + e.Message + "）";
+                m_Gl = null;
+                oError = m_InitError;
+                return false;
+            }
+        }
         try
         {
             var aOpt = WindowOptions.Default;
@@ -938,6 +1099,8 @@ void main() {
         public int VertexCount;
         public int IndexCount;
         public int VoxelCount;
+        /// <summary>外露面數（合併前）與實際輸出的矩形塊數（不合併時兩者相等）—— 讀數用。</summary>
+        public int FaceCount, QuadCount;
         /// <summary>voxel 中心（世界座標，已去重、排序）—— 鏡頭框景用。</summary>
         public Vector3[] Centers = Array.Empty<Vector3>();
         public Vector3 Min, Max;   // 世界座標 AABB（voxel 格的外緣）
@@ -955,7 +1118,7 @@ void main() {
         {  0, 0,-1,   0, 1, 0,   1, 0, 0 },
     };
 
-    static Mesh BuildMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo)
+    static Mesh BuildMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge = false)
     {
         var aMesh = new Mesh();
         if (iVoxels.Count == 0) return aMesh;
@@ -993,68 +1156,160 @@ void main() {
         aCoords.Sort();   // 網格索引的排序 ＝ (z, y, x) 字典序 ⇒ 與輸入順序無關
 
         aMesh.VoxelCount = aCoords.Count;
-        aMesh.Centers = new Vector3[aCoords.Count];
         aMesh.Min = new Vector3(aMinX, aMinY, aMinZ);
         aMesh.Max = new Vector3(aMaxX + 1, aMaxY + 1, aMaxZ + 1);
 
-        var aVerts = new List<float>(aCoords.Count * 6 * 4 * 7 / 3);
-        var aIdx = new List<uint>(aCoords.Count * 6 * 6 / 3);
-        Span<int> aAo = stackalloc int[4];
+        // 框景點只收「至少有一面外露」的 voxel（TASK-0472）：被六面包住的 voxel 在任何投影方向都有鄰格比它更外側，
+        // 永遠不是外框極值（透視的線性分式投影也一樣）⇒ 框景／光源範圍的 min／max 與全收時**逐位元相同**，點數卻少很多。
+        var aCenters = new List<Vector3>(Math.Min(aCoords.Count, 1 << 20));
         for (int c = 0; c < aCoords.Count; c++)
         {
             int k = (int)aCoords[c];
-            int x = k % aStrideY + aOx;
-            int y = k / aStrideY % aSy + aOy;
-            int z = k / aStrideZ + aOz;
-            aMesh.Centers[c] = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
-            byte aColor = aGrid[k];
-            SCP_CanvasPalette.IndexToRgb(aColor, out byte aR, out byte aG, out byte aB);
+            if (aGrid[k + 1] != 0 && aGrid[k - 1] != 0 && aGrid[k + aStrideY] != 0 && aGrid[k - aStrideY] != 0
+                && aGrid[k + aStrideZ] != 0 && aGrid[k - aStrideZ] != 0) continue;
+            int x = k % aStrideY + aOx, y = k / aStrideY % aSy + aOy, z = k / aStrideZ + aOz;
+            aCenters.Add(new Vector3(x + 0.5f, y + 0.5f, z + 0.5f));
+        }
+        aMesh.Centers = aCenters.ToArray();
 
+        var aVerts = new List<float>(Math.Min(aCoords.Count, 1 << 22) * 7);
+        var aIdx = new List<uint>(Math.Min(aCoords.Count, 1 << 22) * 3 / 2);
+        Span<int> aAo = stackalloc int[4];
+
+        // 一角的 AO（0..3）：與舊版逐字同式。
+        int CornerAo(int x, int y, int z, int f, int corner)
+        {
+            if (!iAo) return 3;
+            int nx = s_Faces[f, 0], ny = s_Faces[f, 1], nz = s_Faces[f, 2];
+            int ux = s_Faces[f, 3], uy = s_Faces[f, 4], uz = s_Faces[f, 5];
+            int vx = s_Faces[f, 6], vy = s_Faces[f, 7], vz = s_Faces[f, 8];
+            int a = (corner == 1 || corner == 2) ? 1 : 0;
+            int b = (corner >= 2) ? 1 : 0;
+            int su = a == 1 ? 1 : -1, sv = b == 1 ? 1 : -1;
+            int bx = x + nx, by = y + ny, bz = z + nz;
+            bool s1 = aGrid[Idx(bx + ux * su, by + uy * su, bz + uz * su)] != 0;
+            bool s2 = aGrid[Idx(bx + vx * sv, by + vy * sv, bz + vz * sv)] != 0;
+            bool cc = aGrid[Idx(bx + ux * su + vx * sv, by + uy * su + vy * sv, bz + uz * su + vz * sv)] != 0;
+            return (s1 && s2) ? 0 : 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (cc ? 1 : 0));
+        }
+
+        // 一塊 w×h 的矩形（單一 voxel 面 ＝ 1×1）：與舊版逐字同式的頂點與三角形。
+        void EmitQuad(int x, int y, int z, int f, int w, int h, byte iColor, Span<int> iLevels)
+        {
+            int nx = s_Faces[f, 0], ny = s_Faces[f, 1], nz = s_Faces[f, 2];
+            int ux = s_Faces[f, 3], uy = s_Faces[f, 4], uz = s_Faces[f, 5];
+            int vx = s_Faces[f, 6], vy = s_Faces[f, 7], vz = s_Faces[f, 8];
+            SCP_CanvasPalette.IndexToRgb(iColor, out byte aR, out byte aG, out byte aB);
+            // 面所在平面的原點：法線朝正向的面在 +1 那一側。
+            int px = x + Math.Max(nx, 0), py = y + Math.Max(ny, 0), pz = z + Math.Max(nz, 0);
+            uint aBase = (uint)(aVerts.Count / 7);
+            for (int corner = 0; corner < 4; corner++)
+            {
+                // 角的順序 (0,0) (1,0) (1,1) (0,1) —— 從面外看是逆時針（世界右手系）。
+                int a = (corner == 1 || corner == 2) ? w : 0;
+                int b = (corner >= 2) ? h : 0;
+                float wx = px + ux * a + vx * b;
+                float wy = py + uy * a + vy * b;
+                float wz = pz + uz * a + vz * b;
+                aVerts.Add(wx); aVerts.Add(-wy); aVerts.Add(wz);      // 世界 → GL（y 鏡像）
+                aVerts.Add(nx); aVerts.Add(-ny); aVerts.Add(nz);
+                uint aPacked = aR | ((uint)aG << 8) | ((uint)aB << 16) | ((uint)(iLevels[corner] * 85) << 24);
+                aVerts.Add(BitConverter.UInt32BitsToSingle(aPacked));
+            }
+            // y 鏡像讓繞序反轉 ⇒ 下面的三角形都是「反過來」寫，GL 裡從面外看才是逆時針。
+            // 對角線：沿 AO 總和較大（較亮）的那一對切，讓暗角留在自己那個三角形裡（不拉出斜條紋）。
+            if (iLevels[0] + iLevels[2] >= iLevels[1] + iLevels[3])
+            {
+                aIdx.Add(aBase + 0); aIdx.Add(aBase + 2); aIdx.Add(aBase + 1);
+                aIdx.Add(aBase + 0); aIdx.Add(aBase + 3); aIdx.Add(aBase + 2);
+            }
+            else
+            {
+                aIdx.Add(aBase + 0); aIdx.Add(aBase + 3); aIdx.Add(aBase + 1);
+                aIdx.Add(aBase + 1); aIdx.Add(aBase + 3); aIdx.Add(aBase + 2);
+            }
+            aMesh.QuadCount++;
+        }
+
+        if (!iMerge)
+        {
+            // 逐 voxel 面（舊行為；CLI `op=view` 走這條，輸出逐位元不變）。
+            for (int c = 0; c < aCoords.Count; c++)
+            {
+                int k = (int)aCoords[c];
+                int x = k % aStrideY + aOx;
+                int y = k / aStrideY % aSy + aOy;
+                int z = k / aStrideZ + aOz;
+                byte aColor = aGrid[k];
+                for (int f = 0; f < 6; f++)
+                {
+                    if (aGrid[Idx(x + s_Faces[f, 0], y + s_Faces[f, 1], z + s_Faces[f, 2])] != 0) continue;   // 鄰格有 voxel ⇒ 這面看不到
+                    for (int corner = 0; corner < 4; corner++) aAo[corner] = CornerAo(x, y, z, f, corner);
+                    aMesh.FaceCount++;
+                    EmitQuad(x, y, z, f, 1, 1, aColor, aAo);
+                }
+            }
+        }
+        else
+        {
+            // 合併同色面（TASK-0472）：每個朝向、每一層切片做一張 (u,v) 遮罩，greedy 併成最大矩形。
+            // ⚠ 只併「四角 AO 都相同」的面 —— 不同的照逐面輸出（併了 AO 漸層會被拉成一大片、角落陰影被抹平）。
+            int[] aExt = { aSx, aSy, aSz };
+            int[] aOrg = { aOx, aOy, aOz };
+            int[] aStride = { 1, aStrideY, aStrideZ };
+            var aC = new int[3];
+            Span<int> aLv = stackalloc int[4];
             for (int f = 0; f < 6; f++)
             {
-                int nx = s_Faces[f, 0], ny = s_Faces[f, 1], nz = s_Faces[f, 2];
-                if (aGrid[Idx(x + nx, y + ny, z + nz)] != 0) continue;   // 鄰格有 voxel ⇒ 這面看不到
-                int ux = s_Faces[f, 3], uy = s_Faces[f, 4], uz = s_Faces[f, 5];
-                int vx = s_Faces[f, 6], vy = s_Faces[f, 7], vz = s_Faces[f, 8];
-                // 面所在平面的原點：法線朝正向的面在 +1 那一側。
-                int px = x + Math.Max(nx, 0), py = y + Math.Max(ny, 0), pz = z + Math.Max(nz, 0);
-
-                uint aBase = (uint)(aVerts.Count / 7);
-                for (int corner = 0; corner < 4; corner++)
+                int aNa = s_Faces[f, 0] != 0 ? 0 : s_Faces[f, 1] != 0 ? 1 : 2;
+                int aUa = s_Faces[f, 3] != 0 ? 0 : s_Faces[f, 4] != 0 ? 1 : 2;
+                int aVa = s_Faces[f, 6] != 0 ? 0 : s_Faces[f, 7] != 0 ? 1 : 2;
+                int aNs = s_Faces[f, aNa];
+                int aNu = aExt[aUa], aNv = aExt[aVa];
+                int aStepN = aNs * aStride[aNa];
+                var aMask = new int[aNu * aNv];
+                for (int s = 1; s < aExt[aNa] - 1; s++)
                 {
-                    // 角的順序 (0,0) (1,0) (1,1) (0,1) —— 從面外看是逆時針（世界右手系）。
-                    int a = (corner == 1 || corner == 2) ? 1 : 0;
-                    int b = (corner >= 2) ? 1 : 0;
-                    int aLevel = 3;
-                    if (iAo)
-                    {
-                        int su = a == 1 ? 1 : -1, sv = b == 1 ? 1 : -1;
-                        int bx = x + nx, by = y + ny, bz = z + nz;
-                        bool s1 = aGrid[Idx(bx + ux * su, by + uy * su, bz + uz * su)] != 0;
-                        bool s2 = aGrid[Idx(bx + vx * sv, by + vy * sv, bz + vz * sv)] != 0;
-                        bool cc = aGrid[Idx(bx + ux * su + vx * sv, by + uy * su + vy * sv, bz + uz * su + vz * sv)] != 0;
-                        aLevel = (s1 && s2) ? 0 : 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (cc ? 1 : 0));
-                    }
-                    aAo[corner] = aLevel;
-                    float wx = px + ux * a + vx * b;
-                    float wy = py + uy * a + vy * b;
-                    float wz = pz + uz * a + vz * b;
-                    aVerts.Add(wx); aVerts.Add(-wy); aVerts.Add(wz);      // 世界 → GL（y 鏡像）
-                    aVerts.Add(nx); aVerts.Add(-ny); aVerts.Add(nz);
-                    uint aPacked = aR | ((uint)aG << 8) | ((uint)aB << 16) | ((uint)(aLevel * 85) << 24);
-                    aVerts.Add(BitConverter.UInt32BitsToSingle(aPacked));
-                }
-                // y 鏡像讓繞序反轉 ⇒ 下面的三角形都是「反過來」寫，GL 裡從面外看才是逆時針。
-                // 對角線：沿 AO 總和較大（較亮）的那一對切，讓暗角留在自己那個三角形裡（不拉出斜條紋）。
-                if (aAo[0] + aAo[2] >= aAo[1] + aAo[3])
-                {
-                    aIdx.Add(aBase + 0); aIdx.Add(aBase + 2); aIdx.Add(aBase + 1);
-                    aIdx.Add(aBase + 0); aIdx.Add(aBase + 3); aIdx.Add(aBase + 2);
-                }
-                else
-                {
-                    aIdx.Add(aBase + 0); aIdx.Add(aBase + 3); aIdx.Add(aBase + 1);
-                    aIdx.Add(aBase + 1); aIdx.Add(aBase + 3); aIdx.Add(aBase + 2);
+                    bool aAny = false;
+                    for (int iv = 1; iv < aNv - 1; iv++)
+                        for (int iu = 1; iu < aNu - 1; iu++)
+                        {
+                            int g = s * aStride[aNa] + iu * aStride[aUa] + iv * aStride[aVa];
+                            int m = iv * aNu + iu;
+                            byte aColor = aGrid[g];
+                            if (aColor == 0 || aGrid[g + aStepN] != 0) { aMask[m] = 0; continue; }
+                            aC[aNa] = s; aC[aUa] = iu; aC[aVa] = iv;
+                            int x = aC[0] + aOrg[0], y = aC[1] + aOrg[1], z = aC[2] + aOrg[2];
+                            for (int corner = 0; corner < 4; corner++) aAo[corner] = CornerAo(x, y, z, f, corner);
+                            aMesh.FaceCount++;
+                            bool aUniform = aAo[0] == aAo[1] && aAo[1] == aAo[2] && aAo[2] == aAo[3];
+                            if (DebugMergeIgnoreAo) { aMask[m] = aColor | (3 << 8) | (1 << 16); aAny = true; continue; }
+                            if (!aUniform) { aMask[m] = 0; EmitQuad(x, y, z, f, 1, 1, aColor, aAo); continue; }
+                            aMask[m] = aColor | (aAo[0] << 8) | (1 << 16);
+                            aAny = true;
+                        }
+                    if (!aAny) continue;
+                    for (int iv = 1; iv < aNv - 1; iv++)
+                        for (int iu = 1; iu < aNu - 1; iu++)
+                        {
+                            int aCode = aMask[iv * aNu + iu];
+                            if (aCode == 0) continue;
+                            int w = 1;
+                            while (iu + w < aNu - 1 && aMask[iv * aNu + iu + w] == aCode) w++;
+                            int h = 1;
+                            for (; iv + h < aNv - 1; h++)
+                            {
+                                bool aRow = true;
+                                for (int q = 0; q < w; q++) if (aMask[(iv + h) * aNu + iu + q] != aCode) { aRow = false; break; }
+                                if (!aRow) break;
+                            }
+                            for (int dv = 0; dv < h; dv++)
+                                for (int du = 0; du < w; du++) aMask[(iv + dv) * aNu + iu + du] = 0;
+                            aC[aNa] = s; aC[aUa] = iu; aC[aVa] = iv;
+                            int lvl = (aCode >> 8) & 3;
+                            aLv[0] = aLv[1] = aLv[2] = aLv[3] = lvl;
+                            EmitQuad(aC[0] + aOrg[0], aC[1] + aOrg[1], aC[2] + aOrg[2], f, w, h, (byte)(aCode & 255), aLv);
+                        }
                 }
             }
         }
@@ -1198,6 +1453,7 @@ void main() {
                 if (!iP.FitUpscale) aScale = Math.Min(1.0, aScale);   // 舊行為：只縮不放（見 FitUpscale）
             }
             double aPx = aBasePx * aScale;
+            if (iP.ViewScale != 1) aPx *= iP.ViewScale;   // 觀測頁滾輪（TASK-0472）；CLI 永遠 1 ⇒ 這一行不改任何既有輸出
             float aHalfW = (float)(iP.Width / 2.0 / aPx), aHalfH = (float)(iP.Height / 2.0 / aPx);
 
             // 鏡頭放在注視點後方、所有 voxel 之前；指定 Eye 時只取它的方向（正交沒有「距離」）。
@@ -1247,6 +1503,7 @@ void main() {
                     }
                 }
             }
+            if (iP.ViewScale != 1) aDist = (float)(aDist / iP.ViewScale);   // 觀測頁滾輪（TASK-0472）；CLI 永遠 1
             aEyeP = aTarget - aForward * aDist;
         }
         float aMinDepth = float.MaxValue, aMaxDepth = float.MinValue;
@@ -1396,37 +1653,21 @@ void main() {
     // 區塊職責：GPU 三趟 —— 陰影圖 → MSAA 主畫（背景＋網格）→ blit 解析 → ReadPixels（翻成由上到下）。
     // ════════════════════════════════════════════════════════════════════════════════════
     unsafe byte[] RenderGpu(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP, Matrix4x4 iViewProj, LightSetup iLights,
-                            SkyTexture? iSky, SkyView iSkyView)
+                            SkyTexture? iSky, SkyView iSkyView, uint iTargetFbo = 0)
     {
         var gl = m_Gl!;
         int aW = iP.Width, aH = iP.Height;
         EnsureTargets(aW, aH);
 
-        uint aVao = 0, aVbo = 0, aIbo = 0, aFloorVao = 0, aFloorVbo = 0;
-        bool aHasMesh = iMesh.IndexCount > 0;
+        uint aFloorVao = 0, aFloorVbo = 0;
+        bool aHasMesh = iMesh.IndexCount > 0 && m_MeshVao != 0;
+        // 網格的 VAO 是快取的那一顆（GetMesh 上傳；換網格才重建）
+        uint aVao = m_MeshVao;
         // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
         // 有 ⇒ 由全景上下半球的平均色調出色偏（亮度仍由 Ambient 決定）。
         Vector3 aHs = iSky?.HemiSky ?? Vector3.One, aHg = iSky?.HemiGround ?? new Vector3(0.62f);
         try
         {
-            if (aHasMesh)
-            {
-                aVao = gl.GenVertexArray();
-                gl.BindVertexArray(aVao);
-                aVbo = gl.GenBuffer();
-                gl.BindBuffer(BufferTargetARB.ArrayBuffer, aVbo);
-                gl.BufferData<float>(BufferTargetARB.ArrayBuffer, iMesh.Vertices.AsSpan(), BufferUsageARB.StaticDraw);
-                aIbo = gl.GenBuffer();
-                gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, aIbo);
-                gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, iMesh.Indices.AsSpan(), BufferUsageARB.StaticDraw);
-                const uint aStride = 7 * sizeof(float);
-                gl.EnableVertexAttribArray(0);
-                gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, aStride, (void*)0);
-                gl.EnableVertexAttribArray(1);
-                gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, aStride, (void*)(3 * sizeof(float)));
-                gl.EnableVertexAttribArray(2);
-                gl.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, aStride, (void*)(6 * sizeof(float)));
-            }
 
             // ① 陰影圖：只畫背面（正面剔除）⇒ 受光面與存下的深度差一整顆 voxel，幾乎不會自遮蔽（shadow acne）。
             for (int m = 0; m < iLights.ShadowMaps; m++)
@@ -1534,6 +1775,16 @@ void main() {
                 gl.DrawElements(PrimitiveType.Triangles, (uint)iMesh.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
             }
 
+            // ③' 視窗即時預覽：MSAA 直接解析進呼叫端的 FBO（貼圖），⛔ 不讀回 CPU（TASK-0472）。
+            if (iTargetFbo != 0)
+            {
+                gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, m_MsFbo);
+                gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, iTargetFbo);
+                gl.BlitFramebuffer(0, 0, aW, aH, 0, 0, aW, aH, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                return Array.Empty<byte>();
+            }
+
             // ③ 解析 MSAA → 單樣本，讀回。
             gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, m_MsFbo);
             gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, m_ResolveFbo);
@@ -1559,9 +1810,7 @@ void main() {
         finally
         {
             gl.BindVertexArray(0);
-            if (aVbo != 0) gl.DeleteBuffer(aVbo);
-            if (aIbo != 0) gl.DeleteBuffer(aIbo);
-            if (aVao != 0) gl.DeleteVertexArray(aVao);
+            // 網格 buffer 是快取的（換網格／Dispose 才刪）；地板四邊形每次都很小 ⇒ 照舊用完就丟
             if (aFloorVbo != 0) gl.DeleteBuffer(aFloorVbo);
             if (aFloorVao != 0) gl.DeleteVertexArray(aFloorVao);
         }
@@ -1623,7 +1872,9 @@ void main() {
             if (m_Gl == null) return;
             try
             {
-                m_Context?.MakeCurrent();
+                if (m_External == null) m_Context?.MakeCurrent();
+                DeleteMeshBuffers();
+                m_Mesh = null;
                 DeleteTargets();
                 for (int m = 0; m < MaxShadowMaps; m++) { m_Gl.DeleteFramebuffer(m_ShadowFbo[m]); m_Gl.DeleteTexture(m_ShadowTex[m]); }
                 m_Gl.DeleteVertexArray(m_EmptyVao);
@@ -1636,8 +1887,7 @@ void main() {
                 m_SkyCache.Clear();
                 foreach (var aTex in m_FloorCache.Values) m_Gl.DeleteTexture(aTex.Tex);
                 m_FloorCache.Clear();
-                m_Gl.Dispose();
-                m_Window?.Dispose();
+                if (m_External == null) { m_Gl.Dispose(); m_Window?.Dispose(); }   // 外部 GL 不是我們的，⛔ 不 Dispose
             }
             catch (Exception) { /* 收尾失敗不影響已經交出去的圖 */ }
             m_Gl = null; m_Window = null; m_Context = null;

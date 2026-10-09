@@ -345,12 +345,14 @@ public sealed class GuiImGuiRenderer
                     // GPU 即時畫面（TASK-0470）：場景交給 GpuViews 畫進貼圖，整張照比例縮進框；失敗 ⇒ 佔位框＋原因（⛔ 不假裝有圖）
                     string aGpuKey = SCP_GuiGpuViews.KeyOf(iNode.Value)!;
                     string aWhy = "這個宿主沒有 GPU 畫面";
-                    if (GpuViews != null && GpuViews.TryPaint(aGpuKey, out uint aGpuTex, out int aGw, out int aGh, out aWhy))
+                    if (GpuViews != null && GpuViews.TryPaint(aGpuKey, out uint aGpuTex, out int aGw, out int aGh, out bool aFlip, out aWhy))
                     {
                         float aK = aSide / Math.Max(aGw, aGh);
                         var aSize = new Vector2(aGw * aK, aGh * aK);
                         Vector2 aAt = ImGui.GetCursorScreenPos();
-                        ImGui.Image((IntPtr)aGpuTex, aSize);
+                        // GL 慣例的貼圖（第 0 列在最下面）⇒ uv 上下翻；⚠ 不翻的話整張圖顛倒，而那不會報錯
+                        if (aFlip) ImGui.Image((IntPtr)aGpuTex, aSize, new Vector2(0, 1), new Vector2(1, 0));
+                        else ImGui.Image((IntPtr)aGpuTex, aSize);
                         if (iNode.Interactive && iNode.Id.Length > 0) CapturePointer(iNode.Id, aAt, aSize);
                     }
                     else

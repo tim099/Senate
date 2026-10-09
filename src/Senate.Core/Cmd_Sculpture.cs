@@ -722,27 +722,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     static string? OpView(Ctx c)
     {
         if (!TryOutPath(c, ViewPngName, out string aOut, out string aOutBad)) return Blocked(c, 2, aOutBad);
-        if (!TryBase(c, out SCP_SculptRenderParams aBase, out List<string> aLayers, out string aBaseErr)) return Blocked(c, 2, aBaseErr);
-        if (!TryViewArgs(c, out SCP_SculptViewArgs aViewArgs, out ViewAutos aAutos, out string aArgBad)) return Blocked(c, 2, aArgBad);
-
-        SCP_SculptViewPlan aPlan;
-        try
-        {
-            using (SCP_FileLock.Acquire(c.EngineLockTarget, EngineLockTimeoutSec))
-                aPlan = NewEngine(c).PrepareView(aViewArgs, aBase);
-        }
-        catch (SCP_FileLockTimeoutException e) { return Blocked(c, 4, "拿不到雕刻鎖：" + e.Message); }
-        if (aPlan.ExitCode != 0) return Blocked(c, aPlan.ExitCode == 2 ? 2 : 1, "引擎：" + aPlan.Error);
-        if (!TryApplyViewTail(c, aPlan.Params, aAutos, out string aTailBad)) return Blocked(c, 2, aTailBad);
-        if (!c.Args.IsExplicit("fit_upscale") && (c.Work != null || aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
-            aPlan.Params.FitUpscale = true;
-
-        if (aViewArgs.Exhibit.Length > 0) aLayers.Add("展品 `" + aViewArgs.Exhibit + "`");
-        var aCli = new List<string>();
-        foreach (string k in s_ViewRenderKeys)
-            if (c.Args.IsExplicit(k)) aCli.Add(k + "=" + c.Args.Get(k).Trim());
-        if (aCli.Count > 0) aLayers.Add("CLI（" + string.Join(", ", aCli) + "）");
-        string aLayersText = string.Join(" → ", aLayers);
+        int aPrep = PrepareViewPlan(c, out SCP_SculptViewPlan aPlan, out string aLayersText, out string aPrepBad);
+        if (aPrep != 0) return Blocked(c, aPrep, aPrepBad);
 
         ISCP_SculptRenderer? aRenderer = SCP_SculptRenderers.Current;
         foreach (string l in aPlan.Lines) c.Report.Append(l).Append('\n');
@@ -774,6 +755,65 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         if (aPlan.OutOfRangeColors > 0)
             c.Result.Lines.Add("⚠ " + aPlan.OutOfRangeColors + " 顆 voxel 的顏色不在 1..255 —— 畫成近黑色（資料原值不動）");
         return Finish(c, 0, "✓ view " + aPlan.Voxels.Count + "/" + aPlan.TotalVoxels + " voxels → " + aOut);
+    }
+
+    /// <summary>
+    /// view 的「場景＋參數」那一半（不畫圖）：參數疊層 → 引擎在鎖內準備 → CLI 尾段（auto、fit_upscale）→ layers 說明。
+    /// 回 0 ＝ 成功；否則是 view 該回的 exit code（2 參數／4 拿不到鎖／1 引擎），原因在 <paramref name="oError"/>。
+    /// <para>⭐ CLI 的 `op=view` 與觀測頁的即時預覽（<see cref="TryPrepareView"/>）**走這一支** —— 疊層規則只有一份。</para>
+    /// </summary>
+    static int PrepareViewPlan(Ctx c, out SCP_SculptViewPlan oPlan, out string oLayersText, out string oError)
+    {
+        oPlan = new SCP_SculptViewPlan(); oLayersText = ""; oError = "";
+        if (!TryBase(c, out SCP_SculptRenderParams aBase, out List<string> aLayers, out string aBaseErr)) { oError = aBaseErr; return 2; }
+        if (!TryViewArgs(c, out SCP_SculptViewArgs aViewArgs, out ViewAutos aAutos, out string aArgBad)) { oError = aArgBad; return 2; }
+
+        try
+        {
+            using (SCP_FileLock.Acquire(c.EngineLockTarget, EngineLockTimeoutSec))
+                oPlan = NewEngine(c).PrepareView(aViewArgs, aBase);
+        }
+        catch (SCP_FileLockTimeoutException e) { oError = "拿不到雕刻鎖：" + e.Message; return 4; }
+        if (oPlan.ExitCode != 0) { oError = "引擎：" + oPlan.Error; return oPlan.ExitCode == 2 ? 2 : 1; }
+        if (!TryApplyViewTail(c, oPlan.Params, aAutos, out string aTailBad)) { oError = aTailBad; return 2; }
+        if (!c.Args.IsExplicit("fit_upscale") && (c.Work != null || aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
+            oPlan.Params.FitUpscale = true;
+
+        if (aViewArgs.Exhibit.Length > 0) aLayers.Add("展品 `" + aViewArgs.Exhibit + "`");
+        var aCli = new List<string>();
+        foreach (string k in s_ViewRenderKeys)
+            if (c.Args.IsExplicit(k)) aCli.Add(k + "=" + c.Args.Get(k).Trim());
+        if (aCli.Count > 0) aLayers.Add("CLI（" + string.Join(", ", aCli) + "）");
+        oLayersText = string.Join(" → ", aLayers);
+        return 0;
+    }
+
+    /// <summary>
+    /// **行程內**準備 view 的場景（TASK-0472，觀測頁 GPU 即時預覽用）：同一組參數規格與驗證、同一支 <see cref="PrepareViewPlan"/>，
+    /// 只是不畫圖、不寫檔。<paramref name="iRaw"/> 跟呼叫 `cmd sculpture` 一樣（data_root 等宿主參數由呼叫端放進來）；`op` 一律當 view。
+    /// </summary>
+    public static bool TryPrepareView(IReadOnlyDictionary<string, string> iRaw, out SCP_SculptViewPlan oPlan, out string oLayers, out string oError)
+    {
+        oPlan = new SCP_SculptViewPlan(); oLayers = ""; oError = "";
+        var aCmd = new Cmd_Sculpture();
+        var aRaw = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var kv in iRaw) aRaw[kv.Key] = kv.Value;
+        aRaw["op"] = "view";
+        (SCP_CmdArgs? aArgs, List<string> aErrors) = SCP_CmdArgs.Bind(aCmd.ArgSpecs, aRaw);
+        if (aArgs == null) { oError = "參數不合：" + string.Join("；", aErrors); return false; }
+        string aDataRoot = aArgs.Get("data_root").Trim().Replace('\\', '/');
+        if (!Directory.Exists(aDataRoot)) { oError = "資料根不存在：" + aDataRoot; return false; }
+        string aLetters = aArgs.Get("letters_root").Trim().Replace('\\', '/');
+        var aRoots = new SCP_MorningRoots
+        {
+            DataRoot = aDataRoot,
+            LettersRoot = aLetters.Length > 0 ? aLetters : SCP_DataPaths.Letters(new SCP_DataRoot(aDataRoot)).Value,
+        };
+        string aPersona = aArgs.Get("persona").Trim();
+        if (aPersona.Length > 0 && !SCP_Cmd_FreeTimeActivity.IsSafePersona(aPersona)) { oError = "persona 不合法：" + aPersona; return false; }
+        var c = new Ctx(aRoots, aArgs, new SCP_CmdResult(), "view", aPersona);
+        if (!ConfigureWork(c, out string aWorkError)) { oError = aWorkError; return false; }
+        return PrepareViewPlan(c, out oPlan, out oLayers, out oError) == 0;
     }
 
     /// <summary>view／slice 的輸出：`out=` 必須是絕對路徑；沒給 ⇒ persona 的 cmd 夾；兩者都沒有 ⇒ 擋（⛔ 不退回共用檔名）。</summary>

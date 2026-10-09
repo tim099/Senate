@@ -594,6 +594,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         m_PrevSubject = aSubject;
         m_SubjectFromJob = null;
 
+        // GPU 即時預覽（TASK-0472）：畫面每幀由 DrawGpuResult 跟著欄位走 ⇒ ⛔ 不 spawn 出圖（要求照收、直接清掉）
+        if (UseGpu(g)) { m_AutoWanted = false; m_AutoForce = false; m_AutoWhy = ""; return; }
         if (!m_AutoWanted || m_Job != null) return;   // 正在跑 ⇒ 等它跑完（PumpJob 收掉之後的那一輪再來）
         if (SCP_GuiHost.RedrawsContinuously && DateTime.UtcNow - m_LastAutoStartUtc < AutoMinInterval) return;
         Dictionary<string, string> a = ManualRequest(g, iPersona, out _);
@@ -657,6 +659,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     // ===========================================================
     void RunView(SCP_Ui g, string iLabel, Dictionary<string, string> iArgs, string iPersona, string? iSubject = null)
     {
+        // GPU 即時預覽：只換對象（「渲染展品」「全景」照樣有效），畫面由 DrawGpuResult 跟上 ⇒ ⛔ 不 spawn
+        if (UseGpu(g)) { if (iSubject != null) g.SetField(SSubject, iSubject); m_Message = iLabel + "（GPU 即時預覽）"; return; }
         string aOut = Path.Combine(PageTempDir, "view.png");
         var aArgs = new Dictionary<string, string>(iArgs, StringComparer.Ordinal) { ["op"] = "view", ["out"] = aOut };
         AddWorkTarget(g, aArgs);
@@ -681,8 +685,183 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         });
     }
 
+    // ===========================================================
+    // 區塊職責：GPU 即時預覽（TASK-0472）—— 視窗宿主登記了雕刻畫家 ⇒ 不 spawn：場景（voxel＋參數）在行程內準備一次、
+    //          網格由宿主快取在 GPU 上；換視角（拖曳 yaw、滾輪倍率、相機滑桿）只改相機欄位、當幀重畫。
+    // 物理意義：三層快取 —— ① voxel：作品／展品／region／排除色沒變且內容逐顆相同 ⇒ 沿用**同一個清單物件**（宿主網格快取的鍵）；
+    //          ② 參數：其他欄位變了 ⇒ 背景重新準備場景（同一支 Cmd_Sculpture.TryPrepareView，疊層規則只有一份），網格照用；
+    //          ③ 相機（yaw／pitch／roll／fov／zoom／distance＋檢視倍率）：每幀套在參數副本上，什麼都不重建。
+    //          場景準備時**拿掉相機鍵** ⇒ plan 手上是鏈／展品給的相機；欄位有值才覆寫（清空 ＝ 回到鏈上的值）。
+    // 數值影響：宿主不能畫（文字模式、SENATE_SCULPT_GPU=off）、開關關掉、或宿主回報這一幀失敗 ⇒ 退回 spawn 出圖，原因印在頁面上。
+    //          合併同色面一律開（MergeFaces）；CLI `op=view` 不受影響（它不開）。
+    // ===========================================================
+    const string GpuKey = "sculpture/gpu-view";
+    const string TGpu = P + "t/gpu";
+    const string FViewScale = P + "f/view_scale";
+    static readonly string[] s_CamKeys = { "yaw", "pitch", "roll", "fov", "zoom", "distance" };
+    static readonly string[] s_VoxelKeys = { "work", "exhibit", "region", "exclude_color" };
+    static bool GpuPainterAvailable => SCP_GuiGpuViews.CanPaint(typeof(SCP_SculptGpuScene));
+
+    sealed record PlanSnap(string SceneSig, string VoxelSig, IReadOnlyList<SCP_SculptVoxel> Voxels, SCP_SculptRenderParams Params,
+                           string Layers, int Total, double Ms, bool VoxelsReused);
+    volatile PlanSnap? m_Plan;
+    Task<(PlanSnap? Snap, string? Error)>? m_PlanJob;
+    string m_PlanJobSig = "";
+    string? m_PlanError;
+    string m_GpuSceneSig = "";
+    long m_GpuPut;
+
+    /// <summary>這一幀要不要走 GPU：宿主能畫 ＋ 開關開著 ＋ 宿主沒有回報「這一版畫失敗」。</summary>
+    bool UseGpu(SCP_Ui g)
+    {
+        if (!GpuPainterAvailable || !g.ToggleValue(TGpu, true)) return false;
+        return !(SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus s) && s.Version == m_GpuPut && s.Error != null);
+    }
+
+    /// <summary>畫 GPU 結果區；不走 GPU（含失敗）⇒ 回 false，呼叫端畫舊的檔案結果區。</summary>
+    bool DrawGpuResult(SCP_Ui g, string iPersona)
+    {
+        if (!GpuPainterAvailable) { g.Note("這個宿主沒有 GPU 即時預覽（文字模式，或環境變數 SENATE_SCULPT_GPU=off）⇒ 用 spawn 出圖。"); return false; }
+        g.Toggle("GPU 即時預覽（拖曳轉 yaw、滾輪縮放）", true, TGpu);
+        if (!g.ToggleValue(TGpu, true)) { g.Note("GPU 即時預覽關著 ⇒ 用 spawn 出圖。"); return false; }
+        if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus aSt) && aSt.Version == m_GpuPut && aSt.Error != null)
+        { g.Note("GPU 預覽這一幀失敗 ⇒ 退回 spawn 出圖：" + aSt.Error); return false; }
+
+        Dictionary<string, string> aReq = ManualRequest(g, iPersona, out string aSubject);
+        if (iPersona.Length > 0) aReq["persona"] = iPersona;
+        var aCam = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string k in s_CamKeys) if (aReq.Remove(k, out string? v)) aCam[k] = v;
+        string aSceneSig = RequestSig(aReq, iPersona);
+        string aVoxelSig = string.Join(";", s_VoxelKeys.Select(k => k + "=" + (aReq.TryGetValue(k, out string? v) ? v : "")));
+        PumpPlan();
+        PlanSnap? aPlan = m_Plan;
+        if ((aPlan == null || aPlan.SceneSig != aSceneSig) && m_PlanJob == null && m_PlanJobSig != aSceneSig + "|failed") StartPlan(aReq, aSceneSig, aVoxelSig);
+
+        using var aFold = g.Fold("渲染結果（GPU 即時）", P + "fold/result", iDefaultOpen: true);
+        if (!aFold.Open) return true;
+        g.Label("目前對象：" + SubjectText(aSubject));
+        if (m_PlanError != null) g.Note("[場景準備失敗] " + m_PlanError);
+        if (m_PlanJob != null) g.Note("準備場景中…（作品／參數變了；畫面是上一版）");
+        if (aPlan == null) { g.Note(m_PlanError == null ? "第一次準備場景中…" : "沒有可畫的場景。"); return true; }
+        g.Label("layers：" + aPlan.Layers);
+        g.Label($"場景準備 {aPlan.Ms:0} ms（voxel {(aPlan.VoxelsReused ? "沿用同一份" : "新的一份")}，{aPlan.Voxels.Count:N0}／{aPlan.Total:N0}）");
+
+        // ③ 相機：每幀套在副本上
+        SCP_SculptRenderParams p = aPlan.Params.Clone();
+        p.MergeFaces = true;
+        string? aBad = ApplyCamera(p, aCam, g.FieldValue(FViewScale, "1"));
+        if (aBad != null) { g.Note("[相機欄位] " + aBad); return true; }
+        string aCamSig = string.Join(";", aCam.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value)) + ";vs=" + p.ViewScale.ToString("R", CultureInfo.InvariantCulture);
+        string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig;
+        if (aGpuSig != m_GpuSceneSig || !SCP_GuiGpuViews.Has(GpuKey))
+        {
+            m_GpuPut = SCP_GuiGpuViews.Put(GpuKey, new SCP_SculptGpuScene(aPlan.Voxels, p), p.Width, p.Height);
+            m_GpuSceneSig = aGpuSig;
+        }
+        SCP_GuiPointer? aPtr = g.ImageInteractive(SCP_GuiGpuViews.Ref(GpuKey), ViewSide, "雕刻即時預覽", P + "img/gpu");
+        if (aPtr != null)
+        {
+            if (aPtr.DragX != 0)
+            {
+                // 只轉 yaw（Tim 2026-10-09）：拖過整張圖寬 ＝ 轉 180°；欄位空白 ⇒ 從鏈上的值起算
+                string aCur = g.FieldValue(FYaw, "").Trim();
+                double aYaw = aCur.Length > 0 && double.TryParse(aCur, NumberStyles.Float, CultureInfo.InvariantCulture, out double y0) ? y0 : aPlan.Params.YawDeg;
+                aYaw -= aPtr.DragX * 180;
+                aYaw %= 360; if (aYaw < 0) aYaw += 360;
+                g.SetField(FYaw, aYaw.ToString("0.#", CultureInfo.InvariantCulture));
+            }
+            if (aPtr.Wheel != 0)
+            {
+                double vs = Math.Max(0.1, Math.Min(50, p.ViewScale * Math.Pow(1.25, aPtr.Wheel)));
+                g.SetField(FViewScale, vs.ToString("0.###", CultureInfo.InvariantCulture));
+            }
+        }
+        using (g.Row())
+        {
+            g.Label($"檢視倍率 ×{p.ViewScale:0.##}");
+            if (g.Button("倍率歸 1", P + "btn/view-scale-reset")) g.SetField(FViewScale, "1");
+        }
+        if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out aSt) && aSt.Error == null && aSt.Info.Length > 0) g.Note(aSt.Info);
+        return true;
+    }
+
+    /// <summary>plan 物件的身分（換 plan ⇒ 一定重放場景）。</summary>
+    static string RuntimeHelpers_Id(object o) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>相機欄位（字串，同 CLI 的值）套到參數上；zoom／distance 給 `auto` ⇒ 回到自動框住。壞值 ⇒ 回原因、不套。</summary>
+    static string? ApplyCamera(SCP_SculptRenderParams p, Dictionary<string, string> iCam, string iViewScale)
+    {
+        foreach (var kv in iCam)
+        {
+            string v = kv.Value.Trim();
+            bool aAuto = v.Equals("auto", StringComparison.OrdinalIgnoreCase);
+            if (!aAuto && !double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out double d)) return kv.Key + " 不是數字：" + v;
+            double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d);
+            switch (kv.Key)
+            {
+                case "yaw": if (!aAuto) p.YawDeg = d; break;
+                case "pitch": if (!aAuto) p.PitchDeg = d; break;
+                case "roll": if (!aAuto) p.RollDeg = d; break;
+                case "fov": if (!aAuto) p.FovDeg = d; break;
+                case "zoom": p.Zoom = aAuto ? null : d; break;
+                case "distance": p.Distance = aAuto ? null : d; break;
+            }
+        }
+        if (!double.TryParse(iViewScale.Trim().Length == 0 ? "1" : iViewScale, NumberStyles.Float, CultureInfo.InvariantCulture, out double vs) || !(vs > 0))
+            return "檢視倍率不是正數：" + iViewScale;
+        p.ViewScale = vs;
+        return null;
+    }
+
+    /// <summary>② 背景準備場景（同 CLI 的疊層）；voxel 跟上一份逐顆相同 ⇒ 換成上一份的清單物件（宿主網格快取命中）。</summary>
+    void StartPlan(Dictionary<string, string> iReq, string iSceneSig, string iVoxelSig)
+    {
+        var aRaw = new Dictionary<string, string>(iReq, StringComparer.Ordinal) { ["data_root"] = m_DataRoot };
+        if (m_LettersRoot.Length > 0) aRaw["letters_root"] = m_LettersRoot;
+        PlanSnap? aPrev = m_Plan;
+        m_PlanJobSig = iSceneSig;
+        Func<(PlanSnap?, string?)> aJob = () =>
+        {
+            var sw = Stopwatch.StartNew();
+            if (!Cmd_Sculpture.TryPrepareView(aRaw, out SCP_SculptViewPlan aPlan, out string aLayers, out string aErr)) return (null, aErr);
+            IReadOnlyList<SCP_SculptVoxel> aVox = aPlan.Voxels;
+            bool aReused = false;
+            if (aPrev != null && aPrev.VoxelSig == iVoxelSig && aPrev.Voxels.Count == aVox.Count)
+            {
+                bool aSame = true;
+                for (int i = 0; i < aVox.Count && aSame; i++)
+                {
+                    SCP_SculptVoxel a = aVox[i], b = aPrev.Voxels[i];
+                    aSame = a.X == b.X && a.Y == b.Y && a.Z == b.Z && a.Color == b.Color;
+                }
+                if (aSame) { aVox = aPrev.Voxels; aReused = true; }
+            }
+            return (new PlanSnap(iSceneSig, iVoxelSig, aVox, aPlan.Params, aLayers, aPlan.TotalVoxels, sw.Elapsed.TotalMilliseconds, aReused), null);
+        };
+        if (SCP_GuiHost.RedrawsContinuously) { m_PlanJob = Task.Run(aJob); return; }
+        var r = aJob();
+        FinishPlan(r.Item1, r.Item2);
+    }
+
+    void PumpPlan()
+    {
+        if (m_PlanJob == null || !m_PlanJob.IsCompleted) return;
+        var aJob = m_PlanJob;
+        m_PlanJob = null;
+        try { var r = aJob.Result; FinishPlan(r.Snap, r.Error); }
+        catch (Exception e) { FinishPlan(null, (e.InnerException ?? e).Message); }
+    }
+
+    void FinishPlan(PlanSnap? iSnap, string? iError)
+    {
+        if (iSnap != null) { m_Plan = iSnap; m_PlanError = null; }
+        else { m_PlanError = iError; m_PlanJobSig += "|failed"; }   // 同一組參數失敗過 ⇒ 不每幀重試（改了參數才再試）
+    }
+
     void DrawResult(SCP_Ui g)
     {
+        string aGpuPersona = g.FieldValue(PersonaSel + "/value", None);
+        if (DrawGpuResult(g, aGpuPersona == None ? "" : aGpuPersona)) return;
         string aPath = g.FieldValue(SViewPath, "");
         using var aFold = g.Fold("渲染結果", P + "fold/result", iDefaultOpen: true);
         if (!aFold.Open) return;

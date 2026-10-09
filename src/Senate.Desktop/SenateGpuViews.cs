@@ -12,21 +12,26 @@ namespace Senate.Desktop;
 
 public sealed class SenateGpuViews : IDisposable
 {
-    sealed class Target { public uint Fbo, Color, Depth; public int W, H; public long Version = -1; public string? Error; }
+    sealed class Target { public uint Fbo, Color, Depth; public int W, H; public long Version = -1; public string? Error; public bool FlipY; }
 
     readonly GL m_Gl;
     SenateGlobeGl? m_Globe;
+    SenateSculptRenderer? m_Sculpt;   // TASK-0472：同一份雕刻渲染器，外部 GL 模式（網格快取在它身上）
     string? m_InitError;
     readonly Dictionary<string, Target> m_Targets = new(StringComparer.Ordinal);
 
     public SenateGpuViews(GL iGl) { m_Gl = iGl; }
 
-    /// <summary>畫（或沿用）這個 key 的貼圖。失敗 ⇒ false ＋原因（也已回報給登記處）。</summary>
-    public bool TryPaint(string iKey, out uint oTex, out int oW, out int oH, out string oError)
+    /// <summary>
+    /// 畫（或沿用）這個 key 的貼圖。失敗 ⇒ false ＋原因（也已回報給登記處）。
+    /// <paramref name="oFlipY"/>：貼圖是 GL 慣例（第 0 列在最下面）⇒ 顯示時要上下翻（雕刻）；球面 shader 自己就畫成由上到下 ⇒ false。
+    /// </summary>
+    public bool TryPaint(string iKey, out uint oTex, out int oW, out int oH, out bool oFlipY, out string oError)
     {
-        oTex = 0; oW = oH = 0; oError = "";
+        oTex = 0; oW = oH = 0; oFlipY = false; oError = "";
         if (!SCP_GuiGpuViews.TryGet(iKey, out SCP_GuiGpuFrame aFrame)) { oError = "還沒有場景：" + iKey; return false; }
         if (!m_Targets.TryGetValue(iKey, out Target? t)) m_Targets[iKey] = t = new Target();
+        oFlipY = t.FlipY;
         if (t.Version == aFrame.Version)
         {
             if (t.Error != null) { oError = t.Error; return false; }
@@ -35,26 +40,39 @@ public sealed class SenateGpuViews : IDisposable
         t.Version = aFrame.Version;
         t.Error = null;
         var aSaved = SaveState();
+        string aInfo = "";
         try
         {
-            if (aFrame.Scene is not SCP_GlobeGpuScene aScene) throw new InvalidOperationException("這個宿主不會畫 " + aFrame.Scene.GetType().Name);
-            if (m_InitError != null) throw new InvalidOperationException(m_InitError);
-            try { m_Globe ??= new SenateGlobeGl(m_Gl); }
-            catch (Exception e) { m_InitError = "球面 GPU 初始化失敗：" + e.Message; throw new InvalidOperationException(m_InitError); }
             EnsureTarget(t, aFrame.Width, aFrame.Height);
-            m_Gl.BindFramebuffer(FramebufferTarget.Framebuffer, t.Fbo);
-            m_Gl.Viewport(0, 0, (uint)t.W, (uint)t.H);
-            m_Globe.Draw(aScene, SenateGlobeGl.Mode.Color);
+            if (aFrame.Scene is SCP_GlobeGpuScene aGlobe)
+            {
+                if (m_InitError != null) throw new InvalidOperationException(m_InitError);
+                try { m_Globe ??= new SenateGlobeGl(m_Gl); }
+                catch (Exception e) { m_InitError = "球面 GPU 初始化失敗：" + e.Message; throw new InvalidOperationException(m_InitError); }
+                m_Gl.BindFramebuffer(FramebufferTarget.Framebuffer, t.Fbo);
+                m_Gl.Viewport(0, 0, (uint)t.W, (uint)t.H);
+                m_Globe.Draw(aGlobe, SenateGlobeGl.Mode.Color);
+                t.FlipY = false;
+                aInfo = "GPU " + m_Globe.GlInfo + "｜格子同步 " + m_Globe.LastSync;
+            }
+            else if (aFrame.Scene is SCP.Core.Sculpture.SCP_SculptGpuScene aSculpt)
+            {
+                m_Sculpt ??= new SenateSculptRenderer(m_Gl);
+                if (!m_Sculpt.TryRenderToFbo(aSculpt.Voxels, aSculpt.Params, t.Fbo, out string aWhy)) throw new InvalidOperationException(aWhy);
+                t.FlipY = true;
+                aInfo = m_Sculpt.Name + "｜" + m_Sculpt.LastReading;
+            }
+            else throw new InvalidOperationException("這個宿主不會畫 " + aFrame.Scene.GetType().Name);
             GLEnum aErr = m_Gl.GetError();
             if (aErr != GLEnum.NoError) throw new InvalidOperationException("OpenGL 錯誤：" + aErr);
-            SCP_GuiGpuViews.Report(iKey, aFrame.Version, null, "GPU " + m_Globe.GlInfo + "｜格子同步 " + m_Globe.LastSync);
-            oTex = t.Color; oW = t.W; oH = t.H;
+            SCP_GuiGpuViews.Report(iKey, aFrame.Version, null, aInfo);
+            oTex = t.Color; oW = t.W; oH = t.H; oFlipY = t.FlipY;
             return true;
         }
         catch (Exception e)
         {
             t.Error = oError = e.Message;
-            SCP_GuiGpuViews.Report(iKey, aFrame.Version, oError, m_Globe?.GlInfo ?? "");
+            SCP_GuiGpuViews.Report(iKey, aFrame.Version, oError, aInfo);
             return false;
         }
         finally { RestoreState(aSaved); }
@@ -95,7 +113,10 @@ public sealed class SenateGpuViews : IDisposable
     // ── GL 狀態保存／還原 ──────────────────────────────
     sealed class Saved
     {
-        public int DrawFbo, ReadFbo, Program, Vao, ActiveTex, Tex0, Tex1, TexArr0, Rb, Unpack, DepthFunc;
+        public int DrawFbo, ReadFbo, Program, Vao, ActiveTex, Tex0, Tex1, Tex2, TexArr0, Rb, Unpack, DepthFunc;
+        // 雕刻渲染器還會動這些（TASK-0472）：深度寫入、剔除哪一面、混色函式／方程式
+        public bool DepthMask;
+        public int CullMode, BlendSrcRgb, BlendDstRgb, BlendSrcA, BlendDstA, BlendEqRgb, BlendEqA, Pack;
         public readonly int[] Viewport = new int[4];
         public readonly float[] Clear = new float[4];
         public float ClearDepth;
@@ -121,11 +142,19 @@ public sealed class SenateGpuViews : IDisposable
         s.ClearDepth = gl.GetFloat(GetPName.DepthClearValue);
         s.Unpack = gl.GetInteger(GetPName.UnpackAlignment);
         s.DepthFunc = gl.GetInteger(GetPName.DepthFunc);
+        s.DepthMask = gl.GetBoolean(GetPName.DepthWritemask);
+        s.CullMode = gl.GetInteger(GetPName.CullFaceMode);
+        s.BlendSrcRgb = gl.GetInteger(GetPName.BlendSrcRgb); s.BlendDstRgb = gl.GetInteger(GetPName.BlendDstRgb);
+        s.BlendSrcA = gl.GetInteger(GetPName.BlendSrcAlpha); s.BlendDstA = gl.GetInteger(GetPName.BlendDstAlpha);
+        s.BlendEqRgb = gl.GetInteger(GetPName.BlendEquationRgb); s.BlendEqA = gl.GetInteger(GetPName.BlendEquationAlpha);
+        s.Pack = gl.GetInteger(GetPName.PackAlignment);
         gl.ActiveTexture(TextureUnit.Texture0);
         s.Tex0 = gl.GetInteger(GetPName.TextureBinding2D);
         s.TexArr0 = gl.GetInteger(GetPName.TextureBinding2DArray);
         gl.ActiveTexture(TextureUnit.Texture1);
         s.Tex1 = gl.GetInteger(GetPName.TextureBinding2D);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        s.Tex2 = gl.GetInteger(GetPName.TextureBinding2D);
         gl.ActiveTexture((TextureUnit)s.ActiveTex);
         return s;
     }
@@ -143,6 +172,13 @@ public sealed class SenateGpuViews : IDisposable
         gl.UseProgram((uint)s.Program);
         gl.BindVertexArray((uint)s.Vao);
         gl.BindRenderbuffer(RenderbufferTarget.Renderbuffer, (uint)s.Rb);
+        gl.DepthMask(s.DepthMask);
+        gl.CullFace((TriangleFace)s.CullMode);
+        gl.BlendFuncSeparate((BlendingFactor)s.BlendSrcRgb, (BlendingFactor)s.BlendDstRgb, (BlendingFactor)s.BlendSrcA, (BlendingFactor)s.BlendDstA);
+        gl.BlendEquationSeparate((BlendEquationModeEXT)s.BlendEqRgb, (BlendEquationModeEXT)s.BlendEqA);
+        gl.PixelStore(PixelStoreParameter.PackAlignment, s.Pack);
+        gl.ActiveTexture(TextureUnit.Texture2);
+        gl.BindTexture(TextureTarget.Texture2D, (uint)s.Tex2);
         gl.ActiveTexture(TextureUnit.Texture1);
         gl.BindTexture(TextureTarget.Texture2D, (uint)s.Tex1);
         gl.ActiveTexture(TextureUnit.Texture0);
@@ -161,5 +197,7 @@ public sealed class SenateGpuViews : IDisposable
         m_Targets.Clear();
         m_Globe?.Dispose();
         m_Globe = null;
+        m_Sculpt?.Dispose();
+        m_Sculpt = null;
     }
 }

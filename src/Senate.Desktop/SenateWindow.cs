@@ -354,6 +354,9 @@ public sealed class SenateWindow : IDisposable
         m_Renderer.GpuViews = m_GpuViews;
         if (!string.Equals(Environment.GetEnvironmentVariable("SENATE_GLOBE_GPU"), "off", StringComparison.OrdinalIgnoreCase))
             SCP_GuiGpuViews.RegisterPainter(typeof(SCP.Core.Globe.SCP_GlobeGpuScene));
+        // 雕刻觀測頁的即時預覽（TASK-0472）：同一個畫家；`SENATE_SCULPT_GPU=off` ⇒ 頁面退回 spawn 出圖
+        if (!string.Equals(Environment.GetEnvironmentVariable("SENATE_SCULPT_GPU"), "off", StringComparison.OrdinalIgnoreCase))
+            SCP_GuiGpuViews.RegisterPainter(typeof(SCP.Core.Sculpture.SCP_SculptGpuScene));
 
         // 視窗 icon —— 必須在窗開好之後（那時才有 HWND）。
         // 🩸 GLFW 撈的是名為 GLFW_ICON 的資源，apphost 埋的是數字 ID 32512 ⇒ 名字對不上，
@@ -708,6 +711,7 @@ public sealed class SenateWindow : IDisposable
         m_Renderer.Textures = null;
         m_Textures?.Dispose();
         SCP_GuiGpuViews.UnregisterPainter(typeof(SCP.Core.Globe.SCP_GlobeGpuScene));
+        SCP_GuiGpuViews.UnregisterPainter(typeof(SCP.Core.Sculpture.SCP_SculptGpuScene));
         m_Renderer.GpuViews = null;
         m_GpuViews?.Dispose();
         m_Controller?.Dispose();
