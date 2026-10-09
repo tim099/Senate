@@ -18,6 +18,8 @@ using System.Globalization;
 using System.IO;
 using SCP.Core.Gui;
 using SCP.Core.Market;
+using SCP.Core.Paths;
+using SCP.Core.Tavern;
 using Senate.Core;
 
 namespace Senate.Cli.Pages;
@@ -81,6 +83,7 @@ public sealed class RateAdminPage : SCP_GuiToolPage
         m_LoadError = null;
         m_Message = null;
         m_HistoryCache.Clear();
+        m_Regions = null; m_ImportPlan = null;
 
         // 資料根一律照後台設定那一格（TASK-0390：⛔ 不再猜 `<repo>/AgentCommands` 或寫死的路徑 —— 猜中舊樹時路徑全對、只是屬於另一棵）
         m_DataRoot = m_Model.AgentCommandsRoot.Value;
@@ -283,6 +286,7 @@ public sealed class RateAdminPage : SCP_GuiToolPage
     {
         "toggle_fx" => "切換互換系統",
         "save_rate" => "寫入手填報價",
+        "import_history" => "匯入歷史匯率",
         _ => iPending
     };
 
@@ -366,7 +370,75 @@ public sealed class RateAdminPage : SCP_GuiToolPage
         DrawHistoryPanel(g);
         g.Separator();
 
+        DrawImportPanel(g);
+        g.Separator();
+
         DrawManualEditPanel(g);
+    }
+
+    // ===========================================================
+    // 區塊職責：**從其他區匯入歷史匯率**（TASK-0475）—— 選區 → 試算 → 二段確認寫入。
+    // 物理意義：規則全在 SCP_RateHistoryImport（與 CLI `rate op=import` 同一支）；這裡只是入口。
+    // 🩸 確認那一下**重新試算**：試算到確認之間可能有人 fetch 或同步過，
+    //    拿舊計畫去寫會寫進一份「我沒看過的」內容 ⇒ ref 的 sha 或版本數變了就拒絕、請重新試算。
+    // ===========================================================
+    public const string ImportRegionPickId = "rates/import/region";
+    List<SCP_TavernRegionInfo>? m_Regions;
+    string m_RegionProblems = "";
+    SCP_RateImportPlan? m_ImportPlan;
+
+    void DrawImportPanel(SCP_Ui g)
+    {
+        g.Label("**從其他區匯入歷史匯率**");
+        g.Note("・只讀 git（上次 fetch 的快照，不 checkout）。每個幣只取「比本地該幣第一個點更早、也比本地最新一版更早」的版本；每版只留那些幣，origin 標 `import:`，每日同步不受影響。CLI：`rate --arg op=import --arg region=<區>`。");
+        if (m_Regions == null)
+        {
+            var aProblems = new List<string>();
+            m_Regions = SCP_TavernRegion.ListRegions(new SCP_DataRoot(m_DataRoot), aProblems);
+            m_RegionProblems = string.Join("；", aProblems);
+        }
+        if (m_RegionProblems.Length > 0) g.Note("⚠ 掃描區時有問題：" + m_RegionProblems);
+        if (m_Regions.Count == 0) { g.Note("（沒有掃到任何區 —— 可能是這個 clone 沒有 remote ref）"); return; }
+        var aOptions = new List<SCP_GuiOption>();
+        foreach (var r in m_Regions) aOptions.Add(new SCP_GuiOption(r.Ref, $"{r.Region}（{r.Freshness}）"));
+        string aRef = g.Dropdown("來源區", aOptions, m_Regions[0].Ref, ImportRegionPickId);
+        if (g.Button("試算", "rates/btn/import_preview"))
+        {
+            m_ImportPlan = SCP_RateHistoryImport.Plan(m_DataRoot, aRef, null);
+            if (g.FieldValue(PendingId, "") == "import_history") g.SetField(PendingId, "");   // 重新試算 ⇒ 舊的待確認作廢
+        }
+        var aPlan = m_ImportPlan;
+        if (aPlan == null) return;
+        if (aPlan.Ref != aRef) { g.Note("（換了來源區 ⇒ 重新按「試算」）"); return; }
+        foreach (string e in aPlan.Errors) g.Note("✗ " + e);
+        if (aPlan.Errors.Count > 0) return;
+        foreach (var i in aPlan.Items)
+            g.Note($"・`{i.VersionId}`　{(i.Skip.Length == 0 ? "匯入 " + string.Join(",", i.Symbols) : "跳過：" + i.Skip)}");
+        foreach (string u in aPlan.Unreadable) g.Note("⚠ 來源讀不了（跳過）：" + u);
+        g.Label($"⇒ 會寫入 **{aPlan.ToWrite}** 版（origin=`{aPlan.Origin}`）");
+        if (aPlan.ToWrite == 0) return;
+
+        string aPending = g.FieldValue(PendingId, "");
+        if (aPending != "import_history")
+        {
+            if (g.Button($"匯入 {aPlan.ToWrite} 版", "rates/btn/import_arm")) ArmPending(g, "import_history", aPending);
+            return;
+        }
+        if (g.Button($"確認寫入 {aPlan.ToWrite} 版？", "rates/btn/import_confirm"))
+        {
+            var aFresh = SCP_RateHistoryImport.Plan(m_DataRoot, aPlan.Ref, null);
+            if (aFresh.Errors.Count > 0 || aFresh.Sha != aPlan.Sha || aFresh.ToWrite != aPlan.ToWrite)
+                m_Message = $"[拒絕] 試算之後來源或本地變了（sha {aPlan.Sha}→{aFresh.Sha}、版本 {aPlan.ToWrite}→{aFresh.ToWrite}）⇒ 沒有寫入，請重新試算";
+            else
+            {
+                int aWritten = SCP_RateHistoryImport.Apply(m_DataRoot, aFresh, out var aErrors);
+                m_Message = aErrors.Count == 0 ? $"・已匯入 {aWritten} 版歷史（{aFresh.Origin}）" : $"[錯誤] 寫入 {aWritten}/{aFresh.ToWrite} 版，失敗：{string.Join("；", aErrors)}";
+                m_HistoryCache.Clear();
+            }
+            m_ImportPlan = null;
+            g.SetField(PendingId, "");
+        }
+        if (g.Button("取消", "rates/btn/import_cancel")) g.SetField(PendingId, "");
     }
 
     /// <summary>歷史匯率面板最多畫幾版（最新的那幾版）。全部要看走 CLI `rate op=history`。</summary>

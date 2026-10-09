@@ -128,6 +128,7 @@ public static partial class SelfTest
         One(nameof(PageStack), "gui", PageStack),
         One(nameof(TypeSchemaShape), "gui", TypeSchemaShape),
         One(nameof(MapperRoundTrip), "gui", MapperRoundTrip),
+        One(nameof(JsonMapperIntegerPrecision), "core", JsonMapperIntegerPrecision),
         One(nameof(InspectorEdits), "gui", InspectorEdits),
         One(nameof(FoldSemantics), "gui", FoldSemantics),
         One(nameof(DropdownWidget), "gui", DropdownWidget),
@@ -214,6 +215,7 @@ public static partial class SelfTest
         One(nameof(PortfolioReplayCleanRoom), "market", PortfolioReplayCleanRoom),
         One(nameof(PortfolioLettersMigrateCleanRoom), "market", PortfolioLettersMigrateCleanRoom),
         One(nameof(PortfolioSwapOverflowGuardCleanRoom), "market", PortfolioSwapOverflowGuardCleanRoom),
+        One(nameof(RateHistoryImportCleanRoom), "market", RateHistoryImportCleanRoom),
         // 酒館游標積壓出口（TASK-0369）：本體在 SelfTest.TavernCursor0369.cs
         One(nameof(TavernBacklogSkipCleanRoom), "tavern", TavernBacklogSkipCleanRoom),
         One(nameof(TavernBacklogCapSettings), "tavern", TavernBacklogCapSettings),
