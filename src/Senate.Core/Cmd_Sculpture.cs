@@ -41,7 +41,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "3D雕刻：作品可調尺寸、免費組裝他人零件與Credit、移動、Undo/Redo；任務建立免費領10 token且可開免費子作品；自發建立10、展區按落地收費";
 
     public override string Details =>
-        "落子類（box／carve／stamp2d／stampimg）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
+        "落子類（box／carve／stamp2d／stampimg／stampvox）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
+        + "· stampvox：一刀落一塊任意形狀的 3D 格子（斜的、彎的木料）—— 清單每行 `x,y,z,color`（相對 at；`#` 註解），expect_pixels ＝ 清單格數。\n"
         + "· 預授權用**最壞費用**擋餘額 —— 不夠 ⇒ 引擎不跑、一毛不扣（exit 3）。\n"
         + "· 結算只對**實際落地**收費（禁覆蓋 skip 掉的不收）；同一刀只扣一次（兩把鎖包住整段）。\n"
         + "· 落子成功會用**落子者**的渲染設定渲一張全景、以落子者身分發進酒館（`tavern-post` 帶圖）；`share=0` 關掉。\n"
@@ -67,7 +68,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     public const string SlicePngName = "sculpture_slice.png";
 
     static readonly string[] s_Ops =
-        { "box", "carve", "stamp2d", "stampimg", "view", "slice", "section", "stats", "export", "exhibit", "render-profile", "work" };
+        { "box", "carve", "stamp2d", "stampimg", "stampvox", "view", "slice", "section", "stats", "export", "exhibit", "render-profile", "work" };
 
     /// <summary>
     /// 分享的發文端（預設 `tavern-post`）。⚠ 只給自我對拍換成探針 —— 淨室裡不可以真的發進酒館。
@@ -129,11 +130,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("src_y2", "stamp2d：另一角 y"),
         new SCP_CmdArgSpec("png", "stampimg：RGBA PNG 路徑（透明像素不落地）"),
         new SCP_CmdArgSpec("resize", "stampimg：W,H（NEAREST）"),
-        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）"),
-        new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+）"),
-        new SCP_CmdArgSpec("thickness", "stamp 類：層數", iDefault: "1"),
+        new SCP_CmdArgSpec("voxels", "stampvox：3D 格子清單路徑（每行 x,y,z,color 相對 at；color 1..255；空行與 # 起頭略過；壞行／重複格 ⇒ 整刀拒絕）"),
+        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox ＝ 清單原點"),
+        new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+；stampvox 不吃）"),
+        new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）", iDefault: "1"),
         new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標"),
-        new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數，對不上即拒絕（**強烈建議帶**）"),
+        new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數（stampvox ＝ 清單格數），對不上即拒絕（**強烈建議帶**）"),
         new SCP_CmdArgSpec("alpha_threshold", "stamp 類：alpha 門檻（預設 128）"),
         new SCP_CmdArgSpec("allow_clip", "stamp 類：1 ＝ 接受越界裁切（預設越界即拒絕）"),
         new SCP_CmdArgSpec("exhibit_id", "stamp 類：貼完自動登錄／擴充展品"),
@@ -251,6 +253,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 case "carve":
                 case "stamp2d":
                 case "stampimg":
+                case "stampvox":
                     aPayload = OpPlace(aCtx); break;
                 case "view": aPayload = OpView(aCtx); break;
                 case "slice": aPayload = OpSlice(aCtx); break;
@@ -318,9 +321,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     }
 
     // ===========================================================
-    // 區塊職責：落子四 op（box／carve／stamp2d／stampimg）—— 預授權 → 引擎 → 結算 → 分享。
-    // 物理意義：四個 op 只差「最壞費用怎麼量」與「引擎參數怎麼組」，閘門與帳完全同型 ⇒ 共用本方法。
-    //          ⚠ 最壞費用一律**本檔自己量**（stampimg 讀 PNG IHDR）—— 用呼叫端申報的數字守自己的門，門就是假的。
+    // 區塊職責：落子五 op（box／carve／stamp2d／stampimg／stampvox）—— 預授權 → 引擎 → 結算 → 分享。
+    // 物理意義：五個 op 只差「最壞費用怎麼量」與「引擎參數怎麼組」，閘門與帳完全同型 ⇒ 共用本方法。
+    //          ⚠ 最壞費用一律**本檔自己量**（stampimg 讀 PNG IHDR、stampvox 數清單）—— 用呼叫端申報的數字守自己的門，門就是假的。
     // ===========================================================
     static string? OpPlace(Ctx c)
     {
@@ -557,7 +560,24 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         int aThick = TryInt(c, "thickness", out int t) ? Math.Max(1, t) : 1;
         long aArea;
         SCP_SculptStampArgs aStamp;
-        if (c.Op == "stamp2d")
+        if (c.Op == "stampvox")
+        {
+            // 清單本身就是 3D：facing／thickness 給了就擋（⛔ 不靜默忽略 —— 照 stampimg 的習慣帶上來，會以為它轉了方向）
+            foreach (string k in new[] { "facing", "thickness", "png", "resize", "alpha_threshold" })
+                if (c.Args.IsExplicit(k)) { oBad = "stampvox 不吃 " + k + "（清單每行就是 3D 的 x,y,z,color，相對 at）"; return false; }
+            string aList = c.Args.Get("voxels").Trim();
+            if (aList.Length == 0 || !File.Exists(aList)) { oBad = "stampvox 需要存在的 --arg voxels=<清單路徑>（got '" + aList + "'）"; return false; }
+            // 最壞費用＝清單格數，用引擎同一支解析器自己數（⛔ 不信呼叫端的 expect_pixels）
+            if (!SCP_SculptEngine.TryParseVoxelList(File.ReadAllBytes(aList), out List<int[]> aVox, out string aWhy))
+            { oBad = "格子清單 " + aList + "：" + aWhy; return false; }
+            aArea = aVox.Count;
+            aThick = 1;
+            oWhere = $"清單 {Path.GetFileName(aList)} = {aVox.Count:N0} 格 @({aAt})";
+            var aVoxArgs = new SCP_SculptStampVoxArgs { Voxels = aList };
+            aStamp = aVoxArgs;
+            oRun = e => e.StampVox(aVoxArgs);
+        }
+        else if (c.Op == "stamp2d")
         {
             if (!TryInt(c, "src_x1", out int sx1) || !TryInt(c, "src_y1", out int sy1)
                 || !TryInt(c, "src_x2", out int sx2) || !TryInt(c, "src_y2", out int sy2))
@@ -624,7 +644,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             return;
         }
         if (iRes is not SCP_SculptStampResult s) return;
-        c.Report.Append("- source: ").Append(iWhere).Append(" → 非透明像素 **").Append(s.PaintedSourcePixels).Append("**（透明＝未繪製，不放 voxel）\n");
+        if (s.Op == "stampvox") c.Report.Append("- source: ").Append(iWhere).Append(" → 清單格子 **").Append(s.PaintedSourcePixels).Append("**\n");
+        else c.Report.Append("- source: ").Append(iWhere).Append(" → 非透明像素 **").Append(s.PaintedSourcePixels).Append("**（透明＝未繪製，不放 voxel）\n");
         c.Report.Append("- placed: **").Append(iActual).Append("** voxels")
                 .Append(s.SkippedOccupied > 0 ? "；skip " + s.SkippedOccupied + "（禁覆蓋，不收費）" : "")
                 .Append(s.OutOfBounds > 0 ? "；越界裁掉 " + s.OutOfBounds : "").Append('\n');

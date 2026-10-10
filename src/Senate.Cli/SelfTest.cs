@@ -196,6 +196,7 @@ public static partial class SelfTest
         One(nameof(SculptureWorksCleanRoom), "sculpture", SculptureWorksCleanRoom),
         One(nameof(SculptureEditingCleanRoom), "sculpture", SculptureEditingCleanRoom),
         One(nameof(SculptExportMergeCleanRoom), "sculpture", SculptExportMergeCleanRoom),
+        One(nameof(SculptureStampVoxCleanRoom), "sculpture", SculptureStampVoxCleanRoom),
         // 雕刻即時預覽（TASK-0472）：本體在 SelfTest.SculptGpu.cs
         One(nameof(SculptureMaxAxisCleanRoom), "sculpture", SculptureMaxAxisCleanRoom),
         One(nameof(SculptLargeBboxCleanRoom), "sculpture", SculptLargeBboxCleanRoom),
