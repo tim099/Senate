@@ -57,7 +57,7 @@ public static partial class SelfTest
             Check(r.TryRender(vox, pm, out byte[] aMerged, out err), "合併畫法失敗：" + err);
             var r1 = r.LastReading;
             double aFrac = PixelDiffFraction(aFlat, aMerged, out int aDiff);
-            readings.Add($"逐面 {r0.Triangles:N0} 三角形 → 合併 {r1.Triangles:N0}（外露面 {r1.Faces:N0} 併成 {r1.Quads:N0} 塊）；畫面差異 {aDiff} 像素（{aFrac:P3}）");
+            readings.Add($"逐面 {r0.Triangles:N0} 三角形 → 合併 {r1.Triangles:N0}（外露面 {r1.Faces:N0} 併成 {r1.Quads:N0} 塊）；畫面差異 {aDiff} 像素（{aFrac:P3}）；網格 digest 逐面 {r0.MeshDigest:x16}／合併 {r1.MeshDigest:x16}");
             Check(r0.Faces == r1.Faces && r0.Quads == r0.Faces, "兩種畫法的外露面數相同、逐面時塊數＝面數");
             Check(r1.Triangles * 3 < r0.Triangles, "合併後三角形至少少到三分之一");
             Check(aFrac <= SculptMergeDiffLimit, $"合併後畫面差異 {aFrac:P3} > {SculptMergeDiffLimit:P1}");

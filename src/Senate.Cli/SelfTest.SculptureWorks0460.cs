@@ -101,7 +101,8 @@ public static partial class SelfTest
             store.Save(legacy);
             Check(store.Load("chair").Dimensions == "64,64,64", "舊書卡沿用64尺寸");
             SCP_CmdResult Resize(string dimensions, string owner = "p") => room.Run(("op", "work"), ("sub", "update"), ("work", "chair"), ("persona", owner), ("size", dimensions));
-            Check(Resize("128,96,32", "q").ExitCode == 2 && Resize("0,96,32").ExitCode == 2 && Resize("257").ExitCode == 2 && Resize("8,9").ExitCode == 2, "作者與非法尺寸拒絕");
+            // TASK-0479：上限不再寫死 256 ⇒ 「超過上限」改用預設上限＋1（4097；沒給 repo_root ⇒ 預設 4096）
+            Check(Resize("128,96,32", "q").ExitCode == 2 && Resize("0,96,32").ExitCode == 2 && Resize((SCP_SculptWorks.DefaultMaxAxis + 1).ToString()).ExitCode == 2 && Resize("8,9").ExitCode == 2, "作者與非法尺寸拒絕");
             string revisionBefore = SculptRoom.V(room.Run(("op", "work"), ("sub", "show"), ("work", "chair")), "revision");
             var sizePreview = room.Run(("op", "work"), ("sub", "import"), ("work", "chair"), ("persona", "p"), ("at", "20,20,20"));
             Check(Resize("128,96,32").ExitCode == 0 && store.Load("chair").Dimensions == "128,96,32", "擴大與分軸縮小免費保存");

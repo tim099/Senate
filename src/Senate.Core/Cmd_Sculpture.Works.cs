@@ -81,7 +81,11 @@ public sealed partial class Cmd_Sculpture
             if (c.Args.IsExplicit("title") && string.IsNullOrWhiteSpace(title)) return Blocked(c, 2, "作品名稱不可空白");
             if (c.Args.IsExplicit("size"))
             {
-                var dimensions = SCP_SculptWorks.ParseSize(c.Args.Get("size"));
+                int maxAxis = WorkMaxAxis(c);
+                var dimensions = ParseWorkSize(c.Args.Get("size"), maxAxis, true);
+                // 政策上限只擋「往上長」：維持原尺寸（GUI 存筆記時一定帶著 size）或縮小永遠放行
+                string? sizeWhy = SCP_SculptWorks.PolicyViolation(dimensions, new[] { cardNow.SizeX, cardNow.SizeY, cardNow.SizeZ }, maxAxis);
+                if (sizeWhy != null) return Blocked(c, 2, sizeWhy + "；未修改");
                 var space = c.Works.Engine(cardNow, c.Roots.DataRoot).LoadSpace();
                 foreach (var voxel in space.Voxels.Entries())
                     if (voxel.X >= dimensions[0] || voxel.Y >= dimensions[1] || voxel.Z >= dimensions[2])
@@ -92,6 +96,11 @@ public sealed partial class Cmd_Sculpture
             {
                 cardNow.title = title.Trim();
             }
+            if (c.Args.IsExplicit("meters_per_voxel"))
+            {
+                if (!TryPositive(c.Args.Get("meters_per_voxel"), out double mpv) || mpv > 1000) return Blocked(c, 2, "meters_per_voxel 要是 0–1000 的正數（一格幾公尺；0.1 ＝ 每格 10 公分）");
+                cardNow.meters_per_voxel = mpv;
+            }
             if (c.Args.IsExplicit("notes")) c.Works.WriteText(id, false, c.Args.Get("notes"));
             if (c.Args.IsExplicit("todo")) c.Works.WriteText(id, true, c.Args.Get("todo"));
             c.Works.Save(cardNow);
@@ -101,6 +110,32 @@ public sealed partial class Cmd_Sculpture
         catch (SCP_FileLockTimeoutException e) { return Blocked(c, 4, "作品鎖：" + e.Message); }
         catch (ArgumentException e) { return Blocked(c, 2, e.Message); }
         catch (InvalidOperationException e) { return Blocked(c, 2, e.Message); }
+    }
+
+    /// <summary>
+    /// 建立／調尺寸時的每軸上限：設定 `sculpture.workMaxAxis`（TASK-0479，預設 4096）。上限與來源都印進回傳值 ——
+    /// 被擋下時才分得出「我給太大」與「這台的設定比較小」。⚠ 只管建立與調尺寸；雕刻、渲染只認結構上限。
+    /// </summary>
+    static int WorkMaxAxis(Ctx c)
+    {
+        int aMax = SculptureWorkPrefs.ResolveMaxAxis(c.Args.Get("repo_root").Trim(), out string aSource);
+        c.Result.AddValue("work_max_axis", aMax.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("work_max_axis_source", aSource);
+        return aMax;
+    }
+
+    /// <summary>
+    /// 建立／調尺寸的 size 解析：這裡只做結構檢查（政策上限交給 PolicyViolation），但**錯字講政策上限** ——
+    /// 結構上限 1048576 是呼叫端用不到的數字，照它重試只會換來另一句範圍不同的錯（第二輪審查）。
+    /// </summary>
+    static int[] ParseWorkSize(string iText, int iMaxAxis, bool iUpdate)
+    {
+        try { return SCP_SculptWorks.ParseSize(iText, SCP_SculptWorks.MaxAxisHard); }
+        catch (ArgumentException)
+        {
+            throw new ArgumentException("size 要是邊長或 X,Y,Z 的正整數，各軸1–" + iMaxAxis.ToString(CultureInfo.InvariantCulture)
+                + "（作品尺寸上限 sculpture.workMaxAxis" + (iUpdate ? "；縮小或維持原尺寸不受上限限制" : "") + "）");
+        }
     }
 
     static string ResolveWorkAccount(Ctx c)
@@ -115,8 +150,14 @@ public sealed partial class Cmd_Sculpture
             return Blocked(c, 2, "建立作品需要已存在的 persona");
         string commission = c.Args.Get("commission").Trim(), commissionRef = c.Args.Get("commission_ref").Trim();
         if ((commission.Length == 0) != (commissionRef.Length == 0)) return Blocked(c, 2, "委託內容與commission_ref要一起給；自發作品兩者留空");
-        int[] dimensions = SCP_SculptWorks.ParseSize(c.Args.IsExplicit("size") ? c.Args.Get("size") : "64");
+        // 先只做結構檢查；政策上限只套在**新**作品上 —— 重試 pending 的付款不能被之後調小的上限卡住（錢已經付了）。
+        // 沒給 size ⇒ 預設 64，但不超過上限（否則一個沒帶 size 的人會收到一句講 size 的錯）。
+        int maxAxis = WorkMaxAxis(c);
+        int[] dimensions = ParseWorkSize(c.Args.IsExplicit("size") ? c.Args.Get("size")
+            : Math.Min(SCP_SculptWorks.Size, maxAxis).ToString(CultureInfo.InvariantCulture), maxAxis, false);
         using var registryLock = SCP_FileLock.Acquire(c.Works.RegistryLock, EngineLockTimeoutSec);
+        if ((c.Args.IsExplicit("parent_work") || !c.Works.Exists(id)) && SCP_SculptWorks.PolicyViolation(dimensions, null, maxAxis) is string createWhy)
+            return Blocked(c, 2, createWhy + "；未建立、未扣費");
         if (c.Args.IsExplicit("parent_work")) return CreateChildWork(c, id, dimensions, commission);
         SCP_SculptWork? card = null;
         if (c.Works.Exists(id))

@@ -81,8 +81,10 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         public bool MeshRebuilt;
         public double MeshMs, DrawMs;
         public int Faces, Quads, Triangles, Voxels;
+        /// <summary>頂點＋索引陣列的 FNV-1a 雜湊 —— 「網格逐位元相同」的讀數（改網格建法時拿來比前後）。</summary>
+        public ulong MeshDigest;
         public override string ToString() =>
-            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}）｜這一幀 {DrawMs:0.0} ms";
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}、digest {MeshDigest:x16}）｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
 
@@ -208,6 +210,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     {
         r.MeshRebuilt = iRebuilt; r.MeshMs = iMs;
         r.Faces = m.FaceCount; r.Quads = m.QuadCount; r.Triangles = m.IndexCount / 3; r.Voxels = m.VoxelCount;
+        r.MeshDigest = m.Digest;
     }
 
     static ulong ContentHash(IReadOnlyList<SCP_SculptVoxel> iVoxels)
@@ -1104,6 +1107,16 @@ void main() {
         /// <summary>voxel 中心（世界座標，已去重、排序）—— 鏡頭框景用。</summary>
         public Vector3[] Centers = Array.Empty<Vector3>();
         public Vector3 Min, Max;   // 世界座標 AABB（voxel 格的外緣）
+        /// <summary>頂點（逐位元）＋索引的 FNV-1a；建好時算一次。</summary>
+        public ulong Digest;
+    }
+
+    static ulong MeshDigestOf(float[] iVerts, uint[] iIdx)
+    {
+        ulong h = 1469598103934665603UL;
+        foreach (float f in iVerts) { h ^= BitConverter.SingleToUInt32Bits(f); h *= 1099511628211UL; }
+        foreach (uint i in iIdx) { h ^= i; h *= 1099511628211UL; }
+        return h;
     }
 
     // 六個面：法線 n、切向 u、v（u×v＝n，世界右手系；轉到 GL 鏡像後繞序反轉，建三角形時處理）。
@@ -1117,6 +1130,55 @@ void main() {
         {  0, 0, 1,   1, 0, 0,   0, 1, 0 },
         {  0, 0,-1,   0, 1, 0,   1, 0, 0 },
     };
+
+    /// <summary>
+    /// 稀疏佔用格（TASK-0479）：16³ 一塊、只配有 voxel 的塊 ⇒ 記憶體 ∝ 有東西的塊數，不再 ∝ 外框體積。
+    /// <para>取代原本「依外框配一整塊 byte 陣列」的做法 —— 那一版要擋外框 64M 格，0.1 公尺／voxel 的大作品（桅杆＋船身）會撞到。</para>
+    /// <para>塊座標各 21 位元（±2^20 塊 ＝ ±16M voxel），超出就丟例外（⛔ 不安靜地撞 key）。</para>
+    /// </summary>
+    sealed class SparseGrid
+    {
+        const int Shift = 4, Low = 15, Bias = 1 << 20;
+        readonly Dictionary<long, byte[]> m_Chunks = new();
+        long m_LastKey = long.MinValue;
+        byte[]? m_Last;
+
+        public int ChunkCount => m_Chunks.Count;
+
+        static long Key(int cx, int cy, int cz)
+        {
+            if (cx < -Bias || cx >= Bias || cy < -Bias || cy >= Bias || cz < -Bias || cz >= Bias)
+                throw new InvalidOperationException($"voxel 座標超出稀疏格的範圍（塊 {cx},{cy},{cz}）");
+            return ((long)(cx + Bias) << 42) | ((long)(cy + Bias) << 21) | (long)(cz + Bias);
+        }
+
+        byte[]? Chunk(int x, int y, int z, bool iCreate)
+        {
+            long k = Key(x >> Shift, y >> Shift, z >> Shift);
+            if (k == m_LastKey) return m_Last;
+            if (!m_Chunks.TryGetValue(k, out byte[]? c))
+            {
+                if (!iCreate) return null;   // ⚠ 查無不進快取：之後同一塊被建出來時才不會拿到舊的 null
+                c = new byte[1 << (3 * Shift)];
+                m_Chunks[k] = c;
+            }
+            m_LastKey = k; m_Last = c;
+            return c;
+        }
+
+        static int Cell(int x, int y, int z) => (x & Low) | ((y & Low) << Shift) | ((z & Low) << (2 * Shift));
+
+        public byte Get(int x, int y, int z)
+        {
+            byte[]? c = Chunk(x, y, z, false);
+            return c == null ? (byte)0 : c[Cell(x, y, z)];
+        }
+
+        public void Set(int x, int y, int z, byte iColor) => Chunk(x, y, z, true)![Cell(x, y, z)] = iColor;
+    }
+
+    /// <summary>合併路徑的遮罩每邊上限（格）：超過的切片切成磚塊各自併 ⇒ 遮罩封頂 2048² 個 int（16 MB）、索引不溢位（TASK-0479 審查）。</summary>
+    const int MergeTile = 2048;
 
     static Mesh BuildMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge = false)
     {
@@ -1134,26 +1196,32 @@ void main() {
             if (v.Z < aMinZ) aMinZ = v.Z; if (v.Z > aMaxZ) aMaxZ = v.Z;
         }
         if (aMinX == int.MaxValue) return aMesh;
+        // 合併那條路把外框內的座標各打包成 21 位元 ⇒ 任一軸跨度超過就明說（⛔ 不讓 key 安靜地撞在一起）。
+        const long MaxSpan = 0x1FFFFF;
+        if ((long)aMaxX - aMinX > MaxSpan || (long)aMaxY - aMinY > MaxSpan || (long)aMaxZ - aMinZ > MaxSpan)
+            throw new InvalidOperationException($"場景外框任一軸超過 {MaxSpan + 1:N0} 格（{aMinX}..{aMaxX}, {aMinY}..{aMaxY}, {aMinZ}..{aMaxZ}）");
 
-        // 外圍各墊一格 ⇒ 鄰格查詢（含 AO 的斜角）不必判邊界。
-        int aOx = aMinX - 1, aOy = aMinY - 1, aOz = aMinZ - 1;
-        int aSx = aMaxX - aMinX + 3, aSy = aMaxY - aMinY + 3, aSz = aMaxZ - aMinZ + 3;
-        long aCells = (long)aSx * aSy * aSz;
-        if (aCells > 64L * 1024 * 1024) throw new InvalidOperationException($"場景外框太大（{aSx}×{aSy}×{aSz}）");
-        var aGrid = new byte[aCells];
-        int aStrideY = aSx, aStrideZ = aSx * aSy;
-        int Idx(int x, int y, int z) => (x - aOx) + (y - aOy) * aStrideY + (z - aOz) * aStrideZ;
+        // 排序鍵 ＝ 外框內的 (z, y, x) 字典序（long，外框多大都不溢位）⇒ 與輸入順序無關，也與舊版的網格索引同序。
+        long aSx = (long)aMaxX - aMinX + 1, aSy = (long)aMaxY - aMinY + 1;
+        long SortKey(int x, int y, int z) => ((long)(z - aMinZ) * aSy + (y - aMinY)) * aSx + (x - aMinX);
 
+        var aGrid = new SparseGrid();
         var aCoords = new List<long>(iVoxels.Count);
         for (int i = 0; i < iVoxels.Count; i++)
         {
             var v = iVoxels[i];
             if (v.Color == 0) continue;
-            int k = Idx(v.X, v.Y, v.Z);
-            if (aGrid[k] == 0) aCoords.Add(k);
-            aGrid[k] = v.Color;   // 重複座標：後者為準
+            if (aGrid.Get(v.X, v.Y, v.Z) == 0) aCoords.Add(SortKey(v.X, v.Y, v.Z));
+            aGrid.Set(v.X, v.Y, v.Z, v.Color);   // 重複座標：後者為準
         }
-        aCoords.Sort();   // 網格索引的排序 ＝ (z, y, x) 字典序 ⇒ 與輸入順序無關
+        aCoords.Sort();
+        void Decode(long k, out int x, out int y, out int z)
+        {
+            x = (int)(k % aSx) + aMinX;
+            y = (int)(k / aSx % aSy) + aMinY;
+            z = (int)(k / (aSx * aSy)) + aMinZ;
+        }
+        bool Solid(int x, int y, int z) => aGrid.Get(x, y, z) != 0;
 
         aMesh.VoxelCount = aCoords.Count;
         aMesh.Min = new Vector3(aMinX, aMinY, aMinZ);
@@ -1164,10 +1232,9 @@ void main() {
         var aCenters = new List<Vector3>(Math.Min(aCoords.Count, 1 << 20));
         for (int c = 0; c < aCoords.Count; c++)
         {
-            int k = (int)aCoords[c];
-            if (aGrid[k + 1] != 0 && aGrid[k - 1] != 0 && aGrid[k + aStrideY] != 0 && aGrid[k - aStrideY] != 0
-                && aGrid[k + aStrideZ] != 0 && aGrid[k - aStrideZ] != 0) continue;
-            int x = k % aStrideY + aOx, y = k / aStrideY % aSy + aOy, z = k / aStrideZ + aOz;
+            Decode(aCoords[c], out int x, out int y, out int z);
+            if (Solid(x + 1, y, z) && Solid(x - 1, y, z) && Solid(x, y + 1, z) && Solid(x, y - 1, z)
+                && Solid(x, y, z + 1) && Solid(x, y, z - 1)) continue;
             aCenters.Add(new Vector3(x + 0.5f, y + 0.5f, z + 0.5f));
         }
         aMesh.Centers = aCenters.ToArray();
@@ -1187,9 +1254,9 @@ void main() {
             int b = (corner >= 2) ? 1 : 0;
             int su = a == 1 ? 1 : -1, sv = b == 1 ? 1 : -1;
             int bx = x + nx, by = y + ny, bz = z + nz;
-            bool s1 = aGrid[Idx(bx + ux * su, by + uy * su, bz + uz * su)] != 0;
-            bool s2 = aGrid[Idx(bx + vx * sv, by + vy * sv, bz + vz * sv)] != 0;
-            bool cc = aGrid[Idx(bx + ux * su + vx * sv, by + uy * su + vy * sv, bz + uz * su + vz * sv)] != 0;
+            bool s1 = Solid(bx + ux * su, by + uy * su, bz + uz * su);
+            bool s2 = Solid(bx + vx * sv, by + vy * sv, bz + vz * sv);
+            bool cc = Solid(bx + ux * su + vx * sv, by + uy * su + vy * sv, bz + uz * su + vz * sv);
             return (s1 && s2) ? 0 : 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (cc ? 1 : 0));
         }
 
@@ -1236,14 +1303,11 @@ void main() {
             // 逐 voxel 面（舊行為；CLI `op=view` 走這條，輸出逐位元不變）。
             for (int c = 0; c < aCoords.Count; c++)
             {
-                int k = (int)aCoords[c];
-                int x = k % aStrideY + aOx;
-                int y = k / aStrideY % aSy + aOy;
-                int z = k / aStrideZ + aOz;
-                byte aColor = aGrid[k];
+                Decode(aCoords[c], out int x, out int y, out int z);
+                byte aColor = aGrid.Get(x, y, z);
                 for (int f = 0; f < 6; f++)
                 {
-                    if (aGrid[Idx(x + s_Faces[f, 0], y + s_Faces[f, 1], z + s_Faces[f, 2])] != 0) continue;   // 鄰格有 voxel ⇒ 這面看不到
+                    if (Solid(x + s_Faces[f, 0], y + s_Faces[f, 1], z + s_Faces[f, 2])) continue;   // 鄰格有 voxel ⇒ 這面看不到
                     for (int corner = 0; corner < 4; corner++) aAo[corner] = CornerAo(x, y, z, f, corner);
                     aMesh.FaceCount++;
                     EmitQuad(x, y, z, f, 1, 1, aColor, aAo);
@@ -1254,62 +1318,109 @@ void main() {
         {
             // 合併同色面（TASK-0472）：每個朝向、每一層切片做一張 (u,v) 遮罩，greedy 併成最大矩形。
             // ⚠ 只併「四角 AO 都相同」的面 —— 不同的照逐面輸出（併了 AO 漸層會被拉成一大片、角落陰影被抹平）。
-            int[] aExt = { aSx, aSy, aSz };
-            int[] aOrg = { aOx, aOy, aOz };
-            int[] aStride = { 1, aStrideY, aStrideZ };
+            // TASK-0479：先收這個朝向的外露面、依 (層, v, u) 排序，遮罩只配**那一層外露面的範圍** ——
+            //   掃描順序與舊版（每層掃整個外框、v 外 u 內）相同，範圍外的格子在舊版也全是 0 ⇒ 輸出逐位元不變，
+            //   成本卻從「外框體積 × 6」降到「外露面數＋各層外露範圍」。
             var aC = new int[3];
             Span<int> aLv = stackalloc int[4];
+            int[] aMin = { aMinX, aMinY, aMinZ };
+            var aFaces = new List<long>();
+            int[] aMask = Array.Empty<int>();
             for (int f = 0; f < 6; f++)
             {
                 int aNa = s_Faces[f, 0] != 0 ? 0 : s_Faces[f, 1] != 0 ? 1 : 2;
                 int aUa = s_Faces[f, 3] != 0 ? 0 : s_Faces[f, 4] != 0 ? 1 : 2;
                 int aVa = s_Faces[f, 6] != 0 ? 0 : s_Faces[f, 7] != 0 ? 1 : 2;
-                int aNs = s_Faces[f, aNa];
-                int aNu = aExt[aUa], aNv = aExt[aVa];
-                int aStepN = aNs * aStride[aNa];
-                var aMask = new int[aNu * aNv];
-                for (int s = 1; s < aExt[aNa] - 1; s++)
+                aFaces.Clear();
+                for (int c = 0; c < aCoords.Count; c++)
                 {
-                    bool aAny = false;
-                    for (int iv = 1; iv < aNv - 1; iv++)
-                        for (int iu = 1; iu < aNu - 1; iu++)
+                    Decode(aCoords[c], out int x, out int y, out int z);
+                    if (Solid(x + s_Faces[f, 0], y + s_Faces[f, 1], z + s_Faces[f, 2])) continue;
+                    aC[0] = x - aMinX; aC[1] = y - aMinY; aC[2] = z - aMinZ;
+                    aFaces.Add(((long)aC[aNa] << 42) | ((long)aC[aVa] << 21) | (long)aC[aUa]);
+                }
+                aFaces.Sort();
+                var aBlocks = new List<List<long>>();
+                for (int i0 = 0; i0 < aFaces.Count;)
+                {
+                    int s = (int)(aFaces[i0] >> 42);
+                    int i1 = i0;
+                    int su0 = int.MaxValue, su1 = int.MinValue, sv0 = int.MaxValue, sv1 = int.MinValue;
+                    for (; i1 < aFaces.Count && (int)(aFaces[i1] >> 42) == s; i1++)
+                    {
+                        int fu = (int)(aFaces[i1] & 0x1FFFFF), fv = (int)((aFaces[i1] >> 21) & 0x1FFFFF);
+                        if (fu < su0) su0 = fu; if (fu > su1) su1 = fu;
+                        if (fv < sv0) sv0 = fv; if (fv > sv1) sv1 = fv;
+                    }
+                    // 遮罩每邊最多 MergeTile 格：這一層外露範圍兩邊都裝得下 ⇒ 整層一塊（所有既有作品都走這條，輸出不變）；
+                    // 裝不下 ⇒ 從範圍左下角起切成磚塊，各自併（不跨磚合併）—— 遮罩記憶體封頂 MergeTile² 個 int，索引不會溢位。
+                    aBlocks.Clear();
+                    if (su1 - su0 < MergeTile && sv1 - sv0 < MergeTile)
+                        aBlocks.Add(aFaces.GetRange(i0, i1 - i0));
+                    else
+                    {
+                        var aTiles = new SortedDictionary<long, List<long>>();
+                        for (int i = i0; i < i1; i++)
                         {
-                            int g = s * aStride[aNa] + iu * aStride[aUa] + iv * aStride[aVa];
-                            int m = iv * aNu + iu;
-                            byte aColor = aGrid[g];
-                            if (aColor == 0 || aGrid[g + aStepN] != 0) { aMask[m] = 0; continue; }
-                            aC[aNa] = s; aC[aUa] = iu; aC[aVa] = iv;
-                            int x = aC[0] + aOrg[0], y = aC[1] + aOrg[1], z = aC[2] + aOrg[2];
+                            int fu = (int)(aFaces[i] & 0x1FFFFF), fv = (int)((aFaces[i] >> 21) & 0x1FFFFF);
+                            long aKey = ((long)((fv - sv0) / MergeTile) << 32) | (long)((fu - su0) / MergeTile);
+                            if (!aTiles.TryGetValue(aKey, out List<long>? aTile)) aTiles[aKey] = aTile = new List<long>();
+                            aTile.Add(aFaces[i]);   // 照 (v, u) 序加進來 ⇒ 每塊內仍是 (v, u) 序
+                        }
+                        aBlocks.AddRange(aTiles.Values);
+                    }
+                    i0 = i1;
+
+                    foreach (List<long> aBlock in aBlocks)
+                    {
+                        int u0 = int.MaxValue, u1 = int.MinValue, v0 = int.MaxValue, v1 = int.MinValue;
+                        foreach (long aF in aBlock)
+                        {
+                            int fu = (int)(aF & 0x1FFFFF), fv = (int)((aF >> 21) & 0x1FFFFF);
+                            if (fu < u0) u0 = fu; if (fu > u1) u1 = fu;
+                            if (fv < v0) v0 = fv; if (fv > v1) v1 = fv;
+                        }
+                        int aNu = u1 - u0 + 1, aNv = v1 - v0 + 1;   // 都 ≤ MergeTile ⇒ 乘積 ≤ 4M，int 不溢位
+                        if (aMask.Length < aNu * aNv) aMask = new int[aNu * aNv];
+                        Array.Clear(aMask, 0, aNu * aNv);
+                        // 第一趟（排序＝ v 外 u 內，與舊版掃描同序）：算 AO、填遮罩，四角 AO 不同的當場逐面輸出。
+                        foreach (long aF in aBlock)
+                        {
+                            int fu = (int)(aF & 0x1FFFFF), fv = (int)((aF >> 21) & 0x1FFFFF);
+                            aC[aNa] = s; aC[aUa] = fu; aC[aVa] = fv;
+                            int x = aC[0] + aMinX, y = aC[1] + aMinY, z = aC[2] + aMinZ;
+                            byte aColor = aGrid.Get(x, y, z);
+                            int m = (fv - v0) * aNu + (fu - u0);
                             for (int corner = 0; corner < 4; corner++) aAo[corner] = CornerAo(x, y, z, f, corner);
                             aMesh.FaceCount++;
                             bool aUniform = aAo[0] == aAo[1] && aAo[1] == aAo[2] && aAo[2] == aAo[3];
-                            if (DebugMergeIgnoreAo) { aMask[m] = aColor | (3 << 8) | (1 << 16); aAny = true; continue; }
-                            if (!aUniform) { aMask[m] = 0; EmitQuad(x, y, z, f, 1, 1, aColor, aAo); continue; }
+                            if (DebugMergeIgnoreAo) { aMask[m] = aColor | (3 << 8) | (1 << 16); continue; }
+                            if (!aUniform) { EmitQuad(x, y, z, f, 1, 1, aColor, aAo); continue; }
                             aMask[m] = aColor | (aAo[0] << 8) | (1 << 16);
-                            aAny = true;
                         }
-                    if (!aAny) continue;
-                    for (int iv = 1; iv < aNv - 1; iv++)
-                        for (int iu = 1; iu < aNu - 1; iu++)
-                        {
-                            int aCode = aMask[iv * aNu + iu];
-                            if (aCode == 0) continue;
-                            int w = 1;
-                            while (iu + w < aNu - 1 && aMask[iv * aNu + iu + w] == aCode) w++;
-                            int h = 1;
-                            for (; iv + h < aNv - 1; h++)
+                        // 第二趟：greedy 併最大矩形（先往 u 長、再往 v 長）。
+                        for (int iv = 0; iv < aNv; iv++)
+                            for (int iu = 0; iu < aNu; iu++)
                             {
-                                bool aRow = true;
-                                for (int q = 0; q < w; q++) if (aMask[(iv + h) * aNu + iu + q] != aCode) { aRow = false; break; }
-                                if (!aRow) break;
+                                int aCode = aMask[iv * aNu + iu];
+                                if (aCode == 0) continue;
+                                int w = 1;
+                                while (iu + w < aNu && aMask[iv * aNu + iu + w] == aCode) w++;
+                                int h = 1;
+                                for (; iv + h < aNv; h++)
+                                {
+                                    bool aRow = true;
+                                    for (int q = 0; q < w; q++) if (aMask[(iv + h) * aNu + iu + q] != aCode) { aRow = false; break; }
+                                    if (!aRow) break;
+                                }
+                                for (int dv = 0; dv < h; dv++)
+                                    for (int du = 0; du < w; du++) aMask[(iv + dv) * aNu + iu + du] = 0;
+                                aC[aNa] = s; aC[aUa] = iu + u0; aC[aVa] = iv + v0;
+                                int lvl = (aCode >> 8) & 3;
+                                aLv[0] = aLv[1] = aLv[2] = aLv[3] = lvl;
+                                EmitQuad(aC[0] + aMin[0], aC[1] + aMin[1], aC[2] + aMin[2], f, w, h, (byte)(aCode & 255), aLv);
                             }
-                            for (int dv = 0; dv < h; dv++)
-                                for (int du = 0; du < w; du++) aMask[(iv + dv) * aNu + iu + du] = 0;
-                            aC[aNa] = s; aC[aUa] = iu; aC[aVa] = iv;
-                            int lvl = (aCode >> 8) & 3;
-                            aLv[0] = aLv[1] = aLv[2] = aLv[3] = lvl;
-                            EmitQuad(aC[0] + aOrg[0], aC[1] + aOrg[1], aC[2] + aOrg[2], f, w, h, (byte)(aCode & 255), aLv);
-                        }
+                    }
                 }
             }
         }
@@ -1317,6 +1428,7 @@ void main() {
         aMesh.Indices = aIdx.ToArray();
         aMesh.VertexCount = aMesh.Vertices.Length / 7;
         aMesh.IndexCount = aMesh.Indices.Length;
+        aMesh.Digest = MeshDigestOf(aMesh.Vertices, aMesh.Indices);
         return aMesh;
     }
 

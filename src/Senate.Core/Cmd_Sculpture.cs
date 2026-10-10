@@ -67,7 +67,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     public const string SlicePngName = "sculpture_slice.png";
 
     static readonly string[] s_Ops =
-        { "box", "carve", "stamp2d", "stampimg", "view", "slice", "stats", "export", "exhibit", "render-profile", "work" };
+        { "box", "carve", "stamp2d", "stampimg", "view", "slice", "section", "stats", "export", "exhibit", "render-profile", "work" };
 
     /// <summary>
     /// 分享的發文端（預設 `tavern-post`）。⚠ 只給自我對拍換成探針 —— 淨室裡不可以真的發進酒館。
@@ -99,11 +99,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("op", "做什麼", iRequired: true, iChoices: s_Ops),
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（Senate CLI 從設定自動補）", iRequired: true),
         new SCP_CmdArgSpec("letters_root", "信件夾根（Senate CLI 從設定自動補；都沒有 ⇒ 資料根的慣例位置）"),
-        new SCP_CmdArgSpec("persona", "誰（落子類**必填** —— 錢記在人頭上；view／slice 沒給 out 時必填；其餘選填）"),
+        new SCP_CmdArgSpec("repo_root", "Senate 專案根（宿主自動填）—— 讀作品尺寸上限設定 `sculpture.workMaxAxis` 用"),
+        new SCP_CmdArgSpec("persona", "誰（落子類**必填** —— 錢記在人頭上；view／slice／section 沒給 out 時必填；其餘選填）"),
         new SCP_CmdArgSpec("account", "付 token 的帳號；不給 ⇒ 由 persona 的權威綁定檔解（⛔ 解不出來不猜）"),
         new SCP_CmdArgSpec("pay", "付款方式", iDefault: "auto", iChoices: new[] { "auto", "freetime", "voucher", "token" }),
         new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作作品的獨立空間"),
-        new SCP_CmdArgSpec("size", "work create/update：邊長或X,Y,Z，各軸1–256；建立預設64。調尺寸免費，縮小不可切掉現有voxel"),
+        new SCP_CmdArgSpec("size", "work create/update：邊長或X,Y,Z，各軸 1–上限（設定 `sculpture.workMaxAxis`，預設 4096；後台雕刻頁可改）；建立預設64。調尺寸免費，縮小不可切掉現有voxel"),
         new SCP_CmdArgSpec("parent_work", "work create：任務作品或其子作品ID；同作者免費建立子作品，不另領薪"),
         new SCP_CmdArgSpec("source_work", "work assemble：零件來源作品ID，可用其他作者作品；自動Credit並保留原作"),
         new SCP_CmdArgSpec("delta", "work move：選區平移量dx,dy,dz；選區用region=x1..x2,y1..y2,z1..z2"),
@@ -115,7 +116,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
         new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數"),
-        new SCP_CmdArgSpec("x1", "box/carve：AABB 一角 x（0-255）"),
+        new SCP_CmdArgSpec("x1", "box/carve：AABB 一角 x（共用展區 0-255；作品 0..尺寸-1）"),
         new SCP_CmdArgSpec("x2", "box/carve：另一角 x"),
         new SCP_CmdArgSpec("y1", "box/carve：一角 y"),
         new SCP_CmdArgSpec("y2", "box/carve：另一角 y"),
@@ -139,7 +140,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("exhibit_title", "stamp 類：展品標題"),
         new SCP_CmdArgSpec("exhibit_desc", "stamp 類：展品描述"),
         new SCP_CmdArgSpec("exhibit_margin", "stamp 類：展品邊界格數（預設 2）"),
-        new SCP_CmdArgSpec("region", "view／export／exhibit register：裁切範圍；slice **必填**（x1..x2,y1..y2,z1..z2）"),
+        new SCP_CmdArgSpec("region", "view／export／exhibit register／section：裁切範圍（section 不給 ⇒ 整件作品，共用展區 0..255）；slice **必填**（x1..x2,y1..y2,z1..z2）"),
         new SCP_CmdArgSpec("exclude_color", "view／export／exhibit register：不畫哪些顏色（c,c,…）"),
         new SCP_CmdArgSpec("exhibit", "view：展品 preset id"),
         new SCP_CmdArgSpec("light_dir", "view／exhibit register：一盞白光的行進方向 x,y,z（取代設定檔的燈）"),
@@ -173,8 +174,20 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("smooth", "view／exhibit register：python 時代的旗標（只影響 summary 文字，GPU 渲染不吃）"),
         new SCP_CmdArgSpec("profile", "view：一次性指定一份渲染設定（不走作用中那條鏈）"),
         new SCP_CmdArgSpec("profile_scope", "view：profile= 在哪一層找", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("axis", "slice：法線與近端方向（預設 z+）"),
-        new SCP_CmdArgSpec("out", "view／slice：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑"),
+        new SCP_CmdArgSpec("axis", "slice：法線與近端方向（預設 z+）／section：視線方向（預設 y+ ＝ 從 -y 那側往 +y 看；垂直軸一律朝上）"),
+        new SCP_CmdArgSpec("meters_per_voxel", "work update：這件作品一格幾公尺（剖面與疊圖照它換算；沒記 ⇒ 1 公尺＝32 格；0–1000）／section：單次覆寫"),
+        new SCP_CmdArgSpec("px_per_voxel", "section：每格幾像素（1–64；不給 ⇒ 2400 ÷ 長邊格數取整，夾在 1–32）"),
+        new SCP_CmdArgSpec("grid_m", "section：網格間距（公尺；不給 ⇒ 自動取 1／2／5×10^n，太密就不畫並印 none；明給的每條不到 4 px ⇒ exit 2）"),
+        new SCP_CmdArgSpec("ref", "section：參考圖絕對路徑（PNG／JPEG），疊在剖面底下"),
+        new SCP_CmdArgSpec("ref_points", "section 校準①：參考圖兩個像素 x,y;x,y（搭配 work_points）"),
+        new SCP_CmdArgSpec("work_points", "section 校準①：那兩點在作品平面上的座標 a,b;a,b（右手軸, 朝上軸；單位格；世界座標，格 k 佔 [k, k+1)：y+／x-／z- 視圖裡整數是格在畫面上的左下角，y-／x+／z+（右手軸是負向）裡是右下角）"),
+        new SCP_CmdArgSpec("ref_scale", "section 校準②：參考圖比例尺上兩點與實際長度 x1,y1;x2,y2;公尺（定縮放與旋轉）"),
+        new SCP_CmdArgSpec("ref_anchor", "section 校準②：參考圖上一個像素 x,y（搭配 work_anchor 定平移）"),
+        new SCP_CmdArgSpec("work_anchor", "section 校準②：ref_anchor 對到作品平面的座標 a,b（單位格）"),
+        new SCP_CmdArgSpec("ref_flip", "section：1 ＝ 參考圖先左右鏡像（圖紙的方向跟視圖相反時）"),
+        new SCP_CmdArgSpec("probe", "section：參考圖像素 x,y;x,y;… ⇒ 印出它落在作品哪一格、離最近的 voxel 差幾格"),
+        new SCP_CmdArgSpec("voxel_alpha", "section：voxel 疊色的不透明度 0–1（有參考圖預設 0.55，沒有預設 1）"),
+        new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑"),
         new SCP_CmdArgSpec("format", "export：obj|vox", iChoices: new[] { "obj", "vox" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
@@ -241,6 +254,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                     aPayload = OpPlace(aCtx); break;
                 case "view": aPayload = OpView(aCtx); break;
                 case "slice": aPayload = OpSlice(aCtx); break;
+                case "section": aPayload = OpSection(aCtx); break;
                 case "stats": aPayload = OpStats(aCtx); break;
                 case "export": aPayload = OpExport(aCtx); break;
                 case "exhibit": aPayload = OpExhibit(aCtx); break;
@@ -518,7 +532,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         {
             if (!TryInt(c, "x1", out int x1) || !TryInt(c, "x2", out int x2) || !TryInt(c, "y1", out int y1)
                 || !TryInt(c, "y2", out int y2) || !TryInt(c, "z1", out int z1) || !TryInt(c, "z2", out int z2))
-            { oBad = c.Op + " 需要 x1 x2 y1 y2 z1 z2 六個整數（0-255）"; return false; }
+            { oBad = c.Op + " 需要 x1 x2 y1 y2 z1 z2 六個整數（共用展區 0-255；作品 0..尺寸-1）"; return false; }
             if (c.Work != null && (x1 < 0 || x1 >= c.Work.SizeX || x2 < 0 || x2 >= c.Work.SizeX || y1 < 0 || y1 >= c.Work.SizeY || y2 < 0 || y2 >= c.Work.SizeY || z1 < 0 || z1 >= c.Work.SizeZ || z2 < 0 || z2 >= c.Work.SizeZ))
             { oBad = "作品座標超出尺寸 " + c.Work.Dimensions + "；越界不會裁切或落子"; return false; }
             oWorst = ClampedVolume(ref x1, ref x2, ref y1, ref y2, ref z1, ref z2, c.Size);
@@ -1520,13 +1534,13 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
 
     public static int CeilDiv(long a, int b) => (int)((a + b - 1) / b);
 
-    /// <summary>兩角任意順序、clamp 0..255（與引擎 box 同語意）。回傳 clamp 後體積。</summary>
-    public static int ClampedVolume(ref int x1, ref int x2, ref int y1, ref int y2, ref int z1, ref int z2, int iSize = 256)
+    /// <summary>兩角任意順序、clamp 0..iSize-1（與引擎 box 同語意；共用展區 256）。回傳 clamp 後體積。</summary>
+    public static long ClampedVolume(ref int x1, ref int x2, ref int y1, ref int y2, ref int z1, ref int z2, int iSize = 256)
     {
         void Norm(ref int a, ref int b) { if (a > b) (a, b) = (b, a); a = Math.Max(0, a); b = Math.Min(iSize - 1, b); }
         Norm(ref x1, ref x2); Norm(ref y1, ref y2); Norm(ref z1, ref z2);
         if (x2 < x1 || y2 < y1 || z2 < z1) return 0;
-        return (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1);
+        return (long)(x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1);   // long：作品每軸可到數千格，int 會溢位成負數
     }
 
     /// <summary>

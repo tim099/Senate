@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-08（個人作品可調尺寸、任務子作品、平鋪零件副本與Credit、選區移動、Undo/Redo、1公尺32voxel比例尺）
+last_updated: 2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -21,7 +21,7 @@ related:
 - 建立任務作品時，把使用者要求填入CLI的commission，並提供該次唯一來源commission_ref；重試沿用原ID與交易，不可改ID重領。同一委託由一件主任務作品領薪，可用parent_work免費建立床、椅子等子作品，子作品不另領薪。續作既有作品沿用原work。文件中的範例句與要求修改skill本身，不是一張待執行雕刻委託。
 - 僅agent自行發起的創作（例如自由時間自選雕刻、沒有使用者透過本skill提出雕刻要求）才收個人作品建立費10，作品內續雕免費。使用者直接要求本skill「自由發揮」仍屬任務，不是這裡的自發創作。
 - 續作既有作品：先透過CLI讀書卡、心得與TODO，所有操作指定同一work，完成後保存續作筆記與圖。
-- 個人作品尺寸：建立與事後update均可用size指定邊長或X,Y,Z，各軸1–256、預設64³；調整免費且不縮放內容，縮小會切到現有voxel時拒絕。
+- 個人作品尺寸：建立與事後update均可用size指定邊長或X,Y,Z，各軸1–上限（設定`sculpture.workMaxAxis`，預設4096，見§9.6）、預設64³；調整免費且不縮放內容，縮小會切到現有voxel時拒絕。
 - 模組化：work sub=assemble把source_work的副本放入目前work，可用別人的作品，並自動Credit來源作品、作者、版本及上游來源；原作保留。可選turn繞Z軸旋轉，at指定旋轉後原點。
 - 區域編輯：work sub=move以region選區、delta平移；work sub=undo/redo撤銷／重做voxel操作，history查歷史。作品內全部免費；碰撞預設整筆拒絕，只有顯式overwrite=1才覆蓋。
 - 建築與家具預設比例尺：1公尺＝32 voxel（每格3.125公分），尺寸與at、delta用同一比例換算；常用尺寸見§9.5。
@@ -29,16 +29,17 @@ related:
 
 不要由skill直接改work.json、銀行分錄或券庫；沒有成功回執照CLI提示處理，不自行宣告收費或領酬成功。
 
-## 1. 十一個 op
+## 1. 十二個 op
 
 | op | 做什麼 | 收費 | persona |
 |---|---|---|---|
-| `box` | 填一個 AABB（兩角 x1..z2，0-255；禁覆蓋，已有的格子跳過） | ⌈實際落地/100⌉ | 必填 |
+| `box` | 填一個 AABB（兩角 x1..z2；共用展區 0-255、作品 0..尺寸-1；禁覆蓋，已有的格子跳過） | ⌈實際落地/100⌉ | 必填 |
 | `carve` | 挖掉一個 AABB | ⌈實際挖掉/100⌉ | 必填 |
 | `stamp2d` | 把 2D 共用畫布某區域貼進 3D（透明＝不放） | ⌈實際落地/100⌉ | 必填 |
 | `stampimg` | 把一張 RGBA PNG 貼進 3D | ⌈實際落地/100⌉ | 必填 |
 | `view` | 渲染一張圖（region／exhibit／鏡頭／燈／天空） | 免費 | 沒給 `out` 時必填 |
 | `slice` | region 內 voxel 原色壓成 PNG（可原樣貼回） | 免費 | 沒給 `out` 時必填 |
+| `section` | 剖面圖（垂直軸朝上：側視／正視是 Z、俯視／仰視是 Y；網格、比例尺）＋參考圖疊圖校準＋探針讀數（見 §5.2） | 免費 | 沒給 `out` 時必填 |
 | `stats` | 總數與使用率 | 免費 | 選填 |
 | `export` | 匯出 `.obj`（＋`.mtl`）或 MagicaVoxel `.vox`；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
@@ -140,7 +141,7 @@ senate cmd sculpture --arg op=view --arg out=D:/tmp/a.png --arg exhibit=summit-l
 |---|---|---|---|
 | `floor` | off | on／off | 開關；⚠ 不給 ⇒ 沿用下層（只換貼圖的層不會把地板關掉或打開） |
 | `floor_z` | 0 | −64..320 | 地板高度（世界 z；voxel 在 z 那一格的底面就是 z） |
-| `floor_full_grid` | 0 | 1／0 | 1 ＝ 整個 0..256 空間；0 ＝ 可見 voxel 外框外擴 `floor_margin` 格 |
+| `floor_full_grid` | 0 | 1／0 | 1 ＝ 整個空間（共用展區 0..256；作品取最長邊）；0 ＝ 可見 voxel 外框外擴 `floor_margin` 格 |
 | `floor_margin` | 24 | 0..256 | 外框模式外擴幾格 |
 | `floor_texture` | builtin | builtin／檔名／絕對路徑 | builtin ＝ 量尺網格（每 1 格細線、每 16 格較亮、每 64 格最亮；線落在整數座標＝voxel 邊界，任何縮放都銳利）；檔名 ⇒ `Sculpture/floors/` |
 | `floor_tile` | 16 | 0.25..4096 | 貼圖每重複一次涵蓋幾格（網格忽略） |
@@ -156,6 +157,44 @@ senate cmd sculpture --arg op=view --arg persona=<P> --arg exhibit=summit-mounta
 senate cmd sculpture --arg op=view --arg persona=<P> --arg floor=on --arg floor_texture=stone_tiles_02_diff_2k.jpg --arg floor_tile=8
 senate cmd sculpture --arg op=render-profile --arg sub=set --arg scope=persona --arg persona=<P> --arg name=mine --arg floor=on --arg floor_texture=dark_wooden_planks_diff_2k.jpg
 ```
+
+### 5.2 section —— 剖面圖與參考圖疊圖（TASK-0480）
+
+照圖紙雕的時候用：出一張帶比例的剖面，把圖紙疊在底下，並用探針量出「圖上這一點落在作品哪一格、差幾格」。
+
+```bash
+# 先記下作品的比例（一格幾公尺；沒記 ⇒ 1 公尺＝32 格）
+senate cmd sculpture --arg op=work --arg sub=update --arg work=<作品> --arg persona=<P> --arg meters_per_voxel=0.1
+# 剖面（側視：從 -y 那側往 +y 看，右手是 +X、上是 +Z）
+senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --arg axis=y+
+# 疊圖：比例尺兩端＋實際長度定縮放與旋轉，錨點定平移；探針量偏差
+senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --arg axis=y+ \
+  --arg ref=<參考圖絕對路徑> --arg ref_scale="x1,y1;x2,y2;<公尺>" --arg ref_anchor=x,y --arg work_anchor=a,b \
+  --arg probe="x,y;x,y"
+```
+
+| 參數 | 意思 |
+|---|---|
+| `axis` | **視線方向**（預設 `y+`）。水平軸是站在那一側看過去的右手方向、垂直軸一律朝上（側視／正視是 Z，俯視／仰視是 Y）。⚠ 與 `slice` 的軸對應不同（`slice` 是為了貼圖往返） |
+| `region` | 範圍（不給 ⇒ 整件作品）；沿視線方向投影，保留最靠近視點的那顆 |
+| `px_per_voxel` | 每格幾像素（1–64；不給 ⇒ 2400 ÷ 長邊格數取整，夾在 1–32 —— 小範圍放大到每格 32 px，超過 2400 格的範圍每格 1 px） |
+| `grid_m` | 網格間距（公尺）；網格落在世界座標的整數倍上，每 10 條加深。明給的間距換算不到每條 4 px ⇒ exit 2（加大 `px_per_voxel` 或 `grid_m`）；自動間距太密 ⇒ 不畫，`grid_m` 印 `none` |
+| `meters_per_voxel` | 單次覆寫比例（平常讀作品書卡；0–1000） |
+| `ref` | 參考圖（PNG／JPEG 絕對路徑），畫在剖面底下；有參考圖時 voxel 半透明並描深紅輪廓 |
+| `ref_points`＋`work_points` | 校準①：參考圖兩個像素 ↔ 作品平面兩個座標（右手軸, 朝上軸；單位格）。⚠ 這是**世界座標**，格 k 佔 [k, k+1)：y+／x-／z- 視圖裡整數是格在畫面上的左下角；y-／x+／z+（右手軸是負向）裡是**右下角** |
+| `ref_scale`＋`ref_anchor`＋`work_anchor` | 校準②：比例尺上兩點與實際公尺數（定縮放，並把比例尺轉成水平；兩端順序不拘，旋轉一律收在 ±90° 內）＋一個錨點（定平移） |
+| `ref_flip=1` | 參考圖先左右鏡像（圖紙的船頭方向與視圖相反時）；座標仍照原圖像素給 |
+| `probe` | 參考圖像素 `x,y;x,y;…` ⇒ 每點印出落在作品哪一格（格與公尺）、離最近的 voxel 差幾格；圖上畫綠色十字 |
+| `voxel_alpha` | voxel 疊色不透明度 0–1（有參考圖預設 0.55，沒有預設 1） |
+
+**values**：`path` `sha256` `width` `height` `px_per_voxel` `meters_per_voxel`（＋`_source`）`view` `section_cells` `grid_m` `scale_bar_m`；
+有參考圖再加 `ref_px_per_m` `ref_rotation_deg` `calibration`；每個探針 `probeN`（整句）與 `probeN_offset_cells`（Chebyshev 格數，0 ＝ 落在 voxel 上；256 格內都沒有 voxel ⇒ `none`，⛔ 不是 0）。
+探針句子裡的方向一律寫**世界軸的正向**（例：「最近的 voxel 在 X -5 格」＝ 往 -X 走 5 格），跟視圖的左右無關。
+
+- 讀數比圖可靠：「疊得準不準」先看 `probeN_offset_cells`，圖是給人眼確認方向與形狀的。
+- 參考圖整張解碼（大掃描圖約數百 MB 記憶體），只在這一次呼叫裡存在。
+- 參數壞（有 `ref` 沒校準、`ref_points` 或 `work_points` 兩點重合、兩種校準任一種算出退化或非有限的比例、座標不是有限數、`grid_m` 不是正數或太密、`voxel_alpha` 不在 0–1（含 NaN）、`meters_per_voxel` 不在 0–1000、`ref_flip` 不是 1／0、region 每軸跨度超過 1,048,576、檔案讀不了）⇒ exit 2，不寫圖。
+- 參考圖的透明像素合成在白底上（線稿 PNG 常用透明背景）。
 
 ## 6. 渲染設定檔（render-profile）
 
@@ -232,7 +271,7 @@ senate cmd sculpture --arg op=view --arg work=meadow-chair --arg persona=meadow
 
 建立費固定10單位，沿用§2的付款順序與`pay`模式。付款預驗拒絕不建立作品、不扣款；付款前先保存`pending`書卡與唯一交易ref，全部渠道拿到收據才轉`ready`。扣款途中失敗時不可雕刻；作者用相同ID重試`sub=create`，原付款計畫與ref保持不變、由付款端冪等對帳，不能改用另一筆新交易重扣。`ready`的重複ID直接拒絕。限時／永久繪圖券同屬一個ledger，結算合成一筆consume。
 
-`size`可填單一邊長或`X,Y,Z`，每軸1–256，未指定時預設64³；既有書卡沒有分軸欄位時沿用原size。作者可透過`work sub=update size=...`免費調整空間，原有voxel的位置與顏色不變，不做縮放。縮小若會切掉任何現有voxel，整次更新拒絕，尺寸與筆記均不修改。建立付款或委託領酬重試不得改尺寸；先完成建立，再調整。尺寸變更會使匯入預覽版本失效，必須重新預覽。
+`size`可填單一邊長或`X,Y,Z`，每軸1–上限（§9.6），未指定時預設64³；既有書卡沒有分軸欄位時沿用原size。作者可透過`work sub=update size=...`免費調整空間，原有voxel的位置與顏色不變，不做縮放。縮小若會切掉任何現有voxel，整次更新拒絕，尺寸與筆記均不修改。建立付款或委託領酬重試不得改尺寸；先完成建立，再調整。尺寸變更會使匯入預覽版本失效，必須重新預覽。
 
 既有`box/carve/stamp2d/stampimg/view/slice/stats/export`指定`work=<id>`即使用該作品空間，後續雕刻不再碰付款閘。作品box/carve座標每軸限0到該軸尺寸減1，越界拒絕；stamp沿用越界預設拒絕與顯式`allow_clip`規則。不存在或尚未完成付款的作品不能操作，絕不退回共用展區。渲染繼續使用共用／persona設定鏈，作品自動框住放大，整格地板以最長邊框住作品；export與slice同樣讀作品。作品內雕刻不自動發酒館預覽。GUI建立作品及保存尺寸與筆記均可輸入尺寸。
 
@@ -301,7 +340,7 @@ Undo/Redo僅限作品作者，免費、可連續操作，支援既有box/carve/s
 
 **預設1公尺＝32 voxel；1 voxel＝0.03125公尺＝3.125公分。** 房間、家具、人物與放置座標共用此比例，方便不同作者的作品組裝。這是建造參考，CLI仍輸入整數voxel，不是自動物理單位轉換。
 
-- 尺寸、座標與平移量換算：`voxel數＝公尺數×32`，取最接近的整數（恰好半格時往較大值取整）；每件作品各軸仍限1–256。
+- 尺寸、座標與平移量換算：`voxel數＝公尺數×32`，取最接近的整數（恰好半格時往較大值取整）；每件作品各軸上限見§9.6（預設4096）。
 - 整段寬度N格用座標`0..N-1`；例如2公尺長的床為64格，座標`0..63`，不是`0..64`。
 - X、Y為地面兩軸，Z為高度；90°旋轉會交換零件的X、Y空間尺寸。
 - 既有零件先讀書卡尺寸並依比例比較。匯入保留原voxel大小，不自動縮放；需要不同大小就另做相應尺寸的零件。
@@ -318,6 +357,23 @@ Undo/Redo僅限作品作者，免費、可連續操作，支援既有box/carve/s
 | 成人身高 | 1.75 | 56 |
 | 牆厚 | 0.125 | 4 |
 | 預設64格邊長 | 2 | 64 |
-| 單軸256格上限 | 8 | 256 |
+| 單軸4096格（預設上限） | 128 | 4096 |
 
 例如床面放在Z=16附近，床頭最高到Z=31；房間192×192×96可容納三張64×32的床並留下走道。細節不足一格時可採視覺誇張，但同一組房間與家具維持此基準。
+
+### 9.6 作品尺寸上限（設定）與大作品
+
+個人作品每軸上限是**設定值**，不寫死（Tim 2026-10-10，TASK-0479）：
+
+| 項目 | 值 |
+|---|---|
+| 設定 | `senate.pages.local.json` 的 `sculpture.workMaxAxis`（本機設定，不入版控） |
+| 預設 | 4096 |
+| 範圍 | 1–1,048,576（結構上限：渲染端把外框內座標打包成 21 位元） |
+| 改法 | 後台雕刻頁 →「個人作品」→「作品尺寸上限」；或直接改設定檔 |
+
+- 上限**只管建立與調整尺寸**。讀取、雕刻、渲染、版本只認結構上限 ⇒ 把設定調小，既有的大作品照樣能雕、能看。
+- `work sub=create|update` 的回傳值印 `work_max_axis` 與 `work_max_axis_source`（設定／預設／讀不了）——被擋下時才分得出「我給太大」與「這台的設定比較小」。
+- 共用展區仍是 256³（全員共用的空間，不跟這個設定走）。
+- 渲染網格的佔用格是稀疏分塊（16³ 一塊，只配有 voxel 的塊）⇒ 跟有 voxel 的塊數成正比，不跟外框體積成正比（外框 2000×1000×1000 的稀疏場景逐面畫法約配置十幾 MB）。觀測頁用的合併畫法每一層還要一張遮罩：每邊封頂 2048 格（約 16 MB），超過的層切成磚塊各自合併（磚與磚之間不合併）。
+- 仍在的上限：單刀 box／carve 最多 1,000,000 格（`MaxVolume`，大面積拆多刀）；`export format=vox` 是 MagicaVoxel 單模型格式，region 每軸最多 256（格式本身的限制）。

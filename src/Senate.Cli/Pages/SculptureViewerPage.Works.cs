@@ -1,9 +1,11 @@
 // 區塊職責：雕刻觀測頁的個人作品區；建立／筆記／匯入都派送同一支 sculpture CLI。
 // 物理意義：模式與 ID 明確決定觀測空間；作品選取失效不會退回共用展區。
+using System.Globalization;
 using System.Text;
 using SCP.Core.Gui;
 using SCP.Core.Paths;
 using SCP.Core.Sculpture;
+using Senate.Core;
 
 namespace Senate.Cli.Pages;
 
@@ -21,10 +23,15 @@ public sealed partial class SculptureViewerPage
     Task<(Dictionary<string, List<SCP_SculptCredit>> Credits, Dictionary<string, string> Errors)>? m_CreditJob;
     string m_WorksRoot = "\0";
     string m_WorksError = "";
+    // 作品每軸上限（TASK-0479）：跟作品清單一起讀（⛔ 不每幀讀設定檔）；存檔後立刻重讀。
+    int m_WorkMaxAxis = SCP_SculptWorks.DefaultMaxAxis;
+    string m_WorkMaxAxisSource = "";
+    string m_WorkMaxAxisMsg = "";
 
     void ReloadWorks(SCP_DataRoot data)
     {
         m_WorksRoot = data.Value;
+        m_WorkMaxAxis = SculptureWorkPrefs.ResolveMaxAxis(m_Model.RepoRoot, out m_WorkMaxAxisSource);
         m_Works = new(); m_WorkTexts.Clear(); m_WorkCredits = new(); m_WorkCreditErrors = new(); m_WorksError = ""; m_CreditJob = null;
         var paths = new List<(string Id, SCP_SculptPaths Paths)>();
         try
@@ -99,19 +106,41 @@ public sealed partial class SculptureViewerPage
     void DrawWorks(SCP_Ui g, string persona)
     {
         if (m_WorksError.Length > 0) g.Note(m_WorksError);
-        g.Note("作品預設64³，各軸可設1–256；建立收10單位，作品內雕刻與調尺寸免費。匯入展區另按實際落地收費，原稿保留。");
+        int defaultSize = Math.Min(SCP_SculptWorks.Size, m_WorkMaxAxis);   // 與 CLI 沒帶 size 時同一條：min(64, 上限)
+        g.Note($"作品預設{defaultSize}³，各軸可設1–{m_WorkMaxAxis}（{m_WorkMaxAxisSource}）；建立收10單位，作品內雕刻與調尺寸免費。匯入展區另按實際落地收費，原稿保留。");
+        using (var limit = g.Fold("作品尺寸上限", P + "fold/work-max-axis", iDefaultOpen: false))
+        {
+            if (limit.Open)
+            {
+                g.Note($"只管「建立」與「調整尺寸」；既有作品不受影響（調小之後照樣能雕、能看）。範圍 1–{SCP_SculptWorks.MaxAxisHard}，預設 {SCP_SculptWorks.DefaultMaxAxis}。");
+                string maxText = g.TextField("每軸最多幾格", m_WorkMaxAxis.ToString(CultureInfo.InvariantCulture), P + "work/max-axis");
+                if (g.Button("保存上限", P + "btn/work-max-axis"))
+                {
+                    if (!int.TryParse(maxText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+                        m_WorkMaxAxisMsg = "✗ 不是整數：" + maxText;
+                    else
+                    {
+                        var (ok, msg) = SculptureWorkPrefs.SaveMaxAxis(m_Model.RepoRoot, value);
+                        m_WorkMaxAxis = SculptureWorkPrefs.ResolveMaxAxis(m_Model.RepoRoot, out m_WorkMaxAxisSource);   // 回讀：印的是存進去之後讀到的值
+                        m_WorkMaxAxisMsg = ok ? "✓ 已保存，回讀 " + m_WorkMaxAxis : "✗ " + msg;
+                    }
+                }
+                if (m_WorkMaxAxisMsg.Length > 0) g.Note(m_WorkMaxAxisMsg);
+            }
+        }
         using (var create = g.Fold("建立作品", P + "fold/work-create", iDefaultOpen: false))
         {
             if (create.Open)
             {
                 string id = g.TextField("全庫唯一 ID（英數 _ -）", "", WorkCreateId);
                 string title = g.TextField("作品名稱", "", WorkCreateTitle);
-                string dimensions = g.TextField("尺寸（邊長或X,Y,Z，各軸1–256）", "64", P + "work/create-size");
+                string dimensions = g.TextField($"尺寸（邊長或X,Y,Z，各軸1–{m_WorkMaxAxis}；留空＝{defaultSize}）", defaultSize.ToString(CultureInfo.InvariantCulture), P + "work/create-size").Trim();
                 string parent = g.TextField("任務父作品ID（子作品才填）", "", P + "work/create-parent").Trim();
                 string pending = g.FieldValue(Pending, "");
                 Armed(g, pending, "work-create", parent.Length > 0 ? "建立任務子作品（免費）" : "建立作品（10單位）", () =>
                 {
-                    var args = new Dictionary<string, string> { ["op"] = "work", ["sub"] = "create", ["persona"] = persona, ["id"] = id, ["title"] = title, ["size"] = dimensions };
+                    var args = new Dictionary<string, string> { ["op"] = "work", ["sub"] = "create", ["persona"] = persona, ["id"] = id, ["title"] = title };
+                    if (dimensions.Length > 0) args["size"] = dimensions;   // 留空 ⇒ 不帶 size，交給 CLI 的 min(64, 上限)
                     if (parent.Length > 0) args["parent_work"] = parent;
                     Start(g, "建立作品", () =>
                     {

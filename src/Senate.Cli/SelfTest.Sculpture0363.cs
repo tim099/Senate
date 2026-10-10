@@ -33,7 +33,7 @@ public static partial class SelfTest
             Directory.CreateDirectory(aTmp);
             // ① 兩角任意順序 ＋ clamp 0..255：x 5..3 ⇒ 3..5（3 格）、y 0..0（1 格）、z 250..300 ⇒ 250..255（6 格）
             int x1 = 5, x2 = 3, y1 = 0, y2 = 0, z1 = 250, z2 = 300;
-            int aVol = Cmd_Sculpture.ClampedVolume(ref x1, ref x2, ref y1, ref y2, ref z1, ref z2);
+            long aVol = Cmd_Sculpture.ClampedVolume(ref x1, ref x2, ref y1, ref y2, ref z1, ref z2);
             bool aClamp = aVol == 18 && x1 == 3 && x2 == 5 && z2 == 255;
             // 🔴 整段在界外 ⇒ 0（⛔ 不准算成負數或 1）
             int a1 = 300, a2 = 400, b1 = 0, b2 = 0, c1 = 0, c2 = 0;

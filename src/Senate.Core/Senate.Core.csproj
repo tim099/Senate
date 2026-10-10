@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\SCP_Core\SCP_Core.csproj" />
+    <!-- 雕刻剖面疊圖（TASK-0480）要讀 JPEG 參考圖；與 Senate.Desktop 同一個版本 -->
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
   </ItemGroup>
 
   <PropertyGroup>
