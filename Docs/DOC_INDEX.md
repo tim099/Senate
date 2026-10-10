@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-10-06
+last_updated: 2026-10-11
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -34,6 +34,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Bank](Workflows/Bank.md) | `senate cmd bank`：Server 單一寫入端、op 分類（查詢／消費 pay／後台管理／審批／結帳）、動錢必填 kind／ref／caller、pay 先扣券、transfer 守恆、approve 的 central／mint |
 | [Goodnight](Workflows/Goodnight.md) | 晚安入口（`scp-goodnight` skill 的內容）：只有第一步與回傳檔管不到的幾格（persona 顯式、親筆、private_body） |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
+| [Sculpture_Blueprint_Build](Workflows/Sculpture_Blueprint_Build.md) | **照圖紙雕大型作品**（以憲法號為例）：重新設計新圖紙（plan.json＋provenance）、先貼一片、逐片讀回、**兩本帳**（作品＝設計、設計＝圖紙）、探針從圖紙那一邊取、反向對照、獨立 verifier、補格 vs 精準刻、過程圖與日記；🩸 踩過的坑附讀數 |
 | [Sculpture](Workflows/Sculpture.md) | 3D 體積雕刻 `senate cmd sculpture`：十個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享路徑 |
 
 ## API — 介面規格

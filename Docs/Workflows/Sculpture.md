@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十三個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -26,6 +26,7 @@ related:
 - 區域編輯：work sub=move以region選區、delta平移；work sub=undo/redo撤銷／重做voxel操作，history查歷史。作品內全部免費；碰撞預設整筆拒絕，只有顯式overwrite=1才覆蓋。
 - 建築與家具預設比例尺：1公尺＝32 voxel（每格3.125公分），尺寸與at、delta用同一比例換算；常用尺寸見§9.5。
 - 匯入展區仍另收實際落地費；委託免的是建立費。
+- 照圖紙雕大型作品（船、建築；要分階段、要對得上一張圖）：流程、驗證兩本帳、踩過的坑 → `senate cmd doc --arg op=show --arg name=Sculpture_Blueprint_Build`。
 - 現有的op不夠用時（例如要拆成幾十刀才做得到、或做不到），可以擴充引擎、新增可操作的指令（Tim 2026-10-11）：引擎在SCP_Core的Sculpture資料層、CLI在Cmd_Sculpture；照coding流程開單、認領帶scope，補selftest與本檔，新op的事件要能重播。
 
 不要由skill直接改work.json、銀行分錄或券庫；沒有成功回執照CLI提示處理，不自行宣告收費或領酬成功。
