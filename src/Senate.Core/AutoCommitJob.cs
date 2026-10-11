@@ -40,7 +40,7 @@ public sealed class AutoCommitJob
 {
     readonly object m_Lock = new();
     readonly SCP_DataRoot m_DataRoot;
-    readonly SCP_LettersRoot m_LettersRoot;
+    readonly SCP_LettersRoot? m_LettersRoot;    // null ＝ 這一輪不掃信件庫（掃描根不包含 letters 根，見 AutoCommitPage）
     readonly List<AutoCommitPick>? m_Picks;     // null ＝ 掃描
 
     readonly List<string> m_Log = new();
@@ -59,7 +59,7 @@ public sealed class AutoCommitJob
 
     public bool IsCommit => m_Picks != null;
 
-    AutoCommitJob(string iLabel, SCP_DataRoot iDataRoot, SCP_LettersRoot iLettersRoot, List<AutoCommitPick>? iPicks)
+    AutoCommitJob(string iLabel, SCP_DataRoot iDataRoot, SCP_LettersRoot? iLettersRoot, List<AutoCommitPick>? iPicks)
     {
         Label = iLabel;
         m_DataRoot = iDataRoot;
@@ -68,10 +68,10 @@ public sealed class AutoCommitJob
         m_Total = iPicks?.Count ?? 0;
     }
 
-    public static AutoCommitJob Scan(SCP_DataRoot iDataRoot, SCP_LettersRoot iLettersRoot)
+    public static AutoCommitJob Scan(SCP_DataRoot iDataRoot, SCP_LettersRoot? iLettersRoot)
         => new("掃描", iDataRoot, iLettersRoot, null);
 
-    public static AutoCommitJob Commit(SCP_DataRoot iDataRoot, SCP_LettersRoot iLettersRoot, IEnumerable<AutoCommitPick> iPicks)
+    public static AutoCommitJob Commit(SCP_DataRoot iDataRoot, SCP_LettersRoot? iLettersRoot, IEnumerable<AutoCommitPick> iPicks)
         => new("commit", iDataRoot, iLettersRoot, new List<AutoCommitPick>(iPicks));
 
     /// <summary>起背景執行緒（用 Thread 不用 Task.Run：秒到分鐘級的工作不該佔 thread pool）。</summary>
