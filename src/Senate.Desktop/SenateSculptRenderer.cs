@@ -87,6 +87,8 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}、digest {MeshDigest:x16}）｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
+    /// <summary>上一次成功出圖實際用的鏡頭（TASK-0501；GPU 預覽交回頁面釘住用）。</summary>
+    public SCP_SculptResolvedCamera? LastCamera { get; private set; }
 
     /// <summary>selftest 反向對照用：合併時**不看**四角 AO（⛔ 正式路徑永遠 false；selftest 在另一個組件 ⇒ 只能 public）。</summary>
     public static bool DebugMergeIgnoreAo;
@@ -175,7 +177,8 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         var aReading = new Reading();
         var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, aReading);
         FloorSetup? aFloor = SolveFloor(aMesh, iParams, aFloorTex);
-        if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError)) return null;
+        if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError, out SCP_SculptResolvedCamera aCam)) return null;
+        LastCamera = aCam;
         var aLights = SolveLights(aMesh, aFloor, iParams);
         byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo);
         var aErr = m_Gl!.GetError();
@@ -1476,10 +1479,18 @@ void main() {
     }
 
     static bool SolveCamera(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP, out Matrix4x4 oViewProj, out SkyView oSky, out string oError)
+        => SolveCamera(iMesh, iFloor, iP, out oViewProj, out oSky, out oError, out _);
+
+    /// <summary>世界座標（作品的 x,y 地面、z 朝上）← GL（<see cref="ToGl"/> 的反向：y 取負）。</summary>
+    static (double X, double Y, double Z) FromGl(Vector3 v) => (v.X, -v.Y, v.Z);
+
+    static bool SolveCamera(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP, out Matrix4x4 oViewProj, out SkyView oSky, out string oError,
+                            out SCP_SculptResolvedCamera oCam)
     {
         oViewProj = Matrix4x4.Identity;
         oSky = default;
         oError = "";
+        oCam = new SCP_SculptResolvedCamera { Projection = iP.Projection };
         Vector3[] aPts = FramePoints(iMesh, iFloor, out Vector3 aMinW, out Vector3 aMaxW);
         // 深度範圍（近／遠平面）額外涵蓋的點：地板四角（框景不看它們）
         Vector3[] aDepthOnly = iFloor?.Corners ?? Array.Empty<Vector3>();
@@ -1576,6 +1587,11 @@ void main() {
             var aView = LookAt(aEyePos, aRight, aUp, aForward);
             oViewProj = aView * Ortho(-aHalfW, aHalfW, -aHalfH, aHalfH, aNear, aFar);
             oSky = OrthoSkyView(aForward, aUp, iP.RollDeg, aAspect, iP.SkyboxTiltDeg);
+            // 回填實際用的鏡頭（TASK-0501）：畫面中心 ＋ 縮放 ⇒ 頁面把這兩格釘住送回來，就不必再框（正交帶 target 時不再置中、帶 zoom 時不再算縮放）
+            double aPx1 = aBasePx * aScale;   // 倍率 1 的每世界單位像素
+            FillResolved(oCam, aCenter, aRight, aUp, aForward);
+            oCam.Zoom = aScale;
+            oCam.WorldPerImageWidth = iP.Width / aPx1; oCam.WorldPerImageHeight = iP.Height / aPx1;
             return true;
         }
 
@@ -1615,6 +1631,7 @@ void main() {
                     }
                 }
             }
+            oCam.Distance = aDist;   // 倍率 1 的距離（TASK-0501 釘住用）
             if (iP.ViewScale != 1) aDist = (float)(aDist / iP.ViewScale);   // 觀測頁滾輪（TASK-0472）；CLI 永遠 1
             aEyeP = aTarget - aForward * aDist;
         }
@@ -1642,7 +1659,19 @@ void main() {
         var aViewP = LookAt(aEyeP, aRight, aUp, aForward);
         oViewProj = aViewP * Perspective(aTanY, aAspect, aZNear, aZFar);
         oSky = new SkyView { Right = aRight, Up = aUp, Forward = aForward, TanX = aTanX, TanY = aTanY };
+        // 回填（TASK-0501）：給了鏡頭位置（eye）時距離就是 eye 到注視點；其餘在上面框完時已記
+        if (aEye.HasValue) oCam.Distance = (aTarget - aEyeP).Length();
+        FillResolved(oCam, aTarget, aRight, aUp, aForward);
+        oCam.WorldPerImageWidth = 2 * oCam.Distance * aTanX; oCam.WorldPerImageHeight = 2 * oCam.Distance * aTanY;
         return true;
+    }
+
+    static void FillResolved(SCP_SculptResolvedCamera ioCam, Vector3 iTargetGl, Vector3 iRightGl, Vector3 iUpGl, Vector3 iForwardGl)
+    {
+        (ioCam.TargetX, ioCam.TargetY, ioCam.TargetZ) = FromGl(iTargetGl);
+        (ioCam.RightX, ioCam.RightY, ioCam.RightZ) = FromGl(iRightGl);
+        (ioCam.UpX, ioCam.UpY, ioCam.UpZ) = FromGl(iUpGl);
+        (ioCam.ForwardX, ioCam.ForwardY, ioCam.ForwardZ) = FromGl(iForwardGl);
     }
 
     /// <summary>

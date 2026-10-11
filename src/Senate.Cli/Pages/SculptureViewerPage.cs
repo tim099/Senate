@@ -724,7 +724,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     bool DrawGpuResult(SCP_Ui g, string iPersona)
     {
         if (!GpuPainterAvailable) { g.Note("這個宿主沒有 GPU 即時預覽（文字模式，或環境變數 SENATE_SCULPT_GPU=off）⇒ 用 spawn 出圖。"); return false; }
-        g.Toggle("GPU 即時預覽（拖曳轉 yaw、滾輪縮放）", true, TGpu);
+        g.Toggle("GPU 即時預覽（右鍵／中鍵拖曳旋轉、左鍵拖曳水平平移、滾輪縮放）", true, TGpu);
         if (!g.ToggleValue(TGpu, true)) { g.Note("GPU 即時預覽關著 ⇒ 用 spawn 出圖。"); return false; }
         if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus aSt) && aSt.Version == m_GpuPut && aSt.Error != null)
         { g.Note("GPU 預覽這一幀失敗 ⇒ 退回 spawn 出圖：" + aSt.Error); return false; }
@@ -753,25 +753,41 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         p.MergeFaces = true;
         string? aBad = ApplyCamera(p, aCam, g.FieldValue(FViewScale, "1"));
         if (aBad != null) { g.Note("[相機欄位] " + aBad); return true; }
-        string aCamSig = string.Join(";", aCam.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value)) + ";vs=" + p.ViewScale.ToString("R", CultureInfo.InvariantCulture);
+
+        // ③b 鏡頭只框一次（TASK-0501）：換對象／換投影／按「重置鏡頭」才讓渲染器框；框完那一刻把它交回的鏡頭釘住，之後照原樣送回去
+        string aPinKey = aSubject + "|" + p.Projection;
+        if (aPinKey != m_PinKey) { m_Pin = null; m_PinKey = aPinKey; }
+        if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus aSt0) && aSt0.Version == m_GpuPut && aSt0.Error == null && aSt0.Result is SCP_SculptResolvedCamera aCamBack)
+        {
+            m_ViewCam = aCamBack;
+            if (m_Pin == null && m_PutPinKey == aPinKey && !m_PutPinned) m_Pin = CopyCamera(aCamBack);   // 這一版是自動框的 ⇒ 釘住它
+        }
+        bool aPinned = m_Pin != null && ApplyPin(p, m_Pin, aCam);
+
+        string aCamSig = string.Join(";", aCam.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value)) + ";vs=" + p.ViewScale.ToString("R", CultureInfo.InvariantCulture)
+                         + (aPinned ? ";pin=" + PinSig(m_Pin!) : ";pin=auto");
         string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig;
         if (aGpuSig != m_GpuSceneSig || !SCP_GuiGpuViews.Has(GpuKey))
         {
             m_GpuPut = SCP_GuiGpuViews.Put(GpuKey, new SCP_SculptGpuScene(aPlan.Voxels, p), p.Width, p.Height);
             m_GpuSceneSig = aGpuSig;
+            m_PutPinKey = aPinKey; m_PutPinned = aPinned;
         }
         SCP_GuiPointer? aPtr = g.ImageInteractive(SCP_GuiGpuViews.Ref(GpuKey), ViewSide, "雕刻即時預覽", P + "img/gpu");
         if (aPtr != null)
         {
-            if (aPtr.DragX != 0)
+            // 右鍵／中鍵：繞著目前的中心轉（像 Blender 抓著物體轉）—— 拖過整張圖寬 ＝ yaw 180°、整張圖高 ＝ pitch 180°；欄位空白 ⇒ 從鏈上的值起算
+            double rx = aPtr.RightDragX + aPtr.MiddleDragX, ry = aPtr.RightDragY + aPtr.MiddleDragY;
+            if (rx != 0 || ry != 0)
             {
-                // 只轉 yaw（Tim 2026-10-09）：拖過整張圖寬 ＝ 轉 180°；欄位空白 ⇒ 從鏈上的值起算
-                string aCur = g.FieldValue(FYaw, "").Trim();
-                double aYaw = aCur.Length > 0 && double.TryParse(aCur, NumberStyles.Float, CultureInfo.InvariantCulture, out double y0) ? y0 : aPlan.Params.YawDeg;
-                aYaw -= aPtr.DragX * 180;
-                aYaw %= 360; if (aYaw < 0) aYaw += 360;
+                double aYaw0 = FieldOr(g, FYaw, aPlan.Params.YawDeg), aPitch0 = FieldOr(g, FPitch, aPlan.Params.PitchDeg);
+                var (aYaw, aPitch) = OrbitAngles(aYaw0, aPitch0, rx, ry);
                 g.SetField(FYaw, aYaw.ToString("0.#", CultureInfo.InvariantCulture));
+                g.SetField(FPitch, aPitch.ToString("0.#", CultureInfo.InvariantCulture));
             }
+            // 左鍵：平移畫面中心 —— 只在地面上動（世界 X／Y），高度不變；要先有釘住的中心（第一幀框完才有）
+            if ((aPtr.DragX != 0 || aPtr.DragY != 0) && m_Pin != null && m_ViewCam != null)
+                PanPin(m_Pin, m_ViewCam, aPtr.DragX, aPtr.DragY, p.ViewScale);
             if (aPtr.Wheel != 0)
             {
                 double vs = Math.Max(0.1, Math.Min(50, p.ViewScale * Math.Pow(1.25, aPtr.Wheel)));
@@ -782,9 +798,83 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         {
             g.Label($"檢視倍率 ×{p.ViewScale:0.##}");
             if (g.Button("倍率歸 1", P + "btn/view-scale-reset")) g.SetField(FViewScale, "1");
+            // 重新框住（像 Blender 的 View All）：丟掉釘住的中心與距離、倍率回 1，下一幀渲染器重框一次
+            if (g.Button("重置鏡頭（重新框住）", P + "btn/camera-refit")) { m_Pin = null; g.SetField(FViewScale, "1"); }
         }
+        g.Note(m_Pin != null
+            ? $"鏡頭已釘住：中心 ({m_Pin.TargetX:0.#}, {m_Pin.TargetY:0.#}, {m_Pin.TargetZ:0.#})" + (p.Projection == SCP_SculptProjection.Perspective ? $"、距離 {m_Pin.Distance:0.#}" : $"、縮放 {m_Pin.Zoom:0.###}")
+              + " —— 轉、拖、縮放都不再重新框住（換對象／換投影／按重置才重框）"
+            : "鏡頭這一幀自動框住中（框完就釘住）");
         if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out aSt) && aSt.Error == null && aSt.Info.Length > 0) g.Note(aSt.Info);
         return true;
+    }
+
+    // ── TASK-0501：釘住的鏡頭（只在視窗行程裡活著 —— 視窗以外的宿主不走 GPU 預覽）──
+    /// <summary>釘住的鏡頭（中心＋距離／縮放）；null ＝ 下一幀讓渲染器自動框。</summary>
+    SCP_SculptResolvedCamera? m_Pin;
+    /// <summary>釘住的是哪個對象＋投影（換了就丟掉）。</summary>
+    string m_PinKey = "";
+    /// <summary>最近一幀渲染器交回的鏡頭（平移用它的畫面方向）。</summary>
+    SCP_SculptResolvedCamera? m_ViewCam;
+    /// <summary>最近一次 Put 的那一版：屬於哪個對象＋投影、是不是已經釘住送出去的（只有「自動框的那一版」交回的鏡頭才拿來釘）。</summary>
+    string m_PutPinKey = "";
+    bool m_PutPinned;
+
+    static double FieldOr(SCP_Ui g, string iId, double iFallback)
+    {
+        string v = g.FieldValue(iId, "").Trim();
+        return v.Length > 0 && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : iFallback;
+    }
+
+    public static SCP_SculptResolvedCamera CopyCamera(SCP_SculptResolvedCamera c) => new()
+    {
+        Projection = c.Projection, TargetX = c.TargetX, TargetY = c.TargetY, TargetZ = c.TargetZ, Distance = c.Distance, Zoom = c.Zoom,
+        WorldPerImageWidth = c.WorldPerImageWidth, WorldPerImageHeight = c.WorldPerImageHeight,
+        RightX = c.RightX, RightY = c.RightY, RightZ = c.RightZ, UpX = c.UpX, UpY = c.UpY, UpZ = c.UpZ, ForwardX = c.ForwardX, ForwardY = c.ForwardY, ForwardZ = c.ForwardZ,
+    };
+
+    static string PinSig(SCP_SculptResolvedCamera c) => string.Join(",", new[] { c.TargetX, c.TargetY, c.TargetZ, c.Distance, c.Zoom }.Select(d => d.ToString("R", CultureInfo.InvariantCulture)));
+
+    /// <summary>
+    /// 把釘住的鏡頭套上去（純函數，淨室直接測）：中心 ＋ 透視距離／正交縮放。給了這兩格，渲染器就不再框。
+    /// 不套的情況 ⇒ 回 false：手動給了鏡頭位置（eye 決定一切）。手動欄位給了 zoom／distance ⇒ 那一格以欄位為準（中心照釘）。
+    /// </summary>
+    public static bool ApplyPin(SCP_SculptRenderParams p, SCP_SculptResolvedCamera iPin, IReadOnlyDictionary<string, string> iCam)
+    {
+        if (p.EyeX.HasValue) return false;
+        p.TargetX = iPin.TargetX; p.TargetY = iPin.TargetY; p.TargetZ = iPin.TargetZ;
+        if (p.Projection == SCP_SculptProjection.Perspective) { if (!iCam.ContainsKey("distance")) p.Distance = iPin.Distance; }
+        else if (!iCam.ContainsKey("zoom")) p.Zoom = iPin.Zoom;
+        return true;
+    }
+
+    /// <summary>右鍵／中鍵拖曳 → yaw／pitch（純函數）：抓著物體轉 —— 往右拖物體往右轉（yaw 減）、往下拖看得更從上面（pitch 加）；pitch 夾在 ±89。</summary>
+    public static (double Yaw, double Pitch) OrbitAngles(double iYaw, double iPitch, double iDragX, double iDragY)
+    {
+        double yaw = (iYaw - iDragX * 180) % 360; if (yaw < 0) yaw += 360;
+        double pitch = Math.Max(-89, Math.Min(89, iPitch + iDragY * 180));
+        return (yaw, pitch);
+    }
+
+    /// <summary>
+    /// 左鍵拖曳 → 平移釘住的中心（純函數，就地改 <paramref name="ioPin"/>）：**只動 X／Y**（地面上），Z 一字不動（Tim「只影響水平位置」）。
+    /// 抓著地面拖：往右拖 ⇒ 中心往畫面左邊走；往下拖 ⇒ 中心往畫面深處走。距離換算用這一幀注視點深度上「整張圖對應的世界長度」÷ 檢視倍率；
+    /// 往深處那一軸再除以俯角的 sin（地面被斜看會縮短），太平的時候夾住，免得一拖飛出去。
+    /// </summary>
+    public static void PanPin(SCP_SculptResolvedCamera ioPin, SCP_SculptResolvedCamera iView, double iDragX, double iDragY, double iViewScale)
+    {
+        double vs = iViewScale > 0 ? iViewScale : 1;
+        double w = iView.WorldPerImageWidth / vs, h = iView.WorldPerImageHeight / vs;
+        // 畫面右方投到地面
+        double rx = iView.RightX, ry = iView.RightY, rl = Math.Sqrt(rx * rx + ry * ry);
+        if (rl > 1e-6) { ioPin.TargetX -= iDragX * w * rx / rl; ioPin.TargetY -= iDragX * w * ry / rl; }
+        // 畫面深處投到地面：上方的水平分量（俯看）與視線的水平分量（平看）指同一個方向，取比較長的那個
+        double ux = iView.UpX, uy = iView.UpY, ul = Math.Sqrt(ux * ux + uy * uy);
+        double fx = iView.ForwardX, fy = iView.ForwardY, fl = Math.Sqrt(fx * fx + fy * fy);
+        double dx, dy;
+        if (ul >= fl && ul > 1e-6) { dx = ux / ul; dy = uy / ul; } else if (fl > 1e-6) { dx = fx / fl; dy = fy / fl; } else return;
+        double sinPitch = Math.Max(0.25, ul);   // 上方的水平分量 ＝ sin(俯角)
+        ioPin.TargetX += iDragY * h / sinPitch * dx; ioPin.TargetY += iDragY * h / sinPitch * dy;
     }
 
     /// <summary>plan 物件的身分（換 plan ⇒ 一定重放場景）。</summary>

@@ -65,7 +65,8 @@ public sealed class SenateGpuViews : IDisposable
             else throw new InvalidOperationException("這個宿主不會畫 " + aFrame.Scene.GetType().Name);
             GLEnum aErr = m_Gl.GetError();
             if (aErr != GLEnum.NoError) throw new InvalidOperationException("OpenGL 錯誤：" + aErr);
-            SCP_GuiGpuViews.Report(iKey, aFrame.Version, null, aInfo);
+            // 雕刻：把實際用的鏡頭交回頁面（TASK-0501 釘住用）；球面沒有 ⇒ null
+            SCP_GuiGpuViews.Report(iKey, aFrame.Version, null, aInfo, aFrame.Scene is SCP.Core.Sculpture.SCP_SculptGpuScene ? m_Sculpt?.LastCamera : null);
             oTex = t.Color; oW = t.W; oH = t.H; oFlipY = t.FlipY;
             return true;
         }

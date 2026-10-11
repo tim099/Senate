@@ -164,4 +164,128 @@ public static partial class SelfTest
         return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
             : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
     }
+    /// <summary>
+    /// 淨室（TASK-0501）：鏡頭只框一次 —— 自動框那一幀交回的鏡頭釘住送回去 ⇒ 畫面逐位元相同；釘住之後換 yaw 中心與距離／縮放一字不變（不是又框一次）；
+    /// 左鍵平移只動 X／Y（Z 一字不變），往右拖 ⇒ 東西在畫面上往右、往下拖 ⇒ 往下（量的是像素重心，不是推公式）。透視與正交各一輪。
+    /// </summary>
+    static CheckRow SculptCameraPinCleanRoom()
+    {
+        const string name = "雕刻預覽鏡頭只框一次：釘住後畫面逐位元相同／換 yaw 中心與距離不動／左鍵平移只動 X、Y 且方向對（像素重心）／透視與正交（淨室，TASK-0501）";
+        var failures = new List<string>();
+        var readings = new List<string>();
+        void Check(bool c, string what) { if (!c) failures.Add(what); }
+        using var r = new SenateSculptRenderer();
+        try
+        {
+            var vox = SculptAoScene();
+            foreach (var proj in new[] { SCP_SculptProjection.Perspective, SCP_SculptProjection.Orthographic })
+            {
+                string tag = proj == SCP_SculptProjection.Perspective ? "透視" : "正交";
+                var p = new SCP_SculptRenderParams { Width = 256, Height = 256, Skybox = SCP_SculptRenderParams.SkyboxNone, Projection = proj, YawDeg = 30, PitchDeg = 35 };
+                if (!r.TryRender(vox, p, out byte[] a0, out string err))
+                    return err.Contains("建不出") ? new CheckRow(name, "這台機器沒有可用的 GPU ⇒ **這是跳過，不是通過**：" + err, CheckResult.Skipped)
+                                                 : new CheckRow(name, "渲染失敗：" + err, CheckResult.Fail);
+                var cam = r.LastCamera;
+                Check(cam != null && cam.Projection == proj, tag + "：自動框那一幀交回了鏡頭");
+                if (cam == null) continue;
+                var pin = Senate.Cli.Pages.SculptureViewerPage.CopyCamera(cam);
+                var empty = new Dictionary<string, string>();
+
+                // ① 釘住送回去 ⇒ 畫面逐位元相同
+                var q = p.Clone();
+                Check(Senate.Cli.Pages.SculptureViewerPage.ApplyPin(q, pin, empty), tag + "：ApplyPin 有套");
+                r.TryRender(vox, q, out byte[] a1, out _);
+                int diff = 0; for (int i = 0; i < a0.Length; i++) if (a0[i] != a1[i]) diff++;
+                Check(a0.Length == a1.Length && diff == 0, tag + "：釘住之後畫面逐位元相同（不同的位元組 " + diff + "）");
+
+                // ② 🔴 釘住之後換 yaw（像右鍵拖）⇒ 中心與距離／縮放一字不變（不是重新框住）
+                var (yaw2, pitch2) = Senate.Cli.Pages.SculptureViewerPage.OrbitAngles(q.YawDeg, q.PitchDeg, 0.25, 0.1);
+                var q2 = q.Clone(); q2.YawDeg = yaw2; q2.PitchDeg = pitch2;
+                r.TryRender(vox, q2, out _, out _);
+                var c2 = r.LastCamera!;
+                bool keep = c2.TargetX == pin.TargetX && c2.TargetY == pin.TargetY && c2.TargetZ == pin.TargetZ
+                            && (proj == SCP_SculptProjection.Perspective ? c2.Distance == pin.Distance : c2.Zoom == pin.Zoom);
+                Check(keep, tag + "：🔴 yaw " + q.YawDeg.ToString("0") + "→" + yaw2.ToString("0") + "°、pitch " + q.PitchDeg.ToString("0") + "→" + pitch2.ToString("0") + "° ⇒ 中心與距離／縮放一字不變");
+                // 反向對照：不釘住換 yaw ⇒ 自動框會挪中心（證明上一格量得到「有沒有重框」）
+                var q3 = p.Clone(); q3.YawDeg = yaw2; q3.PitchDeg = pitch2;
+                r.TryRender(vox, q3, out _, out _);
+                var c3 = r.LastCamera!;
+                Check(c3.TargetX != pin.TargetX || c3.TargetY != pin.TargetY || c3.TargetZ != pin.TargetZ || c3.Distance != pin.Distance || c3.Zoom != pin.Zoom,
+                      tag + "：反向對照 —— 沒釘住時換視角，自動框會換中心或距離（不然上一格分不出有沒有重框）");
+
+                // ③ 左鍵平移：只動 X／Y、方向照像素重心
+                (double X, double Y) Centroid(byte[] px)
+                {
+                    int w = q.Width, h = q.Height; byte br = px[0], bg = px[1], bb = px[2];
+                    double sx = 0, sy = 0; int n = 0;
+                    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++)
+                    {
+                        int k = (y * w + x) * 4;
+                        if (Math.Abs(px[k] - br) + Math.Abs(px[k + 1] - bg) + Math.Abs(px[k + 2] - bb) > 30) { sx += x; sy += y; n++; }
+                    }
+                    return n == 0 ? (double.NaN, double.NaN) : (sx / n, sy / n);
+                }
+                var cBase = Centroid(a1);
+                var pinR = Senate.Cli.Pages.SculptureViewerPage.CopyCamera(pin);
+                Senate.Cli.Pages.SculptureViewerPage.PanPin(pinR, cam, 0.1, 0, 1);
+                var qr = p.Clone(); Senate.Cli.Pages.SculptureViewerPage.ApplyPin(qr, pinR, empty);
+                r.TryRender(vox, qr, out byte[] aR, out _);
+                var cR = Centroid(aR);
+                var pinD = Senate.Cli.Pages.SculptureViewerPage.CopyCamera(pin);
+                Senate.Cli.Pages.SculptureViewerPage.PanPin(pinD, cam, 0, 0.1, 1);
+                var qd = p.Clone(); Senate.Cli.Pages.SculptureViewerPage.ApplyPin(qd, pinD, empty);
+                r.TryRender(vox, qd, out byte[] aD, out _);
+                var cD = Centroid(aD);
+                Check(pinR.TargetZ == pin.TargetZ && pinD.TargetZ == pin.TargetZ, tag + "：平移後中心的 Z 一字不變");
+                Check(cR.X - cBase.X > 256 * 0.04, tag + $"：往右拖 ⇒ 東西往右（重心 x {cBase.X:0.0} → {cR.X:0.0}）");
+                Check(cD.Y - cBase.Y > 256 * 0.02, tag + $"：往下拖 ⇒ 東西往下（重心 y {cBase.Y:0.0} → {cD.Y:0.0}）");
+                readings.Add($"{tag}：釘住後差 {diff} 位元組；右拖重心 x {cBase.X:0.0}→{cR.X:0.0}、下拖 y {cBase.Y:0.0}→{cD.Y:0.0}");
+            }
+        }
+        catch (Exception e) { failures.Add("例外：" + e.Message); }
+        string aRead = string.Join("；", readings);
+        return failures.Count == 0 ? new CheckRow(name, aRead, CheckResult.Pass)
+            : new CheckRow(name, "失敗：" + string.Join("、", failures) + "　讀數：" + aRead, CheckResult.Fail);
+    }
+
+    /// <summary>
+    /// 真資料讀數（TASK-0501）：透視「每幀自動框」vs「釘住」轉視角的每幀時間（鏡廳／小木屋，網格已快取），正交釘住當對照。
+    /// 判準：釘住的透視 ≤ 自動框透視的一半（讀數照印）。找不到作品 ⇒ 跳過。
+    /// </summary>
+    static CheckRow SculptCameraPinRealReading()
+    {
+        const string name = "雕刻預覽鏡頭只框一次真資料讀數：透視自動框 vs 釘住、正交釘住，轉視角每幀 ms（TASK-0501）";
+        IReadOnlyList<SelfTestTarget> aTargets = RealTargets();
+        string aData = aTargets.Count > 0 ? aTargets[0].AgentCommandsRoot ?? "" : "";
+        var works = new[] { "apex-one-constitution-mirror-hall", "meadow-cozy-cabin" }.Where(w => aData.Length > 0 && Directory.Exists(Path.Combine(aData, "Sculpture", "works", w))).ToList();
+        if (works.Count == 0) return new CheckRow(name, "找不到鏡廳／小木屋 ⇒ **這是跳過，不是通過**", CheckResult.Skipped);
+        var readings = new List<string>(); bool ok = true;
+        using var r = new SenateSculptRenderer();
+        foreach (string w in works)
+        {
+            if (!Senate.Core.Cmd_Sculpture.TryPrepareView(new Dictionary<string, string> { ["data_root"] = aData, ["work"] = w }, out SCP_SculptViewPlan plan, out _, out string err))
+                return new CheckRow(name, "準備場景失敗：" + err, CheckResult.Fail);
+            double Frames(SCP_SculptRenderParams p0, bool pin)
+            {
+                r.TryRender(plan.Voxels, p0, out _, out _);   // 暖身：建網格＋拿鏡頭
+                var cam = Senate.Cli.Pages.SculptureViewerPage.CopyCamera(r.LastCamera!);
+                var t = new List<double>();
+                for (int k = 1; k <= 5; k++)
+                {
+                    var q = p0.Clone(); q.YawDeg = p0.YawDeg + 7 * k;
+                    if (pin) Senate.Cli.Pages.SculptureViewerPage.ApplyPin(q, cam, new Dictionary<string, string>());
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    r.TryRender(plan.Voxels, q, out _, out _);
+                    t.Add(sw.Elapsed.TotalMilliseconds);
+                }
+                t.Sort(); return t[t.Count / 2];
+            }
+            var pp = plan.Params.Clone(); pp.MergeFaces = true; pp.Width = 1280; pp.Height = 720; pp.Projection = SCP_SculptProjection.Perspective;
+            var po = pp.Clone(); po.Projection = SCP_SculptProjection.Orthographic;
+            double auto = Frames(pp, false), pinned = Frames(pp, true), ortho = Frames(po, true);
+            readings.Add($"{w}（{plan.Voxels.Count:N0} voxel）：透視每幀自動框 {auto:0} ms → 釘住 {pinned:0} ms；正交釘住 {ortho:0} ms（含讀回）");
+            if (!(pinned <= auto * 0.5)) ok = false;
+        }
+        return new CheckRow(name, string.Join("；", readings) + (ok ? "" : "　✗ 釘住沒有降到一半以下"), ok ? CheckResult.Pass : CheckResult.Fail);
+    }
 }

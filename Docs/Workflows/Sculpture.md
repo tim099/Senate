@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（GPU 預覽鏡頭只框一次、右鍵轉左鍵平移 —— §5.3，TASK-0501）；2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -220,6 +220,17 @@ senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --ar
 - 參考圖整張解碼（大掃描圖約數百 MB 記憶體），只在這一次呼叫裡存在。
 - 參數壞（有 `ref` 沒校準、`ref_points` 或 `work_points` 兩點重合、兩種校準任一種算出退化或非有限的比例、座標不是有限數、`grid_m` 不是正數或太密、`voxel_alpha` 不在 0–1（含 NaN）、`meters_per_voxel` 不在 0–1000、`ref_flip` 不是 1／0、region 每軸跨度超過 1,048,576、檔案讀不了）⇒ exit 2，不寫圖。
 - 參考圖的透明像素合成在白底上（線稿 PNG 常用透明背景）。
+
+### 5.3 觀測頁的 GPU 即時預覽 —— 滑鼠與鏡頭（TASK-0501）
+
+- **鏡頭只框一次**：換對象、換投影、或按「重置鏡頭（重新框住）」時，渲染器自動框住一次（距離＋畫面置中）；框完那一刻的中心與距離（透視）／縮放（正交）就**釘住**，之後轉、拖、縮放都不再重新框。頁面上印「鏡頭已釘住：中心 (x, y, z)、距離／縮放」。
+  - 🩸 為什麼：透視的自動框每幀要把外露 voxel 掃十幾遍（鏡廳一幀 ~190 ms，85–99% 花在框住）；釘住之後跟正交同一級（鏡廳 387 → 65 ms、小木屋 226 → 31 ms，1280×720 含讀回）。
+  - 釘住的鏡頭送回去，畫面跟框的那一刻**逐位元相同**（淨室 SculptCameraPinCleanRoom）。
+- **右鍵（或中鍵）拖曳 ＝ 旋轉**：繞著釘住的中心轉（像 Blender 抓著物體轉）—— 拖過整張圖寬 ＝ yaw 180°、整張圖高 ＝ pitch 180°；pitch 夾在 ±89。改的是 yaw／pitch 欄位（滑桿同步）。
+- **左鍵拖曳 ＝ 平移**：抓著地面拖，**只動中心的世界 X／Y，高度（Z）不變**。
+- **滾輪 ＝ 縮放**（檢視倍率，照舊）；「倍率歸 1」只回倍率，「重置鏡頭」連中心一起重框、倍率回 1。
+- 手動欄位：給了 eye（鏡頭位置）⇒ 不釘（eye 決定一切）；給了 zoom／distance ⇒ 那一格以欄位為準、中心照釘。
+- ⚠ 只影響視窗裡的 GPU 預覽；CLI `op=view` 與 spawn 出圖照舊每次自動框（同一份輸入同一張圖）。
 
 ## 6. 渲染設定檔（render-profile）
 

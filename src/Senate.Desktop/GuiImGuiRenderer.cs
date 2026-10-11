@@ -105,7 +105,8 @@ public sealed class GuiImGuiRenderer
     {
         Vector2 aAfter = ImGui.GetCursorScreenPos();
         ImGui.SetCursorScreenPos(iAt);
-        ImGui.InvisibleButton("##ptr" + iId, iSize);
+        // 左／右／中鍵都接（TASK-0501：雕刻預覽右鍵／中鍵轉、左鍵平移）—— 預設的 InvisibleButton 只認左鍵
+        ImGui.InvisibleButton("##ptr" + iId, iSize, ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight | ImGuiButtonFlags.MouseButtonMiddle);
         bool aActive = ImGui.IsItemActive(), aHovered = ImGui.IsItemHovered(), aReleased = ImGui.IsItemDeactivated();
         ImGui.SetCursorScreenPos(aAfter);
         if (aHovered) m_WheelCapturedNext = true;
@@ -114,7 +115,14 @@ public sealed class GuiImGuiRenderer
         Vector2 aDelta = aActive ? io.MouseDelta : Vector2.Zero;
         if (!aActive && !aHovered && !aReleased) return;
         if (!m_Pointers.TryGetValue(iId, out SCP_GuiPointer? p)) m_Pointers[iId] = p = new SCP_GuiPointer();
-        if (iSize.X > 0 && iSize.Y > 0) { p.DragX += aDelta.X / iSize.X; p.DragY += aDelta.Y / iSize.Y; }
+        if (iSize.X > 0 && iSize.Y > 0)
+        {
+            // 照**按著的是哪一鍵**分開累積（⛔ 併進 DragX：只吃左鍵的球面頁會被右鍵拖著跑）
+            float dx = aDelta.X / iSize.X, dy = aDelta.Y / iSize.Y;
+            if (io.MouseDown[1]) { p.RightDragX += dx; p.RightDragY += dy; }
+            else if (io.MouseDown[2]) { p.MiddleDragX += dx; p.MiddleDragY += dy; }
+            else { p.DragX += dx; p.DragY += dy; }
+        }
         p.Wheel += aWheel;
         p.Dragging = aActive;
         p.Released |= aReleased;

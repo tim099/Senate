@@ -212,6 +212,8 @@ public static partial class SelfTest
         One(nameof(SculptMergeParityCleanRoom), "sculpture", SculptMergeParityCleanRoom),
         One(nameof(SculptMeshCacheCleanRoom), "sculpture", SculptMeshCacheCleanRoom),
         One(nameof(SculptGpuRealWorkReading), "sculpture", SculptGpuRealWorkReading),
+        One(nameof(SculptCameraPinCleanRoom), "sculpture", SculptCameraPinCleanRoom),
+        One(nameof(SculptCameraPinRealReading), "sculpture", SculptCameraPinRealReading),
         One(nameof(GlobeGridCleanRoom), "globe", GlobeGridCleanRoom),
         One(nameof(GlobePaintCleanRoom), "globe", GlobePaintCleanRoom),
         One(nameof(GlobePreviewMemoryCleanRoom), "globe", GlobePreviewMemoryCleanRoom),
