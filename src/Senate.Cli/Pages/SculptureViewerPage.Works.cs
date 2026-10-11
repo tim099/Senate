@@ -120,7 +120,103 @@ public sealed partial class SculptureViewerPage
             string links = g.FieldValue(FLinks, "").Trim(), hide = g.FieldValue(FHideLinks, "").Trim();
             if (links.Length > 0) args["links"] = links;
             if (hide.Length > 0) args["hide_links"] = hide;
+            // 文字欄有填 ⇒ 以文字欄為準（頁面上有寫）；都空 ⇒ 照一條一個的開關（TASK-0499）
+            if (links.Length == 0 && hide.Length == 0 && LinkRows(id).Rows is { Count: > 0 } rows)
+            {
+                var (aOn, aHide) = LinkToggleArgs(rows, r => g.ToggleValue(LinkToggleId(id, r.Path), r.Enabled));
+                if (aOn.Length > 0) args["links"] = aOn;
+                if (aHide.Length > 0) args["hide_links"] = aHide;
+            }
         }
+    }
+
+    // ===========================================================
+    // 區塊職責：關聯一條一個開關（TASK-0499，Tim「可以用 toggle 開關子模組顯示」）—— 看下層甲板不用打關聯名。
+    // 物理意義：開關只決定**這一次觀測**送出去的 links=／hide_links=（跟 CLI 同名、由 Cmd_Sculpture 驗）；⛔ 不寫回作品的 links.json。
+    //          開關的 id 帶作品 id ⇒ 換作品清單就換，不會帶著上一件的名字去報「關聯名不存在」。
+    //          預設 ＝ 那一條自己的 enabled；全部都在預設 ⇒ 什麼都不送（場景快取的簽章不變，不白重組）。
+    // ===========================================================
+    const string TLinkPrefix = P + "t/link/";
+    static string LinkToggleId(string iWork, string iPath) => TLinkPrefix + iWork + "/" + iPath;
+
+    /// <summary>關聯樹攤平成的一列（照樹的順序：父在子前）。</summary>
+    public readonly record struct LinkRow(string Path, int Depth, bool Enabled, string Label);
+
+    readonly Dictionary<string, (List<LinkRow>? Rows, string Error, long Ticks)> m_LinkRows = new();
+
+    /// <summary>那件作品的關聯樹（只讀 links.json 與書卡）；預覽每幀都會問 ⇒ 每件記一秒。樹壞了 ⇒ Rows=null、Error 說哪裡壞。</summary>
+    (List<LinkRow>? Rows, string Error) LinkRows(string iId)
+    {
+        if (iId.Length == 0 || m_WorksRoot == "\0") return (null, "");
+        long now = Environment.TickCount64;
+        if (m_LinkRows.TryGetValue(iId, out var hit) && now - hit.Ticks < 1000) return (hit.Rows, hit.Error);
+        List<LinkRow>? rows = null; string error = "";
+        try
+        {
+            rows = FlattenLinkRows(SCP_SculptLinks.Tree(new SCP_SculptWorks(new SCP_DataRoot(m_WorksRoot)), iId));
+        }
+        catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is IOException) { rows = null; error = e.Message; }
+        m_LinkRows[iId] = (rows, error, now);
+        return (rows, error);
+    }
+
+    /// <summary>關聯樹攤平成列（父在子前、帶深度與標籤）—— 頁面與淨室共用這一支。</summary>
+    public static List<LinkRow> FlattenLinkRows(List<SCP_SculptLinkNode> iTree)
+    {
+        var rows = new List<LinkRow>();
+        void Walk(List<SCP_SculptLinkNode> iNodes, int iDepth)
+        {
+            foreach (var n in iNodes)
+            {
+                string label = n.Path + " → " + n.Card.title + "（" + n.Card.id + "）"
+                               + (n.Link.turn != 0 ? " turn " + n.Link.turn : "") + (n.Link.mirror.Length > 0 ? " mirror " + n.Link.mirror : "")
+                               + (n.Link.enabled ? "" : "｜作品裡設為關");
+                rows.Add(new LinkRow(n.Path, iDepth, n.Link.enabled, label));
+                Walk(n.Children, iDepth + 1);
+            }
+        }
+        Walk(iTree, 0);
+        return rows;
+    }
+
+    /// <summary>
+    /// 開關 → links=／hide_links=（純函數，淨室直接測）。
+    /// 畫不畫：自己開著 ⇒ 且上一層也畫（上一層關了，底下整串都不畫）。
+    /// 送法：畫的那幾條全部點名進 links=（含作品裡設為關、這次被打開的）；關掉而上一層有畫的 ⇒ hide_links=（連同底下）。
+    /// ⚠ 不能只送 links=：點名那條底下沒點名的會照它自己的 enabled（見 SCP_SculptLinkSelection.Includes）⇒ 開著的子關聯會被畫回來。
+    /// 全部都在預設 ⇒ ("","")；一條都不畫 ⇒ links=none。
+    /// </summary>
+    public static (string Links, string Hide) LinkToggleArgs(IReadOnlyList<LinkRow> iRows, Func<LinkRow, bool> iIsOn)
+    {
+        bool anyChanged = false;
+        foreach (var r in iRows) anyChanged |= iIsOn(r) != r.Enabled;
+        if (!anyChanged) return ("", "");
+        var drawn = new HashSet<string>(StringComparer.Ordinal);
+        var on = new List<string>(); var hide = new List<string>();
+        foreach (var r in iRows)   // 父在子前 ⇒ 看到子的時候父已經判好了
+        {
+            int cut = r.Path.LastIndexOf('/');
+            bool parentDrawn = cut < 0 || drawn.Contains(r.Path.Substring(0, cut));
+            if (!parentDrawn) continue;                       // 上一層已經不畫（或已經 hide）⇒ 底下不必再提
+            if (iIsOn(r)) { drawn.Add(r.Path); on.Add(r.Path); }
+            else hide.Add(r.Path);
+        }
+        return on.Count == 0 ? ("none", "") : (string.Join(",", on), string.Join(",", hide));
+    }
+
+    void DrawLinkToggles(SCP_Ui g)
+    {
+        string id = SelectedWork(g);
+        var (rows, error) = LinkRows(id);
+        if (error.Length > 0) { g.Note("⚠ 關聯樹讀不了（開關先不畫；觀測那邊會說哪裡壞）：" + error); return; }
+        if (rows == null || rows.Count == 0) return;   // 沒有關聯的作品不顯示這一塊
+        using var fold = g.Fold("關聯開關（" + rows.Count + " 條，只影響這次觀測）", P + "fold/link-toggles", iDefaultOpen: true);
+        if (!fold.Open) return;
+        bool textGiven = g.FieldValue(FLinks, "").Trim().Length > 0 || g.FieldValue(FHideLinks, "").Trim().Length > 0;
+        g.Note(textGiven
+            ? "⚠ 上面的 links=／hide_links= 文字欄有填 ⇒ **以文字欄為準**，下面這些開關這一次不生效（清空文字欄就換回開關）。"
+            : "一條一個開關；預設照那一條在作品裡的開關。關掉上一層 ⇒ 底下整串都不畫。⛔ 不寫回作品（長期開關用 work sub=link enabled=0|1）。");
+        foreach (var r in rows) g.Toggle(new string('　', r.Depth) + r.Label, r.Enabled, LinkToggleId(id, r.Path));
     }
     void DrawWorkSelector(SCP_Ui g, string persona)
     {
@@ -135,6 +231,7 @@ public sealed partial class SculptureViewerPage
             g.Toggle("草稿模式（draft=1：刀落在草稿、看「作品＋草稿」；套進作品／丟掉用 work sub=apply／discard）", false, TWorkDraft);
             Field(g, "只組這些關聯 links=（none｜all｜路徑,…；巢狀用 /；空 ＝ 照每條的開關）", FLinks);
             Field(g, "拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）", FHideLinks);
+            DrawLinkToggles(g);
             g.Note("⚠ 被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組 —— 場景快取只認這一頁送出的參數。");
         }
         string selection = PersonalSpace(g) ? SubjectWork + SelectedWork(g) : SubjectFull;
