@@ -14,7 +14,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureLinkTogglesCleanRoom()
     {
-        const string name = "觀測頁關聯開關：巢狀攤平＋預設照 enabled／關一條連同底下不畫／只關底下那條上一層照畫／設為關的可打開／全關＝none／全預設不送／🔴 只送 links= 會把關掉的子關聯畫回來／不寫回 links.json／換作品不帶舊名字／沒關聯沒有列（淨室，TASK-0499）";
+        const string name = "觀測頁關聯開關：巢狀攤平＋預設照 enabled／關一條連同底下不畫／只關底下那條上一層照畫／設為關的可打開／全關＝none／全預設不送／🔴 只送 links= 會把關掉的子關聯畫回來／不寫回 links.json／換作品不帶舊名字／沒關聯沒有列／三層 activeSelf×activeInHierarchy＋折疊只管列不列（淨室，TASK-0499／0500）";
         var failures = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
         var original = SenateSculptureRewards.Factory;
@@ -111,8 +111,43 @@ public static partial class SelfTest
             // ⑥ 沒有關聯的作品 ⇒ 沒有列（頁面不畫那一塊）
             Check(SculptureViewerPage.FlattenLinkRows(SCP_SculptLinks.Tree(store, "bare")).Count == 0, "⑥ 沒有關聯 ⇒ 0 列");
 
+            // ── TASK-0500：Unity Hierarchy 式 —— 三層（子模組的子模組）、activeSelf／activeInHierarchy、折疊只管列不列 ──
+            // tri（1 格）← a＝A（2 格）← a/b＝B（4 格）← a/b/c＝C（8 格）⇒ 預設 15
+            Check(Create("tri", "16") && Create("A", "12,5,5") && Create("B", "10,3,3") && Create("C", "8,1,1"), "三層作品");
+            Check(Fill("tri", 1, 11) && Fill("A", 2, 12) && Fill("B", 4, 13) && Fill("C", 8, 14), "三層各自的格");
+            Check(Link("tri", "a", "A", "2,2,2") && Link("A", "b", "B", "1,1,1") && Link("B", "c", "C", "1,1,1"), "三層關聯");
+            string triLinks = File.ReadAllText(store.SpacePaths("tri").LinksFile);
+            var tri = SculptureViewerPage.FlattenLinkRows(SCP_SculptLinks.Tree(store, "tri"));
+            Check(Shape(tri) == "a:0:on a/b:1:on a/b/c:2:on", "⑦ 三層都列得出來：" + Shape(tri));
+            Check(Total("tri", Args("tri", tri), out _) == 15, "三層預設 15");
+            bool On(SculptureViewerPage.LinkRow r) => session.TryGetValue("tri|" + r.Path, out bool v) ? v : r.Enabled;
+            var folded = new HashSet<string>(StringComparer.Ordinal);
+            List<SculptureViewerPage.LinkView> View() => SculptureViewerPage.HierarchyView(tri, On, r => !folded.Contains(r.Path));
+            string Vs(List<SculptureViewerPage.LinkView> v) => string.Join(" ", v.Select(x => x.Row.Path + (x.SelfOn ? "+" : "-") + (x.Drawn ? "D" : "_") + (x.HasChildren ? (x.Open ? "▼" : "▶" + x.Descendants) : "")));
+
+            session["tri|a/b"] = false;   // 關中間那層
+            Check(Total("tri", Args("tri", tri), out _) == 3, "⑧ 🔴 關掉中間 a/b ⇒ 最上層 a 照畫、底下兩層都不畫（1＋2）：" + Total("tri", Args("tri", tri), out _));
+            Check(Vs(View()) == "a+D▼ a/b-_▼ a/b/c+_", "⑧ 列表：c 自己的勾留著（+）但不畫（_）＝ activeSelf／activeInHierarchy：" + Vs(View()));
+            session.Remove("tri|a/b");
+            Check(Total("tri", Args("tri", tri), out _) == 15 && Vs(View()) == "a+D▼ a/b+D▼ a/b/c+D", "parent 打開 ⇒ c 照自己的勾回來（15）");
+
+            session["tri|a/b/c"] = false; session["tri|a"] = false;   // c 自己關、再關最上層
+            Check(Total("tri", Args("tri", tri), out _) == 1, "關 a ⇒ 只剩本作品 1");
+            session.Remove("tri|a");
+            Check(Total("tri", Args("tri", tri), out _) == 7 && Vs(View()) == "a+D▼ a/b+D▼ a/b/c-_", "🔴 a 打開回來 ⇒ c 仍是它自己關著的狀態（7＝1＋2＋4），沒被 parent 一併改掉：" + Vs(View()));
+            session.Remove("tri|a/b/c");
+
+            int unfolded = Total("tri", Args("tri", tri), out _);
+            folded.Add("a/b");
+            Check(Vs(View()) == "a+D▼ a/b+D▶1", "⑨ 折 a/b ⇒ c 不列、標藏了 1 條：" + Vs(View()));
+            folded.Add("a");
+            Check(Vs(View()) == "a+D▶2", "折 a ⇒ 底下兩條都不列、標 2：" + Vs(View()));
+            Check(Total("tri", Args("tri", tri), out _) == unfolded && unfolded == 15, "⑨ 🔴 只折疊不關 ⇒ 畫的格數一格沒變（15）");
+            folded.Clear();
+            Check(File.ReadAllText(store.SpacePaths("tri").LinksFile) == triLinks, "⑩ 開關與折疊翻了一輪，tri 的 links.json 逐字不變");
+
             return new CheckRow(name, failures.Count == 0
-                ? "攤平 deck/cabin 深度 1、spare 預設關；全預設不送 16；關 deck ⇒ 6（🔴 上層關、只開船艙仍 6）；開回 16；只關船艙 ⇒ 14（🔴 只送 links= 會畫回 16）；打開 spare ⇒ 17；全關 ⇒ none 4；🔴 links.json 逐字不變、sub=links 仍（開）；換 solo 只有 x、照組 2；沒關聯 0 列"
+                ? "攤平 deck/cabin 深度 1、spare 預設關；全預設不送 16；關 deck ⇒ 6（🔴 上層關、只開船艙仍 6）；開回 16；只關船艙 ⇒ 14（🔴 只送 links= 會畫回 16）；打開 spare ⇒ 17；全關 ⇒ none 4；🔴 links.json 逐字不變、sub=links 仍（開）；換 solo 只有 x、照組 2；沒關聯 0 列｜TASK-0500：三層都列；🔴 關中間 ⇒ 3、c 勾留著但不畫；parent 開回 15；🔴 a 開回 c 仍關（7）；折 a/b 藏 1、折 a 藏 2、🔴 只折不關仍 15；links.json 逐字不變"
                 : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(name, e.ToString(), CheckResult.Fail); }

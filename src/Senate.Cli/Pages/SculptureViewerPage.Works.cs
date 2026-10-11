@@ -138,6 +138,8 @@ public sealed partial class SculptureViewerPage
     // ===========================================================
     const string TLinkPrefix = P + "t/link/";
     static string LinkToggleId(string iWork, string iPath) => TLinkPrefix + iWork + "/" + iPath;
+    /// <summary>折疊狀態（"0" ＝ 折起來；沒動過 ＝ 展開）—— 也帶作品 id。</summary>
+    static string LinkFoldId(string iWork, string iPath) => P + "f/linkfold/" + iWork + "/" + iPath;
 
     /// <summary>關聯樹攤平成的一列（照樹的順序：父在子前）。</summary>
     public readonly record struct LinkRow(string Path, int Depth, bool Enabled, string Label);
@@ -191,17 +193,62 @@ public sealed partial class SculptureViewerPage
         bool anyChanged = false;
         foreach (var r in iRows) anyChanged |= iIsOn(r) != r.Enabled;
         if (!anyChanged) return ("", "");
-        var drawn = new HashSet<string>(StringComparer.Ordinal);
+        bool[] drawn = DrawnFlags(iRows, iIsOn);
         var on = new List<string>(); var hide = new List<string>();
-        foreach (var r in iRows)   // 父在子前 ⇒ 看到子的時候父已經判好了
+        var byPath = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < iRows.Count; i++)
         {
-            int cut = r.Path.LastIndexOf('/');
-            bool parentDrawn = cut < 0 || drawn.Contains(r.Path.Substring(0, cut));
-            if (!parentDrawn) continue;                       // 上一層已經不畫（或已經 hide）⇒ 底下不必再提
-            if (iIsOn(r)) { drawn.Add(r.Path); on.Add(r.Path); }
-            else hide.Add(r.Path);
+            byPath[iRows[i].Path] = i;
+            if (drawn[i]) { on.Add(iRows[i].Path); continue; }
+            int cut = iRows[i].Path.LastIndexOf('/');
+            bool parentDrawn = cut < 0 || (byPath.TryGetValue(iRows[i].Path.Substring(0, cut), out int p) && drawn[p]);
+            if (parentDrawn) hide.Add(iRows[i].Path);   // 自己關、上一層有畫 ⇒ hide（連同底下）；上一層已經不畫 ⇒ 不必再提
         }
         return on.Count == 0 ? ("none", "") : (string.Join(",", on), string.Join(",", hide));
+    }
+
+    /// <summary>
+    /// 每一列實際畫不畫（Unity 的 activeInHierarchy）：自己勾著（activeSelf）**且**上一層畫 —— 上一層關了，底下每一層都不畫，
+    /// 但它們自己的勾不動（parent 打開回來就照自己的勾回來）。⭐ 送參數與列表顯示都問這一支（⛔ 別各寫一份）。
+    /// </summary>
+    public static bool[] DrawnFlags(IReadOnlyList<LinkRow> iRows, Func<LinkRow, bool> iIsOn)
+    {
+        var drawn = new bool[iRows.Count];
+        var byPath = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < iRows.Count; i++)   // 父在子前 ⇒ 看到子的時候父已經判好了
+        {
+            int cut = iRows[i].Path.LastIndexOf('/');
+            bool parentDrawn = cut < 0 || (byPath.TryGetValue(iRows[i].Path.Substring(0, cut), out int p) && drawn[p]);
+            drawn[i] = parentDrawn && iIsOn(iRows[i]);
+            byPath[iRows[i].Path] = i;
+        }
+        return drawn;
+    }
+
+    /// <summary>列表上的一列（Unity Hierarchy 的一行）。</summary>
+    public readonly record struct LinkView(LinkRow Row, bool HasChildren, bool Open, bool SelfOn, bool Drawn, int Descendants);
+
+    /// <summary>
+    /// 要列出來的那幾列（純函數）：祖先有任何一層折起來 ⇒ 不列；折起來的那一列記它藏了幾條（Descendants）。
+    /// ⚠ 折疊只管**列不列**，不管**畫不畫**（畫不畫只看 <see cref="DrawnFlags"/>）—— 跟 Unity 一樣，折起來的 child 照樣在場景裡。
+    /// </summary>
+    public static List<LinkView> HierarchyView(IReadOnlyList<LinkRow> iRows, Func<LinkRow, bool> iIsOn, Func<LinkRow, bool> iIsOpen)
+    {
+        bool[] drawn = DrawnFlags(iRows, iIsOn);
+        var outRows = new List<LinkView>();
+        int hideBelowDepth = int.MaxValue;   // 正在藏的那一段：深度 > 它的都不列
+        for (int i = 0; i < iRows.Count; i++)
+        {
+            var r = iRows[i];
+            if (r.Depth > hideBelowDepth) continue;
+            hideBelowDepth = int.MaxValue;
+            int desc = 0;
+            for (int j = i + 1; j < iRows.Count && iRows[j].Depth > r.Depth; j++) desc++;
+            bool open = desc == 0 || iIsOpen(r);
+            outRows.Add(new LinkView(r, desc > 0, open, iIsOn(r), drawn[i], desc));
+            if (!open) hideBelowDepth = r.Depth;
+        }
+        return outRows;
     }
 
     void DrawLinkToggles(SCP_Ui g)
@@ -215,8 +262,33 @@ public sealed partial class SculptureViewerPage
         bool textGiven = g.FieldValue(FLinks, "").Trim().Length > 0 || g.FieldValue(FHideLinks, "").Trim().Length > 0;
         g.Note(textGiven
             ? "⚠ 上面的 links=／hide_links= 文字欄有填 ⇒ **以文字欄為準**，下面這些開關這一次不生效（清空文字欄就換回開關）。"
-            : "一條一個開關；預設照那一條在作品裡的開關。關掉上一層 ⇒ 底下整串都不畫。⛔ 不寫回作品（長期開關用 work sub=link enabled=0|1）。");
-        foreach (var r in rows) g.Toggle(new string('　', r.Depth) + r.Label, r.Enabled, LinkToggleId(id, r.Path));
+            : "一條一個開關（像 Unity 的 Hierarchy）：預設照那一條在作品裡的開關；關掉上一層 ⇒ 底下每一層都不畫，但它們自己的勾照留（標「上層關著」），上一層打開就照自己的勾回來。▶／▼ 只折疊列表、不影響畫不畫。⛔ 開關與折疊都不寫回作品（長期開關用 work sub=link enabled=0|1）。");
+        bool anyParent = false;
+        foreach (var r in rows) anyParent |= r.Depth > 0;
+        if (anyParent)
+            using (g.Row())
+            {
+                // 全部展開／全部折疊：只動列表（同 Unity 的 Alt＋點三角形），不動畫不畫
+                if (g.Button("全部展開", P + "btn/linkfold-all-open")) foreach (var r in rows) g.SetField(LinkFoldId(id, r.Path), "1");
+                if (g.Button("全部折疊", P + "btn/linkfold-all-close")) foreach (var r in rows) g.SetField(LinkFoldId(id, r.Path), "0");
+            }
+        var view = HierarchyView(rows, r => g.ToggleValue(LinkToggleId(id, r.Path), r.Enabled), r => g.FieldValue(LinkFoldId(id, r.Path), "1") != "0");
+        foreach (var v in view)
+        {
+            using (g.Row())
+            {
+                if (v.Row.Depth > 0) g.Label(new string('　', v.Row.Depth * 2));
+                if (v.HasChildren)
+                {
+                    if (g.Button(v.Open ? "▼" : "▶", P + "btn/linkfold/" + id + "/" + v.Row.Path))
+                        g.SetField(LinkFoldId(id, v.Row.Path), v.Open ? "0" : "1");
+                }
+                else g.Label("　");
+                // 勾 ＝ 自己的勾（activeSelf）；上層關著 ⇒ 勾照留、標「不畫」（activeInHierarchy）
+                string tail = (v.SelfOn && !v.Drawn ? "　◌ 上層關著 ⇒ 不畫" : "") + (!v.Open ? "　（折疊：底下 " + v.Descendants + " 條）" : "");
+                g.Toggle(v.Row.Label + tail, v.Row.Enabled, LinkToggleId(id, v.Row.Path));
+            }
+        }
     }
     void DrawWorkSelector(SCP_Ui g, string persona)
     {
