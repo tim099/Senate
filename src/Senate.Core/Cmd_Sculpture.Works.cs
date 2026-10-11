@@ -33,6 +33,10 @@ public sealed partial class Cmd_Sculpture
         catch (Exception e) { error = e.Message; return false; }
     }
 
+    /// <summary>拿作品鎖之後才分派的 sub（create／list／assemble 自己管鎖）。</summary>
+    static readonly string[] s_WorkLockedSubs =
+        { "show", "update", "import", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links" };
+
     static string? OpWork(Ctx c)
     {
         try
@@ -50,9 +54,20 @@ public sealed partial class Cmd_Sculpture
             id = SCP_SculptWorks.NormalizeId(id);
             if (sub == "create") return CreateWork(c, id);
             if (sub == "assemble") return AssembleWork(c, id);
-            if (sub != "show" && sub != "update" && sub != "import" && sub != "move" && sub != "undo" && sub != "redo" && sub != "history" && sub != "mark" && sub != "marks") return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks");
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
-            using var workLock = SCP_FileLock.Acquire(c.Works.EngineLock(id), EngineLockTimeoutSec);
+            // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
+            List<SCP_SculptLinkNode>? tree = null;
+            var lockIds = new SortedSet<string>(StringComparer.Ordinal) { id };
+            if (sub == "show" || sub == "import")
+            {
+                try { tree = SCP_SculptLinks.Tree(c.Works, id); SCP_SculptLinks.Closure(tree, lockIds); }
+                catch (Exception e) when ((e is ArgumentException || e is InvalidOperationException) && sub == "show")
+                { c.Report.Append("- ⚠ 關聯樹讀不了（只看本作品）：").Append(e.Message).Append('\n'); tree = null; }
+            }
+            // 關聯的增刪：先拿 registry 鎖（全庫序列化）—— 兩個作者同時互相關聯時，成環檢查才看得到對方剛寫的那一筆
+            using var registryLock = sub == "link" || sub == "unlink" ? SCP_FileLock.Acquire(c.Works.RegistryLock, EngineLockTimeoutSec) : null;
+            using var workLock = LockAll(c, lockIds);
             var cardNow = c.Works.Load(id);
             c.Result.AddValue("work", id);
             c.Result.AddValue("owner", cardNow.owner);
@@ -65,6 +80,16 @@ public sealed partial class Cmd_Sculpture
                 AppendCredits(c, id);
                 c.Result.AddValue("revision", SCP_SculptWorks.Revision(space, cardNow.Dimensions));
                 c.Result.AddValue("total_voxels", space.Voxels.Count.ToString(CultureInfo.InvariantCulture));
+                if (tree != null && tree.Count > 0)
+                {
+                    // 組好的樣子另給一組 key（⛔ 不蓋掉 revision：本作品自己的版本跟「加上關聯」的版本是兩件事）
+                    var composed = Flatten(c, cardNow, tree, new List<SCP_SculptCredit>());
+                    c.Result.AddValue("composed_revision", SCP_SculptWorks.Revision(composed, cardNow.Dimensions));
+                    c.Result.AddValue("composed_voxels", composed.Voxels.Count.ToString(CultureInfo.InvariantCulture));
+                    AppendLinkTree(c, tree);
+                }
+                if (SCP_SculptDraft.IsOpen(c.Works.SpacePaths(id))) c.Report.Append("\n- 📝 開著草稿（`work sub=draft` 看狀態）\n");
+                c.Result.AddValue("draft_open", SCP_SculptDraft.IsOpen(c.Works.SpacePaths(id)) ? "1" : "0");
                 c.Result.AddValue("path", c.Works.Folder(id));
                 WorkNextSteps(c, id);
                 return Finish(c, 0, "✓ " + cardNow.title + "｜" + cardNow.Dimensions + "｜by " + cardNow.owner);
@@ -72,10 +97,19 @@ public sealed partial class Cmd_Sculpture
             if (sub == "history") return WorkHistory(c, id);
             if (sub == "marks") return WorkMarks(c, id);
             if (sub == "mark") return WorkMark(c, cardNow);
+            if (sub == "draft") return WorkDraft(c, cardNow);
+            if (sub == "link") return WorkLink(c, cardNow);
+            if (sub == "unlink") return WorkUnlink(c, cardNow);
+            if (sub == "links") return WorkLinks(c, cardNow);
+            if (sub == "apply" || sub == "discard")
+            {
+                if (c.Persona.Length == 0 || c.Persona != cardNow.owner) return Blocked(c, 2, "只有作品作者 " + cardNow.owner + " 可以" + (sub == "apply" ? "把草稿套進作品" : "丟掉草稿"));
+                return sub == "apply" ? WorkApplyDraft(c, cardNow) : WorkDiscardDraft(c, cardNow);
+            }
             if (sub == "import")
             {
                 if (c.Persona.Length == 0 || !Directory.Exists(SCP_LettersPaths.ProfileDir(c.Letters, c.Persona))) return Blocked(c, 2, "匯入展區需要已存在的persona支付落地費");
-                return ImportWork(c, cardNow); // 允許他人作品副本；作者Credit保留，費用由匯入者支付。
+                return ImportWork(c, cardNow, tree ?? new List<SCP_SculptLinkNode>()); // 允許他人作品副本；作者Credit保留，費用由匯入者支付；關聯照 enabled 攤平（TASK-0494）
             }
             if (c.Persona.Length == 0 || c.Persona != cardNow.owner) return Blocked(c, 2, "只有作品作者 " + cardNow.owner + " 可以修改原作");
             if (sub == "move" || sub == "undo" || sub == "redo") return EditWork(c, cardNow, sub);
@@ -92,6 +126,12 @@ public sealed partial class Cmd_Sculpture
                 foreach (var voxel in space.Voxels.Entries())
                     if (voxel.X >= dimensions[0] || voxel.Y >= dimensions[1] || voxel.Z >= dimensions[2])
                         return Blocked(c, 2, "縮小會切掉現有voxel；未修改。請先挖除範圍外內容，或選擇較大尺寸");
+                // 關聯進來的作品也要整件放得下（TASK-0494）—— 縮小會切掉它們的話一樣擋
+                foreach (var link in SCP_SculptLinks.Read(c.Works.SpacePaths(id)).links)
+                {
+                    string? fit = SCP_SculptLinks.Fits(link.work, link.pivot.ToArray(), link.at.ToArray(), link.turn, dimensions[0], dimensions[1], dimensions[2]);
+                    if (fit != null) return Blocked(c, 2, "縮小會切掉關聯 `" + link.name + "`：" + fit + "；未修改");
+                }
                 SCP_SculptWorks.SetSize(cardNow, dimensions);
             }
             if (c.Args.IsExplicit("title"))
@@ -277,9 +317,14 @@ public sealed partial class Cmd_Sculpture
         if (worst <= 0 || worst > MaxVolume) return Blocked(c, 2, "體積不合法或超出單刀上限");
         try
         {
-            using var workLock = SCP_FileLock.Acquire(c.EngineLockTarget, EngineLockTimeoutSec);
+            using var workLock = LockWorks(c);   // 作品＋關聯樹（算 linked_hits 要讀它們），依 ID 排序
             c.Work = c.Works.Load(work.id); // 在鎖內重驗ready與尺寸，防止等待鎖時作品縮小。
             if (!TryBuildPlace(c, out run, out worst, out where, out error)) return Blocked(c, 2, error);
+            if (c.Draft)
+            {
+                try { OpenDraft(c, c.Work); }   // TASK-0493：草稿沒開就開（底 ＝ 現在的作品）
+                catch (InvalidOperationException e) { return Blocked(c, 2, e.Message); }
+            }
             var result = run!(NewEngine(c));
             c.Report.Append(result.Render());
             if (!result.Ok || result.Status != "success") return Finish(c, 5, "✗ 作品未落子（免費）");
@@ -292,25 +337,29 @@ public sealed partial class Cmd_Sculpture
                 c.Result.AddValue("already_empty", listCut.AlreadyEmpty.ToString(CultureInfo.InvariantCulture));
             }
             c.Result.AddValue("revision", SCP_SculptWorks.Revision(NewEngine(c).LoadSpace(), c.Work.Dimensions));
-            return Finish(c, 0, "✓ 作品 " + work.id + " " + c.Op + " " + PlacedOf(result) + " voxels，免費");
+            AppendLinkedHits(c);   // TASK-0494：這一刀的範圍裡有沒有關聯進來的格（沒被動到）
+            return Finish(c, 0, "✓ 作品 " + work.id + (c.Draft ? " 的草稿" : "") + " " + c.Op + " " + PlacedOf(result) + " voxels，免費");
         }
         catch (SCP_FileLockTimeoutException e) { return Blocked(c, 4, e.Message); }
     }
 
     // 進來時已持有來源作品鎖；之後拿展區鎖與付款鎖，預覽與提交共享同一個 voxel 計畫。
-    static string? ImportWork(Ctx c, SCP_SculptWork card)
+    static string? ImportWork(Ctx c, SCP_SculptWork card, List<SCP_SculptLinkNode> tree)
     {
         string[] atText = c.Args.Get("at").Split(',');
         var at = new int[3];
         if (atText.Length != 3) return Blocked(c, 2, "匯入需要 at=x,y,z（作品原點的展區座標）");
         for (int i = 0; i < 3; i++) if (!int.TryParse(atText[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out at[i])) return Blocked(c, 2, "at 需要三個整數");
-        var source = c.Works.Engine(card, c.Roots.DataRoot).LoadSpace();
+        // 關聯照 enabled 攤平成實際 voxel；每件關聯進來的作品記 Credit＋當時的版本（TASK-0494）。revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上
+        var linkCredits = new List<SCP_SculptCredit>();
+        var source = Flatten(c, card, tree, linkCredits);
         var target = NewEngine(c); // work 管理 op 的 Ctx 不切換空間，這裡就是共用展區。
         using var exhibitLock = SCP_FileLock.Acquire(c.EngineLockTarget, EngineLockTimeoutSec);
         var plan = target.PreviewWorkImport(source, card.id, card.owner, at);
         plan.Revision = SCP_SculptWorks.Revision(source, card.Dimensions);
         plan.Credits.Add(new SCP_SculptCredit { work = card.id, title = card.title, author = card.owner, revision = plan.Revision });
         plan.Credits.AddRange(SCP_SculptHistory.Read(c.Works.SpacePaths(card.id)).Credits());
+        plan.Credits.AddRange(linkCredits);
         int charge = CeilDiv(plan.Placed.Count, VoxelsPerUnit);
         c.Result.AddValue("revision", plan.Revision);
         c.Result.AddValue("would_place", plan.Placed.Count.ToString(CultureInfo.InvariantCulture));

@@ -46,7 +46,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         + "· carvevox：照清單刻（stampvox 的反向）—— 每行 `x,y,z` 或 `x,y,z,color`（帶 color ＝ 那一格現在要是這個顏色才刻，對不上整刀拒絕）；清單外一格都不動。\n"
         + "· diff：兩個時間點之間放／刻／換色了幾格（分顏色）—— from=／to= 給標記（name、name:begin、name:end）、start、now 或事件檔 *.json；out= 寫差異清單。\n"
         + "· stats：structure=1 多報元件數與封閉空腔（6 連通）、mirror=y:160 量鏡像差；region／exclude_color 限定範圍；吃 mark／hide／only。\n"
-        + "· export format=list：純格子清單 `x,y,z,color`（設計程式直接讀；stampvox at=0,0,0 可原樣貼回）。\n"
+        + "· export format=list：純格子清單 `x,y,z,color`（設計程式直接讀；stampvox at=0,0,0 可原樣貼回）；外部程式讀作品走它（mark=<事件>.json ＝ 重播到那一刀）。\n"
+        + "· 草稿（預雕刻）：作品的刀帶 draft=1 只落在草稿、觀測帶 draft=1 看「作品＋草稿」；work sub=draft 看狀態、sub=apply 一筆套進作品、sub=discard 無痕丟掉。草稿開著時寫入作品要明寫 draft=0。\n"
+        + "· 關聯匯入：work sub=link name= source_work= at= [turn=] 只記關聯不複製 voxel（巢狀可），觀測時現組；links=none|all|路徑、hide_links=路徑|self 一次性開關；sub=links 看整棵樹。\n"
         + "· 預授權用**最壞費用**擋餘額 —— 不夠 ⇒ 引擎不跑、一毛不扣（exit 3）。\n"
         + "· 結算只對**實際落地**收費（禁覆蓋 skip 掉的不收）；同一刀只扣一次（兩把鎖包住整段）。\n"
         + "· 落子成功會用**落子者**的渲染設定渲一張全景、以落子者身分發進酒館（`tavern-post` 帶圖）；`share=0` 關掉。\n"
@@ -111,19 +113,23 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作作品的獨立空間"),
         new SCP_CmdArgSpec("size", "work create/update：邊長或X,Y,Z，各軸 1–上限（設定 `sculpture.workMaxAxis`，預設 4096；後台雕刻頁可改）；建立預設64。調尺寸免費，縮小不可切掉現有voxel"),
         new SCP_CmdArgSpec("parent_work", "work create：任務作品或其子作品ID；同作者免費建立子作品，不另領薪"),
-        new SCP_CmdArgSpec("source_work", "work assemble：零件來源作品ID，可用其他作者作品；自動Credit並保留原作"),
+        new SCP_CmdArgSpec("source_work", "work assemble：零件來源作品ID，可用其他作者作品；自動Credit並保留原作（來源有關聯 ⇒ 照 enabled 攤平）／work link：要關聯的作品（任何作品都行，TASK-0494）"),
         new SCP_CmdArgSpec("delta", "work move：選區平移量dx,dy,dz；選區用region=x1..x2,y1..y2,z1..z2"),
-        new SCP_CmdArgSpec("turn", "work assemble：繞Z軸旋轉0/90/180/270度，旋轉後原點放在at", iDefault: "0"),
+        new SCP_CmdArgSpec("turn", "work assemble／link：繞Z軸旋轉0/90/180/270度，旋轉後原點放在at", iDefault: "0"),
         new SCP_CmdArgSpec("commission", "work create：使用者指定的委託內容；有委託才可填，免建立費並立即發10 token（可用 --arg-file）"),
         new SCP_CmdArgSpec("commission_ref", "work create：該次委託的唯一來源（task／訊息seq／對話來源），不可重複領酬"),
         new SCP_CmdArgSpec("notes", "work update：心得與續作筆記（可用 --arg-file）"),
         new SCP_CmdArgSpec("todo", "work update：待辦（可用 --arg-file）"),
-        new SCP_CmdArgSpec("mark", "view／slice／section／stats／export：看某個時間標記那一刻的樣子（name、name:begin、name:end 或 start；要 work=）—— 作品、事件、快取都不動"),
+        new SCP_CmdArgSpec("mark", "view／slice／section／stats／export：看某個時間標記那一刻的樣子（name、name:begin、name:end、start，或事件檔 *.json ＝ 重播到那一刀（含）；要 work=）—— 作品、事件、快取都不動"),
         new SCP_CmdArgSpec("hide", "view／slice／section／stats／export：把這幾個區間（逗號分隔）的改動撤掉再看（那一段改過、之後沒再改的格回到區間開始時的值）"),
         new SCP_CmdArgSpec("only", "view／slice／section／stats／export：只看這個區間改動到的格"),
+        new SCP_CmdArgSpec("links", "view／slice／section／stats／export：這次組進哪些關聯（TASK-0494）—— none｜all（含停用的）｜路徑,路徑（巢狀用 /：甲板2/船長室；點名的連同祖先、它底下照開關）；不給 ⇒ 每條照 enabled"),
+        new SCP_CmdArgSpec("hide_links", "view／slice／section／stats／export：這次拿掉哪些關聯（路徑,路徑；連同底下）；self ＝ 不畫本作品自己的格（例：只看甲板 links=甲板2 hide_links=self）"),
+        new SCP_CmdArgSpec("enabled", "work link：這條關聯平常開不開（1／0；只給 enabled／note ⇒ 只改這兩格）"),
+        new SCP_CmdArgSpec("draft","1 ＝ 草稿（TASK-0493）：落子／刻（box/carve/carvevox/stamp*）與 work sub=move|assemble|undo|redo 只動草稿（沒開就開）；觀測（view/slice/section/stats/export）看「作品＋草稿」；diff ＝ 作品現在 → 草稿。開／看狀態 sub=draft、套進作品 sub=apply、丟掉 sub=discard"),
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
-        new SCP_CmdArgSpec("note", "work mark：備註"),
+        new SCP_CmdArgSpec("note", "work mark／link：備註"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
         new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數"),
@@ -141,7 +147,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("png", "stampimg：RGBA PNG 路徑（透明像素不落地）"),
         new SCP_CmdArgSpec("resize", "stampimg：W,H（NEAREST）"),
         new SCP_CmdArgSpec("voxels", "stampvox：3D 格子清單路徑（每行 x,y,z,color 相對 at；color 1..255；空行與 # 起頭略過；壞行／重複格 ⇒ 整刀拒絕）／carvevox：要刻的格（每行 x,y,z 或 x,y,z,color；帶 color ＝ 守門）"),
-        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox／carvevox ＝ 清單原點"),
+        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox／carvevox ＝ 清單原點；work assemble／link／import：放在哪"),
         new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+；stampvox 不吃）"),
         new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）", iDefault: "1"),
         new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標／work mark：1覆蓋同名同類的標記"),
@@ -205,15 +211,15 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("format", "export：obj|vox|list（list ＝ 純格子清單 x,y,z,color）", iChoices: new[] { "obj", "vox", "list" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
-                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks" }),
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
         new SCP_CmdArgSpec("desc", "exhibit register：描述"),
         new SCP_CmdArgSpec("bg_color", "exhibit register：背景色（存進 preset）"),
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
-        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）"),
+        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
         new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
@@ -259,6 +265,10 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 aPayload = Blocked(aCtx, 2, aWorkError);
             else if (!ConfigureView(aCtx, out string aViewError))
                 aPayload = Blocked(aCtx, 2, aViewError);
+            else if (!ConfigureLinks(aCtx, out string aLinkError))
+                aPayload = Blocked(aCtx, 2, aLinkError);
+            else if (!ConfigureDraft(aCtx, out string aDraftError))
+                aPayload = Blocked(aCtx, 2, aDraftError);
             else
             switch (aOp)
             {
@@ -302,6 +312,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         public SCP_SculptWork? Work;
         /// <summary>觀測的時間條件（mark／hide／only，TASK-0491）；null ＝ 看現在。</summary>
         public SCP_SculptViewFilter? View;
+        /// <summary>draft=1（TASK-0493）：這一刀落在草稿／觀測看「作品＋草稿」。</summary>
+        public bool Draft;
+        /// <summary>作品的關聯樹（TASK-0494；只讀 links.json）—— null ＝ 沒有關聯或這個 op 用不到。拿鎖時樹上所有作品一起拿。</summary>
+        public List<SCP_SculptLinkNode>? LinkTree;
+        /// <summary>觀測類 op 的組裝器（links=／hide_links= 解析好的選擇）；null ＝ 不組。</summary>
+        public SCP_SculptLinkComposer? Links;
 
         public Ctx(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult iResult, string iOp, string iPersona)
         {
@@ -327,8 +343,11 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     static SCP_SculptEngine NewEngine(Ctx c)
     {
         if (c.Work != null) c.Work = c.Works.Load(c.Work.id);
-        var aEngine = c.Work == null ? new SCP_SculptEngine(c.Data) : c.Works.Engine(c.Work, c.Roots.DataRoot);
+        var aEngine = c.Work == null ? new SCP_SculptEngine(c.Data)
+                    : c.Draft && SCP_SculptDraft.IsOpen(c.Works.SpacePaths(c.Work.id)) ? DraftEngine(c, c.Work)   // TASK-0493：草稿 ⇒ 指向 draft/、底 ＝ 開草稿那一刻
+                    : c.Works.Engine(c.Work, c.Roots.DataRoot);
         aEngine.ViewFilter = c.View;   // 只有觀測類 op 會讀它（LoadView）；寫入類一律 LoadSpace
+        aEngine.Links = c.Links;       // TASK-0494：同上 —— 觀測時組進關聯；寫入類碰不到被關聯的作品
         SCP_DataRoot aData = c.Data;
         aEngine.PhotoBase = () =>
         {
@@ -809,6 +828,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
 
         ISCP_SculptRenderer? aRenderer = SCP_SculptRenderers.Current;
         foreach (string l in aPlan.Lines) c.Report.Append(l).Append('\n');
+        AppendLinkReport(c, c.Links?.Last);
         c.Report.Append("- layers: ").Append(aLayersText).Append('\n');
         c.Result.AddValue("layers", aLayersText);
         if (!SCP_SculptEngine.TryRenderPng(aPlan, out byte[] aPng, out string aWhy))
@@ -852,7 +872,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
 
         try
         {
-            using (SCP_FileLock.Acquire(c.EngineLockTarget, EngineLockTimeoutSec))
+            using (LockWorks(c))   // 作品＋關聯樹上所有作品，依 ID 排序（TASK-0494）
                 oPlan = NewEngine(c).PrepareView(aViewArgs, aBase);
         }
         catch (SCP_FileLockTimeoutException e) { oError = "拿不到雕刻鎖：" + e.Message; return 4; }
@@ -894,7 +914,11 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         string aPersona = aArgs.Get("persona").Trim();
         if (aPersona.Length > 0 && !SCP_Cmd_FreeTimeActivity.IsSafePersona(aPersona)) { oError = "persona 不合法：" + aPersona; return false; }
         var c = new Ctx(aRoots, aArgs, new SCP_CmdResult(), "view", aPersona);
+        // 與 Execute 同一串設定（mark／hide／only、關聯、草稿）—— 觀測頁的即時預覽跟 CLI view 看到的是同一個東西
         if (!ConfigureWork(c, out string aWorkError)) { oError = aWorkError; return false; }
+        if (!ConfigureView(c, out string aViewError)) { oError = aViewError; return false; }
+        if (!ConfigureLinks(c, out string aLinkError)) { oError = aLinkError; return false; }
+        if (!ConfigureDraft(c, out string aDraftError)) { oError = aDraftError; return false; }
         return PrepareViewPlan(c, out oPlan, out oLayers, out oError) == 0;
     }
 
@@ -1213,9 +1237,22 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             Region = c.Args.Get("region").Trim(),
             Out = c.Args.Get("out").Trim(),
         };
-        if (aArgs.From.Length == 0) return Blocked(c, 2, "diff 要 --arg from=<標記 name|name:begin|name:end、start，或事件檔 *.json>（to 不給 ＝ now）");
         if (aArgs.Out.Length > 0 && !Path.IsPathRooted(aArgs.Out)) return Blocked(c, 2, "diff 的 out 要絕對路徑（got '" + aArgs.Out + "'）");
-        if (!TryLocked(c, e => e.Diff(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
+        Func<SCP_SculptEngine, SCP_SculptResult> aRun;
+        if (c.Draft)
+        {
+            // TASK-0493：作品現在 → 草稿（兩端固定，⛔ 不吃 from／to）
+            if (aArgs.From.Length > 0 || aArgs.To.Length > 0) return Blocked(c, 2, "diff draft=1 比的是「作品現在 → 草稿」—— 不吃 from／to");
+            SCP_SculptWork aCard = c.Work!;
+            // 作品那一端只讀（⛔ 不替作品寫快取 —— 草稿的一切都要無痕）
+            aRun = e => SCP_SculptEngine.DiffSpaces(SCP_SculptDraft.WorkNow(c.Works.SpacePaths(aCard.id)), e.LoadSpace(), "作品現在", "草稿", aArgs);
+        }
+        else
+        {
+            if (aArgs.From.Length == 0) return Blocked(c, 2, "diff 要 --arg from=<標記 name|name:begin|name:end、start，或事件檔 *.json>（to 不給 ＝ now）");
+            aRun = e => e.Diff(aArgs);
+        }
+        if (!TryLocked(c, aRun, out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
         c.Report.Append("```\n").Append(aRes.Render()).Append("\n```\n");
         if (!aRes.Ok) return EngineFail(c, aRes);
         c.Result.Lines.AddRange(aRes.Lines);
@@ -1342,8 +1379,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         oBlocked = null;
         try
         {
-            using (SCP_FileLock.Acquire(c.EngineLockTarget, EngineLockTimeoutSec))
+            using (LockWorks(c))   // 作品＋關聯樹上所有作品，依 ID 排序（TASK-0494）；共用展區 ⇒ 展區那顆
                 oRes = iRun(NewEngine(c));
+            AppendLinkReport(c, c.Links?.Last);
             return true;
         }
         catch (SCP_FileLockTimeoutException e)

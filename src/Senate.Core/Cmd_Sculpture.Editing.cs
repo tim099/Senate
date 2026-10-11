@@ -52,25 +52,30 @@ public sealed partial class Cmd_Sculpture
     {
         string sourceId = SCP_SculptWorks.NormalizeId(c.Args.Get("source_work"));
         c.Works.Load(id); c.Works.Load(sourceId); // 不為不存在的作品建立鎖目錄。
-        string first = string.CompareOrdinal(id, sourceId) <= 0 ? id : sourceId;
-        string second = first == id ? sourceId : id;
-        using var firstLock = SCP_FileLock.Acquire(c.Works.EngineLock(first), EngineLockTimeoutSec);
-        using var secondLock = first == second ? null : SCP_FileLock.Acquire(c.Works.EngineLock(second), EngineLockTimeoutSec);
+        // 來源有關聯 ⇒ 照 enabled 攤平（TASK-0494）：先不拿鎖讀出來源的關聯樹；目標在樹上 ＝ 把自己裝進自己 ⇒ 擋
+        var sourceTree = SCP_SculptLinks.Tree(c.Works, sourceId);
+        var lockIds = TreeIds(sourceTree);
+        if (lockIds.Contains(id)) return Blocked(c, 2, "作品 " + id + " 在來源 " + sourceId + " 的關聯樹裡 —— 那是把自己裝進自己；未修改");
+        lockIds.Add(id); lockIds.Add(sourceId);
+        using var locks = LockAll(c, lockIds);   // 目標＋來源＋來源的關聯樹，依 ID 排序一次拿齊
         var card = c.Works.Load(id); var source = c.Works.Load(sourceId);
         if (c.Persona.Length == 0 || c.Persona != card.owner) return Blocked(c, 2, "只有目標作品作者可以放入零件；來源作者不限");
         int[] at = WorkVector(c.Args.Get("at"), "at");
         if (!TryInt(c, "turn", out int turn)) return Blocked(c, 2, "turn需為0/90/180/270");
-        var engine = c.Works.Engine(card, c.Roots.DataRoot);
-        var sourceSpace = c.Works.Engine(source, c.Roots.DataRoot).LoadSpace();
+        var engine = WorkEngine(c, card, true);   // draft=1 ⇒ 零件放進草稿（TASK-0493）
+        var linkCredits = new List<SCP_SculptCredit>();
+        var sourceSpace = Flatten(c, source, sourceTree, linkCredits);
         var edit = engine.Assemble(sourceSpace, source.SizeX, source.SizeY, at, turn, WorkOverwrite(c));
         edit.credits.Add(new SCP_SculptCredit { work = source.id, author = source.owner, title = source.title,
             revision = SCP_SculptWorks.Revision(sourceSpace, source.Dimensions) });
-        edit.credits.AddRange(SCP_SculptHistory.Read(c.Works.SpacePaths(source.id)).Credits());
+        // 草稿裡拿作品自己當零件 ⇒ 不讀它的歷史（讀會刷新作品的歷史索引 —— 草稿要無痕；那些 Credit 本來就在作品裡）
+        if (!(c.Draft && source.id == card.id)) edit.credits.AddRange(SCP_SculptHistory.Read(c.Works.SpacePaths(source.id)).Credits());
+        edit.credits.AddRange(linkCredits);
         return FinishEdit(c, card, engine, edit);
     }
     static string? EditWork(Ctx c, SCP_SculptWork card, string sub)
     {
-        var engine = c.Works.Engine(card, c.Roots.DataRoot);
+        var engine = WorkEngine(c, card, sub == "move");   // draft=1 ⇒ 只動草稿；undo／redo 要草稿已經開著（TASK-0493）
         SCP_SculptEdit edit;
         if (sub == "move")
         {
@@ -86,6 +91,7 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("work", card.id); c.Result.AddValue("changed", edit.after.Count.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("charged", "0"); c.Result.AddValue("event_file", file);
         c.Result.AddValue("revision", SCP_SculptWorks.Revision(engine.LoadSpace(), card.Dimensions));
+        if (c.Draft) return Finish(c, 0, "✓ 草稿 " + edit.action + "｜" + edit.after.Count + "格變動｜作品本身沒動；草稿裡可用 work sub=undo/redo draft=1");
         AppendCredits(c, card.id);
         return Finish(c, 0, "✓ " + edit.action + "｜" + edit.after.Count + "格變動｜免費；可用work sub=undo/redo");
     }
@@ -97,6 +103,7 @@ public sealed partial class Cmd_Sculpture
             .Append("）｜by ").Append(credit.author).Append("｜版本 ").Append(credit.revision).Append('\n');
         if (credits.Count == 0) c.Report.Append("（尚未匯入零件）\n");
         c.Result.AddValue("credit_count", credits.Count.ToString(CultureInfo.InvariantCulture));
+        AppendLinkCredits(c, id);   // TASK-0494：關聯進來的作品（現組，不在 events）
     }
     static string? WorkHistory(Ctx c, string id)
     {

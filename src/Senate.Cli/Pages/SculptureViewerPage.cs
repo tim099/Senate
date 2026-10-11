@@ -113,7 +113,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     static readonly string[] s_TextParamIds =
     {
         FRegion, FExclude, FTarget, FEye, FDistance, FZoom, FLightDir, FWidth, FHeight,
-        FFloorTile, FFloorZ, FFloorMargin, FFloorMarginRatio, FFloorColor, FFloorFade,
+        FFloorTile, FFloorZ, FFloorMargin, FFloorMarginRatio, FFloorColor, FFloorFade, FLinks, FHideLinks,
     };
 
     static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
@@ -701,7 +701,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     const string TGpu = P + "t/gpu";
     const string FViewScale = P + "f/view_scale";
     static readonly string[] s_CamKeys = { "yaw", "pitch", "roll", "fov", "zoom", "distance" };
-    static readonly string[] s_VoxelKeys = { "work", "exhibit", "region", "exclude_color" };
+    static readonly string[] s_VoxelKeys = { "work", "exhibit", "region", "exclude_color", "draft", "links", "hide_links" };
     static bool GpuPainterAvailable => SCP_GuiGpuViews.CanPaint(typeof(SCP_SculptGpuScene));
 
     sealed record PlanSnap(string SceneSig, string VoxelSig, IReadOnlyList<SCP_SculptVoxel> Voxels, SCP_SculptRenderParams Params,

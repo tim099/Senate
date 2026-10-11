@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -49,7 +49,7 @@ related:
 | `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
-| `work` | 個人作品：`sub=create|list|show|update|import` | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
+| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
 
 ```bash
 senate cmd sculpture --arg op=box --arg persona=<P> --arg x1=10 --arg x2=12 --arg y1=10 --arg y2=12 --arg z1=0 --arg z2=0 --arg color=19
@@ -406,8 +406,55 @@ senate cmd sculpture --arg op=export --arg work=<作品> --arg format=list --arg
 - **stats structure=1**：元件數（**6 連通** ＝ 面相鄰，附最小幾塊的位置與外框）、封閉空腔（外框外擴一格後從角落灌不進去的空格，6 連通，附最大幾塊）。定義與 scipy `ndimage.label` 預設相同。外框超過 2.68 億格 ⇒ 空腔印 `skipped` 並說原因（⛔ 不印 0），給 `region` 縮小再量。
 - **stats mirror=軸:中心**：`y:160` ＝ 以第 160 格的中心為鏡面（c ↔ 320−c）；`y:159.5` ＝ 159 與 160 兩格之間。分別數「低側有而高側空」「高側有而低側空」「兩邊都有但顏色不同」，附幾個位置。給了 `region` ⇒ 鏡像落在框外的格不比（計 `mirror_skipped`）。
 - `region`／`exclude_color` 在 stats 只限定結構讀數（嚴格解析，寫錯 ⇒ exit 2）；總數那兩行照舊是整件。什麼都沒給 ⇒ 輸出跟以前逐字相同。
-- **export format=list**：每行 `x,y,z,color`（絕對座標，照 x→y→z 排，開頭兩行 `#` 註解），`sha256` 印在回傳值。這個檔就是 stampvox 吃的格式 ⇒ `at=0,0,0` 原樣貼得回去。吃 region／exclude_color／mark／hide／only。
+- **export format=list**：每行 `x,y,z,color`（絕對座標，照 x→y→z 排，開頭 `#` 註解；有關聯 ⇒ 每條一行 `# link 路徑 作品@版本`），`sha256` 印在回傳值。這個檔就是 stampvox 吃的格式 ⇒ `at=0,0,0` 原樣貼得回去。吃 region／exclude_color／mark／hide／only／draft／links。空的也照寫（只有檔頭）。
+- ⭐ **外部程式（設計用的 python）讀作品一律走它**，⛔ 不要自己重播 events：`export format=list links=none [mark=<事件>.json]` ＝ 引擎重播到那一刀（含）的本作品。workedit（草稿 apply、undo、move…）與之後新加的 op 都由引擎認。自寫的重播器只留來當「跟引擎不同源的證人」對拍（憲法號 `design/tools/replay.py`：`replay()` 走 CLI、`replay_witness()` 純 python）。
 - 讀數（憲法號，2026-10-11）：階段六結束封閉空腔 0、階段七 2,252 個／5,668 格、階段八 2,200 個／5,602 格；砲門區間 44 刀 carve＋3 刀 stampvox ⇒ 放 424、刻 7,924、換色 36；清單與差異清單跟作品自寫的重播器逐格相同。
+
+### 9.4.3 草稿 —— 預雕刻：先在草稿裡雕、看、微調，OK 才套進作品（TASK-0493）
+
+草稿 ＝ 作品資料夾底下的 `draft/`（不入版控），自己是一個空間，**底** ＝ 開草稿那一刻的作品。草稿裡的刀、undo／redo、觀測都跟平常一樣，只是帶 `draft=1`。
+
+```bash
+# 下第一刀就自動開草稿（也可以先 work sub=draft 開一份）
+senate cmd sculpture --arg op=stampvox --arg work=<作品> --arg persona=<P> --arg voxels=D:/tmp/deck_beams.txt --arg at=0,0,0 --arg expect_pixels=812 --arg draft=1
+senate cmd sculpture --arg op=view --arg work=<作品> --arg draft=1 --arg out=<png>          # 看「作品＋草稿」
+senate cmd sculpture --arg op=work --arg sub=undo --arg work=<作品> --arg persona=<P> --arg draft=1   # 草稿裡 undo／redo／move／assemble
+senate cmd sculpture --arg op=work --arg sub=draft --arg work=<作品> --arg persona=<P>        # 狀態：底、過期沒、幾刀、跟作品現在差幾格（分色）
+senate cmd sculpture --arg op=diff --arg work=<作品> --arg draft=1                          # 作品現在 → 草稿（同一份差異讀數，可 out= 寫清單）
+senate cmd sculpture --arg op=work --arg sub=apply --arg work=<作品> --arg persona=<P>        # OK ⇒ 一筆套進作品
+senate cmd sculpture --arg op=work --arg sub=discard --arg work=<作品> --arg persona=<P>      # 不 OK ⇒ 整個丟掉（無痕）
+```
+
+- **無痕**：草稿的讀寫一個位元組都不碰作品（events／快取／marks.json／歷史索引；讀作品走「只讀」，作品沒快取也不會替它建）。export／展品等輸出檔仍落在作品資料夾，不會跟著 draft/ 被刪。
+- **apply** ＝ 一筆 workedit（action=draft，舊版 senate.exe 重播得出來）：套完逐格驗 ＝ 草稿才刪草稿；`work sub=undo` 一次就整份回到草稿前；草稿裡 undo 掉的刀不在最終狀態裡 ⇒ 不會被帶進去。不受單刀 1,000,000 格上限（草稿是很多刀累積的）。
+- **底過期 ⇒ apply 擋下、零寫入**：照**內容**判（尺寸＋每一格的雜湊）—— 開草稿之後作品被改過（含插進較早的事件、改尺寸）就算過期；漏帶 draft 落了一刀再 undo 回來（內容一樣）不算。出口：discard、照現在的作品重開（不做 rebase）。
+- **草稿開著時，寫入作品的刀要明寫** `draft=1`（落草稿）或 `draft=0`（直接落作品）—— 沒寫 ⇒ exit 2。觀測頁的「草稿模式」開關替你寫好。
+- 擋下（exit 2）：draft＋mark／hide／only、共用展區、不收 draft 的 op、draft＋exhibit_id、沒開草稿就觀測／undo、殘留的 draft/（沒有 base.json：上次刪到一半）⇒ 先 `sub=discard`。
+- 跟關聯合用：觀測 `draft=1` 時，被關聯的作品有開著的草稿也一起用草稿（甲板在草稿裡試刻，回船殼裡看合不合）；`links_used` 會標 `(草稿)`。
+
+### 9.4.4 關聯匯入 —— 作品由哪幾件組成（TASK-0494）
+
+「子作品其實跟獨立作品一樣，只是創作時切分出來的作品」（Tim）⇒ 任何作品都能被關聯，別人的也行。關聯只記在作品的 `links.json`（入版控，⛔ 不進 events），**一格 voxel 都不複製**；觀測時現組 ⇒ 被關聯的作品改了，下一次觀測就是新樣子。巢狀：被關聯的作品自己也有關聯（甲板 → 船艙 → 物品）就一路組進來。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=甲板2 --arg source_work=ship-deck2 --arg at=0,0,0
+senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=砲L1 --arg source_work=cannon --arg at=310,40,82 --arg turn=90
+senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=甲板2 --arg enabled=0   # 只改開關
+senate cmd sculpture --arg op=work --arg sub=links --arg work=ship                                                     # 整棵樹（巢狀、開關、尺寸變過、開著草稿）
+senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2 --arg out=<png>                 # 拿掉甲板2（連同底下）看裡面
+senate cmd sculpture --arg op=view --arg work=ship --arg links=甲板2 --arg hide_links=self --arg out=<png> # 只看甲板2
+senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船長室 --arg out=<png>          # 只拿掉甲板2 上的船長室
+```
+
+- **選擇**：`links=none|all|路徑,…`（all 含停用的；點名的連同它的祖先、它底下照各自的開關）、`hide_links=路徑,…|self`（self ＝ 不畫本作品自己的格）；路徑用 `/` 分層。打錯名字 ⇒ exit 2。只給觀測類 op（view／slice／section／stats／export）。
+- **誰蓋誰**：每一層都是「自己的格優先，關聯照清單順序、先到的贏」；被蓋掉、越界的格都計數＋附位置（回傳值 `link_overlap`／`link_clipped`，回報列每一條）。
+- **轉向**：`turn` 繞 Z（同 assemble），軸心固定用**加關聯當下**那件作品的尺寸（它之後長大，整件不會平移；長出去的格越界 ⇒ 丟掉並計數，`sub=links` 標「尺寸變過」）。加關聯時要整件放得進來；縮小父作品會切掉關聯 ⇒ 擋。
+- **寫入只動本作品**：父作品的刀碰不到被關聯的作品（要改去改那件作品）；落子後回報 `linked_hits`（這一刀的範圍裡有幾格是關聯進來的，沒被動到）。
+- **擋下**：成環（含隔好幾層、含停用的關聯）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`、非作者改關聯。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
+- **攤平**：`work sub=import`（匯入展區）與 `work sub=assemble`（來源有關聯）照 enabled 攤平成實際 voxel，Credit 逐件記；import 的 revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上。`work show` 另給 `composed_revision`／`composed_voxels`；Credit 多一段「關聯（現組）」。export 檔頭記每條用了哪個版本。
+- **效能與鎖**：被關聯的作品讀它自己的快取（只讀、不寫回）；同一件只讀一次（28 門砲關聯同一件 cannon 也只讀一次）。鎖：作品＋關聯樹上所有作品依 ID 排序一次拿齊（全系統只有這一種鎖序）。
+- `diff` 只比本作品自己的事件（不含關聯）；`mark` 回到過去時，被關聯的作品照現在。觀測頁：「只組這些關聯／拿掉這些關聯」兩欄；被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組。
+- ⭐ 慣例（甲板這種切出來的區域）：子作品尺寸 ＝ 父作品、`at=0,0,0`、`turn=0` ⇒ 子作品直接用父作品的座標雕，剖面校準也能共用。
 
 ### 9.5 建築與家具的相對比例尺
 

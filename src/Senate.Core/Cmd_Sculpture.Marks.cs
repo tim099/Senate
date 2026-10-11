@@ -31,7 +31,16 @@ public sealed partial class Cmd_Sculpture
             var aFilter = new SCP_SculptViewFilter();
             if (aMark.Length > 0)
             {
-                string aRel = SCP_SculptMarks.ResolvePoint(aFile, aMark);
+                // 標記名，或直接給事件檔（*.json：相對 events/ 的路徑或唯一檔名，含那一刀）—— 外部程式要「某一刀之後的作品」不必自己重播
+                string aRel;
+                if (aMark.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    var aEvents = SCP_SculptStore.ListEvents(c.Works.SpacePaths(c.Work.id));
+                    try { aRel = aEvents[SCP_SculptMarks.FindEvent(aEvents, aMark, "mark")].Rel.Replace('\\', '/'); }
+                    catch (ArgumentException) when (aFile.marks.Exists(m => m.name == aMark.Split(':')[0]))
+                    { aRel = SCP_SculptMarks.ResolvePoint(aFile, aMark); }   // 舊的標記名剛好以 .json 結尾（新標記不准這樣取名）
+                }
+                else aRel = SCP_SculptMarks.ResolvePoint(aFile, aMark);
                 if (aRel.Length == 0) aFilter.UptoStart = true;
                 else aFilter.UptoEvent = aRel;
             }

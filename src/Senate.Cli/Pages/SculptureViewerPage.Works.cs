@@ -72,12 +72,55 @@ public sealed partial class SculptureViewerPage
         string id = g.FieldValue(WorkSel + "/value", "");
         return m_Works.Exists(w => w.id == id && w.status == "ready") ? id : "";
     }
+    // 草稿模式（TASK-0493）與關聯的一次性開關（TASK-0494）—— 送出去的參數跟 CLI 同名，規則由 Cmd_Sculpture 判（⛔ 頁面不另寫一份）
+    const string TWorkDraft = P + "t/work-draft", FLinks = P + "f/links", FHideLinks = P + "f/hide_links";
+    static readonly string[] s_DraftOps = { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox", "view", "slice", "section", "stats", "export", "diff" };
+    static readonly string[] s_LinkViewOps = { "view", "slice", "section", "stats", "export" };
+
+    // 「有沒有草稿可看」每幀都會問（GPU 預覽每幀組一次請求）⇒ 每件作品記一秒
+    readonly Dictionary<string, (bool Has, long Ticks)> m_DraftSeen = new();
+    bool HasDraftToShow(string id)
+    {
+        if (id.Length == 0 || m_WorksRoot == "\0") return false;
+        long now = Environment.TickCount64;
+        if (m_DraftSeen.TryGetValue(id, out var hit) && now - hit.Ticks < 1000) return hit.Has;
+        bool has = false;
+        try
+        {
+            var store = new SCP_SculptWorks(new SCP_DataRoot(m_WorksRoot));
+            has = SCP_SculptDraft.IsOpen(store.SpacePaths(id));
+            if (!has)
+            {
+                var ids = new SortedSet<string>(StringComparer.Ordinal);
+                SCP_SculptLinks.Closure(SCP_SculptLinks.Tree(store, id), ids);
+                foreach (string k in ids) has |= SCP_SculptDraft.IsOpen(store.SpacePaths(k));
+            }
+        }
+        catch (Exception) { has = false; }   // 樹壞了 ⇒ 不送 draft=1（觀測那邊自己會說樹壞在哪）
+        m_DraftSeen[id] = (has, now);
+        return has;
+    }
+
     void AddWorkTarget(SCP_Ui g, Dictionary<string, string> args)
     {
         if (!PersonalSpace(g)) return;
         string id = SelectedWork(g);
         args["work"] = id.Length > 0 ? id : "__missing-work__"; // 不准失效選取靜默變成展區操作。
         args.Remove("exhibit");
+        // 沒有 op ＝ view（手動渲染／GPU 預覽）。草稿：開關開 ⇒ draft=1；關 ⇒ 明寫 draft=0（草稿開著時寫入類要明寫，頁面替使用者寫清楚）
+        string op = args.TryGetValue("op", out string? o) ? o : "view";
+        string sub = args.TryGetValue("sub", out string? s) ? s : "";
+        bool draftOn = g.ToggleValue(TWorkDraft, false);
+        bool view = Array.IndexOf(s_LinkViewOps, op) >= 0 || op == "diff";
+        if (Array.IndexOf(s_DraftOps, op) >= 0 || (op == "work" && (sub == "undo" || sub == "redo" || sub == "move" || sub == "assemble")))
+            // 觀測：這件作品（或它組進來的關聯）真的有開著的草稿才送 1 —— 否則開關開著也只會換來「沒有草稿」的錯
+            args["draft"] = draftOn && (!view || HasDraftToShow(id)) ? "1" : "0";
+        if (Array.IndexOf(s_LinkViewOps, op) >= 0)
+        {
+            string links = g.FieldValue(FLinks, "").Trim(), hide = g.FieldValue(FHideLinks, "").Trim();
+            if (links.Length > 0) args["links"] = links;
+            if (hide.Length > 0) args["hide_links"] = hide;
+        }
     }
     void DrawWorkSelector(SCP_Ui g, string persona)
     {
@@ -89,6 +132,10 @@ public sealed partial class SculptureViewerPage
             if (g.FieldValue(WorkSel + "/value", "").Length == 0 && first.Length > 0)
                 g.SetField(WorkSel + "/value", first);
             g.Dropdown("作品", options, first, WorkSel);
+            g.Toggle("草稿模式（draft=1：刀落在草稿、看「作品＋草稿」；套進作品／丟掉用 work sub=apply／discard）", false, TWorkDraft);
+            Field(g, "只組這些關聯 links=（none｜all｜路徑,…；巢狀用 /；空 ＝ 照每條的開關）", FLinks);
+            Field(g, "拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）", FHideLinks);
+            g.Note("⚠ 被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組 —— 場景快取只認這一頁送出的參數。");
         }
         string selection = PersonalSpace(g) ? SubjectWork + SelectedWork(g) : SubjectFull;
         string seen = g.FieldValue(WorkSeen, "");
@@ -98,6 +145,7 @@ public sealed partial class SculptureViewerPage
             if (seen.Length > 0 || PersonalSpace(g))
             {
                 g.SetField(SSubject, selection); g.SetField(FRegion, ""); g.SetField(FExclude, "");
+                g.SetField(FLinks, ""); g.SetField(FHideLinks, "");   // 關聯名是那件作品的 ⇒ 換作品就清掉（⛔ 帶著舊名字去看下一件只會一直報錯）
                 g.SetField(SViewPath, ""); g.SetField(SSlicePath, ""); g.SetField(SExportPath, "");
                 RequestRender("切換雕刻空間", iForce: true);
             }
