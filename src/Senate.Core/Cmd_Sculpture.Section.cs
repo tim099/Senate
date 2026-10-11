@@ -187,7 +187,7 @@ public sealed partial class Cmd_Sculpture
         string aLoadErr = "";
         if (!TryLocked(c, e =>
             {
-                try { aSpace = e.LoadSpace(); }
+                try { aSpace = e.LoadView(); }   // mark／hide／only（TASK-0491）
                 catch (Exception ex) { aLoadErr = ex.Message; }
                 return SCP_SculptResult.Text(0);
             }, out _, out string? aBlocked)) return aBlocked;

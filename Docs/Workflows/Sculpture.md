@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十三個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -347,6 +347,33 @@ senate cmd sculpture --arg op=work --arg sub=history --arg work=room
 移動只處理選區非空voxel，保留各自顏色。來源與目的地重疊可整體平移，不會搬到一半擦掉自己；目的地有選區外內容則預設拒絕，可顯式`overwrite=1`。零平移或空選區沒有變動，不新增事件。
 
 Undo/Redo僅限作品作者，免費、可連續操作，支援既有box/carve/stamp及新assemble/move。每次撤銷最後一筆尚未撤銷的voxel操作；新增一刀會清除Redo分支。Undo也能還原覆蓋前的顏色。事件只追加、不刪歷史，刪快取重播結果一致。尺寸與筆記不在voxel Undo範圍；若作品已縮小，還原內容超出目前尺寸時整筆拒絕，先擴大空間再還原。共用展區、建立費與薪水不受作品Undo影響。
+
+### 9.4.1 時間標記 —— 看某一刻、撤掉或只看某一段（TASK-0491）
+
+一個標記 ＝「重播到某個事件（含）為止」的那一刻。同名的 `phase=begin`＋`phase=end` ＝ 一個區間（開始那一刻本身不算在區間裡）。
+用途：還原開砲門之前的船殼、拿掉外板看裡面的肋骨與甲板、只看某一層甲板、每個階段的過程圖。
+
+```bash
+# 標在現在（預設 point）；區間的開始／結束各標一次
+senate cmd sculpture --arg op=work --arg sub=mark --arg persona=basecamp --arg work=<作品> --arg name=砲門 --arg phase=begin
+senate cmd sculpture --arg op=work --arg sub=mark --arg persona=basecamp --arg work=<作品> --arg name=砲門 --arg phase=end --arg note="gun deck 15 個／舷"
+# 補標過去：upto=<相對 events/ 的路徑或唯一檔名>｜start（第一個事件之前）
+senate cmd sculpture --arg op=work --arg sub=mark --arg persona=basecamp --arg work=<作品> --arg name=外板 --arg phase=begin --arg upto=083315_982_966ad9.json
+senate cmd sculpture --arg op=work --arg sub=marks --arg work=<作品>          # 列出（history 也會列）
+
+# 觀測：view／slice／section／stats／export 都吃
+senate cmd sculpture --arg op=view --arg work=<作品> --arg mark=砲門:begin --arg out=<png>   # 開砲門之前
+senate cmd sculpture --arg op=view --arg work=<作品> --arg hide=外板 --arg out=<png>         # 拿掉外板（逗號分隔可撤多段）
+senate cmd sculpture --arg op=stats --arg work=<作品> --arg only=甲板2                        # 只看那一段改動到的格
+```
+
+- **作品、事件、快取一格都不動**：觀測時從頭重播到那一刻（不讀也不寫 `sculpt_cache.json`）；大作品會慢幾秒。
+- **寫入類 op 帶 mark／hide／only ⇒ exit 2**：落子、刻、編輯永遠落在現在的作品上。
+- `mark=<名字>`；同名有開始與結束時要寫 `<名字>:begin`／`<名字>:end`（`start` ＝ 空的作品）。
+- `hide=<區間>`：那一段改過、**之後沒再改**的格回到區間開始時的值（被蓋過的顏色會回來、新放的格不見）；之後又改過的格維持現在。
+- `only=<區間>`：只留那一段改動到、現在還在的格。區間沒標結束 ⇒ 到現在為止。
+- 標記存在作品資料夾的 `marks.json`（作者寫的，入版控），⛔ **不進 events/** —— 舊版 senate.exe 照常重播這件作品。同名同類重複 ⇒ 擋下，要改加 `overwrite=1`；`marks.json` 壞了 ⇒ 擋下、不當成空的（寫回去會清掉所有標記）。
+- undo／redo 也是事件 ⇒ undo 之前標的那一刻，之後照樣看得到 undo 之前的樣子。
 
 ### 9.5 建築與家具的相對比例尺
 

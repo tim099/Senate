@@ -107,6 +107,8 @@ public sealed partial class Cmd_Sculpture
         for (int i = Math.Max(0, history.Active.Count - 20); i < history.Active.Count; i++)
             c.Report.Append("- ").Append(history.Active[i].Rel).Append('\n');
         AppendCredits(c, id);
+        try { c.Result.AddValue("mark_count", AppendMarks(c, id).ToString(CultureInfo.InvariantCulture)); }
+        catch (InvalidOperationException e) { c.Report.Append("\n⚠ ").Append(e.Message).Append('\n'); }
         return Finish(c, 0, "✓ 可Undo " + history.Active.Count + " 筆；可Redo " + history.Redo.Count + " 筆");
     }
 }

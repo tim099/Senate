@@ -50,7 +50,7 @@ public sealed partial class Cmd_Sculpture
             id = SCP_SculptWorks.NormalizeId(id);
             if (sub == "create") return CreateWork(c, id);
             if (sub == "assemble") return AssembleWork(c, id);
-            if (sub != "show" && sub != "update" && sub != "import" && sub != "move" && sub != "undo" && sub != "redo" && sub != "history") return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history");
+            if (sub != "show" && sub != "update" && sub != "import" && sub != "move" && sub != "undo" && sub != "redo" && sub != "history" && sub != "mark" && sub != "marks") return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             using var workLock = SCP_FileLock.Acquire(c.Works.EngineLock(id), EngineLockTimeoutSec);
             var cardNow = c.Works.Load(id);
@@ -70,6 +70,8 @@ public sealed partial class Cmd_Sculpture
                 return Finish(c, 0, "✓ " + cardNow.title + "｜" + cardNow.Dimensions + "｜by " + cardNow.owner);
             }
             if (sub == "history") return WorkHistory(c, id);
+            if (sub == "marks") return WorkMarks(c, id);
+            if (sub == "mark") return WorkMark(c, cardNow);
             if (sub == "import")
             {
                 if (c.Persona.Length == 0 || !Directory.Exists(SCP_LettersPaths.ProfileDir(c.Letters, c.Persona))) return Blocked(c, 2, "匯入展區需要已存在的persona支付落地費");

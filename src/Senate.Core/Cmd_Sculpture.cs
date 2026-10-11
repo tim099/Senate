@@ -114,6 +114,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("commission_ref", "work create：該次委託的唯一來源（task／訊息seq／對話來源），不可重複領酬"),
         new SCP_CmdArgSpec("notes", "work update：心得與續作筆記（可用 --arg-file）"),
         new SCP_CmdArgSpec("todo", "work update：待辦（可用 --arg-file）"),
+        new SCP_CmdArgSpec("mark", "view／slice／section／stats／export：看某個時間標記那一刻的樣子（name、name:begin、name:end 或 start；要 work=）—— 作品、事件、快取都不動"),
+        new SCP_CmdArgSpec("hide", "view／slice／section／stats／export：把這幾個區間（逗號分隔）的改動撤掉再看（那一段改過、之後沒再改的格回到區間開始時的值）"),
+        new SCP_CmdArgSpec("only", "view／slice／section／stats／export：只看這個區間改動到的格"),
+        new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
+        new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
+        new SCP_CmdArgSpec("note", "work mark：備註"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
         new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數"),
@@ -134,7 +140,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox ＝ 清單原點"),
         new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+；stampvox 不吃）"),
         new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）", iDefault: "1"),
-        new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標"),
+        new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標／work mark：1覆蓋同名同類的標記"),
         new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數（stampvox ＝ 清單格數），對不上即拒絕（**強烈建議帶**）"),
         new SCP_CmdArgSpec("alpha_threshold", "stamp 類：alpha 門檻（預設 128）"),
         new SCP_CmdArgSpec("allow_clip", "stamp 類：1 ＝ 接受越界裁切（預設越界即拒絕）"),
@@ -193,15 +199,15 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("format", "export：obj|vox", iChoices: new[] { "obj", "vox" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
-                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history" }),
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
         new SCP_CmdArgSpec("desc", "exhibit register：描述"),
         new SCP_CmdArgSpec("bg_color", "exhibit register：背景色（存進 preset）"),
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
-        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）"),
+        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
         new SCP_CmdArgSpec("from", "render-profile copy：來源設定名"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
@@ -245,6 +251,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         {
             if (aOp != "work" && !ConfigureWork(aCtx, out string aWorkError))
                 aPayload = Blocked(aCtx, 2, aWorkError);
+            else if (!ConfigureView(aCtx, out string aViewError))
+                aPayload = Blocked(aCtx, 2, aViewError);
             else
             switch (aOp)
             {
@@ -284,6 +292,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         public readonly string Persona;
         public readonly StringBuilder Report = new StringBuilder();
         public SCP_SculptWork? Work;
+        /// <summary>觀測的時間條件（mark／hide／only，TASK-0491）；null ＝ 看現在。</summary>
+        public SCP_SculptViewFilter? View;
 
         public Ctx(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult iResult, string iOp, string iPersona)
         {
@@ -310,6 +320,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     {
         if (c.Work != null) c.Work = c.Works.Load(c.Work.id);
         var aEngine = c.Work == null ? new SCP_SculptEngine(c.Data) : c.Works.Engine(c.Work, c.Roots.DataRoot);
+        aEngine.ViewFilter = c.View;   // 只有觀測類 op 會讀它（LoadView）；寫入類一律 LoadSpace
         SCP_DataRoot aData = c.Data;
         aEngine.PhotoBase = () =>
         {
