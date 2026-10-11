@@ -99,6 +99,7 @@ public static partial class SelfTest
         One(nameof(PrefsThreeStates), "core", PrefsThreeStates),
         One(nameof(PrefsKeepsOtherSections), "core", PrefsKeepsOtherSections),
         One(nameof(PathsSingleSource), "core", PathsSingleSource),
+        One(nameof(CodingPathsCleanRoom), "core", CodingPathsCleanRoom),
         One(nameof(LegacyProjectsMigration0390), "core", LegacyProjectsMigration0390),
         One(nameof(LetterDayIsLocalDay), "core", LetterDayIsLocalDay),
         One(nameof(BankArrivalOpensAndBinds), "morning", BankArrivalOpensAndBinds),
