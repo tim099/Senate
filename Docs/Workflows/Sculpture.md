@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -46,7 +46,7 @@ related:
 | `section` | 剖面圖（垂直軸朝上：側視／正視是 Z、俯視／仰視是 Y；網格、比例尺）＋參考圖疊圖校準＋探針讀數（見 §5.2） | 免費 | 沒給 `out` 時必填 |
 | `stats` | 總數與使用率；`structure=1` 多報元件數與封閉空腔、`mirror=y:160` 量鏡像差（§9.4.2） | 免費 | 選填 |
 | `diff` | 兩個時間點之間放／刻／換色了幾格（分顏色）、可寫差異清單（`from=`／`to=`，§9.4.2） | 免費 | 選填 |
-| `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用） | 免費 | 選填 |
+| `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用）；obj 預設省略封閉在模型裡的面，`sealed=keep` 照常輸出（§9.4.2） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
 | `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
@@ -400,6 +400,8 @@ senate cmd sculpture --arg op=stats --arg work=<作品> --arg structure=1 --arg 
 senate cmd sculpture --arg op=stats --arg work=<作品> --arg mirror=y:160 --arg region=300..400,0..319,60..110
 # 純格子清單（設計程式直接讀，不必自己重播）
 senate cmd sculpture --arg op=export --arg work=<作品> --arg format=list --arg mark=階段六:end --arg out=D:/tmp/world.txt
+# obj：封閉在模型裡的面預設省略（作品不動）；除錯時要照常輸出帶 sealed=keep
+senate cmd sculpture --arg op=export --arg work=<作品> --arg format=obj --arg out=D:/tmp/ship.obj
 ```
 
 - **diff**：放（空 → 有）／刻（有 → 空）／換色（有 → 另一色），分顏色列，外加區間裡各 op 幾刀。只比兩端 ⇒ 中間放了又刻掉的格不算。`region=` 只算框裡的；`out=`（絕對路徑）寫差異清單，每行 `x,y,z,before,after`（0 ＝ 空，照 x→y→z 排）。from 晚於 to ⇒ exit 2（要反過來看就對調）。⛔ 不吃 mark／hide／only。不讀不寫快取。
@@ -409,6 +411,12 @@ senate cmd sculpture --arg op=export --arg work=<作品> --arg format=list --arg
 - **export format=list**：每行 `x,y,z,color`（絕對座標，照 x→y→z 排，開頭 `#` 註解；有關聯 ⇒ 每條一行 `# link 路徑 作品@版本`），`sha256` 印在回傳值。這個檔就是 stampvox 吃的格式 ⇒ `at=0,0,0` 原樣貼得回去。吃 region／exclude_color／mark／hide／only／draft／links。空的也照寫（只有檔頭）。
 - ⭐ **外部程式（設計用的 python）讀作品一律走它**，⛔ 不要自己重播 events：`export format=list links=none [mark=<事件>.json]` ＝ 引擎重播到那一刀（含）的本作品。workedit（草稿 apply、undo、move…）與之後新加的 op 都由引擎認。自寫的重播器只留來當「跟引擎不同源的證人」對拍（憲法號 `design/tools/replay.py`：`replay()` 走 CLI、`replay_witness()` 純 python）。
 - 讀數（憲法號，2026-10-11）：階段六結束封閉空腔 0、階段七 2,252 個／5,668 格、階段八 2,200 個／5,602 格；砲門區間 44 刀 carve＋3 刀 stampvox ⇒ 放 424、刻 7,924、換色 36；清單與差異清單跟作品自寫的重播器逐格相同。
+- **export obj 省略封閉面**（預設，TASK-0498）：朝向封閉空腔（跟 `stats structure=1` 同一個定義）的面不輸出 ⇒ 實心立方體不管裡面挖了多少封住的洞都是 6 面。**作品一格都不動**。
+  - ⚠ 這只管**匯出**，⛔ 不取代作品資料層的補空腔 —— 補空腔照做、已補的保留（Tim 2026-10-11：之後要做 voxel 海戰，空腔被打破之後看得到裡面）。打破之後那一塊就通到外面了，匯出照常輸出內壁。
+  - 判的是**這次匯出的那批格**（region／exclude_color／mark／links 濾過之後）：region 切過一個空腔 ⇒ 對這批格它通到外面，內壁照常輸出。
+  - 回傳 `sealed=omit` 與 `sealed_faces`（省略的 voxel 面數，合併**前**的單位面）、`sealed_cavities`／`sealed_cells`。
+  - `sealed=keep` ⇒ 照常輸出（除錯；或 3D 列印要印出中空 —— 省略後切片軟體會把空腔當實心）。外框超過 2.68 億格 ⇒ 印 `sealed=skipped`、照常輸出並說原因（⛔ 不當成沒有空腔），給 `region` 縮小再匯。
+  - 讀數（憲法號）：補空腔之前那一刻（`mark=補空腔:begin`）省略 20,396 個 voxel 面、2,200 個空腔／5,602 格 ⇒ 107,225 面，**obj 跟補空腔之後逐字相同**；`sealed=keep` ⇒ 120,832 面，跟舊版輸出逐字相同。
 
 ### 9.4.3 草稿 —— 預雕刻：先在草稿裡雕、看、微調，OK 才套進作品（TASK-0493）
 

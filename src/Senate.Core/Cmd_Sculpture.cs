@@ -211,6 +211,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("format", "export：obj|vox|list（list ＝ 純格子清單 x,y,z,color）", iChoices: new[] { "obj", "vox", "list" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
+        new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
         new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
                            iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
@@ -1287,6 +1288,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         };
         string aMerge = c.Args.Get("merge").Trim();
         if (aMerge.Length > 0) aArgs.Merge = aMerge;
+        aArgs.KeepSealed = c.Args.Get("sealed").Trim() == "keep";
         if (!TryLocked(c, e => e.Export(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
         c.Report.Append("```\n").Append(aRes.Render()).Append("\n```\n");
         if (!aRes.Ok) return EngineFail(c, aRes);
@@ -1302,6 +1304,13 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             c.Result.AddValue("merge", aEx.Merge);
             c.Result.AddValue("faces", aEx.FaceCount.ToString(CultureInfo.InvariantCulture));
             c.Result.AddValue("vertices", aEx.VertexCount.ToString(CultureInfo.InvariantCulture));
+            c.Result.AddValue("sealed", aEx.SealedMode);
+            if (aEx.SealedMode == "omit")
+            {
+                c.Result.AddValue("sealed_faces", aEx.SealedFaces.ToString(CultureInfo.InvariantCulture));
+                c.Result.AddValue("sealed_cavities", aEx.SealedCavities.ToString(CultureInfo.InvariantCulture));
+                c.Result.AddValue("sealed_cells", aEx.SealedCells.ToString(CultureInfo.InvariantCulture));
+            }
         }
         c.Result.AddOutput(aPath);
         return Finish(c, 0, "✓ export " + aFormat + " " + aEx.VoxelCount + " voxels → " + aPath);
