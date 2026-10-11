@@ -51,6 +51,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         + "· export format=list：純格子清單 `x,y,z,color`（設計程式直接讀；stampvox at=0,0,0 可原樣貼回）；外部程式讀作品走它（mark=<事件>.json ＝ 重播到那一刀）。\n"
         + "· 草稿（預雕刻）：作品的刀帶 draft=1 只落在草稿、觀測帶 draft=1 看「作品＋草稿」；work sub=draft 看狀態、sub=apply 一筆套進作品、sub=discard 無痕丟掉。草稿開著時寫入作品要明寫 draft=0。\n"
         + "· 關聯匯入：work sub=link name= source_work= at= [turn=] 只記關聯不複製 voxel（巢狀可），觀測時現組；links=none|all|路徑、hide_links=路徑|self 一次性開關；sub=links 看整棵樹。\n"
+        + "· 繩索（TASK-0502，不是 voxel）：work sub=anchor name= at= 加固定點；sub=rope name= from= to= [slack=] [color=] [thickness=] 拉繩（端點：固定點｜關聯/…/固定點｜x,y,z）；"
+        + "受重力下垂（懸鏈線），跟著關聯的 at／turn／mirror 走；sub=ropes 印每條的長度與最大下垂；view／export obj 畫成管子（ropes=0｜hide_ropes=路徑 一次性關掉）。\n"
         + "· 預授權用**最壞費用**擋餘額 —— 不夠 ⇒ 引擎不跑、一毛不扣（exit 3）。\n"
         + "· 結算只對**實際落地**收費（禁覆蓋 skip 掉的不收）；同一刀只扣一次（兩把鎖包住整段）。\n"
         + "· 落子成功會用**落子者**的渲染設定渲一張全景、以落子者身分發進酒館（`tavern-post` 帶圖）；`share=0` 關掉。\n"
@@ -127,11 +129,14 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("only", "view／slice／section／stats／export：只看這個區間改動到的格"),
         new SCP_CmdArgSpec("links", "view／slice／section／stats／export：這次組進哪些關聯（TASK-0494）—— none｜all（含停用的）｜路徑,路徑（巢狀用 /：甲板2/船長室；點名的連同祖先、它底下照開關）；不給 ⇒ 每條照 enabled"),
         new SCP_CmdArgSpec("hide_links", "view／slice／section／stats／export：這次拿掉哪些關聯（路徑,路徑；連同底下）；self ＝ 不畫本作品自己的格（例：只看甲板 links=甲板2 hide_links=self）"),
-        new SCP_CmdArgSpec("enabled", "work link：這條關聯平常開不開（1／0；只給 enabled／note ⇒ 只改這兩格）"),
+        new SCP_CmdArgSpec("enabled", "work link：這條關聯平常開不開（1／0；只給 enabled／note ⇒ 只改這兩格）／work rope：這條繩平常畫不畫"),
+        new SCP_CmdArgSpec("slack", "work rope：鬆緊 ＝ 繩長 ÷ 兩端直線距離（1 ＝ 拉直、1.05 ＝ 微垂；1.." + SCP_SculptRopes.MaxSlack + "）"),
+        new SCP_CmdArgSpec("ropes", "view／export：1（預設）畫繩｜0 ＝ 這次不畫繩（TASK-0502）"),
+        new SCP_CmdArgSpec("hide_ropes", "view／export：這次拿掉哪幾條繩（繩路徑,…：組裝件自己的寫名字，關聯裡的寫 關聯/…/名字；打錯 ⇒ 擋）"),
         new SCP_CmdArgSpec("draft","1 ＝ 草稿（TASK-0493）：落子／刻（box/carve/carvevox/stamp*）與 work sub=move|assemble|undo|redo 只動草稿（沒開就開）；觀測（view/slice/section/stats/export）看「作品＋草稿」；diff ＝ 作品現在 → 草稿。開／看狀態 sub=draft、套進作品 sub=apply、丟掉 sub=discard"),
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
-        new SCP_CmdArgSpec("note", "work mark／link：備註"),
+        new SCP_CmdArgSpec("note", "work mark／link／anchor／rope：備註"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽／spray：1 才落刀（要帶 expect_plan）；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
         new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數／spray：預覽的換色格數（選帶）"),
@@ -150,7 +155,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("y2", "box/carve：另一角 y"),
         new SCP_CmdArgSpec("z1", "box/carve：一角 z"),
         new SCP_CmdArgSpec("z2", "box/carve：另一角 z"),
-        new SCP_CmdArgSpec("color", "box：顏色 index（0-255，RGB332）／spray：噴漆色 1..255（必須明寫）", iDefault: "19"),
+        new SCP_CmdArgSpec("color", "box：顏色 index（0-255，RGB332）／spray：噴漆色 1..255（必須明寫）／work rope：繩色 index 1..255 或 #RRGGBB（不給 ⇒ " + SCP_SculptRopes.DefaultColor + "）", iDefault: "19"),
         new SCP_CmdArgSpec("src_x1", "stamp2d：2D 畫布來源區域一角 x（0 起算，上限是畫布實際寬度 −1，見 canvas op=size）"),
         new SCP_CmdArgSpec("src_y1", "stamp2d：一角 y"),
         new SCP_CmdArgSpec("src_x2", "stamp2d：另一角 x"),
@@ -158,9 +163,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("png", "stampimg：RGBA PNG 路徑（透明像素不落地）"),
         new SCP_CmdArgSpec("resize", "stampimg：W,H（NEAREST）"),
         new SCP_CmdArgSpec("voxels", "stampvox：3D 格子清單路徑（每行 x,y,z,color 相對 at；color 1..255；空行與 # 起頭略過；壞行／重複格 ⇒ 整刀拒絕）／carvevox：要刻的格（每行 x,y,z 或 x,y,z,color；帶 color ＝ 守門）"),
-        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox／carvevox ＝ 清單原點；work assemble／link／import：放在哪"),
+        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox／carvevox ＝ 清單原點；work assemble／link／import：放在哪；work anchor：固定點的格（點取格心）"),
         new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+；stampvox 不吃）"),
-        new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）", iDefault: "1"),
+        new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）／work rope：繩的直徑（格，可帶小數；不給 ⇒ " + SCP_SculptRopes.DefaultThickness.ToString(CultureInfo.InvariantCulture) + "）", iDefault: "1"),
         new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標／work mark：1覆蓋同名同類的標記"),
         new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數（stampvox／carvevox ＝ 清單格數），對不上即拒絕（**強烈建議帶**）"),
         new SCP_CmdArgSpec("alpha_threshold", "stamp 類：alpha 門檻（預設 128）"),
@@ -224,19 +229,20 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
-                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links" }),
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links",
+                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
         new SCP_CmdArgSpec("desc", "exhibit register：描述"),
         new SCP_CmdArgSpec("bg_color", "exhibit register：背景色（存進 preset）"),
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
-        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）"),
+        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）／work anchor／unanchor／rope／unrope：固定點名／繩名（同關聯名的規矩）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）／spray：射線起點 x,y,z（整數 ＝ 格心，可帶小數）"),
+        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）／spray：射線起點 x,y,z（整數 ＝ 格心，可帶小數）／work rope：一端（固定點名｜關聯/…/固定點名｜x,y,z）"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("to", "render-profile copy：目標設定名／diff：終點（同 from 的寫法；不給 ＝ now）／spray：射線終點 x,y,z（含終點那格）"),
+        new SCP_CmdArgSpec("to", "render-profile copy：目標設定名／diff：終點（同 from 的寫法；不給 ＝ now）／spray：射線終點 x,y,z（含終點那格）／work rope：另一端（同 from）"),
         new SCP_CmdArgSpec("background", "render-profile set：純色背景 #RRGGBB（skybox=none 時用）"),
         new SCP_CmdArgSpec("lights", "view／render-profile set：整組燈（JSON 陣列，取代下層的燈）"),
         new SCP_CmdArgSpec("light_add", "view／render-profile set：加燈 x,y,z[;#rrggbb[;強度[;shadow 0|1]]]，多盞用 | 串（疊在下層的燈之後）"),
@@ -332,6 +338,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         public List<SCP_SculptLinkNode>? LinkTree;
         /// <summary>觀測類 op 的組裝器（links=／hide_links= 解析好的選擇）；null ＝ 不組。</summary>
         public SCP_SculptLinkComposer? Links;
+        /// <summary>這次觀測的繩（TASK-0502；view／export）—— null ＝ 沒算（不是觀測、或沒有作品）。</summary>
+        public List<SCP_SculptRopeReading>? Ropes;
 
         public Ctx(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult iResult, string iOp, string iPersona)
         {
@@ -843,6 +851,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         ISCP_SculptRenderer? aRenderer = SCP_SculptRenderers.Current;
         foreach (string l in aPlan.Lines) c.Report.Append(l).Append('\n');
         AppendLinkReport(c, c.Links?.Last);
+        if (c.Ropes != null) AppendRopeReport(c, c.Ropes);
         c.Report.Append("- layers: ").Append(aLayersText).Append('\n');
         c.Result.AddValue("layers", aLayersText);
         if (!SCP_SculptEngine.TryRenderPng(aPlan, out byte[] aPng, out string aWhy))
@@ -892,6 +901,10 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         catch (SCP_FileLockTimeoutException e) { oError = "拿不到雕刻鎖：" + e.Message; return 4; }
         if (oPlan.ExitCode != 0) { oError = "引擎：" + oPlan.Error; return oPlan.ExitCode == 2 ? 2 : 1; }
         if (!TryApplyViewTail(c, oPlan.Params, aAutos, out string aTailBad)) { oError = aTailBad; return 2; }
+        // 繩索（TASK-0502）：算好形狀交給渲染器（跟 voxel 同一個網格）—— CLI view 與觀測頁走這同一支
+        if (ResolveViewRopes(c, out List<SCP_SculptRopeReading> aRopes) is string aRopeBad) { oError = aRopeBad; return 2; }
+        c.Ropes = aRopes;
+        oPlan.Params.Ropes = SCP_SculptRopes.Drawable(aRopes);
         if (!c.Args.IsExplicit("fit_upscale") && (c.Work != null || aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
             oPlan.Params.FitUpscale = true;
 
@@ -1302,6 +1315,10 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         string aMerge = c.Args.Get("merge").Trim();
         if (aMerge.Length > 0) aArgs.Merge = aMerge;
         aArgs.KeepSealed = c.Args.Get("sealed").Trim() == "keep";
+        // 繩索（TASK-0502）：obj 輸出成管狀網格；list／vox 只有格子 ⇒ 不輸出、明說
+        if (ResolveViewRopes(c, out List<SCP_SculptRopeReading> aRopes) is string aRopeBad) return Blocked(c, 2, aRopeBad);
+        AppendRopeReport(c, aRopes);
+        aArgs.Ropes = SCP_SculptRopes.Drawable(aRopes);
         if (!TryLocked(c, e => e.Export(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
         c.Report.Append("```\n").Append(aRes.Render()).Append("\n```\n");
         if (!aRes.Ok) return EngineFail(c, aRes);
@@ -1311,6 +1328,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         c.Result.AddValue("path", aPath);
         if (aEx.MtlPath.Length > 0) c.Result.AddValue("mtl_path", aEx.MtlPath.Replace('\\', '/'));
         if (aEx.Sha256.Length > 0) c.Result.AddValue("sha256", aEx.Sha256);
+        if (aArgs.Ropes.Count > 0) c.Result.AddValue("ropes_exported", aEx.RopesExported.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("voxels", aEx.VoxelCount.ToString(CultureInfo.InvariantCulture));
         if (aEx.Merge.Length > 0)
         {

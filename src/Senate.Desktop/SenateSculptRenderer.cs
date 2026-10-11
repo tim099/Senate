@@ -71,7 +71,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     Mesh? m_Mesh;
     object? m_MeshList;
     int m_MeshCount;
-    ulong m_MeshHash;
+    ulong m_MeshHash, m_MeshRopeHash;
     bool m_MeshAo, m_MeshMerge;
     uint m_MeshVao, m_MeshVbo, m_MeshIbo;
 
@@ -81,10 +81,12 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         public bool MeshRebuilt;
         public double MeshMs, DrawMs;
         public int Faces, Quads, Triangles, Voxels;
+        /// <summary>繩索（TASK-0502）：畫了幾條、管子幾個三角形（已含在 Triangles 裡）。</summary>
+        public int Ropes, RopeTriangles;
         /// <summary>頂點＋索引陣列的 FNV-1a 雜湊 —— 「網格逐位元相同」的讀數（改網格建法時拿來比前後）。</summary>
         public ulong MeshDigest;
         public override string ToString() =>
-            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}、digest {MeshDigest:x16}）｜這一幀 {DrawMs:0.0} ms";
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
     /// <summary>上一次成功出圖實際用的鏡頭（TASK-0501；GPU 預覽交回頁面釘住用）。</summary>
@@ -175,7 +177,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         FloorTexture? aFloorTex = null;
         if (iParams.Floor?.Texture != null && !ResolveFloorTexture(iParams.Floor.Texture, out aFloorTex, out oError)) return null;
         var aReading = new Reading();
-        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, aReading);
+        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, iParams.Ropes, aReading);
         FloorSetup? aFloor = SolveFloor(aMesh, iParams, aFloorTex);
         if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError, out SCP_SculptResolvedCamera aCam)) return null;
         LastCamera = aCam;
@@ -192,19 +194,20 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     /// 網格：同一份 voxel ＋ 同旗標 ⇒ 沿用（含 GPU buffer）；否則重建並重傳。
     /// <para>鍵 ＝ 清單物件 ＋ 顆數 ＋ 內容雜湊 —— 只比物件的話，呼叫端改了同一個清單再畫會拿到舊網格而不報錯。</para>
     /// </summary>
-    Mesh GetMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge, Reading ioReading)
+    Mesh GetMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge, IReadOnlyList<SCP_SculptRopeGeom>? iRopes, Reading ioReading)
     {
-        ulong aHash = ContentHash(iVoxels);
+        ulong aHash = ContentHash(iVoxels), aRopeHash = RopeHash(iRopes);
         if (m_Mesh != null && ReferenceEquals(m_MeshList, iVoxels) && m_MeshCount == iVoxels.Count && m_MeshHash == aHash
-            && m_MeshAo == iAo && m_MeshMerge == iMerge)
+            && m_MeshAo == iAo && m_MeshMerge == iMerge && m_MeshRopeHash == aRopeHash)
         {
             FillReading(ioReading, m_Mesh, false, 0);
             return m_Mesh;
         }
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Mesh aMesh = BuildMesh(iVoxels, iAo, iMerge);
+        if (iRopes != null) AppendRopes(aMesh, iRopes);   // ⚠ 要在上傳之前（上傳完 CPU 那份就清掉了）
         UploadMesh(aMesh);
-        m_Mesh = aMesh; m_MeshList = iVoxels; m_MeshCount = iVoxels.Count; m_MeshHash = aHash; m_MeshAo = iAo; m_MeshMerge = iMerge;
+        m_Mesh = aMesh; m_MeshList = iVoxels; m_MeshCount = iVoxels.Count; m_MeshHash = aHash; m_MeshAo = iAo; m_MeshMerge = iMerge; m_MeshRopeHash = aRopeHash;
         FillReading(ioReading, aMesh, true, sw.Elapsed.TotalMilliseconds);
         return aMesh;
     }
@@ -214,6 +217,22 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         r.MeshRebuilt = iRebuilt; r.MeshMs = iMs;
         r.Faces = m.FaceCount; r.Quads = m.QuadCount; r.Triangles = m.IndexCount / 3; r.Voxels = m.VoxelCount;
         r.MeshDigest = m.Digest;
+        r.Ropes = m.RopeCount; r.RopeTriangles = m.RopeTriangles;
+    }
+
+    /// <summary>繩的內容雜湊（點、半徑、顏色逐位元）—— 繩動了網格就要重建；沒有繩 ⇒ 固定值。</summary>
+    static ulong RopeHash(IReadOnlyList<SCP_SculptRopeGeom>? iRopes)
+    {
+        ulong h = 1469598103934665603UL;
+        if (iRopes == null) return h;
+        foreach (SCP_SculptRopeGeom r in iRopes)
+        {
+            h = (h ^ (ulong)BitConverter.DoubleToInt64Bits(r.Radius)) * 1099511628211UL;
+            h = (h ^ ((uint)r.R | ((uint)r.G << 8) | ((uint)r.B << 16))) * 1099511628211UL;
+            foreach (double d in r.Points) h = (h ^ (ulong)BitConverter.DoubleToInt64Bits(d)) * 1099511628211UL;
+            h = (h ^ 0xFFUL) * 1099511628211UL;   // 條與條之間的分隔（⛔ 不讓兩條接起來跟一條長的同雜湊）
+        }
+        return h;
     }
 
     static ulong ContentHash(IReadOnlyList<SCP_SculptVoxel> iVoxels)
@@ -1105,6 +1124,10 @@ void main() {
         public int VertexCount;
         public int IndexCount;
         public int VoxelCount;
+        /// <summary>繩索（TASK-0502）：併進來幾條、幾個三角形。</summary>
+        public int RopeCount, RopeTriangles;
+        /// <summary>有東西可框（voxel 或繩）。</summary>
+        public bool HasGeometry => VoxelCount > 0 || RopeCount > 0;
         /// <summary>外露面數（合併前）與實際輸出的矩形塊數（不合併時兩者相等）—— 讀數用。</summary>
         public int FaceCount, QuadCount;
         /// <summary>voxel 中心（世界座標，已去重、排序）—— 鏡頭框景用。</summary>
@@ -1436,6 +1459,57 @@ void main() {
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════
+    // 區塊職責：繩索的管子（TASK-0502）—— 併進 voxel 那份網格的尾巴：同一個 VAO、同一組燈與陰影圖（繩會投影子、也接影子）。
+    // 物理意義：管子的形狀由 SCP_SculptRopes.Tube 給（世界座標、外法線、從外面看逆時針的四邊形 —— obj 匯出用同一支）；
+    //          這裡只做「世界 → GL（y 取負）」＋ 繞序反過來寫（y 鏡像會反轉繞序，跟 EmitQuad 同一個理由）。AO 槽給滿（管子沒有格子鄰居可遮）。
+    // 數值影響：框景點加上每個折線點、外框加上半徑 ⇒ 繩伸出作品外也框得到；Digest 重算（含繩）。沒有繩 ⇒ 這支不碰網格。
+    // ════════════════════════════════════════════════════════════════════════════════════
+    static void AppendRopes(Mesh ioMesh, IReadOnlyList<SCP_SculptRopeGeom> iRopes)
+    {
+        if (iRopes.Count == 0) return;
+        var aVerts = new List<float>(ioMesh.Vertices);
+        var aIdx = new List<uint>(ioMesh.Indices);
+        var aCenters = new List<Vector3>(ioMesh.Centers);
+        Vector3 aMin = ioMesh.VoxelCount > 0 ? ioMesh.Min : new Vector3(float.MaxValue), aMax = ioMesh.VoxelCount > 0 ? ioMesh.Max : new Vector3(float.MinValue);
+        foreach (SCP_SculptRopeGeom r in iRopes)
+        {
+            SCP_SculptRopes.Tube(r, r.Radius >= 2 ? 16 : 8, out List<double[]> aPos, out List<double[]> aNrm, out List<int[]> aQuads);
+            if (aQuads.Count == 0) continue;
+            uint aBase = (uint)(aVerts.Count / 7);
+            uint aPacked = r.R | ((uint)r.G << 8) | ((uint)r.B << 16) | (255u << 24);
+            for (int k = 0; k < aPos.Count; k++)
+            {
+                aVerts.Add((float)aPos[k][0]); aVerts.Add((float)-aPos[k][1]); aVerts.Add((float)aPos[k][2]);   // 世界 → GL（y 鏡像）
+                aVerts.Add((float)aNrm[k][0]); aVerts.Add((float)-aNrm[k][1]); aVerts.Add((float)aNrm[k][2]);
+                aVerts.Add(BitConverter.UInt32BitsToSingle(aPacked));
+            }
+            foreach (int[] q in aQuads)
+            {
+                // 世界裡從外面看逆時針 ⇒ y 鏡像後順時針 ⇒ 反過來寫
+                aIdx.Add(aBase + (uint)q[0]); aIdx.Add(aBase + (uint)q[2]); aIdx.Add(aBase + (uint)q[1]);
+                aIdx.Add(aBase + (uint)q[0]); aIdx.Add(aBase + (uint)q[3]); aIdx.Add(aBase + (uint)q[2]);
+            }
+            float rad = (float)r.Radius;
+            for (int i = 0; i < r.PointCount; i++)
+            {
+                var c = new Vector3((float)r.Points[i * 3], (float)r.Points[i * 3 + 1], (float)r.Points[i * 3 + 2]);
+                aCenters.Add(c);
+                aMin = Vector3.Min(aMin, c - new Vector3(rad)); aMax = Vector3.Max(aMax, c + new Vector3(rad));
+            }
+            ioMesh.RopeCount++;
+            ioMesh.RopeTriangles += aQuads.Count * 2;
+        }
+        if (ioMesh.RopeCount == 0) return;
+        ioMesh.Min = aMin; ioMesh.Max = aMax;
+        ioMesh.Centers = aCenters.ToArray();
+        ioMesh.Vertices = aVerts.ToArray();
+        ioMesh.Indices = aIdx.ToArray();
+        ioMesh.VertexCount = ioMesh.Vertices.Length / 7;
+        ioMesh.IndexCount = ioMesh.Indices.Length;
+        ioMesh.Digest = MeshDigestOf(ioMesh.Vertices, ioMesh.Indices);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════
     // 區塊職責：鏡頭 —— 正交／透視、yaw／pitch／roll、注視點、指定鏡頭位置、自動框景。
     // 物理意義：全部在 GL 座標（世界 y 取負）裡算；使用者給的角度與座標都是世界座標。
     // ════════════════════════════════════════════════════════════════════════════════════
@@ -1448,7 +1522,7 @@ void main() {
     /// </summary>
     static Vector3[] FramePoints(Mesh iMesh, FloorSetup? iFloor, out Vector3 oMin, out Vector3 oMax)
     {
-        if (iMesh.VoxelCount == 0)
+        if (!iMesh.HasGeometry)
         {
             if (iFloor != null)
             {
@@ -1768,7 +1842,7 @@ void main() {
         Vector3 aUpRef = Math.Abs(iTravel.Z) > 0.999f ? Vector3.UnitY : Vector3.UnitZ;
         Vector3 aRight = Vector3.Normalize(Vector3.Cross(iTravel, aUpRef));
         Vector3 aUp = Vector3.Cross(aRight, iTravel);
-        Vector3 aMin = iMesh.VoxelCount > 0 ? iMesh.Min : Vector3.Zero, aMax = iMesh.VoxelCount > 0 ? iMesh.Max : Vector3.One;
+        Vector3 aMin = iMesh.HasGeometry ? iMesh.Min : Vector3.Zero, aMax = iMesh.HasGeometry ? iMesh.Max : Vector3.One;
         float aMinR = float.MaxValue, aMaxR = float.MinValue, aMinU = float.MaxValue, aMaxU = float.MinValue;
         float aMinF = float.MaxValue, aMaxF = float.MinValue;
         for (int i = 0; i < 8; i++)

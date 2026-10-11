@@ -128,6 +128,83 @@ public sealed partial class SculptureViewerPage
                 if (aHide.Length > 0) args["hide_links"] = aHide;
             }
         }
+        // 繩索（TASK-0502）：只有 view／export 畫繩 —— 總開關關 ⇒ ropes=0；個別關掉的 ⇒ hide_ropes=（跟 CLI 同名、由 Cmd_Sculpture 驗）
+        if ((op == "view" || op == "export") && RopeRows(id).Rows is { Count: > 0 } ropeRows)
+        {
+            var (aRopes, aHideRopes) = RopeToggleArgs(g.ToggleValue(TRopesAll, true), ropeRows.ConvertAll(r => new RopeRow(r.Path, r.Rope.enabled)),
+                                                      path => g.ToggleValue(RopeToggleId(id, path), true));
+            if (aRopes.Length > 0) args["ropes"] = aRopes;
+            if (aHideRopes.Length > 0) args["hide_ropes"] = aHideRopes;
+        }
+    }
+
+    // ===========================================================
+    // 區塊職責：繩索開關（TASK-0502，「觀測頁可以開關繩索 —— 跟關聯 toggle 同一種用法」）。
+    // 物理意義：總開關 ＋ 一條一個勾，只決定**這一次觀測**送出去的 ropes=／hide_ropes=；⛔ 不寫回作品的 ropes.json（長期開關用 work sub=rope enabled=0|1）。
+    //          勾的 id 帶作品 id（同關聯開關的理由）；全部都在預設 ⇒ 什麼都不送（場景快取的簽章不變）。
+    //          綁在關聯上的繩：那條關聯關掉 ⇒ 繩跟著不畫（由 Cmd 判，頁面不另算）；作品裡設為關的繩只列出來、沒有勾（這頁只能拿掉，不能多畫）。
+    // ===========================================================
+    const string TRopesAll = P + "t/ropes-all";
+    const string TRopePrefix = P + "t/rope/";
+    static string RopeToggleId(string iWork, string iPath) => TRopePrefix + iWork + "/" + iPath;
+
+    /// <summary>繩索開關的一列：繩路徑＋作品裡的 enabled。</summary>
+    public readonly record struct RopeRow(string Path, bool Enabled);
+
+    /// <summary>
+    /// 開關 → ropes=／hide_ropes=（純函數，淨室直接測）：總開關關 ⇒ ("0","")；否則作品裡開著、這次被取消勾的 ⇒ hide_ropes；全在預設 ⇒ ("","")。
+    /// 作品裡設為關的繩不送（hide 一條本來就不畫的繩沒有意義）。
+    /// </summary>
+    public static (string Ropes, string Hide) RopeToggleArgs(bool iAllOn, IReadOnlyList<RopeRow> iRows, Func<string, bool> iIsOn)
+    {
+        if (!iAllOn) return ("0", "");
+        var hide = new List<string>();
+        foreach (var r in iRows) if (r.Enabled && !iIsOn(r.Path)) hide.Add(r.Path);
+        return ("", string.Join(",", hide));
+    }
+
+    readonly Dictionary<string, (List<SCP_SculptRopeReading>? Rows, string Error, long Ticks)> m_RopeRows = new();
+
+    /// <summary>那件作品的繩（預設的關聯開關下的讀數）；預覽每幀都會問 ⇒ 每件記一秒。讀不了 ⇒ Rows=null、Error 說哪裡壞。</summary>
+    (List<SCP_SculptRopeReading>? Rows, string Error) RopeRows(string iId)
+    {
+        if (iId.Length == 0 || m_WorksRoot == "\0") return (null, "");
+        long now = Environment.TickCount64;
+        if (m_RopeRows.TryGetValue(iId, out var hit) && now - hit.Ticks < 1000) return (hit.Rows, hit.Error);
+        List<SCP_SculptRopeReading>? rows = null; string error = "";
+        try
+        {
+            var store = new SCP_SculptWorks(new SCP_DataRoot(m_WorksRoot));
+            List<SCP_SculptLinkNode>? tree = null;
+            try { tree = SCP_SculptLinks.Tree(store, iId); } catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { tree = null; }
+            rows = SCP_SculptRopes.Resolve(store, iId, tree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection());
+        }
+        catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is IOException) { rows = null; error = e.Message; }
+        m_RopeRows[iId] = (rows, error, now);
+        return (rows, error);
+    }
+
+    void DrawRopeToggles(SCP_Ui g)
+    {
+        string id = SelectedWork(g);
+        var (rows, error) = RopeRows(id);
+        if (error.Length > 0) { g.Note("⚠ 繩索讀不了（觀測那邊會說哪裡壞）：" + error); return; }
+        if (rows == null || rows.Count == 0) return;   // 沒有繩的作品不顯示這一塊
+        using var fold = g.Fold("繩索開關（" + rows.Count + " 條，只影響這次觀測）", P + "fold/rope-toggles", iDefaultOpen: true);
+        if (!fold.Open) return;
+        g.Note("總開關關掉 ⇒ 這次不畫任何繩（ropes=0）；一條一個勾 ⇒ 取消勾的那條這次不畫（hide_ropes=）。綁在關聯上的繩：那條關聯關掉，繩就跟著不畫。⛔ 不寫回作品（長期開關用 work sub=rope enabled=0|1）。");
+        g.Toggle("畫繩索", true, TRopesAll);
+        bool allOn = g.ToggleValue(TRopesAll, true);
+        foreach (var r in rows)
+        {
+            string info = r.Rope.from + " → " + r.Rope.to + (r.From != null && r.To != null ? "｜長 " + r.Length.ToString("0.##", CultureInfo.InvariantCulture) + "、下垂 " + r.MaxSag.ToString("0.##", CultureInfo.InvariantCulture) : "");
+            if (r.State == SCP_SculptRopeReading.Broken) { g.Note("🔴 `" + r.Path + "` 綁定壞了（不畫）：" + r.Reason); continue; }
+            if (!r.Rope.enabled) { g.Label("◌ " + r.Path + "　" + info + "｜作品裡設為關"); continue; }
+            using (g.Row())
+            {
+                g.Toggle(r.Path + "　" + info + (allOn ? "" : "　◌ 總開關關著 ⇒ 不畫"), true, RopeToggleId(id, r.Path));
+            }
+        }
     }
 
     // ===========================================================
@@ -304,6 +381,7 @@ public sealed partial class SculptureViewerPage
             Field(g, "只組這些關聯 links=（none｜all｜路徑,…；巢狀用 /；空 ＝ 照每條的開關）", FLinks);
             Field(g, "拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）", FHideLinks);
             DrawLinkToggles(g);
+            DrawRopeToggles(g);
             g.Note("⚠ 被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組 —— 場景快取只認這一頁送出的參數。");
         }
         string selection = PersonalSpace(g) ? SubjectWork + SelectedWork(g) : SubjectFull;

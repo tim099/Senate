@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（GPU 預覽鏡頭只框一次、右鍵轉左鍵平移 —— §5.3，TASK-0501）；2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（固定點與繩索：work sub=anchor／rope、懸鏈線、跨關聯綁定、view／觀測頁／export obj 畫成管子、壞掉的綁定大聲列 —— §9.4.6，TASK-0502）；2026-10-11（GPU 預覽鏡頭只框一次、右鍵轉左鍵平移 —— §5.3，TASK-0501）；2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -50,7 +50,7 @@ related:
 | `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用）；obj 預設省略封閉在模型裡的面，`sealed=keep` 照常輸出（§9.4.2） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
-| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
+| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
 
 ```bash
 senate cmd sculpture --arg op=box --arg persona=<P> --arg x1=10 --arg x2=12 --arg y1=10 --arg y2=12 --arg z1=0 --arg z2=0 --arg color=19
@@ -511,6 +511,36 @@ senate cmd sculpture --arg op=spray --arg work=<作品> --arg persona=<P> --arg 
 - **草稿**：`draft=1` ⇒ 噴在草稿裡（沒開就開），看、undo，OK 再 `sub=apply`（§9.4.3）。
 - **事件** ＝ 一筆 workedit（action=spray，before／after 逐格）＋ 最上層 `source`（射線參數與讀數）⇒ **沒更新的 senate.exe 也重播得出來**（edit 只用舊版就有的欄位）；`work sub=undo／redo` 照常；`diff` 的 op 統計標 `workedit:spray`。
 - 讀數（憲法號事件的副本，零寫入）：船側整面（204,800 道）預覽約 3 秒，打中 65,989 道、換 61,518 格；左右舷各噴一次讀數相同（船是對稱的）。
+
+### 9.4.6 固定點與繩索 —— 索具不用 voxel 雕（TASK-0502）
+
+帆與索具不用 voxel 雕（Tim）⇒ 作品可以記**固定點**（名字 → 格座標）與**繩**（兩端、顏色、粗細、鬆緊）；兩份都是作品資料（`anchors.json`／`ropes.json`，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**，改的只有作者（同 link）。觀測時才算形狀、才畫。
+
+```bash
+# 固定點：點取那一格的格心（x+0.5, y+0.5, z+0.5）
+senate cmd sculpture --arg op=work --arg sub=anchor --arg work=main-mast --arg persona=<P> --arg name=masthead --arg at=4,4,180
+senate cmd sculpture --arg op=work --arg sub=anchors --arg work=ship                 # 本作品的＋關聯樹上每一層的（路徑指名、換到本作品座標）
+# 繩：端點 ＝ 固定點名｜關聯/…/固定點名（相對於繩所在的作品）｜x,y,z（整數 ＝ 格心，可帶小數）
+senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=main-stay --arg from=bow-channel --arg to=主桅/masthead --arg slack=1.02 --arg color=#5a4632 --arg thickness=0.6
+senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=main-stay --arg slack=1.1        # 改鬆緊／顏色／粗細／開關不用 overwrite
+senate cmd sculpture --arg op=work --arg sub=ropes --arg work=ship                   # 每條的長度、最大下垂、狀態（讀數）
+senate cmd sculpture --arg op=view --arg work=ship --arg hide_ropes=main-stay --arg out=<png>   # 這次拿掉一條；ropes=0 ＝ 這次一條都不畫
+```
+
+- **固定點** `sub=anchor name= at=x,y,z [note=]`：要在作品尺寸裡；同名搬位置要 `overwrite=1`（綁在上面的繩會跟著動，⛔ 不默默搬）。`sub=unanchor name=` 拿掉。名字的規矩同關聯名（不含 `: , | / \`、不是保留字）。
+- **繩** `sub=rope name= from= to= [slack=] [color=] [thickness=] [enabled=] [note=]`：
+  - `slack` ＝ 繩長 ÷ 兩端直線距離（1 ＝ 拉直、1.02 微垂、1.2 明顯下垂；上限 10）。`color` ＝ 調色盤 index 1..255 或 `#RRGGBB`（存小寫）；`thickness` ＝ **直徑**（格，可帶小數，預設 0.5）。
+  - 同名已在：改 slack／color／thickness／enabled／note 直接改；**換兩端**要 `overwrite=1`。
+  - 寫之前先解一次：端點解不到（固定點或關聯路徑打錯）⇒ exit 2、**未寫入**（⛔ 打錯字不會變成一條壞繩）。`sub=unrope name=` 拿掉。
+- **形狀**：只受重力（−z）⇒ 懸鏈線解析解（同輸入同形狀，決定性）。拉直 ⇒ 直線；兩端在同一條鉛直線上 ⇒ 畫直線並標明（鬆度沒有往旁邊垂的方向）。⚠ **沒有碰撞**：繩會穿過格子（垂得太多就穿進船身）——鬆度自己控制，看 `rope_max_sag`。風與其他力等帆那張單（TASK-0503）。
+- **讀數**：`sub=rope` 寫完印 `rope_length`／`rope_chord`／`rope_max_sag`；`sub=ropes` 與 view／export 的回報每條一行：狀態、兩端（名字＋座標）、長、直線距離、slack、最大下垂（離兩端連線往下最多幾格）、色、粗。
+- **跨作品**：端點寫關聯路徑（`主桅/masthead`、`甲板2/船長室/hook`），座標照路徑上每一層關聯的 `mirror`→`turn`→`at` 換到組裝件 —— 跟 voxel 同一個公式（格心換過去正好是那一格換過去的格心）。⇒ 搬關聯（`at`）、轉向、鏡像（右舷那根桅的固定點翻到另一舷）繩都跟著走。被關聯進來的作品**自己的繩**也照那條關聯換座標、一起畫（繩路徑 ＝ `關聯/…/繩名`）。
+- **跟著不畫**：綁在某一層上的繩，那一層這次沒畫（`links=none`、`hide_links`、那條關聯 `enabled=0`）⇒ 繩 `hidden`；繩自己 `enabled=0` ⇒ `disabled`；`ropes=0`／`hide_ropes=繩路徑,…` ⇒ 這次不畫（打錯路徑 ⇒ exit 2）。
+- **壞掉的綁定**（固定點刪了／改名、關聯路徑不在了、固定點檔壞了）⇒ `broken`：⛔ 不靜默消失 —— 觀測照樣出圖，但回傳行大聲列 🔴 與原因（`ropes_broken`）；`sub=unanchor` 當下就全庫掃一次，印出哪幾條繩（含上層作品用關聯路徑綁的）現在壞了（`ropes_now_broken`）。把固定點用原名加回去就接上。
+- **畫**：view 與觀測頁的 GPU 預覽把繩畫成管子，跟 voxel 同一個網格（吃同一組燈、會投影子、也接影子）；繩不是 voxel ⇒ `visible_voxels` 不變。回傳值 `ropes_drawn`／`ropes_hidden`／`ropes_disabled`／`ropes_broken`。`slice`／`section`／`stats` 量的是格子，不畫繩。
+- **觀測頁**：選了有繩的作品，「繩索開關」列出每一條（長度、下垂）：總開關「畫繩索」＋一條一個勾（像關聯開關，只影響這次觀測、⛔ 不寫回 ropes.json）；壞掉的列 🔴＋原因；作品裡設為關的只列不勾。
+- **匯出**：`export format=obj` 把繩接在 voxel 面後面輸出成管狀網格（每條一個 `o rope_n`＋材質 `rope_n`，mtl 有 Kd；有法線、繞序跟法線同向）⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ 繩不輸出、`ropes_exported=0`。
+- **之後的帆**：端點的 `種類:…` 形狀（例 `sail:主帆/上左角`）留給 TASK-0503；本版只認固定點路徑與座標，`種類:` 一律 exit 2（不猜）。固定點與繩的格式就是帆要共用的那一份。
 
 ### 9.5 建築與家具的相對比例尺
 
