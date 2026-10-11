@@ -209,6 +209,9 @@ public static partial class SelfTest
         // 雕刻繩索（TASK-0502）：本體在 SelfTest.SculptureRopes0502.cs
         One(nameof(SculptureRopesCleanRoom), "sculpture", SculptureRopesCleanRoom),
         One(nameof(SculptRopeGpuCleanRoom), "sculpture", SculptRopeGpuCleanRoom),
+        // 雕刻帆（TASK-0503）：本體在 SelfTest.SculptureSails0503.cs
+        One(nameof(SculptureSailsCleanRoom), "sculpture", SculptureSailsCleanRoom),
+        One(nameof(SculptSailGpuCleanRoom), "sculpture", SculptSailGpuCleanRoom),
         // 雕刻即時預覽（TASK-0472）：本體在 SelfTest.SculptGpu.cs
         One(nameof(SculptureMaxAxisCleanRoom), "sculpture", SculptureMaxAxisCleanRoom),
         One(nameof(SculptLargeBboxCleanRoom), "sculpture", SculptLargeBboxCleanRoom),

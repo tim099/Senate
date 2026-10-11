@@ -136,6 +136,59 @@ public sealed partial class SculptureViewerPage
             if (aRopes.Length > 0) args["ropes"] = aRopes;
             if (aHideRopes.Length > 0) args["hide_ropes"] = aHideRopes;
         }
+        // 帆（TASK-0503）：同一種開關（sails=／hide_sails=）＋風與秒數欄位（空 ＝ 作品預設）
+        if ((op == "view" || op == "export") && SailRows(id).Rows is { Count: > 0 } sailRows)
+        {
+            var (aSails, aHideSails) = RopeToggleArgs(g.ToggleValue(TSailsAll, true), sailRows.ConvertAll(r => new RopeRow(r.Path, r.Sail.enabled)),
+                                                      path => g.ToggleValue(SailToggleId(id, path), true));
+            if (aSails.Length > 0) args["sails"] = aSails;
+            if (aHideSails.Length > 0) args["hide_sails"] = aHideSails;
+            string wind = g.FieldValue(FSailWind, "").Trim(), secs = g.FieldValue(FSailSeconds, "").Trim();
+            if (wind.Length > 0) args["wind"] = wind;
+            if (secs.Length > 0) args["sail_seconds"] = secs;
+        }
+    }
+
+    // ===========================================================
+    // 區塊職責：帆的開關與風（TASK-0503）—— 跟繩索開關同一種用法（同一支純函數 RopeToggleArgs ⇒ sails=／hide_sails=）。
+    // 物理意義：開關只決定**這一次觀測**畫不畫（⛔ 不寫回 sails.json；被拿掉的帆照樣模擬，綁在它角上的繩照樣拉）。
+    //          風／秒數欄位空 ⇒ 用作品預設（work sub=wind）；填了 ⇒ 送 wind=／sail_seconds=（由 Cmd_Sculpture 驗）。
+    //          「持續模擬」開著 ⇒ GPU 預覽每幀把帆往前推（帆會動）；關掉 ⇒ 停在 sail_seconds 那一刻（跟 CLI view 同一張）。
+    // ===========================================================
+    const string TSailsAll = P + "t/sails-all";
+    const string TSailPrefix = P + "t/sail/";
+    const string TSailLive = P + "t/sail-live";
+    const string FSailWind = P + "f/sail_wind";
+    const string FSailSeconds = P + "f/sail_seconds";
+    static string SailToggleId(string iWork, string iPath) => TSailPrefix + iWork + "/" + iPath;
+
+    void DrawSailToggles(SCP_Ui g)
+    {
+        string id = SelectedWork(g);
+        var (rows, error) = SailRows(id);
+        if (error.Length > 0) { g.Note("⚠ 帆讀不了（觀測那邊會說哪裡壞）：" + error); return; }
+        if (rows == null || rows.Count == 0) return;   // 沒有帆的作品不顯示這一塊
+        using var fold = g.Fold("帆（" + rows.Count + " 面，開關只影響這次觀測）", P + "fold/sail-toggles", iDefaultOpen: true);
+        if (!fold.Open) return;
+        g.Note("風 wind=x,y,z（m/s，世界座標；空 ＝ 作品預設，work sub=wind 改預設）；秒數 ＝ CLI／關掉持續模擬時取「模擬幾秒後」那一刻。拿掉的帆照樣模擬。⛔ 不寫回作品。");
+        Field(g, "風 wind=（m/s，例 0,-8,0）", FSailWind);
+        Field(g, "模擬秒數 sail_seconds=（空 ＝ 作品預設）", FSailSeconds);
+        g.Toggle("持續模擬（GPU 預覽裡帆會動）", true, TSailLive);
+        g.Toggle("畫帆", true, TSailsAll);
+        bool allOn = g.ToggleValue(TSailsAll, true);
+        foreach (var r in rows)
+        {
+            var free = new List<string>();
+            for (int k = 0; k < r.Sail.corners.Count; k++) if (!SCP_SculptSails.CornerPinned(r.Sail, k)) free.Add(r.Sail.corners[k].name.Length > 0 ? r.Sail.corners[k].name : k.ToString(CultureInfo.InvariantCulture));
+            string info = (r.Sail.corners.Count == 3 ? "三角帆" : "四邊形") + (r.Sail.bind.Count > 0 ? "｜釘住的邊 " + string.Join(",", r.Sail.bind) : "")
+                          + (free.Count > 0 ? "｜free " + string.Join(",", free) : "") + "｜色 " + r.Sail.color;
+            if (r.State == SCP_SculptSailReading.Broken) { g.Note("🔴 `" + r.Path + "` 綁定壞了（不畫）：" + r.Reason); continue; }
+            if (!r.Sail.enabled) { g.Label("◌ " + r.Path + "　" + info + "｜作品裡設為關"); continue; }
+            using (g.Row())
+            {
+                g.Toggle(r.Path + "　" + info + (allOn ? "" : "　◌ 總開關關著 ⇒ 不畫"), true, SailToggleId(id, r.Path));
+            }
+        }
     }
 
     // ===========================================================
@@ -163,26 +216,32 @@ public sealed partial class SculptureViewerPage
         return ("", string.Join(",", hide));
     }
 
-    readonly Dictionary<string, (List<SCP_SculptRopeReading>? Rows, string Error, long Ticks)> m_RopeRows = new();
+    readonly Dictionary<string, (SCP_SculptSailRig? Rig, string Error, long Ticks)> m_RigRows = new();
 
-    /// <summary>那件作品的繩（預設的關聯開關下的讀數）；預覽每幀都會問 ⇒ 每件記一秒。讀不了 ⇒ Rows=null、Error 說哪裡壞。</summary>
-    (List<SCP_SculptRopeReading>? Rows, string Error) RopeRows(string iId)
+    /// <summary>
+    /// 那件作品的繩與帆（預設的關聯開關下的讀數，⛔ 不模擬 —— 只要清單）；預覽每幀都會問 ⇒ 每件記一秒。讀不了 ⇒ Rig=null、Error 說哪裡壞。
+    /// 繩也走這一支（TASK-0503）：綁帆角的繩要靠帆才解得到端點。
+    /// </summary>
+    (SCP_SculptSailRig? Rig, string Error) RigRows(string iId)
     {
         if (iId.Length == 0 || m_WorksRoot == "\0") return (null, "");
         long now = Environment.TickCount64;
-        if (m_RopeRows.TryGetValue(iId, out var hit) && now - hit.Ticks < 1000) return (hit.Rows, hit.Error);
-        List<SCP_SculptRopeReading>? rows = null; string error = "";
+        if (m_RigRows.TryGetValue(iId, out var hit) && now - hit.Ticks < 1000) return (hit.Rig, hit.Error);
+        SCP_SculptSailRig? rig = null; string error = "";
         try
         {
             var store = new SCP_SculptWorks(new SCP_DataRoot(m_WorksRoot));
             List<SCP_SculptLinkNode>? tree = null;
             try { tree = SCP_SculptLinks.Tree(store, iId); } catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { tree = null; }
-            rows = SCP_SculptRopes.Resolve(store, iId, tree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection());
+            rig = SCP_SculptSails.Rig(store, iId, tree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(), new SCP_SculptSailEnv());
         }
-        catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is IOException) { rows = null; error = e.Message; }
-        m_RopeRows[iId] = (rows, error, now);
-        return (rows, error);
+        catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is IOException) { rig = null; error = e.Message; }
+        m_RigRows[iId] = (rig, error, now);
+        return (rig, error);
     }
+
+    (List<SCP_SculptRopeReading>? Rows, string Error) RopeRows(string iId) { var (rig, error) = RigRows(iId); return (rig?.Ropes, error); }
+    (List<SCP_SculptSailReading>? Rows, string Error) SailRows(string iId) { var (rig, error) = RigRows(iId); return (rig?.Sails, error); }
 
     void DrawRopeToggles(SCP_Ui g)
     {
@@ -382,6 +441,7 @@ public sealed partial class SculptureViewerPage
             Field(g, "拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）", FHideLinks);
             DrawLinkToggles(g);
             DrawRopeToggles(g);
+            DrawSailToggles(g);
             g.Note("⚠ 被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組 —— 場景快取只認這一頁送出的參數。");
         }
         string selection = PersonalSpace(g) ? SubjectWork + SelectedWork(g) : SubjectFull;

@@ -83,10 +83,12 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         public int Faces, Quads, Triangles, Voxels;
         /// <summary>繩索（TASK-0502）：畫了幾條、管子幾個三角形（已含在 Triangles 裡）。</summary>
         public int Ropes, RopeTriangles;
+        /// <summary>帆（TASK-0503，另一趟）：幾面、幾個三角形（雙面算兩份）、綁在帆角上的繩幾條（不含在 Triangles 裡）。</summary>
+        public int Sails, SailTriangles, SailRopes;
         /// <summary>頂點＋索引陣列的 FNV-1a 雜湊 —— 「網格逐位元相同」的讀數（改網格建法時拿來比前後）。</summary>
         public ulong MeshDigest;
         public override string ToString() =>
-            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）｜這一幀 {DrawMs:0.0} ms";
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
     /// <summary>上一次成功出圖實際用的鏡頭（TASK-0501；GPU 預覽交回頁面釘住用）。</summary>
@@ -178,10 +180,15 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         if (iParams.Floor?.Texture != null && !ResolveFloorTexture(iParams.Floor.Texture, out aFloorTex, out oError)) return null;
         var aReading = new Reading();
         var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, iParams.Ropes, aReading);
-        FloorSetup? aFloor = SolveFloor(aMesh, iParams, aFloorTex);
-        if (!SolveCamera(aMesh, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError, out SCP_SculptResolvedCamera aCam)) return null;
+        // 帆（TASK-0503）：另一趟；框景／地板／燈用「voxel 網格＋帆的外框」的淺複本，畫 voxel 仍用快取的那顆 VAO
+        Mesh aDyn = BuildDynamic(iParams.Sails, iParams.SailRopes);
+        UploadDynamic(aDyn);
+        aReading.Sails = aDyn.SailCount; aReading.SailTriangles = aDyn.SailTriangles; aReading.SailRopes = aDyn.RopeCount;
+        Mesh aScene = aMesh.WithDynamic(aDyn);
+        FloorSetup? aFloor = SolveFloor(aScene, iParams, aFloorTex);
+        if (!SolveCamera(aScene, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError, out SCP_SculptResolvedCamera aCam)) return null;
         LastCamera = aCam;
-        var aLights = SolveLights(aMesh, aFloor, iParams);
+        var aLights = SolveLights(aScene, aFloor, iParams);
         byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo);
         var aErr = m_Gl!.GetError();
         if (aErr != GLEnum.NoError) { oError = "OpenGL 錯誤：" + aErr; return null; }
@@ -1126,8 +1133,40 @@ void main() {
         public int VoxelCount;
         /// <summary>繩索（TASK-0502）：併進來幾條、幾個三角形。</summary>
         public int RopeCount, RopeTriangles;
-        /// <summary>有東西可框（voxel 或繩）。</summary>
-        public bool HasGeometry => VoxelCount > 0 || RopeCount > 0;
+        /// <summary>帆（TASK-0503，只在另一趟的網格上）：幾面、幾個三角形（雙面算兩份）。</summary>
+        public int SailCount, SailTriangles;
+        /// <summary>有東西可框（voxel、繩，或另一趟的帆）。</summary>
+        public bool HasGeometry => VoxelCount > 0 || RopeCount > 0 || Extra.Length > 0;
+        /// <summary>
+        /// 另一趟（帆，TASK-0503）的外框八角 —— 只在 <see cref="WithDynamic"/> 的淺複本上有值：框景／地板／陰影圖把帆也算進去，
+        /// ⛔ 不碰 voxel 網格本身（不重建、不重傳）。
+        /// </summary>
+        public Vector3[] Extra = Array.Empty<Vector3>();
+
+        /// <summary>淺複本＋另一趟的外框（框景、地板、燈用；畫 voxel 仍用原本那份的 VAO）。另一趟是空的 ⇒ 回自己。</summary>
+        public Mesh WithDynamic(Mesh iDyn)
+        {
+            if (iDyn.IndexCount == 0) return this;
+            var m = (Mesh)MemberwiseClone();
+            bool aHad = VoxelCount > 0 || RopeCount > 0;
+            m.Min = aHad ? Vector3.Min(Min, iDyn.Min) : iDyn.Min;
+            m.Max = aHad ? Vector3.Max(Max, iDyn.Max) : iDyn.Max;
+            m.Extra = new Vector3[8];
+            for (int i = 0; i < 8; i++)
+                m.Extra[i] = new Vector3((i & 1) != 0 ? iDyn.Max.X : iDyn.Min.X, (i & 2) != 0 ? iDyn.Max.Y : iDyn.Min.Y, (i & 4) != 0 ? iDyn.Max.Z : iDyn.Min.Z);
+            m.IndexCount = IndexCount + iDyn.IndexCount;   // ⚠ 只給「有沒有東西會投影子」那一格判斷用；畫的時候兩趟各用各自的數
+            return m;
+        }
+
+        /// <summary>框景點 ＝ voxel 中心＋另一趟的外框八角。</summary>
+        public Vector3[] FrameCenters()
+        {
+            if (Extra.Length == 0) return Centers;
+            var a = new Vector3[Centers.Length + Extra.Length];
+            Array.Copy(Centers, a, Centers.Length);
+            Array.Copy(Extra, 0, a, Centers.Length, Extra.Length);
+            return a;
+        }
         /// <summary>外露面數（合併前）與實際輸出的矩形塊數（不合併時兩者相等）—— 讀數用。</summary>
         public int FaceCount, QuadCount;
         /// <summary>voxel 中心（世界座標，已去重、排序）—— 鏡頭框景用。</summary>
@@ -1510,6 +1549,116 @@ void main() {
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════
+    // 區塊職責：帆（TASK-0503）與綁在帆角上的繩 —— 另一趟、另一顆 VAO：觀測頁每幀都會換形狀（持續模擬），
+    //          ⛔ 不併進 voxel 網格（併進去 ⇒ 每幀重建整艘船的網格）。內容沒變 ⇒ 沿用上一次上傳的那份。
+    // 物理意義：頂點格式跟 voxel 同一種（位置、法線、4ub 色＋AO 滿格）⇒ 同一支 shader、同一組燈與陰影圖（帆會投影子也接影子）。
+    //          帆是雙面的（SCP_SculptSails.TwoSided：正反各一份、各往法線推一點點）⇒ 照常剔除背面也兩面都看得到；繩用 SCP_SculptRopes.Tube。
+    //          世界 → GL（y 取負）是鏡像 ⇒ 三角形繞序反過來寫（同 AppendRopes）。
+    // 數值影響：讀數多「帆 N 面、三角形 M」；Digest 不含這一趟（voxel 網格的讀數不變）。
+    // ════════════════════════════════════════════════════════════════════════════════════
+    uint m_DynVao, m_DynVbo, m_DynIbo;
+    int m_DynIndexCount;
+    ulong m_DynHash;
+
+    /// <summary>帆＋綁帆角的繩的 CPU 網格（Min／Max 是世界座標外框）。沒有 ⇒ IndexCount 0。</summary>
+    static Mesh BuildDynamic(IReadOnlyList<SCP_SculptSailGeom>? iSails, IReadOnlyList<SCP_SculptRopeGeom>? iRopes)
+    {
+        var aMesh = new Mesh();
+        var aVerts = new List<float>();
+        var aIdx = new List<uint>();
+        Vector3 aMin = new(float.MaxValue), aMax = new(float.MinValue);
+        void Emit(List<double[]> iPos, List<double[]> iNrm, byte iR, byte iG, byte iB)
+        {
+            uint aPacked = iR | ((uint)iG << 8) | ((uint)iB << 16) | (255u << 24);
+            for (int k = 0; k < iPos.Count; k++)
+            {
+                aVerts.Add((float)iPos[k][0]); aVerts.Add((float)-iPos[k][1]); aVerts.Add((float)iPos[k][2]);   // 世界 → GL（y 鏡像）
+                aVerts.Add((float)iNrm[k][0]); aVerts.Add((float)-iNrm[k][1]); aVerts.Add((float)iNrm[k][2]);
+                aVerts.Add(BitConverter.UInt32BitsToSingle(aPacked));
+                var w = new Vector3((float)iPos[k][0], (float)iPos[k][1], (float)iPos[k][2]);
+                aMin = Vector3.Min(aMin, w); aMax = Vector3.Max(aMax, w);
+            }
+        }
+        if (iSails != null)
+            foreach (SCP_SculptSailGeom s in iSails)
+            {
+                SCP_SculptSails.TwoSided(s, out List<double[]> aPos, out List<double[]> aNrm, out List<int[]> aTris);
+                if (aTris.Count == 0) continue;
+                uint aBase = (uint)(aVerts.Count / 7);
+                Emit(aPos, aNrm, s.R, s.G, s.B);
+                // 世界裡從法線那側看逆時針 ⇒ y 鏡像後順時針 ⇒ 反過來寫
+                foreach (int[] t in aTris) { aIdx.Add(aBase + (uint)t[0]); aIdx.Add(aBase + (uint)t[2]); aIdx.Add(aBase + (uint)t[1]); }
+                aMesh.SailCount++;
+                aMesh.SailTriangles += aTris.Count;
+            }
+        if (iRopes != null)
+            foreach (SCP_SculptRopeGeom r in iRopes)
+            {
+                SCP_SculptRopes.Tube(r, r.Radius >= 2 ? 16 : 8, out List<double[]> aPos, out List<double[]> aNrm, out List<int[]> aQuads);
+                if (aQuads.Count == 0) continue;
+                uint aBase = (uint)(aVerts.Count / 7);
+                Emit(aPos, aNrm, r.R, r.G, r.B);
+                foreach (int[] q in aQuads)
+                {
+                    aIdx.Add(aBase + (uint)q[0]); aIdx.Add(aBase + (uint)q[2]); aIdx.Add(aBase + (uint)q[1]);
+                    aIdx.Add(aBase + (uint)q[0]); aIdx.Add(aBase + (uint)q[3]); aIdx.Add(aBase + (uint)q[2]);
+                }
+                aMesh.RopeCount++;
+                aMesh.RopeTriangles += aQuads.Count * 2;
+            }
+        if (aIdx.Count == 0) return aMesh;
+        aMesh.Vertices = aVerts.ToArray();
+        aMesh.Indices = aIdx.ToArray();
+        aMesh.VertexCount = aMesh.Vertices.Length / 7;
+        aMesh.IndexCount = aMesh.Indices.Length;
+        aMesh.Min = aMin; aMesh.Max = aMax;
+        aMesh.Digest = MeshDigestOf(aMesh.Vertices, aMesh.Indices);
+        return aMesh;
+    }
+
+    /// <summary>上傳另一趟（內容逐位元沒變 ⇒ 不重傳）；沒有 ⇒ 不畫。</summary>
+    unsafe void UploadDynamic(Mesh iDyn)
+    {
+        var gl = m_Gl!;
+        m_DynIndexCount = iDyn.IndexCount;
+        if (iDyn.IndexCount == 0) return;
+        if (m_DynVao != 0 && m_DynHash == iDyn.Digest) return;
+        if (m_DynVao == 0)
+        {
+            m_DynVao = gl.GenVertexArray();
+            gl.BindVertexArray(m_DynVao);
+            m_DynVbo = gl.GenBuffer();
+            gl.BindBuffer(BufferTargetARB.ArrayBuffer, m_DynVbo);
+            m_DynIbo = gl.GenBuffer();
+            gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, m_DynIbo);
+            const uint aStride = 7 * sizeof(float);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, aStride, (void*)0);
+            gl.EnableVertexAttribArray(1);
+            gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, aStride, (void*)(3 * sizeof(float)));
+            gl.EnableVertexAttribArray(2);
+            gl.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, aStride, (void*)(6 * sizeof(float)));
+        }
+        else gl.BindVertexArray(m_DynVao);
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, m_DynVbo);
+        gl.BufferData<float>(BufferTargetARB.ArrayBuffer, iDyn.Vertices.AsSpan(), BufferUsageARB.DynamicDraw);
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, m_DynIbo);
+        gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, iDyn.Indices.AsSpan(), BufferUsageARB.DynamicDraw);
+        gl.BindVertexArray(0);
+        m_DynHash = iDyn.Digest;
+    }
+
+    void DeleteDynamicBuffers()
+    {
+        var gl = m_Gl!;
+        if (m_DynVbo != 0) gl.DeleteBuffer(m_DynVbo);
+        if (m_DynIbo != 0) gl.DeleteBuffer(m_DynIbo);
+        if (m_DynVao != 0) gl.DeleteVertexArray(m_DynVao);
+        m_DynVao = m_DynVbo = m_DynIbo = 0;
+        m_DynIndexCount = 0; m_DynHash = 0;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════
     // 區塊職責：鏡頭 —— 正交／透視、yaw／pitch／roll、注視點、指定鏡頭位置、自動框景。
     // 物理意義：全部在 GL 座標（世界 y 取負）裡算；使用者給的角度與座標都是世界座標。
     // ════════════════════════════════════════════════════════════════════════════════════
@@ -1539,14 +1688,15 @@ void main() {
         }
         oMin = iMesh.Min; oMax = iMesh.Max;
         if (iFloor == null || Math.Abs(iMesh.Min.Z - iFloor.Z)
-            > iFloor.Src.EffectiveMargin(Math.Max(iMesh.Max.X - iMesh.Min.X, iMesh.Max.Y - iMesh.Min.Y))) return iMesh.Centers;
+            > iFloor.Src.EffectiveMargin(Math.Max(iMesh.Max.X - iMesh.Min.X, iMesh.Max.Y - iMesh.Min.Y))) return iMesh.FrameCenters();
         // 每顆 voxel 正下方在地板上的那一格（格中心 z 在地板下半格 ⇒ 加回 ±0.5 剛好是地板面）—— 只框「作品實際踩著的地方」，
         // ⛔ 不用外框四角：細長斜放的作品外框比剪影寬很多，框四角會讓作品縮小（2026-10-02 燈塔實測）。
-        int n = iMesh.Centers.Length;
+        Vector3[] aC = iMesh.FrameCenters();   // 帆（另一趟）的外框八角也算一份（TASK-0503）
+        int n = aC.Length;
         var aPts = new Vector3[n * 2];
-        Array.Copy(iMesh.Centers, aPts, n);
+        Array.Copy(aC, aPts, n);
         float aZ = iFloor.Z - 0.5f;
-        for (int i = 0; i < n; i++) aPts[n + i] = new Vector3(iMesh.Centers[i].X, iMesh.Centers[i].Y, aZ);
+        for (int i = 0; i < n; i++) aPts[n + i] = new Vector3(aC[i].X, aC[i].Y, aZ);
         oMin = Vector3.Min(oMin, new Vector3(iMesh.Min.X, iMesh.Min.Y, iFloor.Z));
         oMax = Vector3.Max(oMax, new Vector3(iMesh.Max.X, iMesh.Max.Y, iFloor.Z));
         return aPts;
@@ -1876,6 +2026,7 @@ void main() {
 
         uint aFloorVao = 0, aFloorVbo = 0;
         bool aHasMesh = iMesh.IndexCount > 0 && m_MeshVao != 0;
+        bool aHasDyn = m_DynIndexCount > 0 && m_DynVao != 0;   // 帆（TASK-0503）：另一趟
         // 網格的 VAO 是快取的那一顆（GetMesh 上傳；換網格才重建）
         uint aVao = m_MeshVao;
         // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
@@ -1897,8 +2048,17 @@ void main() {
                 gl.CullFace(TriangleFace.Front);
                 gl.UseProgram(m_ShadowProg);
                 SetMat(m_ShadowProg, "uLightVP", iLights.ShadowVp[m]);
-                gl.BindVertexArray(aVao);
-                gl.DrawElements(PrimitiveType.Triangles, (uint)iMesh.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
+                if (aHasMesh)
+                {
+                    gl.BindVertexArray(aVao);
+                    gl.DrawElements(PrimitiveType.Triangles, (uint)iMesh.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
+                }
+                if (aHasDyn)
+                {
+                    // 帆（另一趟，TASK-0503）：雙面、各往法線推一點 ⇒ 剔除正面後存下的是背向光那一份，受光面差半個布厚
+                    gl.BindVertexArray(m_DynVao);
+                    gl.DrawElements(PrimitiveType.Triangles, (uint)m_DynIndexCount, DrawElementsType.UnsignedInt, (void*)0);
+                }
             }
 
             // ② 主畫：MSAA FBO。
@@ -1975,7 +2135,7 @@ void main() {
                 gl.Disable(EnableCap.Blend);
             }
 
-            if (aHasMesh)
+            if (aHasMesh || aHasDyn)
             {
                 gl.Enable(EnableCap.DepthTest);
                 gl.DepthFunc(DepthFunction.Less);
@@ -1986,8 +2146,16 @@ void main() {
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uNormalOffset"), 0.08f);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uAoMin"), 0.5f);
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uHemiGround"), aHg.X, aHg.Y, aHg.Z);
-                gl.BindVertexArray(aVao);
-                gl.DrawElements(PrimitiveType.Triangles, (uint)iMesh.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
+                if (aHasMesh)
+                {
+                    gl.BindVertexArray(aVao);
+                    gl.DrawElements(PrimitiveType.Triangles, (uint)iMesh.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
+                }
+                if (aHasDyn)
+                {
+                    gl.BindVertexArray(m_DynVao);
+                    gl.DrawElements(PrimitiveType.Triangles, (uint)m_DynIndexCount, DrawElementsType.UnsignedInt, (void*)0);
+                }
             }
 
             // ③' 視窗即時預覽：MSAA 直接解析進呼叫端的 FBO（貼圖），⛔ 不讀回 CPU（TASK-0472）。
@@ -2089,6 +2257,7 @@ void main() {
             {
                 if (m_External == null) m_Context?.MakeCurrent();
                 DeleteMeshBuffers();
+                DeleteDynamicBuffers();
                 m_Mesh = null;
                 DeleteTargets();
                 for (int m = 0; m < MaxShadowMaps; m++) { m_Gl.DeleteFramebuffer(m_ShadowFbo[m]); m_Gl.DeleteTexture(m_ShadowTex[m]); }

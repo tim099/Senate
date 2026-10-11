@@ -766,7 +766,28 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
         string aCamSig = string.Join(";", aCam.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value)) + ";vs=" + p.ViewScale.ToString("R", CultureInfo.InvariantCulture)
                          + (aPinned ? ";pin=" + PinSig(m_Pin!) : ";pin=auto");
-        string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig;
+        // ③c 帆（TASK-0503）：持續模擬開著 ⇒ 每 SailUpdateSeconds 秒（不是每幀；Tim「不用頻繁模擬」）照真實經過的時間把 rig 往前推（固定 dt 補步），
+        //     一次最多花約 SailBudgetMs 毫秒的步數 —— 帆多、算不完就慢動作（⛔ 不改 dt、不拖垮畫面）；推過才換一版場景
+        string aSailSig = "";
+        if (p.SailRig is SCP_SculptSailRig aRig)
+        {
+            long aNow = Stopwatch.GetTimestamp();
+            bool aLive = g.ToggleValue(TSailLive, true);
+            double aSince = (aNow - m_SailTick) / (double)Stopwatch.Frequency;
+            if (!ReferenceEquals(m_SailRigSeen, aRig) || !aLive) { m_SailRigSeen = aRig; m_SailTick = aNow; }
+            else if (aSince >= SailUpdateSeconds)
+            {
+                int aMax = aRig.LastStepMs > 0 ? Math.Clamp((int)(SailBudgetMs / aRig.LastStepMs), 1, 12) : 1;
+                aRig.Advance(aSince, aMax);
+                m_SailTick = aNow;
+            }
+            p.Sails = aRig.SailGeoms();
+            p.SailRopes = aRig.RopeGeoms(true);
+            aSailSig = ";sail=" + aRig.Steps.ToString(CultureInfo.InvariantCulture);
+            g.Note($"帆：模擬到 {aRig.Time:0.00} 秒（{aRig.Steps:N0} 步，每步 {aRig.LastStepMs:0.###} ms）"
+                   + (aLive ? $"　持續模擬中（每 {SailUpdateSeconds:0.#} 秒更新一次、一次最多約 {SailBudgetMs:0} ms；算不完就慢動作）" : "　持續模擬關著 ⇒ 停在這一刻"));
+        }
+        string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig + aSailSig;
         if (aGpuSig != m_GpuSceneSig || !SCP_GuiGpuViews.Has(GpuKey))
         {
             m_GpuPut = SCP_GuiGpuViews.Put(GpuKey, new SCP_SculptGpuScene(aPlan.Voxels, p), p.Width, p.Height);
@@ -808,6 +829,12 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out aSt) && aSt.Error == null && aSt.Info.Length > 0) g.Note(aSt.Info);
         return true;
     }
+
+    // ── TASK-0503：持續模擬的帆 —— 上一幀的時間戳與那時推的是哪一個 rig（換了 plan ⇒ 新的 rig 從它自己的那一刻起算，不補舊的時間）──
+    long m_SailTick;
+    SCP_SculptSailRig? m_SailRigSeen;
+    /// <summary>持續模擬多久更新一次（秒）與一次最多花多少毫秒算（Tim 2026-10-11「不用頻繁模擬 模擬頻率可以降低」）。</summary>
+    const double SailUpdateSeconds = 0.1, SailBudgetMs = 8;
 
     // ── TASK-0501：釘住的鏡頭（只在視窗行程裡活著 —— 視窗以外的宿主不走 GPU 預覽）──
     /// <summary>釘住的鏡頭（中心＋距離／縮放）；null ＝ 下一幀讓渲染器自動框。</summary>

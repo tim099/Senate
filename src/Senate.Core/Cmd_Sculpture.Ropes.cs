@@ -18,38 +18,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>會把繩畫進去的觀測 op（其餘觀測 op 只看格子：slice／section／stats 是 voxel 的讀數）。</summary>
     static readonly string[] RopeViewOps = { "view", "export" };
 
-    // ───────────────────────── 觀測：算繩 ─────────────────────────
-
-    /// <summary>
-    /// 觀測時的繩：關聯樹（ConfigureLinks 那份；links=none 時它是 null ⇒ 自己讀一份，只為了知道綁的那一層「存在但沒畫」而不是「不存在」）＋
-    /// 這次的關聯選擇 ＋ ropes／hide_ropes。回 null ＝ 成功（<paramref name="oReadings"/> 可能是空的）；否則是 exit 2 的原因。
-    /// </summary>
-    static string? ResolveViewRopes(Ctx c, out List<SCP_SculptRopeReading> oReadings)
-    {
-        oReadings = new List<SCP_SculptRopeReading>();
-        string aRopes = c.Args.Get("ropes").Trim(), aHide = c.Args.Get("hide_ropes").Trim();
-        bool aGiven = aRopes.Length > 0 || aHide.Length > 0;
-        if (aRopes.Length > 0 && aRopes != "0" && aRopes != "1") return "ropes 要是 1 或 0（got '" + aRopes + "'）";
-        if (aGiven && Array.IndexOf(RopeViewOps, c.Op) < 0) return "ropes／hide_ropes 只給 view／export（繩不是格子：slice／section／stats 量的是 voxel）";
-        if (c.Work == null) return aGiven ? "繩是作品的 —— 要帶 work=" : null;
-        if (Array.IndexOf(RopeViewOps, c.Op) < 0) return null;
-
-        List<SCP_SculptLinkNode>? aTree = c.LinkTree;
-        if (aTree == null)
-        {
-            try { aTree = SCP_SculptLinks.Tree(c.Works, c.Work.id); }
-            catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { aTree = null; c.Report.Append("- ⚠ 繩：關聯樹讀不了（綁在關聯上的繩會列成 broken）：").Append(e.Message).Append('\n'); }
-        }
-        SCP_SculptLinkSelection aSel = c.Links?.Selection ?? SCP_SculptLinkSelection.Parse(c.Args.Get("links"), c.Args.Get("hide_links"));
-        var aRopeSel = SCP_SculptRopeSelection.Parse(aRopes, aHide);
-        try { oReadings = SCP_SculptRopes.Resolve(c.Works, c.Work.id, aTree, aSel, aRopeSel); }
-        catch (InvalidOperationException e) { return "繩：" + e.Message + "（只想看格子：ropes=0 也救不了壞掉的 ropes.json —— 先修檔）"; }
-        // hide_ropes 點名的路徑要存在（⛔ 打錯字不會變成「什麼都沒關」）
-        var aKnown = new HashSet<string>(oReadings.ConvertAll(r => r.Path), StringComparer.Ordinal);
-        foreach (string p in aRopeSel.Hide)
-            if (!aKnown.Contains(p)) return "沒有繩 `" + p + "`（這次看得到的：" + (aKnown.Count == 0 ? "（沒有）" : string.Join("、", aKnown)) + "）";
-        return null;
-    }
+    // 觀測時的繩跟帆一起算（綁帆角的繩要等帆模擬完才知道形狀）⇒ Cmd_Sculpture.Sails.cs 的 ResolveViewRig（TASK-0503）。
 
     /// <summary>每條繩一行：狀態、兩端、長度、下垂、顏色粗細、原因 ＋ 回傳值。</summary>
     static void AppendRopeReport(Ctx c, List<SCP_SculptRopeReading> iReadings, bool iAlways = false)
@@ -142,39 +111,17 @@ public sealed partial class Cmd_Sculpture
         aFile.anchors.RemoveAt(aIdx);
         SCP_SculptRopes.SaveAnchors(aPaths, aFile);
         c.Result.AddValue("anchor_count", aFile.anchors.Count.ToString(CultureInfo.InvariantCulture));
-        List<string> aBroken = BrokenRopesAcrossWorks(c, iCard.id);
-        c.Result.AddValue("ropes_now_broken", aBroken.Count.ToString(CultureInfo.InvariantCulture));
+        // 全庫掃（TASK-0503 起連帆一起掃：帆角也可能綁在這個固定點上）—— 本體在 Cmd_Sculpture.Sails.cs
+        List<string> aBroken = BrokenRiggingAcrossWorks(c, iCard.id, out int aRopesBroken, out int aSailsBroken);
+        c.Result.AddValue("ropes_now_broken", aRopesBroken.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("sails_now_broken", aSailsBroken.ToString(CultureInfo.InvariantCulture));
         if (aBroken.Count > 0)
         {
-            c.Report.Append("\n## 🔴 現在綁定壞掉的繩（全庫掃：繩所在作品 → 繩路徑｜原因）\n");
+            c.Report.Append("\n## 🔴 現在綁定壞掉的繩與帆（全庫掃：所在作品 → 路徑｜原因）\n");
             foreach (string s in aBroken) c.Report.Append("- ").Append(s).Append('\n');
-            c.Result.Lines.Add("🔴 拿掉之後有 " + aBroken.Count + " 條繩綁定壞了 —— 它們沒被刪，每次觀測都會列成 broken（清單見回傳檔）");
+            c.Result.Lines.Add("🔴 拿掉之後有 " + aRopesBroken + " 條繩、" + aSailsBroken + " 面帆綁定壞了 —— 它們沒被刪，每次觀測都會列成 broken（清單見回傳檔）");
         }
-        return Finish(c, 0, "✓ 拿掉固定點 `" + aName + "`" + (aBroken.Count > 0 ? "｜🔴 " + aBroken.Count + " 條繩的綁定壞了" : "｜沒有繩綁在上面"));
-    }
-
-    /// <summary>
-    /// 全庫掃：有 ropes.json 的作品逐件解一次（關聯全開 links=all），收集 broken 而且跟 <paramref name="iWorkId"/> 有關的
-    /// （繩就在這件作品上、或它的關聯樹裡有這件作品）。讀不了的作品記一行原因（⛔ 不當成沒有）。
-    /// </summary>
-    static List<string> BrokenRopesAcrossWorks(Ctx c, string iWorkId)
-    {
-        var aOut = new List<string>();
-        foreach (SCP_SculptWork w in c.Works.List(""))
-        {
-            if (!File.Exists(c.Works.SpacePaths(w.id).RopesFile)) continue;
-            try
-            {
-                List<SCP_SculptLinkNode> aTree = SCP_SculptLinks.Tree(c.Works, w.id);
-                var aIds = new SortedSet<string>(StringComparer.Ordinal) { w.id };
-                SCP_SculptLinks.Closure(aTree, aIds);
-                if (!aIds.Contains(iWorkId)) continue;
-                foreach (var r in SCP_SculptRopes.Resolve(c.Works, w.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection()))
-                    if (r.State == SCP_SculptRopeReading.Broken) aOut.Add(w.id + " → `" + r.Path + "`｜" + r.Reason);
-            }
-            catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { aOut.Add(w.id + " →（讀不了，沒辦法判）" + e.Message); }
-        }
-        return aOut;
+        return Finish(c, 0, "✓ 拿掉固定點 `" + aName + "`" + (aBroken.Count > 0 ? "｜🔴 " + aRopesBroken + " 條繩、" + aSailsBroken + " 面帆的綁定壞了" : "｜沒有繩或帆綁在上面"));
     }
 
     /// <summary>work sub=anchors：本作品的固定點＋關聯樹上每一層的（路徑指名、換到本作品座標）。</summary>
@@ -263,7 +210,7 @@ public sealed partial class Cmd_Sculpture
             aRope.slack = s;
         }
         if (SCP_SculptRopes.CheckThickness(aRope.thickness) is string aBadT) return Blocked(c, 2, aBadT + "；未寫入");
-        if (SCP_SculptRopes.CheckSlack(aRope.slack) is string aBadS) return Blocked(c, 2, aBadS + "；未寫入");
+        if (SCP_SculptRopes.CheckSlack(aRope.slack, SCP_SculptRopes.OnSail(aRope)) is string aBadS) return Blocked(c, 2, aBadS + "；未寫入");
         if (c.Args.IsExplicit("enabled"))
         {
             string v = c.Args.Get("enabled").Trim();
@@ -276,8 +223,10 @@ public sealed partial class Cmd_Sculpture
         List<SCP_SculptLinkNode>? aTree = null;
         try { aTree = SCP_SculptLinks.Tree(c.Works, iCard.id); }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return Blocked(c, 2, "關聯樹讀不了（端點驗不了）：" + e.Message + "；未寫入"); }
-        SCP_SculptRopeReading? aReading = SCP_SculptRopes.Resolve(c.Works, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection(), aFile)
-                                          .Find(r => r.Path == aRope.name);
+        // 帆角端點（sail:）要靠帆的觀測解 ⇒ 走 SCP_SculptSails.Rig（裡面是同一支 Resolve，帆角由它注入；沒模擬 ⇒ 長度是設計位置的讀數）
+        SCP_SculptRopeReading? aReading = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
+                                                              new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }, null, aFile)
+                                          .Ropes.Find(r => r.Path == aRope.name);
         if (aReading == null) return Blocked(c, 1, "寫之前的回讀沒找到這條繩（不該發生）；未寫入");
         if (aReading.State == SCP_SculptRopeReading.Broken) return Blocked(c, 2, "端點解不到：" + aReading.Reason + "；未寫入（先 sub=anchor 加固定點，或用 sub=anchors 看有哪些）");
         SCP_SculptRopes.SaveRopes(aPaths, aFile);
@@ -312,7 +261,9 @@ public sealed partial class Cmd_Sculpture
         List<SCP_SculptLinkNode>? aTree = null;
         try { aTree = SCP_SculptLinks.Tree(c.Works, iCard.id); }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { c.Report.Append("- ⚠ 關聯樹讀不了（綁在關聯上的繩會列成 broken）：").Append(e.Message).Append('\n'); }
-        List<SCP_SculptRopeReading> aReadings = SCP_SculptRopes.Resolve(c.Works, iCard.id, aTree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection());
+        // 綁帆角的繩：位置是帆角的設計位置（沒模擬；模擬完的長度與下垂 ⇒ sub=sails）
+        List<SCP_SculptRopeReading> aReadings = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
+                                                                    new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }).Ropes;
         AppendRopeReport(c, aReadings, true);
         c.Result.AddValue("rope_count", aReadings.Count.ToString(CultureInfo.InvariantCulture));
         int aBroken = aReadings.FindAll(r => r.State == SCP_SculptRopeReading.Broken).Count;

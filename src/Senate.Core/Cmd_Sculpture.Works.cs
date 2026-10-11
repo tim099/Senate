@@ -36,7 +36,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>拿作品鎖之後才分派的 sub（create／list／assemble 自己管鎖）。</summary>
     static readonly string[] s_WorkLockedSubs =
         { "show", "update", "import", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links",
-          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes" };
+          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "sail", "unsail", "sails", "wind" };
 
     static string? OpWork(Ctx c)
     {
@@ -55,7 +55,7 @@ public sealed partial class Cmd_Sculpture
             id = SCP_SculptWorks.NormalizeId(id);
             if (sub == "create") return CreateWork(c, id);
             if (sub == "assemble") return AssembleWork(c, id);
-            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes");
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
             List<SCP_SculptLinkNode>? tree = null;
@@ -109,6 +109,11 @@ public sealed partial class Cmd_Sculpture
             if (sub == "rope") return WorkRope(c, cardNow);
             if (sub == "unrope") return WorkUnrope(c, cardNow);
             if (sub == "ropes") return WorkRopes(c, cardNow);
+            // TASK-0503：帆（作品資料，不是 voxel；改的只有作者）
+            if (sub == "sail") return WorkSail(c, cardNow);
+            if (sub == "unsail") return WorkUnsail(c, cardNow);
+            if (sub == "sails") return WorkSails(c, cardNow);
+            if (sub == "wind") return WorkWind(c, cardNow);
             if (sub == "apply" || sub == "discard")
             {
                 if (c.Persona.Length == 0 || c.Persona != cardNow.owner) return Blocked(c, 2, "只有作品作者 " + cardNow.owner + " 可以" + (sub == "apply" ? "把草稿套進作品" : "丟掉草稿"));

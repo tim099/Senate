@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（固定點與繩索：work sub=anchor／rope、懸鏈線、跨關聯綁定、view／觀測頁／export obj 畫成管子、壞掉的綁定大聲列 —— §9.4.6，TASK-0502）；2026-10-11（GPU 預覽鏡頭只框一次、右鍵轉左鍵平移 —— §5.3，TASK-0501）；2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（帆：work sub=sail／unsail／sails／wind、布料模擬（重力＋風、決定性）、bind 整條邊、free 角＋帆腳索（繩端點 sail:帆/角，綁帆角的繩 slack 可以小於 1）、view／觀測頁持續模擬／export obj —— §9.4.7，TASK-0503）；2026-10-11（固定點與繩索：work sub=anchor／rope、懸鏈線、跨關聯綁定、view／觀測頁／export obj 畫成管子、壞掉的綁定大聲列 —— §9.4.6，TASK-0502）；2026-10-11（GPU 預覽鏡頭只框一次、右鍵轉左鍵平移 —— §5.3，TASK-0501）；2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -50,7 +50,7 @@ related:
 | `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用）；obj 預設省略封閉在模型裡的面，`sealed=keep` 照常輸出（§9.4.2） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
-| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
+| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6）；帆 `sail|unsail|sails|wind`（§9.4.7） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
 
 ```bash
 senate cmd sculpture --arg op=box --arg persona=<P> --arg x1=10 --arg x2=12 --arg y1=10 --arg y2=12 --arg z1=0 --arg z2=0 --arg color=19
@@ -540,7 +540,50 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_ropes=main-stay --
 - **畫**：view 與觀測頁的 GPU 預覽把繩畫成管子，跟 voxel 同一個網格（吃同一組燈、會投影子、也接影子）；繩不是 voxel ⇒ `visible_voxels` 不變。回傳值 `ropes_drawn`／`ropes_hidden`／`ropes_disabled`／`ropes_broken`。`slice`／`section`／`stats` 量的是格子，不畫繩。
 - **觀測頁**：選了有繩的作品，「繩索開關」列出每一條（長度、下垂）：總開關「畫繩索」＋一條一個勾（像關聯開關，只影響這次觀測、⛔ 不寫回 ropes.json）；壞掉的列 🔴＋原因；作品裡設為關的只列不勾。
 - **匯出**：`export format=obj` 把繩接在 voxel 面後面輸出成管狀網格（每條一個 `o rope_n`＋材質 `rope_n`，mtl 有 Kd；有法線、繞序跟法線同向）⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ 繩不輸出、`ropes_exported=0`。
-- **之後的帆**：端點的 `種類:…` 形狀（例 `sail:主帆/上左角`）留給 TASK-0503；本版只認固定點路徑與座標，`種類:` 一律 exit 2（不猜）。固定點與繩的格式就是帆要共用的那一份。
+- **帆**：端點寫帆角 `sail:[關聯/…/]帆名/角` ⇒ 繩綁在帆的角上（TASK-0503，見 §9.4.7）；其他 `種類:` 一律 exit 2（不猜）。固定點與繩的格式就是帆共用的那一份。
+
+### 9.4.7 帆 —— 布料模擬，綁在固定點與繩上（TASK-0503）
+
+帆不用 voxel 雕（Tim）⇒ 作品記**帆**：幾個角綁在哪、哪條邊整條釘住、什麼顏色；存在 `sails.json`（作品資料，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**，改的只有作者。觀測時才用布料模擬算形狀、才畫。
+
+```bash
+# 方帆：四個角依序繞一圈（角 ＝ 固定點名｜關聯/…/固定點名｜x,y,z，同繩的端點），上緣（邊 0）整條釘在 yard 上
+senate cmd sculpture --arg op=work --arg sub=sail --arg work=ship --arg persona=<P> --arg name=main-topsail --arg corners="主桅/yard_p|主桅/yard_s|主桅/lyard_s|主桅/lyard_p" --arg bind=0
+# 下面兩角不釘（free），名字給繩用；三角帆給 3 個角
+senate cmd sculpture --arg op=work --arg sub=sail --arg work=ship --arg persona=<P> --arg name=main-course --arg corners="hp|hs|47,29,8|16,29,8" --arg corner_names="head_p|head_s|clew_s|clew_p" --arg bind=0 --arg free=clew_s,clew_p --arg color=#f2ead8
+# 帆腳索：繩的一端寫帆角 sail:[關聯/…/]帆名/角（角 ＝ 名字或序號）
+senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=sheet_p --arg from=sail:main-course/clew_p --arg to=cleat_p
+senate cmd sculpture --arg op=work --arg sub=wind --arg work=ship --arg persona=<P> --arg wind=4,-9,0 --arg sail_seconds=4   # 作品預設風（m/s）與秒數
+senate cmd sculpture --arg op=work --arg sub=sails --arg work=ship                                                          # 每面帆模擬到那一刻的讀數
+senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_seconds=2 --arg out=<png>                  # 這次換風、換秒數
+```
+
+- **帆** `sub=sail name= corners=角0|角1|角2[|角3] [corner_names=名|名|…] [bind=邊,…] [free=角,…] [color=] [res=] [fullness=] [enabled=] [note=]`：
+  - 角 3 個 ＝ 三角帆（jib、staysail）、4 個 ＝ 四邊形（方帆、梯形的縱帆 spanker）；**依序繞一圈**，`|` 分隔。
+  - `bind=k`：**邊 k ＝ 角 k → 角 k+1** 整條釘在兩角之間的線段上（方帆上緣沿 yard、縱帆沿 gaff／boom）—— 那條邊上的每一個布點都釘住，不是只釘兩個角。
+  - 角預設**釘住**；`free=` 的角（名字或序號）跟著布動。綁在 free 角上的繩會拉住它（見下）；沒綁繩的 free 角就隨風亂飛。
+  - `color` ＝ 調色盤 index 1..255 或 `#RRGGBB`（存小寫；預設 `#f2ead8` 帆布色）。`res` ＝ 布料每邊幾格（0 ＝ 照大小自動，6..24）。`fullness` ＝ 布比角圍出來的框多幾成（預設 1.06；1 ＝ 繃平、鼓不起來；上限 1.5）。
+  - 同名已在：改 free／bind／color／res／fullness／enabled／note／corner_names 直接改；**換角的位置**要 `overwrite=1`。寫之前先解一次：角解不到 ⇒ exit 2、**未寫入**。`sub=unsail name=` 拿掉（綁它角的繩之後會是 broken，當下全庫掃一次印出來）。
+- **模擬**：PBD 布料（距離約束：相鄰／對角／隔一格）＋**重力**＋**風**（只算布面法線方向的風壓，含固定的陣風起伏）；固定 dt 1/60 秒、每步固定迭代次數、單執行緒依序走 ⇒ **同樣的輸入＋同樣的秒數 ⇒ 逐位元同樣的形狀**。不用算到靜止（Tim）：
+  - CLI `view`／`export`：取「模擬 `sail_seconds` 秒後」那一刻（不給 ⇒ 作品預設，預設 3 秒；上限 60）。
+  - 觀測頁：「持續模擬」開著 ⇒ 帆會動；**每 0.1 秒更新一次、一次最多約 8 ms**（Tim「不用頻繁模擬」）—— 帆多、算不完就慢動作播放，⛔ 不改 dt、不拖垮畫面。關掉 ⇒ 停在 `sail_seconds` 那一刻（跟 CLI 同一張）。
+  - 單位：重力 9.81 m/s²、風 `wind=x,y,z`（**m/s，世界座標**；例 `0,-8,0` ＝ 往 −y 吹的 8 m/s 風），照**組裝件**的 `meters_per_voxel` 換成格 ⇒ 比例對了，鼓的程度才對（憲法號一格 0.1 m）。預設風存在組裝件的 `sails.json`（`sub=wind`），`view`／`export`／`sub=sails` 的 `wind=`／`sail_seconds=` 一次性蓋過。
+  - ⚠ **沒有碰撞**：帆會穿過格子與繩（同繩）—— 綁點與 fullness 自己控制，看讀數。
+- **讀數**（`sub=sails` 與 view／export 的回報，每面帆一行）：狀態、角（名字＋座標、哪幾個 free）、釘住的邊、解析度與布點數、**最鼓**（離綁點平面最遠那一點幾格，帶正負號：正 ＝ 往「角依序繞一圈的右手法線」那側）、**平均位移**（全部布點離設計位置，世界座標 —— 沒風 ⇒ 幾乎只往 −z）、牽繩條數；環境一行：風、一格幾公尺、模擬了幾秒幾步、平均每步幾毫秒。回傳值 `sails_drawn／hidden／disabled／broken`、`sail_seconds`、`sail_steps`、`sail_step_ms`、`sail_max_billow`。
+- **帆角當繩的端點**：繩的 `from`／`to` 寫 `sail:[關聯/…/]帆名/角`（相對於繩所在的作品，同固定點路徑）。
+  - 綁在 **free** 角上 ⇒ 那條繩是**牽繩**：繩長 L ＝ `slack` × 設計時兩端的距離；帆角離繩另一端超過 L 就被拉回（繩繃住），沒超過就不拉（鬆的繩不出力）。⇒ 風把帆角往外吹時繩繃住；**拉繩的另一頭（搬固定點）或改 slack，帆的形狀就跟著變**。
+  - **綁帆角的繩 slack 可以小於 1**（下限 0.3）：繩比設計時短 ⇒ 把帆角拉過去（收帆腳索）。拉不到那麼近時繩畫成拉直。沒綁帆角的繩照舊 1..10。
+  - 綁在釘住的角上 ⇒ 繩只是畫出來，不拉任何東西。繩畫到帆角**模擬完那一刻**的位置（觀測頁持續模擬時跟著動）。
+  - 只被顯示開關關掉的繩（`ropes=0`、`hide_ropes`、`enabled=0`）照樣拉；所在或綁的那一層沒組進來（`links`）⇒ 這條繩這次不存在、不拉。
+- **跟著部件走**：角寫關聯路徑（`主桅/yard_p`）⇒ 照那條關聯的 `mirror`→`turn`→`at` 換到組裝件（同繩、同 voxel 的公式）—— 搬關聯、轉向、鏡像（另一舷）帆都跟著走。被關聯進來的作品**自己的帆**也照那條關聯換座標、一起模擬（帆路徑 ＝ `關聯/…/帆名`）。
+  - 帆所在或角綁的那一層這次沒組進來（`links=none`、`hide_links`、那條關聯 `enabled=0`）⇒ `hidden`、**不模擬**；帆自己 `enabled=0` ⇒ `disabled`、不模擬。
+  - `sails=0`／`hide_sails=帆路徑,…` ⇒ 這次**不畫、照樣模擬**（綁在它角上的繩照樣拉）；打錯路徑 ⇒ exit 2。
+  - **壞掉的綁定**（固定點刪了／改名、關聯路徑不在了、角幾乎在一條線上）⇒ `broken`：⛔ 不靜默消失 —— 觀測照樣出圖，回傳行大聲列 🔴（`sails_broken`）；`sub=unanchor`／`sub=unsail` 當下全庫掃一次（`sails_now_broken`／`ropes_now_broken`）。用原名把固定點加回去就接上。
+- **畫**：view 與觀測頁的 GPU 預覽把帆畫成**雙面**的布（正反各一份、各往法線推半個布厚 ⇒ 兩面都看得到、也不會自己遮自己的影子），吃同一組燈、會投影子也接影子。帆與綁帆角的繩是**另一趟**（每次換形狀只重傳帆，⛔ voxel 網格不重建）。帆不是 voxel ⇒ `visible_voxels` 不變。
+- **觀測頁**：選了有帆的作品，「帆」區：風／秒數欄位（空 ＝ 作品預設）、「持續模擬」開關、總開關「畫帆」＋一面一個勾（只影響這次觀測，⛔ 不寫回 sails.json）；壞掉的列 🔴＋原因；作品裡設為關的只列不勾。
+- **匯出**：`export format=obj` 把帆（模擬到 `sail_seconds` 那一刻）接在繩後面輸出成雙面三角網格（每面一個 `o sail_n`＋材質 `sail_n`，mtl 有 Kd；有法線、繞序跟法線同向），綁帆角的繩也一起 ⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ `sails_exported=0`。
+- **讀數**（淨室 SculptureSailsCleanRoom，Release）：24 面帆、每面 25×25 布點，模擬 3 秒（180 步）約 1.2 秒、每步約 6.8 ms。
+- **之後**：貼圖（Tim 2026-10-11「貼圖可以先不處理」）、收帆（furled，捲在 yard 上）、縮帆（reef）本版不做 —— `sails.json` 的帆是可以加欄位的物件，加的時候舊檔照讀。
 
 ### 9.5 建築與家具的相對比例尺
 
