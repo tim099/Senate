@@ -62,10 +62,13 @@ public sealed partial class Cmd_Sculpture
         if (c.Persona.Length == 0 || c.Persona != card.owner) return Blocked(c, 2, "只有目標作品作者可以放入零件；來源作者不限");
         int[] at = WorkVector(c.Args.Get("at"), "at");
         if (!TryInt(c, "turn", out int turn)) return Blocked(c, 2, "turn需為0/90/180/270");
+        string? mirrorError = SCP_SculptLinks.NormalizeMirror(c.Args.Get("mirror"), out string mirror);
+        if (mirrorError != null) return Blocked(c, 2, mirrorError + "；未修改");
         var engine = WorkEngine(c, card, true);   // draft=1 ⇒ 零件放進草稿（TASK-0493）
         var linkCredits = new List<SCP_SculptCredit>();
         var sourceSpace = Flatten(c, source, sourceTree, linkCredits);
-        var edit = engine.Assemble(sourceSpace, source.SizeX, source.SizeY, at, turn, WorkOverwrite(c));
+        var edit = engine.Assemble(sourceSpace, source.SizeX, source.SizeY, source.SizeZ, at, turn, mirror, WorkOverwrite(c));
+        c.Result.AddValue("mirror", mirror.Length == 0 ? "none" : mirror);
         edit.credits.Add(new SCP_SculptCredit { work = source.id, author = source.owner, title = source.title,
             revision = SCP_SculptWorks.Revision(sourceSpace, source.Dimensions) });
         // 草稿裡拿作品自己當零件 ⇒ 不讀它的歷史（讀會刷新作品的歷史索引 —— 草稿要無痕；那些 Credit 本來就在作品裡）

@@ -203,7 +203,7 @@ public sealed partial class Cmd_Sculpture
         var aPaths = c.Works.SpacePaths(iCard.id);
         SCP_SculptLinkFile aFile = SCP_SculptLinks.Read(aPaths);
         int aIdx = aFile.links.FindIndex(l => l.name == aName);
-        bool aPos = c.Args.IsExplicit("source_work") || c.Args.IsExplicit("at") || c.Args.IsExplicit("turn");
+        bool aPos = c.Args.IsExplicit("source_work") || c.Args.IsExplicit("at") || c.Args.IsExplicit("turn") || c.Args.IsExplicit("mirror");
         bool aFlags = c.Args.IsExplicit("enabled") || c.Args.IsExplicit("note");
         string aEnabled = c.Args.Get("enabled").Trim();
         if (c.Args.IsExplicit("enabled") && aEnabled != "0" && aEnabled != "1") return Blocked(c, 2, "enabled 要是 1 或 0（got '" + aEnabled + "'）");
@@ -211,18 +211,18 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptLink aLink;
         if (aIdx >= 0 && !aPos)
         {
-            if (!aFlags) return Blocked(c, 2, "關聯 `" + aName + "` 已經在了 —— 沒有要改什麼（改開關 enabled=0|1；改作品／位置／轉向要 overwrite=1）");
+            if (!aFlags) return Blocked(c, 2, "關聯 `" + aName + "` 已經在了 —— 沒有要改什麼（改開關 enabled=0|1；改作品／位置／轉向／鏡像要 overwrite=1）");
             aLink = aFile.links[aIdx];
             if (c.Args.IsExplicit("enabled")) aLink.enabled = aEnabled == "1";
             if (c.Args.IsExplicit("note")) aLink.note = c.Args.Get("note").Trim();
         }
         else
         {
-            if (aIdx >= 0 && !WorkOverwrite(c)) return Blocked(c, 2, "已經有關聯 `" + aName + "`（→ " + aFile.links[aIdx].work + "）—— ⛔ 不默默蓋掉；要改作品／位置／轉向請加 overwrite=1");
-            // overwrite：從既有那一筆出發，只改有給的格（⛔ 搬個位置不該把關掉的開關、轉向、備註默默重設）
+            if (aIdx >= 0 && !WorkOverwrite(c)) return Blocked(c, 2, "已經有關聯 `" + aName + "`（→ " + aFile.links[aIdx].work + "）—— ⛔ 不默默蓋掉；要改作品／位置／轉向／鏡像請加 overwrite=1");
+            // overwrite：從既有那一筆出發，只改有給的格（⛔ 搬個位置不該把關掉的開關、轉向、鏡像、備註默默重設）
             SCP_SculptLink? aOld = aIdx >= 0 ? aFile.links[aIdx] : null;
             string aSource = c.Args.IsExplicit("source_work") ? c.Args.Get("source_work").Trim() : aOld?.work ?? "";
-            if (aSource.Length == 0 || (aOld == null && !c.Args.IsExplicit("at"))) return Blocked(c, 2, "加關聯要 source_work=<作品> 與 at=x,y,z（turn= 選填 0/90/180/270）");
+            if (aSource.Length == 0 || (aOld == null && !c.Args.IsExplicit("at"))) return Blocked(c, 2, "加關聯要 source_work=<作品> 與 at=x,y,z（turn= 選填 0/90/180/270；mirror= 選填 x／y／z 或組合）");
             SCP_SculptWork aChild;
             try { aChild = c.Works.Load(SCP_SculptWorks.NormalizeId(aSource)); }
             catch (Exception e) when (e is InvalidOperationException || e is ArgumentException) { return Blocked(c, 2, "被關聯的作品讀不了：" + e.Message); }
@@ -231,13 +231,16 @@ public sealed partial class Cmd_Sculpture
             int aTurn = aOld?.turn ?? 0;
             if (c.Args.IsExplicit("turn") && (!TryInt(c, "turn", out aTurn) || (aTurn != 0 && aTurn != 90 && aTurn != 180 && aTurn != 270)))
                 return Blocked(c, 2, "turn 要是 0/90/180/270（繞 Z 轉，轉法同 assemble）");
+            string aMirror = aOld?.mirror ?? "";
+            if (c.Args.IsExplicit("mirror") && SCP_SculptLinks.NormalizeMirror(c.Args.Get("mirror"), out aMirror) is string aBadMirror)
+                return Blocked(c, 2, aBadMirror + "；未寫入");
             // 軸心：換了作品（或新關聯）才用那件作品現在的尺寸；同一件只搬位置／轉向 ⇒ 沿用加關聯當下記的
             int[] aPivot = aOld != null && aOld.work == aChild.id ? aOld.pivot.ToArray() : new[] { aChild.SizeX, aChild.SizeY, aChild.SizeZ };
             string? aFit = SCP_SculptLinks.Fits(aChild.id, aPivot, aAt, aTurn, iCard.SizeX, iCard.SizeY, iCard.SizeZ);
             if (aFit != null) return Blocked(c, 2, aFit + "（關聯要整件放得進來 —— 那件作品之後在自己的尺寸裡怎麼改都不會越界）；未寫入");
             aLink = new SCP_SculptLink
             {
-                name = aName, work = aChild.id, at = new List<int>(aAt), turn = aTurn, pivot = new List<int>(aPivot),
+                name = aName, work = aChild.id, at = new List<int>(aAt), turn = aTurn, mirror = aMirror, pivot = new List<int>(aPivot),
                 enabled = c.Args.IsExplicit("enabled") ? aEnabled == "1" : aOld?.enabled ?? true,
                 created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
                 persona = aOld?.persona ?? c.Persona,
@@ -254,11 +257,13 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("link_work", aLink.work);
         c.Result.AddValue("link_at", string.Join(",", aLink.at));
         c.Result.AddValue("link_turn", aLink.turn.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("link_mirror", aLink.mirror.Length == 0 ? "none" : aLink.mirror);
+        c.Result.AddValue("links_schema", aFile.schema.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_enabled", aLink.enabled ? "1" : "0");
         c.Result.AddValue("link_count", aFile.links.Count.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("links_file", aPaths.LinksFile.Replace('\\', '/'));
         AppendLinkTree(c, aTree);
-        return Finish(c, 0, "✓ 關聯 `" + aLink.name + "` → " + aLink.work + " @" + string.Join(",", aLink.at) + " turn " + aLink.turn + (aLink.enabled ? "（開）" : "（關）") + "｜只記關聯，一格 voxel 都沒複製");
+        return Finish(c, 0, "✓ 關聯 `" + aLink.name + "` → " + aLink.work + " @" + string.Join(",", aLink.at) + " turn " + aLink.turn + (aLink.mirror.Length > 0 ? " mirror " + aLink.mirror : "") + (aLink.enabled ? "（開）" : "（關）") + "｜只記關聯，一格 voxel 都沒複製");
     }
 
     /// <summary>work sub=unlink name=：拿掉一條關聯（那件作品本身不動）。</summary>
@@ -294,13 +299,13 @@ public sealed partial class Cmd_Sculpture
     static void AppendLinkTree(Ctx c, List<SCP_SculptLinkNode> iTree)
     {
         c.Report.Append("\n## 關聯樹（觀測時 links=none|all|路徑,… ／ hide_links=路徑,…|self；路徑用 / 分層）\n");
-        if (iTree.Count == 0) c.Report.Append("（沒有 —— `--arg op=work --arg sub=link --arg name=<名> --arg source_work=<作品> --arg at=x,y,z [--arg turn=]`）\n");
+        if (iTree.Count == 0) c.Report.Append("（沒有 —— `--arg op=work --arg sub=link --arg name=<名> --arg source_work=<作品> --arg at=x,y,z [--arg turn=] [--arg mirror=x|y|z]`）\n");
         void Walk(List<SCP_SculptLinkNode> iNodes, int iDepth)
         {
             foreach (var n in iNodes)
             {
                 c.Report.Append(new string(' ', iDepth * 2)).Append("- `").Append(n.Path).Append("` → ").Append(n.Card.id).Append("《").Append(n.Card.title).Append("》by ").Append(n.Card.owner)
-                        .Append(" @").Append(string.Join(",", n.Link.at)).Append(" turn ").Append(n.Link.turn).Append(n.Link.enabled ? "（開）" : "（關）")
+                        .Append(" @").Append(string.Join(",", n.Link.at)).Append(" turn ").Append(n.Link.turn).Append(n.Link.mirror.Length > 0 ? " mirror " + n.Link.mirror : "").Append(n.Link.enabled ? "（開）" : "（關）")
                         .Append(n.PivotDrift ? "｜⚠ 尺寸變過（加關聯時 " + string.Join(",", n.Link.pivot) + "、現在 " + n.Card.Dimensions + "）" : "")
                         .Append(SCP_SculptDraft.IsOpen(c.Works.SpacePaths(n.Card.id)) ? "｜📝 開著草稿" : "")
                         .Append(n.Link.note.Length > 0 ? "｜" + n.Link.note : "").Append('\n');

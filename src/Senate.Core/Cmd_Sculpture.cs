@@ -172,7 +172,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("region", "view／export／exhibit register／section：裁切範圍（section 不給 ⇒ 整件作品，共用展區 0..255）；slice **必填**（x1..x2,y1..y2,z1..z2）；stats 的結構讀數／diff：只算這個框"),
         new SCP_CmdArgSpec("exclude_color", "view／export／exhibit register：不畫哪些顏色（c,c,…）；stats 的結構讀數：不算哪些顏色"),
         new SCP_CmdArgSpec("structure", "stats：1 ＝ 多報元件數（6 連通，附最小幾塊的位置）與封閉空腔（跟外面不通的空格）"),
-        new SCP_CmdArgSpec("mirror", "stats：鏡像差 軸:中心（y:160 ＝ 以第 160 格中心為鏡面；y:159.5 ＝ 159 與 160 之間）"),
+        new SCP_CmdArgSpec("mirror", "兩種 op 兩種意思（同一個鍵）—— stats：**量**鏡像差 軸:中心（y:160 ＝ 以第 160 格中心為鏡面；y:159.5 ＝ 159 與 160 之間）"
+            + "／work assemble／link：**翻面**（TASK-0497）x／y／z 或組合（例 x、xz），空＝不翻；先在零件自己的框裡翻、再 turn、再放到 at（外框不變）—— 左右對稱的零件只做一份、另一邊 mirror=x（或 y）關聯進來"),
         new SCP_CmdArgSpec("exhibit", "view：展品 preset id"),
         new SCP_CmdArgSpec("light_dir", "view／exhibit register：一盞白光的行進方向 x,y,z（取代設定檔的燈）"),
         new SCP_CmdArgSpec("ambient", "view／exhibit register／render-profile set：環境光 0-1"),

@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -22,7 +22,7 @@ related:
 - 僅agent自行發起的創作（例如自由時間自選雕刻、沒有使用者透過本skill提出雕刻要求）才收個人作品建立費10，作品內續雕免費。使用者直接要求本skill「自由發揮」仍屬任務，不是這裡的自發創作。
 - 續作既有作品：先透過CLI讀書卡、心得與TODO，所有操作指定同一work，完成後保存續作筆記與圖。
 - 個人作品尺寸：建立與事後update均可用size指定邊長或X,Y,Z，各軸1–上限（設定`sculpture.workMaxAxis`，預設4096，見§9.6）、預設64³；調整免費且不縮放內容，縮小會切到現有voxel時拒絕。
-- 模組化：work sub=assemble把source_work的副本放入目前work，可用別人的作品，並自動Credit來源作品、作者、版本及上游來源；原作保留。可選turn繞Z軸旋轉，at指定旋轉後原點。
+- 模組化：work sub=assemble把source_work的副本放入目前work，可用別人的作品，並自動Credit來源作品、作者、版本及上游來源；原作保留。可選turn繞Z軸旋轉、mirror=x|y|z（可組合）翻面（先翻再轉），at指定旋轉後原點。
 - 區域編輯：work sub=move以region選區、delta平移；work sub=undo/redo撤銷／重做voxel操作，history查歷史。作品內全部免費；碰撞預設整筆拒絕，只有顯式overwrite=1才覆蓋。
 - 建築與家具預設比例尺：1公尺＝32 voxel（每格3.125公分），尺寸與at、delta用同一比例換算；常用尺寸見§9.5。
 - 匯入展區仍另收實際落地費；委託免的是建立費。
@@ -342,7 +342,7 @@ senate cmd sculpture --arg op=work --arg sub=assemble --arg persona=meadow --arg
 senate cmd sculpture --arg op=work --arg sub=assemble --arg persona=meadow --arg work=room --arg source_work=room-bed --arg at=8,88,0 --arg turn=90
 ```
 
-`assemble`來源不限作者，可用任意ready作品，包括自己的作品。以來源空間原點定位；`turn=0|90|180|270`繞Z軸旋轉後，把旋轉後空間原點放在`at`。只複製非空voxel，空白不擦掉目的地；不縮放。越界整筆拒絕，碰到既有voxel預設整筆拒絕，明確給`overwrite=1`才覆蓋。每筆最多1,000,000格變動。
+`assemble`來源不限作者，可用任意ready作品，包括自己的作品。以來源空間原點定位；`mirror=x|y|z`（可組合，如 `xz`；TASK-0497）先在來源自己的框裡翻面，`turn=0|90|180|270`再繞Z軸旋轉，把旋轉後空間原點放在`at`（翻面不改外框 ⇒ 放不放得進跟沒翻一樣）。只複製非空voxel，空白不擦掉目的地；不縮放。越界整筆拒絕，碰到既有voxel預設整筆拒絕，明確給`overwrite=1`才覆蓋。每筆最多1,000,000格變動。
 
 放入時保存原色與來源版本快照。`work show`及GUI作品說明自動產生Credit，列來源作品ID、名稱、作者、版本與來源已有的上游Credit；同一來源版本去重，重複放三張床仍列一次。Undo該次組裝會移除該次來源的Credit，其他仍有效的同來源組裝會保留Credit；Redo恢復。這是事件推導的說明區，不覆寫作者親筆notes。後續修改來源，不會悄悄改動已放入的零件；來源不在時仍可重播與顯示Credit。
 
@@ -407,7 +407,7 @@ senate cmd sculpture --arg op=export --arg work=<作品> --arg format=obj --arg 
 
 - **diff**：放（空 → 有）／刻（有 → 空）／換色（有 → 另一色），分顏色列，外加區間裡各 op 幾刀。只比兩端 ⇒ 中間放了又刻掉的格不算。`region=` 只算框裡的；`out=`（絕對路徑）寫差異清單，每行 `x,y,z,before,after`（0 ＝ 空，照 x→y→z 排）。from 晚於 to ⇒ exit 2（要反過來看就對調）。⛔ 不吃 mark／hide／only。不讀不寫快取。
 - **stats structure=1**：元件數（**6 連通** ＝ 面相鄰，附最小幾塊的位置與外框）、封閉空腔（外框外擴一格後從角落灌不進去的空格，6 連通，附最大幾塊）。定義與 scipy `ndimage.label` 預設相同。外框超過 2.68 億格 ⇒ 空腔印 `skipped` 並說原因（⛔ 不印 0），給 `region` 縮小再量。
-- **stats mirror=軸:中心**：`y:160` ＝ 以第 160 格的中心為鏡面（c ↔ 320−c）；`y:159.5` ＝ 159 與 160 兩格之間。分別數「低側有而高側空」「高側有而低側空」「兩邊都有但顏色不同」，附幾個位置。給了 `region` ⇒ 鏡像落在框外的格不比（計 `mirror_skipped`）。
+- **stats mirror=軸:中心**：`y:160` ＝ 以第 160 格的中心為鏡面（c ↔ 320−c）；`y:159.5` ＝ 159 與 160 兩格之間。分別數「低側有而高側空」「高側有而低側空」「兩邊都有但顏色不同」，附幾個位置。給了 `region` ⇒ 鏡像落在框外的格不比（計 `mirror_skipped`）。　⚠ 同一個鍵在 `work sub=link|assemble` 是**翻面**（`mirror=x`，§9.4.4），在 stats 是**量**鏡像差（`軸:中心`）——兩種寫法互不通用，給錯會 exit 2。
 - `region`／`exclude_color` 在 stats 只限定結構讀數（嚴格解析，寫錯 ⇒ exit 2）；總數那兩行照舊是整件。什麼都沒給 ⇒ 輸出跟以前逐字相同。
 - **export format=list**：每行 `x,y,z,color`（絕對座標，照 x→y→z 排，開頭 `#` 註解；有關聯 ⇒ 每條一行 `# link 路徑 作品@版本`），`sha256` 印在回傳值。這個檔就是 stampvox 吃的格式 ⇒ `at=0,0,0` 原樣貼得回去。吃 region／exclude_color／mark／hide／only／draft／links。空的也照寫（只有檔頭）。
 - ⭐ **外部程式（設計用的 python）讀作品一律走它**，⛔ 不要自己重播 events：`export format=list links=none [mark=<事件>.json]` ＝ 引擎重播到那一刀（含）的本作品。workedit（草稿 apply、undo、move…）與之後新加的 op 都由引擎認。自寫的重播器只留來當「跟引擎不同源的證人」對拍（憲法號 `design/tools/replay.py`：`replay()` 走 CLI、`replay_witness()` 純 python）。
@@ -448,6 +448,7 @@ senate cmd sculpture --arg op=work --arg sub=discard --arg work=<作品> --arg p
 ```bash
 senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=甲板2 --arg source_work=ship-deck2 --arg at=0,0,0
 senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=砲L1 --arg source_work=cannon --arg at=310,40,82 --arg turn=90
+senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=肘R1 --arg source_work=knee --arg at=900,280,60 --arg mirror=y   # 右舷用左舷那一件翻面
 senate cmd sculpture --arg op=work --arg sub=link --arg work=ship --arg persona=<P> --arg name=甲板2 --arg enabled=0   # 只改開關
 senate cmd sculpture --arg op=work --arg sub=links --arg work=ship                                                     # 整棵樹（巢狀、開關、尺寸變過、開著草稿）
 senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2 --arg out=<png>                 # 拿掉甲板2（連同底下）看裡面
@@ -458,6 +459,12 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
 - **選擇**：`links=none|all|路徑,…`（all 含停用的；點名的連同它的祖先、它底下照各自的開關）、`hide_links=路徑,…|self`（self ＝ 不畫本作品自己的格）；路徑用 `/` 分層。打錯名字 ⇒ exit 2。只給觀測類 op（view／slice／section／stats／export）。
 - **誰蓋誰**：每一層都是「自己的格優先，關聯照清單順序、先到的贏」；被蓋掉、越界的格都計數＋附位置（回傳值 `link_overlap`／`link_clipped`，回報列每一條）。
 - **轉向**：`turn` 繞 Z（同 assemble），軸心固定用**加關聯當下**那件作品的尺寸（它之後長大，整件不會平移；長出去的格越界 ⇒ 丟掉並計數，`sub=links` 標「尺寸變過」）。加關聯時要整件放得進來；縮小父作品會切掉關聯 ⇒ 擋。
+- **鏡像**（TASK-0497）：`mirror=x|y|z` 或組合（`xz`；`""`／`none` ＝ 不翻），**先**在那件作品自己的框（加關聯當下的尺寸）裡翻面——x ⇒ W−1−x、y ⇒ H−1−y、z ⇒ D−1−z——**再** `turn`、再放到 `at`。公式與 assemble 同一支（`SCP_SculptLinks.Transform`）。
+  - ⭐ 左右對稱的零件只做一份：一邊照原樣，另一邊 `mirror=x`（沿船長方向對稱就 `mirror=y`）放在對稱位置 ⇒ 兩邊逐格鏡像相同、零件改了兩邊一起變。對稱位置：父作品寬 W、零件寬 w、一邊 at.x＝a ⇒ 另一邊 at.x＝W−a−w。
+  - 巢狀每一層各自翻／轉，照「在自己的座標裡組好 → 翻 → 轉 → 放」一層一層疊；攤平（import／assemble）與觀測現組逐格相同。
+  - 只改開關（`enabled`／`note`）不動鏡像；改鏡像跟改位置一樣要 `overwrite=1`。只有繞 Z 的 0／90／180／270 是旋轉；繞 X／Y 的效果用鏡像組合（例 `mirror=yz` ＝ 繞 X 轉 180°）。
+  - ⚠ links.json 只要有一條用了鏡像就寫 **schema 2**（沒用的維持 1）：沒更新的 senate.exe 讀到會 exit 2「schema=2」，⛔ 而不是默默畫成沒翻面的零件。
+  - 實例：`apex-one-constitution-mirror-hall`《憲法號的鏡廳》—— basecamp 兩版憲法號，一對 `mirror=z` 龍骨相接、一對 `mirror=x` 船頭相對（常駐展覽）。
 - **寫入只動本作品**：父作品的刀碰不到被關聯的作品（要改去改那件作品）；落子後回報 `linked_hits`（這一刀的範圍裡有幾格是關聯進來的，沒被動到）。
 - **擋下**：成環（含隔好幾層、含停用的關聯）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`、非作者改關聯。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
 - **攤平**：`work sub=import`（匯入展區）與 `work sub=assemble`（來源有關聯）照 enabled 攤平成實際 voxel，Credit 逐件記；import 的 revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上。`work show` 另給 `composed_revision`／`composed_voxels`；Credit 多一段「關聯（現組）」。export 檔頭記每條用了哪個版本。

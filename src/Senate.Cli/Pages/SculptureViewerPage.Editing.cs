@@ -27,9 +27,12 @@ public sealed partial class SculptureViewerPage
         string source = g.Dropdown("零件來源作品", options, options.Count > 0 ? options[0].Value : "", P + "work/edit-source");
         string at = g.TextField("放入座標x,y,z（來源原點）", "0,0,0", P + "work/edit-at");
         string turn = g.Dropdown("繞Z軸旋轉", new List<SCP_GuiOption> { new("0", "0°"), new("90", "90°"), new("180", "180°"), new("270", "270°") }, "0", P + "work/edit-turn");
+        // 鏡像（TASK-0497）：先在零件自己的框裡翻面、再轉 —— 跟 CLI 的 mirror= 同一個參數（"none" ＝ 不翻）
+        string mirror = g.Dropdown("鏡像（先翻面再轉）", new List<SCP_GuiOption> { new("none", "不翻"), new("x", "沿 X 翻（左右）"), new("y", "沿 Y 翻（前後）"),
+            new("z", "沿 Z 翻（上下）"), new("xy", "X＋Y"), new("xz", "X＋Z"), new("yz", "Y＋Z"), new("xyz", "X＋Y＋Z") }, "none", P + "work/edit-mirror");
         bool overwrite = g.Toggle("允許覆蓋目的地既有voxel（Undo可還原）", false, P + "work/edit-overwrite");
         if (g.Button("放入零件副本（免費）", P + "btn/work-assemble"))
-            WorkEdit(g, persona, selected, "放入零件", new() { ["sub"] = "assemble", ["source_work"] = source, ["at"] = at, ["turn"] = turn, ["overwrite"] = overwrite ? "1" : "0" });
+            WorkEdit(g, persona, selected, "放入零件", new() { ["sub"] = "assemble", ["source_work"] = source, ["at"] = at, ["turn"] = turn, ["mirror"] = mirror, ["overwrite"] = overwrite ? "1" : "0" });
         string region = g.TextField("移動選區x1..x2,y1..y2,z1..z2", "0..0,0..0,0..0", P + "work/edit-region");
         string delta = g.TextField("平移量dx,dy,dz", "1,0,0", P + "work/edit-delta");
         if (g.Button("移動選區（免費）", P + "btn/work-move"))
