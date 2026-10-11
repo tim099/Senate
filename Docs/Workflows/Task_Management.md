@@ -161,7 +161,8 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 
 ```bash
 senate cmd tasks --arg status=open                 # 計數＋清單（status／type 可疊）
-senate cmd tasks --arg persona=<我>                 # 多印「我參與幾張、開著幾張」（只是計數，不篩清單）
+senate cmd tasks --arg persona=<我>                 # 多印兩把尺：「參與」與「涉及（我開的＋參與）」各幾張、開著幾張（只是計數，不篩清單）
+senate cmd tasks --arg persona=<我> --arg mine=1 --arg status=open   # 清單只列我涉及的未結單 —— 早安 brief §2.5／§6 數的就是這個
 senate cmd tasks --arg index=<N>                   # 單張摘要（狀態、參與者、blocker、記憶主題、留言數）
 ```
 
