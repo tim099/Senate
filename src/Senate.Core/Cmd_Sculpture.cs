@@ -44,6 +44,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "落子類（box／carve／carvevox／stamp2d／stampimg／stampvox）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
         + "· stampvox：一刀落一塊任意形狀的 3D 格子（斜的、彎的木料）—— 清單每行 `x,y,z,color`（相對 at；`#` 註解），expect_pixels ＝ 清單格數。\n"
         + "· carvevox：照清單刻（stampvox 的反向）—— 每行 `x,y,z` 或 `x,y,z,color`（帶 color ＝ 那一格現在要是這個顏色才刻，對不上整刀拒絕）；清單外一格都不動。\n"
+        + "· spray：噴漆（只換色、不放不刻，作品內免費）—— 射線 from＋dir／from＋to／path（curve=smooth 平滑）打出去，碰到的第一格（往裡 depth 層）換成 color；"
+        + "sweep／sweep_path（沿一條線，例：貼著舷弧）＋sweep2（帶寬）平行複製 ⇒ 一刀噴一整條；only_color 只噴哪些原色。預設只預覽，落刀帶 confirm=1 expect_plan=<預覽的 plan_sha256>。\n"
         + "· diff：兩個時間點之間放／刻／換色了幾格（分顏色）—— from=／to= 給標記（name、name:begin、name:end）、start、now 或事件檔 *.json；out= 寫差異清單。\n"
         + "· stats：structure=1 多報元件數與封閉空腔（6 連通）、mirror=y:160 量鏡像差；region／exclude_color 限定範圍；吃 mark／hide／only。\n"
         + "· export format=list：純格子清單 `x,y,z,color`（設計程式直接讀；stampvox at=0,0,0 可原樣貼回）；外部程式讀作品走它（mark=<事件>.json ＝ 重播到那一刀）。\n"
@@ -74,7 +76,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     public const string SlicePngName = "sculpture_slice.png";
 
     static readonly string[] s_Ops =
-        { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox", "view", "slice", "section", "stats", "diff", "export", "exhibit", "render-profile", "work" };
+        { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox", "spray", "view", "slice", "section", "stats", "diff", "export", "exhibit", "render-profile", "work" };
 
     /// <summary>
     /// 分享的發文端（預設 `tavern-post`）。⚠ 只給自我對拍換成探針 —— 淨室裡不可以真的發進酒館。
@@ -130,16 +132,25 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
         new SCP_CmdArgSpec("note", "work mark／link：備註"),
-        new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽"),
+        new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽／spray：1 才落刀（要帶 expect_plan）；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
-        new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數"),
+        new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數／spray：預覽的換色格數（選帶）"),
+        new SCP_CmdArgSpec("expect_plan", "spray confirm：預覽印的 plan_sha256（換色清單的雜湊）—— 對不上 ⇒ exit 4、零事件"),
+        new SCP_CmdArgSpec("dir", "spray：射線方向 dx,dy,dz（配 from；打到空間邊緣為止）"),
+        new SCP_CmdArgSpec("path", "spray：沿折線打 x,y,z;x,y,z;…（curve=smooth ⇒ 平滑曲線通過每個點）"),
+        new SCP_CmdArgSpec("curve", "spray：path／sweep_path 是折線 line（預設）或平滑曲線 smooth", iChoices: new[] { "line", "smooth" }),
+        new SCP_CmdArgSpec("sweep", "spray：沿這個向量平行複製射線（0..向量，每步 ≤ 1 格）"),
+        new SCP_CmdArgSpec("sweep_path", "spray：沿這條線平行複製射線 x,y,z;x,y,z;…（偏移 ＝ 線上的點 − 第一點 ⇒ from 通常給第一點；例：貼著舷弧）"),
+        new SCP_CmdArgSpec("sweep2", "spray：再沿第二個向量複製（面／帶寬）"),
+        new SCP_CmdArgSpec("only_color", "spray：只噴這些原色（逗號分隔）—— 打中的第一格不是這些顏色 ⇒ 那一道被擋下、什麼都不換"),
+        new SCP_CmdArgSpec("depth", "spray：從打中那格往裡噴幾層（預設 1；遇到空格或 only_color 以外就停）"),
         new SCP_CmdArgSpec("x1", "box/carve：AABB 一角 x（共用展區 0-255；作品 0..尺寸-1）"),
         new SCP_CmdArgSpec("x2", "box/carve：另一角 x"),
         new SCP_CmdArgSpec("y1", "box/carve：一角 y"),
         new SCP_CmdArgSpec("y2", "box/carve：另一角 y"),
         new SCP_CmdArgSpec("z1", "box/carve：一角 z"),
         new SCP_CmdArgSpec("z2", "box/carve：另一角 z"),
-        new SCP_CmdArgSpec("color", "box：顏色 index（0-255，RGB332）", iDefault: "19"),
+        new SCP_CmdArgSpec("color", "box：顏色 index（0-255，RGB332）／spray：噴漆色 1..255（必須明寫）", iDefault: "19"),
         new SCP_CmdArgSpec("src_x1", "stamp2d：2D 畫布來源區域一角 x（0 起算，上限是畫布實際寬度 −1，見 canvas op=size）"),
         new SCP_CmdArgSpec("src_y1", "stamp2d：一角 y"),
         new SCP_CmdArgSpec("src_x2", "stamp2d：另一角 x"),
@@ -207,7 +218,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("ref_flip", "section：1 ＝ 參考圖先左右鏡像（圖紙的方向跟視圖相反時）"),
         new SCP_CmdArgSpec("probe", "section：參考圖像素 x,y;x,y;… ⇒ 印出它落在作品哪一格、離最近的 voxel 差幾格"),
         new SCP_CmdArgSpec("voxel_alpha", "section：voxel 疊色的不透明度 0–1（有參考圖預設 0.55，沒有預設 1）"),
-        new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑／diff：差異清單（每行 x,y,z,before,after）"),
+        new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑／diff：差異清單（每行 x,y,z,before,after）／spray：換色清單（同 diff 的格式；**絕對路徑**）"),
         new SCP_CmdArgSpec("format", "export：obj|vox|list（list ＝ 純格子清單 x,y,z,color）", iChoices: new[] { "obj", "vox", "list" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
@@ -222,9 +233,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
         new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）"),
+        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）／spray：射線起點 x,y,z（整數 ＝ 格心，可帶小數）"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("to", "render-profile copy：目標設定名／diff：終點（同 from 的寫法；不給 ＝ now）"),
+        new SCP_CmdArgSpec("to", "render-profile copy：目標設定名／diff：終點（同 from 的寫法；不給 ＝ now）／spray：射線終點 x,y,z（含終點那格）"),
         new SCP_CmdArgSpec("background", "render-profile set：純色背景 #RRGGBB（skybox=none 時用）"),
         new SCP_CmdArgSpec("lights", "view／render-profile set：整組燈（JSON 陣列，取代下層的燈）"),
         new SCP_CmdArgSpec("light_add", "view／render-profile set：加燈 x,y,z[;#rrggbb[;強度[;shadow 0|1]]]，多盞用 | 串（疊在下層的燈之後）"),
@@ -281,6 +292,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 case "stampimg":
                 case "stampvox":
                     aPayload = OpPlace(aCtx); break;
+                case "spray": aPayload = OpSpray(aCtx); break;
                 case "view": aPayload = OpView(aCtx); break;
                 case "slice": aPayload = OpSlice(aCtx); break;
                 case "section": aPayload = OpSection(aCtx); break;

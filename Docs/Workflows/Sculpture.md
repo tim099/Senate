@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -41,6 +41,7 @@ related:
 | `stamp2d` | 把 2D 共用畫布某區域貼進 3D（透明＝不放） | ⌈實際落地/100⌉ | 必填 |
 | `stampimg` | 把一張 RGBA PNG 貼進 3D | ⌈實際落地/100⌉ | 必填 |
 | `stampvox` | 一刀落一塊任意形狀的 3D 格子（`voxels=<清單>`，見下）—— 斜放、彎曲、不沿軸的東西不必拆成幾十片貼片（TASK-0487） | ⌈實際落地/100⌉ | 必填 |
+| `spray` | 噴漆：射線／一束／沿線打出去，碰到的第一格換色（只換色、不放不刻；預覽 → `confirm=1 expect_plan=`，§9.4.5，TASK-0495） | 免費（只在作品裡） | 必填 |
 | `view` | 渲染一張圖（region／exhibit／鏡頭／燈／天空） | 免費 | 沒給 `out` 時必填 |
 | `slice` | region 內 voxel 原色壓成 PNG（可原樣貼回） | 免費 | 沒給 `out` 時必填 |
 | `section` | 剖面圖（垂直軸朝上：側視／正視是 Z、俯視／仰視是 Y；網格、比例尺）＋參考圖疊圖校準＋探針讀數（見 §5.2） | 免費 | 沒給 `out` 時必填 |
@@ -463,6 +464,33 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
 - **效能與鎖**：被關聯的作品讀它自己的快取（只讀、不寫回）；同一件只讀一次（28 門砲關聯同一件 cannon 也只讀一次）。鎖：作品＋關聯樹上所有作品依 ID 排序一次拿齊（全系統只有這一種鎖序）。
 - `diff` 只比本作品自己的事件（不含關聯）；`mark` 回到過去時，被關聯的作品照現在。觀測頁：「只組這些關聯／拿掉這些關聯」兩欄；被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組。
 - ⭐ 慣例（甲板這種切出來的區域）：子作品尺寸 ＝ 父作品、`at=0,0,0`、`turn=0` ⇒ 子作品直接用父作品的座標雕，剖面校準也能共用。
+
+### 9.4.5 噴漆 —— 打出去，碰到哪格就漆哪格（TASK-0495）
+
+`op=spray`：射線打出去，碰到的第一格（往裡 `depth` 層）換成 `color`。**只換色、不放不刻**（實心格的集合一格不差），作品內免費、只有作者、共用展區不收。船殼塗裝這種「船外看得到的那一層」不必先在設計端算出來再 stampvox overwrite —— 從外面打過去就是那一層。
+
+```bash
+# 預覽（預設，零事件）：會換哪幾格、幾格、分原色；out= 寫換色清單（x,y,z,before,after）
+senate cmd sculpture --arg op=spray --arg work=<作品> --arg persona=<P> --arg color=255 --arg from=0,0,62 --arg dir=0,1,0 --arg sweep=1023,0,0 --arg sweep2=0,0,7
+# 確認 ⇒ 同樣的參數加 confirm=1 與預覽印的 plan_sha256（對不上 ⇒ exit 4、零事件）
+senate cmd sculpture --arg op=spray --arg work=<作品> --arg persona=<P> --arg color=255 --arg from=0,0,62 --arg dir=0,1,0 --arg sweep=1023,0,0 --arg sweep2=0,0,7 --arg confirm=1 --arg expect_plan=<sha>
+# 一整條跟著舷弧走：基準射線沿 sweep_path 平行複製（偏移 ＝ 線上的點 − 第一點 ⇒ from 給第一點），sweep2 ＝ 帶寬
+senate cmd sculpture --arg op=spray --arg work=<作品> --arg persona=<P> --arg color=255 --arg from=0,-1,60 --arg dir=0,1,0 --arg sweep_path="0,-1,60;300,-1,56;600,-1,62" --arg curve=smooth --arg sweep2=0,0,7
+# 沿折線／曲線打（轉彎之後才碰到的那格）
+senate cmd sculpture --arg op=spray --arg work=<作品> --arg persona=<P> --arg color=36 --arg path="6,1,1;6,1,6;6,9,6"
+```
+
+- **射線三選一**：`from`＋`dir`（打到空間邊緣）／`from`＋`to`（線段，含終點那格）／`path=x,y,z;…`（折線；`curve=smooth` ⇒ Catmull-Rom 平滑曲線通過每個點）。
+- **一束**：`sweep=dx,dy,dz`（沿向量）或 `sweep_path=x,y,z;…`（沿一條線，`curve=smooth` 也吃）擇一，每步 ≤ 1 格；`sweep2` 再沿第二個方向（面、帶寬）。回報 `rays`／`rays_hit`／`rays_missed`／`rays_blocked`。每刀最多 1,000,000 道、1,000,000 格。
+- **打中** ＝ 沿路第一個實心格（起點那格也算）。`only_color=a,b` ⇒ 那一格的原色不在裡面就**擋下**（漆不穿牆：那一道什麼都不換）。`depth=N` ⇒ 往裡連續漆 N 層，遇到空格或 only_color 以外就停。本來就是噴漆色的格報 `already`、不進事件。所有射線看的是「噴之前」的作品，同一格只換一次。
+- **座標與接縫**（寫死的規則）：整數 k ＝ 第 k 格的**中心**（可帶小數）。
+  ① 起點剛好在兩格的接縫上 ⇒ 算**前進方向**那一格；
+  ② 射線貼著接縫面平行走 ⇒ 算**座標較大**那一側（x=4.5 走在 x=5、x=7.5 走在 x=8）；
+  ③ 剛好穿過格的邊或角 ⇒ 一步同時跨過，只被擦到邊／角、沒穿過內部的格**不算打到**。
+- **預覽 → 確認**：預覽印 `plan_sha256`（換色清單的雜湊）；`confirm=1` 必帶 `expect_plan`（可再帶 `expect_placed` ＝ 換色格數）⇒ 落刀的格跟看過的那份逐格相同，預覽之後作品或參數變了就擋下。什麼都沒換到 ⇒ 預覽回 0、confirm exit 3，零事件。
+- **草稿**：`draft=1` ⇒ 噴在草稿裡（沒開就開），看、undo，OK 再 `sub=apply`（§9.4.3）。
+- **事件** ＝ 一筆 workedit（action=spray，before／after 逐格）＋ 最上層 `source`（射線參數與讀數）⇒ **沒更新的 senate.exe 也重播得出來**（edit 只用舊版就有的欄位）；`work sub=undo／redo` 照常；`diff` 的 op 統計標 `workedit:spray`。
+- 讀數（憲法號事件的副本，零寫入）：船側整面（204,800 道）預覽約 3 秒，打中 65,989 道、換 61,518 格；左右舷各噴一次讀數相同（船是對稱的）。
 
 ### 9.5 建築與家具的相對比例尺
 

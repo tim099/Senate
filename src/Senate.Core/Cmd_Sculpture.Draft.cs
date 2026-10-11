@@ -14,7 +14,7 @@ namespace Senate.Core;
 public sealed partial class Cmd_Sculpture
 {
     /// <summary>draft=1 會落在草稿的寫入類 op。</summary>
-    static readonly string[] DraftWriteOps = { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox" };
+    static readonly string[] DraftWriteOps = { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox", "spray" };
     /// <summary>draft=1 看「作品＋草稿」的觀測類 op。</summary>
     static readonly string[] DraftViewOps = { "view", "slice", "section", "stats", "export", "diff" };
     /// <summary>op=work 底下吃 draft=1 的 sub（只動草稿）。</summary>
