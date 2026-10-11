@@ -4957,8 +4957,13 @@ public static partial class SelfTest
             bool aStep1 = aR3.Seq == 3 && aP1 != null && aP1.Length == 3 && aUsed1 && aStale1 == 0;
 
             // 🔴 反向對照：繞過寫入端丟一個檔（不經 Refresh）⇒ 落後看得見、答案照樣對
+            // ⚠ 丟完把目錄 mtime 設回丟之前（TASK-0477）：目錄 mtime 的刻度約 1ms，
+            //   300 次連續建檔有 209 次 mtime 一格不動（2026-10-11 量）⇒ 「同一刻度內又多一檔」是常態不是邊角。
+            //   不設回去的話，這一格量到什麼取決於 Refresh 跑得比 1ms 快還是慢（JIT 熱的全套裡才紅）。
             string aDay = Path.GetDirectoryName(aR3.FullPath)!;
+            DateTime aDayMtime = Directory.GetLastWriteTimeUtc(aDay);
             File.WriteAllText(Path.Combine(aDay, "00000004.json"), "{\"body\":\"繞過寫入端\"}", new UTF8Encoding(false));
+            Directory.SetLastWriteTimeUtc(aDay, aDayMtime);
             string[]? aP2 = SCP_TavernMsgIndex.TryGetOrderedPaths(aTmp, aRoom, out _, out int aStale2);
             bool aStep2 = aP2 != null && aP2.Length == 4 && aStale2 == 1;
 
