@@ -313,6 +313,11 @@ public sealed class GuiImGuiRenderer
                 if (TitleFont.HasValue) ImGui.PopFont();
                 break;
 
+            case SCP_GuiNodeKind.Label when iNode.Arrow == SCP_GuiArrow.Spacer:
+                // 折疊三角形的佔位（TASK-0500）：跟 ArrowButton 一樣是邊長＝框高的方塊 ⇒ 葉子列的勾選框跟有三角形的列對齊
+                ImGui.Dummy(new Vector2(ImGui.GetFrameHeight(), ImGui.GetFrameHeight()));
+                break;
+
             case SCP_GuiNodeKind.Label:
                 if (iNode.Wrap) ImGui.PushTextWrapPos(0f);
                 ImGui.TextUnformatted(T(iNode.Text));
@@ -424,6 +429,12 @@ public sealed class GuiImGuiRenderer
 
             case SCP_GuiNodeKind.Space:
                 ImGui.Spacing();
+                break;
+
+            case SCP_GuiNodeKind.Button when iNode.Arrow == SCP_GuiArrow.Right || iNode.Arrow == SCP_GuiArrow.Down:
+                // 樹的折疊三角形（TASK-0500）：原生 ArrowButton ＝ 方形、邊長＝框高 ＝ 勾選框的大小（⛔ 不套按鈕最小寬度）
+                if (ImGui.ArrowButton("##" + iNode.Id, iNode.Arrow == SCP_GuiArrow.Down ? ImGuiDir.Down : ImGuiDir.Right))
+                    ClickedId = iNode.Id;
                 break;
 
             case SCP_GuiNodeKind.Button:

@@ -138,7 +138,7 @@ public sealed partial class SculptureViewerPage
     // ===========================================================
     const string TLinkPrefix = P + "t/link/";
     static string LinkToggleId(string iWork, string iPath) => TLinkPrefix + iWork + "/" + iPath;
-    /// <summary>折疊狀態（"0" ＝ 折起來；沒動過 ＝ 展開）—— 也帶作品 id。</summary>
+    /// <summary>折疊狀態（"1" ＝ 展開；沒動過 ＝ 折起來，Tim 2026-10-11「預設折疊」）—— 也帶作品 id。</summary>
     static string LinkFoldId(string iWork, string iPath) => P + "f/linkfold/" + iWork + "/" + iPath;
 
     /// <summary>關聯樹攤平成的一列（照樹的順序：父在子前）。</summary>
@@ -262,7 +262,7 @@ public sealed partial class SculptureViewerPage
         bool textGiven = g.FieldValue(FLinks, "").Trim().Length > 0 || g.FieldValue(FHideLinks, "").Trim().Length > 0;
         g.Note(textGiven
             ? "⚠ 上面的 links=／hide_links= 文字欄有填 ⇒ **以文字欄為準**，下面這些開關這一次不生效（清空文字欄就換回開關）。"
-            : "一條一個開關（像 Unity 的 Hierarchy）：預設照那一條在作品裡的開關；關掉上一層 ⇒ 底下每一層都不畫，但它們自己的勾照留（標「上層關著」），上一層打開就照自己的勾回來。▶／▼ 只折疊列表、不影響畫不畫。⛔ 開關與折疊都不寫回作品（長期開關用 work sub=link enabled=0|1）。");
+            : "一條一個開關（像 Unity 的 Hierarchy）：預設照那一條在作品裡的開關；關掉上一層 ⇒ 底下每一層都不畫，但它們自己的勾照留（標「上層關著」），上一層打開就照自己的勾回來。▶／▼ 只折疊列表、不影響畫不畫（預設折起來）。⛔ 開關與折疊都不寫回作品（長期開關用 work sub=link enabled=0|1）。");
         bool anyParent = false;
         foreach (var r in rows) anyParent |= r.Depth > 0;
         if (anyParent)
@@ -272,7 +272,7 @@ public sealed partial class SculptureViewerPage
                 if (g.Button("全部展開", P + "btn/linkfold-all-open")) foreach (var r in rows) g.SetField(LinkFoldId(id, r.Path), "1");
                 if (g.Button("全部折疊", P + "btn/linkfold-all-close")) foreach (var r in rows) g.SetField(LinkFoldId(id, r.Path), "0");
             }
-        var view = HierarchyView(rows, r => g.ToggleValue(LinkToggleId(id, r.Path), r.Enabled), r => g.FieldValue(LinkFoldId(id, r.Path), "1") != "0");
+        var view = HierarchyView(rows, r => g.ToggleValue(LinkToggleId(id, r.Path), r.Enabled), r => g.FieldValue(LinkFoldId(id, r.Path), "0") == "1");   // 預設折起來（Tim）：只有按過展開的才是 "1"
         foreach (var v in view)
         {
             using (g.Row())
@@ -280,10 +280,10 @@ public sealed partial class SculptureViewerPage
                 if (v.Row.Depth > 0) g.Label(new string('　', v.Row.Depth * 2));
                 if (v.HasChildren)
                 {
-                    if (g.Button(v.Open ? "▼" : "▶", P + "btn/linkfold/" + id + "/" + v.Row.Path))
+                    if (g.FoldArrow(v.Open, P + "btn/linkfold/" + id + "/" + v.Row.Path))
                         g.SetField(LinkFoldId(id, v.Row.Path), v.Open ? "0" : "1");
                 }
-                else g.Label("　");
+                else g.FoldArrowSpacer();
                 // 勾 ＝ 自己的勾（activeSelf）；上層關著 ⇒ 勾照留、標「不畫」（activeInHierarchy）
                 string tail = (v.SelfOn && !v.Drawn ? "　◌ 上層關著 ⇒ 不畫" : "") + (!v.Open ? "　（折疊：底下 " + v.Descendants + " 條）" : "");
                 g.Toggle(v.Row.Label + tail, v.Row.Enabled, LinkToggleId(id, v.Row.Path));
