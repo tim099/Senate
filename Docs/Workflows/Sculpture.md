@@ -1,8 +1,8 @@
 ---
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
-description: 256³ 共用 voxel 空間怎麼雕：十三個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
+description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -31,20 +31,22 @@ related:
 
 不要由skill直接改work.json、銀行分錄或券庫；沒有成功回執照CLI提示處理，不自行宣告收費或領酬成功。
 
-## 1. 十三個 op
+## 1. 十五個 op
 
 | op | 做什麼 | 收費 | persona |
 |---|---|---|---|
 | `box` | 填一個 AABB（兩角 x1..z2；共用展區 0-255、作品 0..尺寸-1；禁覆蓋，已有的格子跳過） | ⌈實際落地/100⌉ | 必填 |
 | `carve` | 挖掉一個 AABB | ⌈實際挖掉/100⌉ | 必填 |
+| `carvevox` | 照清單刻（`voxels=<清單>`，stampvox 的反向）—— 只刻清單上的格，清單外一格都不動（TASK-0492，見下） | ⌈實際挖掉/100⌉ | 必填 |
 | `stamp2d` | 把 2D 共用畫布某區域貼進 3D（透明＝不放） | ⌈實際落地/100⌉ | 必填 |
 | `stampimg` | 把一張 RGBA PNG 貼進 3D | ⌈實際落地/100⌉ | 必填 |
 | `stampvox` | 一刀落一塊任意形狀的 3D 格子（`voxels=<清單>`，見下）—— 斜放、彎曲、不沿軸的東西不必拆成幾十片貼片（TASK-0487） | ⌈實際落地/100⌉ | 必填 |
 | `view` | 渲染一張圖（region／exhibit／鏡頭／燈／天空） | 免費 | 沒給 `out` 時必填 |
 | `slice` | region 內 voxel 原色壓成 PNG（可原樣貼回） | 免費 | 沒給 `out` 時必填 |
 | `section` | 剖面圖（垂直軸朝上：側視／正視是 Z、俯視／仰視是 Y；網格、比例尺）＋參考圖疊圖校準＋探針讀數（見 §5.2） | 免費 | 沒給 `out` 時必填 |
-| `stats` | 總數與使用率 | 免費 | 選填 |
-| `export` | 匯出 `.obj`（＋`.mtl`）或 MagicaVoxel `.vox`；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用） | 免費 | 選填 |
+| `stats` | 總數與使用率；`structure=1` 多報元件數與封閉空腔、`mirror=y:160` 量鏡像差（§9.4.2） | 免費 | 選填 |
+| `diff` | 兩個時間點之間放／刻／換色了幾格（分顏色）、可寫差異清單（`from=`／`to=`，§9.4.2） | 免費 | 選填 |
+| `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
 | `work` | 個人作品：`sub=create|list|show|update|import` | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
@@ -65,6 +67,16 @@ senate cmd sculpture --arg op=view --arg out=D:/tmp/a.png --arg exhibit=summit-l
 
 ```bash
 senate cmd sculpture --arg op=stampvox --arg work=<作品> --arg persona=<P> --arg voxels=D:/tmp/cant_frame_f+27.txt --arg at=0,0,0 --arg expect_pixels=1864
+```
+
+**carvevox 的清單**（TASK-0492）：每行 `x,y,z` 或 `x,y,z,color`（相對 `at`），解析規則同 stampvox（壞行、重複格 ⇒ exit 2 指出第幾行）。
+- 只刻清單上的格 —— **清單外一格都不動**；刻掉數 ＝ 清單裡現在有東西的格數（本來就空的計 `already_empty`，不算錯）。
+- 帶了 `color` 的行是**守門**：那一格現在不是這個顏色 ⇒ 整刀拒絕、零事件（清單跟作品對不上，⛔ 不猜哪一邊對）。拿 stampvox 用過的清單直接刻 ＝「把那一刀拿掉，而且確定它之後沒被改過」。
+- `expect_pixels` ＝ 清單格數；越界 ⇒ 拒絕，`allow_clip=1` 只刻界內的；`facing`／`thickness`／`overwrite`／`color` 給了就擋。
+- 事件記成 `op=carve`（逐格 `carved_voxels`，外加 `mode=list` 與清單 `sha256`）⇒ 沒更新的 senate.exe 也重播得出來，Undo 照常（連顏色回來）。
+
+```bash
+senate cmd sculpture --arg op=carvevox --arg work=<作品> --arg persona=<P> --arg voxels=D:/tmp/port_openings.txt --arg at=0,0,0 --arg expect_pixels=7924
 ```
 
 引擎是 in-process 的 SCP_Core `SCP_SculptEngine`（幾何／事件／快取／展品；不碰錢、不畫圖）。
@@ -285,7 +297,7 @@ senate cmd sculpture --arg op=view --arg work=meadow-chair --arg persona=meadow
 
 `size`可填單一邊長或`X,Y,Z`，每軸1–上限（§9.6），未指定時預設64³；既有書卡沒有分軸欄位時沿用原size。作者可透過`work sub=update size=...`免費調整空間，原有voxel的位置與顏色不變，不做縮放。縮小若會切掉任何現有voxel，整次更新拒絕，尺寸與筆記均不修改。建立付款或委託領酬重試不得改尺寸；先完成建立，再調整。尺寸變更會使匯入預覽版本失效，必須重新預覽。
 
-既有`box/carve/stamp2d/stampimg/stampvox/view/slice/stats/export`指定`work=<id>`即使用該作品空間，後續雕刻不再碰付款閘。作品box/carve座標每軸限0到該軸尺寸減1，越界拒絕；stamp沿用越界預設拒絕與顯式`allow_clip`規則。不存在或尚未完成付款的作品不能操作，絕不退回共用展區。渲染繼續使用共用／persona設定鏈，作品自動框住放大，整格地板以最長邊框住作品；export與slice同樣讀作品。作品內雕刻不自動發酒館預覽。GUI建立作品及保存尺寸與筆記均可輸入尺寸。
+既有`box/carve/carvevox/stamp2d/stampimg/stampvox/view/slice/stats/diff/export`指定`work=<id>`即使用該作品空間，後續雕刻不再碰付款閘。作品box/carve座標每軸限0到該軸尺寸減1，越界拒絕；stamp沿用越界預設拒絕與顯式`allow_clip`規則。不存在或尚未完成付款的作品不能操作，絕不退回共用展區。渲染繼續使用共用／persona設定鏈，作品自動框住放大，整格地板以最長邊框住作品；export與slice同樣讀作品。作品內雕刻不自動發酒館預覽。GUI建立作品及保存尺寸與筆記均可輸入尺寸。
 
 `box` 在個人作品中也不覆蓋已有 voxel；改 `color` 再填同一塊不會重上色。要更換材質，先以同一 `work` 的 `carve` 清除指定區域，再 `box` 填入新色。只清需要改色的範圍，避免連帶刪掉裝飾；填完以 `view` 回讀外觀，不能只憑成功回執判定新色已生效。作品匯入共用展區後，修改原稿不會改到已展出的副本。
 
@@ -374,6 +386,28 @@ senate cmd sculpture --arg op=stats --arg work=<作品> --arg only=甲板2      
 - `only=<區間>`：只留那一段改動到、現在還在的格。區間沒標結束 ⇒ 到現在為止。
 - 標記存在作品資料夾的 `marks.json`（作者寫的，入版控），⛔ **不進 events/** —— 舊版 senate.exe 照常重播這件作品。同名同類重複 ⇒ 擋下，要改加 `overwrite=1`；`marks.json` 壞了 ⇒ 擋下、不當成空的（寫回去會清掉所有標記）。
 - undo／redo 也是事件 ⇒ undo 之前標的那一刻，之後照樣看得到 undo 之前的樣子。
+
+### 9.4.2 檢查 —— 差異、結構讀數、純清單（TASK-0492）
+
+雕完要量的那幾樣，以前每件作品在 `design/tools/` 各寫一份 python；跟作品無關的這一半搬進引擎了（Tim 2026-10-11）。
+⛔ 沒搬的：哪一格算船殼、哪裡該白、會不會漏水 —— 那是作品自己的設計，留在作品裡；自寫的 events 重播也留著（它跟引擎不同源，拿來對拍才有用）。
+
+```bash
+# 兩個時間點之間改了什麼（from／to：標記 name、name:begin、name:end；start；now；事件檔 *.json）
+senate cmd sculpture --arg op=diff --arg work=<作品> --arg from=砲門:begin --arg to=砲門:end --arg out=D:/tmp/ports.diff.txt
+# 結構讀數（吃 mark／hide／only ⇒ 量某個階段結束時的樣子）
+senate cmd sculpture --arg op=stats --arg work=<作品> --arg structure=1 --arg mark=船殼:end
+senate cmd sculpture --arg op=stats --arg work=<作品> --arg mirror=y:160 --arg region=300..400,0..319,60..110
+# 純格子清單（設計程式直接讀，不必自己重播）
+senate cmd sculpture --arg op=export --arg work=<作品> --arg format=list --arg mark=階段六:end --arg out=D:/tmp/world.txt
+```
+
+- **diff**：放（空 → 有）／刻（有 → 空）／換色（有 → 另一色），分顏色列，外加區間裡各 op 幾刀。只比兩端 ⇒ 中間放了又刻掉的格不算。`region=` 只算框裡的；`out=`（絕對路徑）寫差異清單，每行 `x,y,z,before,after`（0 ＝ 空，照 x→y→z 排）。from 晚於 to ⇒ exit 2（要反過來看就對調）。⛔ 不吃 mark／hide／only。不讀不寫快取。
+- **stats structure=1**：元件數（**6 連通** ＝ 面相鄰，附最小幾塊的位置與外框）、封閉空腔（外框外擴一格後從角落灌不進去的空格，6 連通，附最大幾塊）。定義與 scipy `ndimage.label` 預設相同。外框超過 2.68 億格 ⇒ 空腔印 `skipped` 並說原因（⛔ 不印 0），給 `region` 縮小再量。
+- **stats mirror=軸:中心**：`y:160` ＝ 以第 160 格的中心為鏡面（c ↔ 320−c）；`y:159.5` ＝ 159 與 160 兩格之間。分別數「低側有而高側空」「高側有而低側空」「兩邊都有但顏色不同」，附幾個位置。給了 `region` ⇒ 鏡像落在框外的格不比（計 `mirror_skipped`）。
+- `region`／`exclude_color` 在 stats 只限定結構讀數（嚴格解析，寫錯 ⇒ exit 2）；總數那兩行照舊是整件。什麼都沒給 ⇒ 輸出跟以前逐字相同。
+- **export format=list**：每行 `x,y,z,color`（絕對座標，照 x→y→z 排，開頭兩行 `#` 註解），`sha256` 印在回傳值。這個檔就是 stampvox 吃的格式 ⇒ `at=0,0,0` 原樣貼得回去。吃 region／exclude_color／mark／hide／only。
+- 讀數（憲法號，2026-10-11）：階段六結束封閉空腔 0、階段七 2,252 個／5,668 格、階段八 2,200 個／5,602 格；砲門區間 44 刀 carve＋3 刀 stampvox ⇒ 放 424、刻 7,924、換色 36；清單與差異清單跟作品自寫的重播器逐格相同。
 
 ### 9.5 建築與家具的相對比例尺
 

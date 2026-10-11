@@ -286,6 +286,11 @@ public sealed partial class Cmd_Sculpture
             c.Result.AddValue("charged", "0");
             c.Result.AddValue("placed", PlacedOf(result).ToString(CultureInfo.InvariantCulture));
             c.Result.AddValue("event_file", EventFileOf(result));
+            if (result is SCP_SculptCarveResult { ListCount: > 0 } listCut)
+            {
+                c.Result.AddValue("list_count", listCut.ListCount.ToString(CultureInfo.InvariantCulture));
+                c.Result.AddValue("already_empty", listCut.AlreadyEmpty.ToString(CultureInfo.InvariantCulture));
+            }
             c.Result.AddValue("revision", SCP_SculptWorks.Revision(NewEngine(c).LoadSpace(), c.Work.Dimensions));
             return Finish(c, 0, "✓ 作品 " + work.id + " " + c.Op + " " + PlacedOf(result) + " voxels，免費");
         }

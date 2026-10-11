@@ -19,7 +19,9 @@ public sealed partial class Cmd_Sculpture
         if (aMark.Length == 0 && aHide.Length == 0 && aOnly.Length == 0) return true;
         if (Array.IndexOf(ViewTimeOps, c.Op) < 0)
         {
-            oError = "mark／hide／only 只給觀測類 op（view／slice／section／stats／export）—— 落子、刻、編輯一律落在現在的作品上";
+            oError = c.Op == "diff"
+                ? "diff 的兩端用 from=／to= 給（標記、start、now 或事件檔）—— 不吃 mark／hide／only"
+                : "mark／hide／only 只給觀測類 op（view／slice／section／stats／export）—— 落子、刻、編輯一律落在現在的作品上";
             return false;
         }
         if (c.Work == null) { oError = "時間標記是作品的 —— 要帶 work="; return false; }

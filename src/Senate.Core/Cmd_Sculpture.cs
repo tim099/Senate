@@ -41,8 +41,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "3D雕刻：作品可調尺寸、免費組裝他人零件與Credit、移動、Undo/Redo；任務建立免費領10 token且可開免費子作品；自發建立10、展區按落地收費";
 
     public override string Details =>
-        "落子類（box／carve／stamp2d／stampimg／stampvox）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
+        "落子類（box／carve／carvevox／stamp2d／stampimg／stampvox）要 persona；收費走 Senate 銀行與券（pay=auto：限時券 → 永久券 → 酒館券 → token）。\n"
         + "· stampvox：一刀落一塊任意形狀的 3D 格子（斜的、彎的木料）—— 清單每行 `x,y,z,color`（相對 at；`#` 註解），expect_pixels ＝ 清單格數。\n"
+        + "· carvevox：照清單刻（stampvox 的反向）—— 每行 `x,y,z` 或 `x,y,z,color`（帶 color ＝ 那一格現在要是這個顏色才刻，對不上整刀拒絕）；清單外一格都不動。\n"
+        + "· diff：兩個時間點之間放／刻／換色了幾格（分顏色）—— from=／to= 給標記（name、name:begin、name:end）、start、now 或事件檔 *.json；out= 寫差異清單。\n"
+        + "· stats：structure=1 多報元件數與封閉空腔（6 連通）、mirror=y:160 量鏡像差；region／exclude_color 限定範圍；吃 mark／hide／only。\n"
+        + "· export format=list：純格子清單 `x,y,z,color`（設計程式直接讀；stampvox at=0,0,0 可原樣貼回）。\n"
         + "· 預授權用**最壞費用**擋餘額 —— 不夠 ⇒ 引擎不跑、一毛不扣（exit 3）。\n"
         + "· 結算只對**實際落地**收費（禁覆蓋 skip 掉的不收）；同一刀只扣一次（兩把鎖包住整段）。\n"
         + "· 落子成功會用**落子者**的渲染設定渲一張全景、以落子者身分發進酒館（`tavern-post` 帶圖）；`share=0` 關掉。\n"
@@ -68,7 +72,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     public const string SlicePngName = "sculpture_slice.png";
 
     static readonly string[] s_Ops =
-        { "box", "carve", "stamp2d", "stampimg", "stampvox", "view", "slice", "section", "stats", "export", "exhibit", "render-profile", "work" };
+        { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox", "view", "slice", "section", "stats", "diff", "export", "exhibit", "render-profile", "work" };
 
     /// <summary>
     /// 分享的發文端（預設 `tavern-post`）。⚠ 只給自我對拍換成探針 —— 淨室裡不可以真的發進酒館。
@@ -136,20 +140,22 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("src_y2", "stamp2d：另一角 y"),
         new SCP_CmdArgSpec("png", "stampimg：RGBA PNG 路徑（透明像素不落地）"),
         new SCP_CmdArgSpec("resize", "stampimg：W,H（NEAREST）"),
-        new SCP_CmdArgSpec("voxels", "stampvox：3D 格子清單路徑（每行 x,y,z,color 相對 at；color 1..255；空行與 # 起頭略過；壞行／重複格 ⇒ 整刀拒絕）"),
-        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox ＝ 清單原點"),
+        new SCP_CmdArgSpec("voxels", "stampvox：3D 格子清單路徑（每行 x,y,z,color 相對 at；color 1..255；空行與 # 起頭略過；壞行／重複格 ⇒ 整刀拒絕）／carvevox：要刻的格（每行 x,y,z 或 x,y,z,color；帶 color ＝ 守門）"),
+        new SCP_CmdArgSpec("at", "stamp 類：圖左上角貼在哪（x,y,z）；stampvox／carvevox ＝ 清單原點"),
         new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+；stampvox 不吃）"),
         new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）", iDefault: "1"),
         new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標／work mark：1覆蓋同名同類的標記"),
-        new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數（stampvox ＝ 清單格數），對不上即拒絕（**強烈建議帶**）"),
+        new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數（stampvox／carvevox ＝ 清單格數），對不上即拒絕（**強烈建議帶**）"),
         new SCP_CmdArgSpec("alpha_threshold", "stamp 類：alpha 門檻（預設 128）"),
-        new SCP_CmdArgSpec("allow_clip", "stamp 類：1 ＝ 接受越界裁切（預設越界即拒絕）"),
+        new SCP_CmdArgSpec("allow_clip", "stamp 類／carvevox：1 ＝ 接受越界裁切（預設越界即拒絕）"),
         new SCP_CmdArgSpec("exhibit_id", "stamp 類：貼完自動登錄／擴充展品"),
         new SCP_CmdArgSpec("exhibit_title", "stamp 類：展品標題"),
         new SCP_CmdArgSpec("exhibit_desc", "stamp 類：展品描述"),
         new SCP_CmdArgSpec("exhibit_margin", "stamp 類：展品邊界格數（預設 2）"),
-        new SCP_CmdArgSpec("region", "view／export／exhibit register／section：裁切範圍（section 不給 ⇒ 整件作品，共用展區 0..255）；slice **必填**（x1..x2,y1..y2,z1..z2）"),
-        new SCP_CmdArgSpec("exclude_color", "view／export／exhibit register：不畫哪些顏色（c,c,…）"),
+        new SCP_CmdArgSpec("region", "view／export／exhibit register／section：裁切範圍（section 不給 ⇒ 整件作品，共用展區 0..255）；slice **必填**（x1..x2,y1..y2,z1..z2）；stats 的結構讀數／diff：只算這個框"),
+        new SCP_CmdArgSpec("exclude_color", "view／export／exhibit register：不畫哪些顏色（c,c,…）；stats 的結構讀數：不算哪些顏色"),
+        new SCP_CmdArgSpec("structure", "stats：1 ＝ 多報元件數（6 連通，附最小幾塊的位置）與封閉空腔（跟外面不通的空格）"),
+        new SCP_CmdArgSpec("mirror", "stats：鏡像差 軸:中心（y:160 ＝ 以第 160 格中心為鏡面；y:159.5 ＝ 159 與 160 之間）"),
         new SCP_CmdArgSpec("exhibit", "view：展品 preset id"),
         new SCP_CmdArgSpec("light_dir", "view／exhibit register：一盞白光的行進方向 x,y,z（取代設定檔的燈）"),
         new SCP_CmdArgSpec("ambient", "view／exhibit register／render-profile set：環境光 0-1"),
@@ -195,8 +201,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("ref_flip", "section：1 ＝ 參考圖先左右鏡像（圖紙的方向跟視圖相反時）"),
         new SCP_CmdArgSpec("probe", "section：參考圖像素 x,y;x,y;… ⇒ 印出它落在作品哪一格、離最近的 voxel 差幾格"),
         new SCP_CmdArgSpec("voxel_alpha", "section：voxel 疊色的不透明度 0–1（有參考圖預設 0.55，沒有預設 1）"),
-        new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑"),
-        new SCP_CmdArgSpec("format", "export：obj|vox", iChoices: new[] { "obj", "vox" }),
+        new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑／diff：差異清單（每行 x,y,z,before,after）"),
+        new SCP_CmdArgSpec("format", "export：obj|vox|list（list ＝ 純格子清單 x,y,z,color）", iChoices: new[] { "obj", "vox", "list" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
@@ -209,9 +215,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
         new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名"),
+        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("to", "render-profile copy：目標設定名"),
+        new SCP_CmdArgSpec("to", "render-profile copy：目標設定名／diff：終點（同 from 的寫法；不給 ＝ now）"),
         new SCP_CmdArgSpec("background", "render-profile set：純色背景 #RRGGBB（skybox=none 時用）"),
         new SCP_CmdArgSpec("lights", "view／render-profile set：整組燈（JSON 陣列，取代下層的燈）"),
         new SCP_CmdArgSpec("light_add", "view／render-profile set：加燈 x,y,z[;#rrggbb[;強度[;shadow 0|1]]]，多盞用 | 串（疊在下層的燈之後）"),
@@ -259,6 +265,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 case "work": aPayload = OpWork(aCtx); break;
                 case "box":
                 case "carve":
+                case "carvevox":
                 case "stamp2d":
                 case "stampimg":
                 case "stampvox":
@@ -267,6 +274,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 case "slice": aPayload = OpSlice(aCtx); break;
                 case "section": aPayload = OpSection(aCtx); break;
                 case "stats": aPayload = OpStats(aCtx); break;
+                case "diff": aPayload = OpDiff(aCtx); break;
                 case "export": aPayload = OpExport(aCtx); break;
                 case "exhibit": aPayload = OpExhibit(aCtx); break;
                 case "render-profile": aPayload = OpRenderProfile(aCtx); break;
@@ -403,8 +411,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 if (!aRes.Ok || aRes.Status != "success")
                 {
                     string aStatus = aRes.Status;
-                    string aReason = aRes is SCP_SculptStampResult aSr && aSr.Reason.Length > 0
-                        ? aSr.Reason : (aRes.Lines.Count > 0 ? aRes.Lines[0].TrimStart('❌', ' ') : "");
+                    string aReason = aRes is SCP_SculptStampResult aSr && aSr.Reason.Length > 0 ? aSr.Reason
+                        : aRes is SCP_SculptCarveResult aCr && aCr.Reason.Length > 0 ? aCr.Reason
+                        : (aRes.Lines.Count > 0 ? aRes.Lines[0].TrimStart('❌', ' ') : "");
                     c.Report.Append("## blocked\n- reason: 引擎未落子（engine exit=").Append(aRes.ExitCode)
                             .Append(aStatus.Length > 0 ? ", status=" + aStatus : "").Append("）—— 未扣任何費用\n");
                     if (aReason.Length > 0) c.Report.Append("- engine: ").Append(aReason).Append('\n');
@@ -566,6 +575,26 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             return true;
         }
 
+        if (c.Op == "carvevox")
+        {
+            // 照清單刻（TASK-0492）：貼片／上色的參數給了就擋（⛔ 不靜默忽略）
+            foreach (string k in new[] { "facing", "thickness", "png", "resize", "alpha_threshold", "overwrite", "color", "exhibit_id" })
+                if (c.Args.IsExplicit(k)) { oBad = "carvevox 不吃 " + k + "（清單每行就是要刻的 x,y,z[,color]，相對 at）"; return false; }
+            string aAtV = c.Args.Get("at").Trim();
+            if (aAtV.Length == 0) { oBad = "缺 --arg at=<x,y,z>（清單原點；清單是絕對座標就給 0,0,0）"; return false; }
+            string aListV = c.Args.Get("voxels").Trim();
+            if (aListV.Length == 0 || !File.Exists(aListV)) { oBad = "carvevox 需要存在的 --arg voxels=<清單路徑>（got '" + aListV + "'）"; return false; }
+            // 最壞費用＝清單格數，用引擎同一支解析器自己數
+            if (!SCP_SculptEngine.TryParseCarveList(File.ReadAllBytes(aListV), out List<int[]> aCut, out string aWhyV))
+            { oBad = "格子清單 " + aListV + "：" + aWhyV; return false; }
+            oWorst = aCut.Count;
+            oWhere = $"清單 {Path.GetFileName(aListV)} = {aCut.Count:N0} 格 @({aAtV})";
+            var aCarveVox = new SCP_SculptCarveVoxArgs { Voxels = aListV, At = aAtV, Persona = c.Persona, AllowClip = Truthy(c.Args.Get("allow_clip")) };
+            if (TryInt(c, "expect_pixels", out int aExpectV)) aCarveVox.ExpectPixels = aExpectV;
+            oRun = e => e.CarveVox(aCarveVox);
+            return true;
+        }
+
         string aAt = c.Args.Get("at").Trim();
         if (aAt.Length == 0) { oBad = "缺 --arg at=<x,y,z>（圖左上角要貼在 3D 的哪一點）"; return false; }
         int aThick = TryInt(c, "thickness", out int t) ? Math.Max(1, t) : 1;
@@ -649,9 +678,16 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                     .Append(aBox.SkippedCount > 0 ? "（skip " + aBox.SkippedCount + " —— 禁覆蓋，不收費）" : "").Append('\n');
             return;
         }
-        if (iRes is SCP_SculptCarveResult)
+        if (iRes is SCP_SculptCarveResult aCv)
         {
             c.Report.Append("- carved: **").Append(iActual).Append("** @").Append(iWhere).Append('\n');
+            if (aCv.ListCount > 0)
+            {
+                c.Report.Append("- list: ").Append(aCv.ListCount).Append(" 格 ⇒ 刻掉 ").Append(iActual).Append("、本來就空 ").Append(aCv.AlreadyEmpty)
+                        .Append(aCv.OutOfBounds > 0 ? "、越界裁掉 " + aCv.OutOfBounds : "").Append("（清單外一格都不動）\n");
+                c.Result.AddValue("list_count", aCv.ListCount.ToString(CultureInfo.InvariantCulture));
+                c.Result.AddValue("already_empty", aCv.AlreadyEmpty.ToString(CultureInfo.InvariantCulture));
+            }
             return;
         }
         if (iRes is not SCP_SculptStampResult s) return;
@@ -1133,12 +1169,71 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
 
     static string? OpStats(Ctx c)
     {
-        if (!TryLocked(c, e => e.Stats(), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
+        string aStructure = c.Args.Get("structure").Trim();
+        if (aStructure.Length > 0 && aStructure != "0" && aStructure != "1") return Blocked(c, 2, "structure 要是 1 或 0（got '" + aStructure + "'）");
+        var aArgs = new SCP_SculptStatsArgs
+        {
+            Structure = aStructure == "1",
+            Mirror = c.Args.Get("mirror").Trim(),
+            Region = c.Args.Get("region").Trim(),
+            ExcludeColor = c.Args.Get("exclude_color").Trim(),
+        };
+        if (!TryLocked(c, e => e.Stats(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
         c.Report.Append("```\n").Append(aRes.Render()).Append("\n```\n");
         if (!aRes.Ok) return EngineFail(c, aRes);
         c.Result.Lines.AddRange(aRes.Lines);
-        c.Result.AddValue("total_voxels", ((SCP_SculptStatsResult)aRes).TotalVoxels.ToString(CultureInfo.InvariantCulture));
+        var s = (SCP_SculptStatsResult)aRes;
+        c.Result.AddValue("total_voxels", s.TotalVoxels.ToString(CultureInfo.InvariantCulture));
+        if (s.ScopedVoxels >= 0) c.Result.AddValue("scoped_voxels", s.ScopedVoxels.ToString(CultureInfo.InvariantCulture));
+        if (s.Components >= 0)
+        {
+            c.Result.AddValue("components", s.Components.ToString(CultureInfo.InvariantCulture));
+            c.Result.AddValue("largest_component", s.LargestComponent.ToString(CultureInfo.InvariantCulture));
+            // ⛔ 沒算不印 0：外框太大時 cavities 印 skipped，讀的人才不會把「沒量」讀成「沒有」
+            c.Result.AddValue("cavities", s.Cavities >= 0 ? s.Cavities.ToString(CultureInfo.InvariantCulture) : "skipped");
+            if (s.Cavities >= 0) c.Result.AddValue("cavity_cells", s.CavityCells.ToString(CultureInfo.InvariantCulture));
+        }
+        if (s.MirrorMissingLow >= 0)
+        {
+            c.Result.AddValue("mirror_missing_low", s.MirrorMissingLow.ToString(CultureInfo.InvariantCulture));
+            c.Result.AddValue("mirror_missing_high", s.MirrorMissingHigh.ToString(CultureInfo.InvariantCulture));
+            c.Result.AddValue("mirror_color_diff", s.MirrorColorDiff.ToString(CultureInfo.InvariantCulture));
+            if (s.MirrorSkipped > 0) c.Result.AddValue("mirror_skipped", s.MirrorSkipped.ToString(CultureInfo.InvariantCulture));
+        }
         return Finish(c, 0, "✓ stats 完成");
+    }
+
+    /// <summary>diff（TASK-0492）：兩個時間點之間改了哪幾格。⛔ 不吃 mark／hide／only（時間點由 from／to 給）。</summary>
+    static string? OpDiff(Ctx c)
+    {
+        var aArgs = new SCP_SculptDiffArgs
+        {
+            From = c.Args.Get("from").Trim(),
+            To = c.Args.Get("to").Trim(),
+            Region = c.Args.Get("region").Trim(),
+            Out = c.Args.Get("out").Trim(),
+        };
+        if (aArgs.From.Length == 0) return Blocked(c, 2, "diff 要 --arg from=<標記 name|name:begin|name:end、start，或事件檔 *.json>（to 不給 ＝ now）");
+        if (aArgs.Out.Length > 0 && !Path.IsPathRooted(aArgs.Out)) return Blocked(c, 2, "diff 的 out 要絕對路徑（got '" + aArgs.Out + "'）");
+        if (!TryLocked(c, e => e.Diff(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
+        c.Report.Append("```\n").Append(aRes.Render()).Append("\n```\n");
+        if (!aRes.Ok) return EngineFail(c, aRes);
+        c.Result.Lines.AddRange(aRes.Lines);
+        var d = (SCP_SculptDiffResult)aRes;
+        c.Result.AddValue("from_event", d.FromEvent);
+        c.Result.AddValue("to_event", d.ToEvent);
+        c.Result.AddValue("events", d.EventCount.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("placed", d.Placed.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("carved", d.Carved.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("recolored", d.Recolored.ToString(CultureInfo.InvariantCulture));
+        if (d.OutputPath.Length > 0)
+        {
+            string aPath = d.OutputPath.Replace('\\', '/');
+            c.Result.AddValue("path", aPath);
+            c.Result.AddValue("sha256", d.Sha256);
+            c.Result.AddOutput(aPath);
+        }
+        return Finish(c, 0, "✓ diff 放 " + d.Placed + "／刻 " + d.Carved + "／換色 " + d.Recolored + "（" + d.EventCount + " 個事件）");
     }
 
     static string? OpExport(Ctx c)
@@ -1163,6 +1258,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         c.Result.Lines.AddRange(aRes.Lines);
         c.Result.AddValue("path", aPath);
         if (aEx.MtlPath.Length > 0) c.Result.AddValue("mtl_path", aEx.MtlPath.Replace('\\', '/'));
+        if (aEx.Sha256.Length > 0) c.Result.AddValue("sha256", aEx.Sha256);
         c.Result.AddValue("voxels", aEx.VoxelCount.ToString(CultureInfo.InvariantCulture));
         if (aEx.Merge.Length > 0)
         {
