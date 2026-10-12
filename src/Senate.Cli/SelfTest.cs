@@ -113,6 +113,7 @@ public static partial class SelfTest
         One(nameof(DelegateCarriesCmdExitCode), "core", DelegateCarriesCmdExitCode),
         One(nameof(AtomicFileDistinguishesCollisionFromOtherIo), "core", AtomicFileDistinguishesCollisionFromOtherIo),
         One(nameof(ServerEndpointFourStates), "core", ServerEndpointFourStates),
+        One(nameof(DataRootServerSingleton0468), "server", DataRootServerSingleton0468, iImportant: true),
         One(nameof(ServerCmdClientMatchesAgentCmdClient), "core", ServerCmdClientMatchesAgentCmdClient),
         One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
         One(nameof(QueueAppendSurvivesConcurrency), "core", QueueAppendSurvivesConcurrency),
@@ -5484,8 +5485,10 @@ public static partial class SelfTest
             SCP_ServerProbe aBad = SCP_ServerEndpoint.Probe(aTmp, aId);
             bool aOk5 = aBad.State == SCP_ServerLiveness.Unreadable;
 
-            // ⑥ 刪掉 ⇒ 回到「沒有」
-            SCP_ServerEndpoint.Delete(aTmp, aId);
+            // ⑥ 刪掉 ⇒ 回到「沒有」（壞名片讀不開 ⇒ Delete 不認得是誰的 ⇒ 先手動清掉、寫回自己那張，再由自己刪）
+            File.Delete(SCP_ServerEndpoint.PathFor(aTmp, aId));
+            SCP_ServerEndpoint.Write(aTmp, aCard);
+            SCP_ServerEndpoint.Delete(aTmp, aId, aCard.Pid, aCard.StartedAtUtc);
             bool aOk6 = SCP_ServerEndpoint.Probe(aTmp, aId).State == SCP_ServerLiveness.NoEndpoint;
 
             bool aOk = aOk1 && aOk2 && aOk3 && aOk4 && aOk5 && aOk6;

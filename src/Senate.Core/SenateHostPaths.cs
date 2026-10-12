@@ -68,6 +68,9 @@ public static class SenateHostPaths
         SCP.Core.Cmd.SCP_Cmd_Skill.RootsProvider = () =>
             new SCP.Core.Cmd.SCP_SkillRoots(Path.Combine(iRepoRoot, "SCP_Core", "Skills~"), iRepoRoot);
 
+        // Process 管理頁要列「資料根上的 Server 名片」（TASK-0468：別的工作副本開的 Server 也要看得到）。
+        SCP.Core.Gui.SCP_GuiProcessAdminPage.ServerCardsDataRoot = () => ServerHost.TryResolveDataRoot(iRepoRoot);
+
         // 本地 Cmd 殼（早安／晚安／酒館發文）要的宿主能力：資料根、詞典根、環境標記。
         SCP.Core.Cmd.SCP_LocalRootsCmd.Host = new SenateLocalCmdHost();
     }

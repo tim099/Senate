@@ -320,6 +320,36 @@ public static class ServerHost
             return 1;
         }
 
+        // ── 資料根單例閘（TASK-0468）────────────────────────────────────
+        // 🩸 上面那道鎖與 registry 都住在**本 repo 的 runtime** ⇒ 另一份 Senate（副本／worktree／測試用 exe）
+        //    指向同一棵資料根時，兩邊都說「沒有別顆」⇒ 2026-10-08 兩顆 tavern 同時送 Discord、互搶 Inbound 游標。
+        //    ⇒ 唯一性要量在**它們共用的那棵樹上**。Tim 2026-10-12 拍板：**同根同 id 一律擋**；
+        //       測試用 Server 換一個 id（main／tavern 以外的 id 本來就不跑 Discord／酒保／結算），或指向另一棵資料根。
+        // ⚠ 名片上是另一顆**活著的**也擋：拿得到鎖只代表沒有「新版」握著 —— 沒有這道鎖的舊 exe 也會在名片上留名。
+        string? aEndpointDataRoot = TryResolveDataRoot(iRepoRoot);
+        FileStream? aDataRootLock = null;
+        if (aEndpointDataRoot != null)
+        {
+            aDataRootLock = SCP_ServerEndpoint.TryAcquireLock(aEndpointDataRoot, aServerId, SingletonLockWaitMs, out string aDrWhy);
+            if (aDataRootLock == null)
+            {
+                iErr($"✗ 拿不到資料根單例鎖 ⇒ 拒絕啟動：{aDrWhy}");
+                iErr($"  同一棵資料根（{aEndpointDataRoot}）上同一個 id 只能有一顆（TASK-0468）。"
+                     + "測試用 Server：換一個 `--id`，或讓它的 senate.local.json 指向另一棵資料根。");
+                return 1;
+            }
+            SCP_ServerProbe aCardNow = SCP_ServerEndpoint.Probe(aEndpointDataRoot, aServerId);
+            if (aCardNow.State == SCP_ServerLiveness.Alive || aCardNow.State == SCP_ServerLiveness.Unreadable)
+            {
+                aDataRootLock.Dispose();
+                iErr($"✗ 資料根上 `{aServerId}` 的名片{(aCardNow.Alive ? "是另一顆**活著的** Server" : "讀不開")} ⇒ 拒絕啟動："
+                     + SCP_ServerEndpoint.Describe(aCardNow));
+                iErr("  它沒有握資料根單例鎖 ⇒ 多半是還沒有 TASK-0468 的舊 exe。先收掉它（看名片上的 repo 根／pid），再起這一顆。");
+                return 1;
+            }
+        }
+        using FileStream? aDataRootLockHold = aDataRootLock;
+
         string aStopReq = SenatePaths.ServerStopRequest(iRepoRoot, aServerId);
         string aHbPath = SenatePaths.ServerHeartbeat(iRepoRoot, aServerId);
         Directory.CreateDirectory(SenatePaths.RuntimeDir(iRepoRoot));
@@ -385,12 +415,15 @@ public static class ServerHost
         // 🩸 為什麼要這一步：只看得到資料根的一方不知道 Senate 在哪 ⇒ 由知道答案的一方（Server）把答案寫進資料根。
         // ⚠ 名片寫不出去**不擋啟動** —— Server 本身仍然是好的，只是讀名片的一方會判成「沒有 Server」。
         //   ⇒ 那時候要大聲說，⛔ 不可以靜默：靜默的話症狀會長成「委派一直說沒有 Server」，而 Server 明明開著。
-        string? aEndpointDataRoot = TryResolveDataRoot(iRepoRoot);
+        // ⚠ 心跳要先跳一次再寫名片：名片一落地，別人 Probe 它就要讀得到新鮮的心跳（否則會被判成遺體而補寫蓋掉）。
+        aHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        WriteAtomic(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
+        SCP_ServerEndpointInfo? aCard = null;
         if (aEndpointDataRoot == null)
             iErr("⚠ 解析不出 AgentCommands 資料根 ⇒ **沒有留名片**：讀名片的一方會判成「這棵樹沒有 Server」。");
         else
         {
-            var aCard = new SCP_ServerEndpointInfo
+            aCard = new SCP_ServerEndpointInfo
             {
                 ServerId = aServerId,
                 Pid = aSelf.Id,
@@ -399,11 +432,14 @@ public static class ServerHost
                 ServerRoot = aServerRoot,
                 HeartbeatPath = aHbPath,
                 StaleSeconds = HeartbeatStaleSeconds,
+                RepoRoot = iRepoRoot.Replace('\\', '/'),
             };
-            (bool aCardOk, string aCardMsg) = SCP_ServerEndpoint.Write(aEndpointDataRoot, aCard);
-            if (aCardOk) iOut("· 名片：" + aCardMsg + "（讀名片的一方靠它找到執行器與心跳）");
+            (SCP_EndpointWrite aCardRes, string aCardMsg) = SCP_ServerEndpoint.Write(aEndpointDataRoot, aCard);
+            if (aCardRes == SCP_EndpointWrite.Written) iOut("· 名片：" + aCardMsg + "（讀名片的一方靠它找到執行器與心跳）");
             else iErr("⚠ " + aCardMsg);
         }
+        // 「名片上是我」＝ 資料根單例工作（Discord／酒保／每日結算）的資格；每 OwnerCheckSeconds 重量一次（見 CheckCardOwner）。
+        var aOwner = new CardOwnerState { IsOwner = aCard != null && IsCardMine(aEndpointDataRoot!, aCard) };
 
         // 延後發文匣（TASK-0312）只歸酒館那顆 —— alter 配對的訊息到點由它投回自己的 tavern lane。
         bool aFlushDeferred = string.Equals(aServerId, SCP_ServerIds.Tavern, StringComparison.Ordinal);
@@ -429,7 +465,11 @@ public static class ServerHost
                 iErr("⚠ 延後發文匣有上次認領了、不知道送出去沒的一則：" + aOrphan
                      + " —— ⛔ 不自動重送（可能已經發了）；對照酒館後手動處理");
 
+        if (aCard != null && !aOwner.IsOwner && (aRunDiscordIn || aRunOvernight))
+            iErr("⚠ 名片上不是本顆 ⇒ Discord／酒保／每日結算**先不跑**（TASK-0468）；名片空出來或變成遺物時會補寫並接手。");
+
         string aExitWhy;
+        var aSinceOwnerCheck = Stopwatch.StartNew();
         try
         {
             while (true)
@@ -437,6 +477,14 @@ public static class ServerHost
                 aHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
                 WriteAtomic(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
                 if (aCancel) { aExitWhy = "Ctrl+C"; break; }
+                if (aCard != null && aSinceOwnerCheck.Elapsed.TotalSeconds >= OwnerCheckSeconds)
+                {
+                    aSinceOwnerCheck.Restart();
+                    bool aWasOwner = aOwner.IsOwner;
+                    CheckCardOwner(aEndpointDataRoot!, aCard, aOwner, iOut, iErr);
+                    // 失去名片那一刻主動斷 Gateway —— 不斷的話它會一直連著、照樣收訊息（Inbound 不再 Tick 也擋不住已經開著的連線）
+                    if (aWasOwner && !aOwner.IsOwner && aRunDiscordIn) { try { SenateDiscordGateway.Stop("名片上不是本顆（TASK-0468）"); } catch { } }
+                }
                 if (File.Exists(aStopReq))
                 {
                     // 先消費掉請求：不刪的話下一圈又命中，而使用者會看到同一段排乾訊息一直重印。
@@ -450,7 +498,7 @@ public static class ServerHost
                     // ⛔ 不硬切：被切的那條會在下一顆 Server 啟動時續跑 ＝ 那筆 cmd 做第二次。
                     continue;
                 }
-                if (aRunOvernight)
+                if (aRunOvernight && aOwner.IsOwner)
                 {
                     // 每日結算（TASK-0315）：這一格只看時間，到期才起背景工作 ⇒ ⛔ 不擋服務迴圈與心跳。
                     try { SenateOvernightJob.Tick(aEndpointDataRoot!, iOut, iErr); }
@@ -462,7 +510,7 @@ public static class ServerHost
                     try { SenateTavernDeferred.FlushDue(aServerRoot, DateTime.UtcNow, iOut); }
                     catch (Exception e) { iErr("⚠ 延後發文匣這一圈沒掃成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
-                if (aRunDiscordIn)
+                if (aRunDiscordIn && aOwner.IsOwner)
                 {
                     // 背景執行緒做網路與寫入 ⇒ ⛔ 不擋心跳；錯誤在 Job 裡節流回報。
                     try { SenateDiscordInboundJob.Tick(aEndpointDataRoot!, iRepoRoot, iOut, iErr); }
@@ -500,10 +548,12 @@ public static class ServerHost
             TryDelete(aStopReq, iErr);
             // 名片是第四件遺物。⚠ 刪不掉要說：留下來的名片讀起來像「有一顆 Server」，
             //   而下一個人要再去讀心跳才分得出那是遺體 —— 那一步不是每個呼叫端都會做。
+            // ⚠ 只刪自己的（TASK-0468）：名片上是別顆時，刪掉的會是**還在跑的那顆**的名片。
             if (aEndpointDataRoot != null)
             {
-                (bool aDelOk, string aDelMsg) = SCP_ServerEndpoint.Delete(aEndpointDataRoot, aServerId);
+                (bool aDelOk, string aDelMsg) = SCP_ServerEndpoint.Delete(aEndpointDataRoot, aServerId, aSelf.Id, aHb.StartedAtUtc);
                 if (!aDelOk) iErr("⚠ " + aDelMsg);
+                else if (aDelMsg.StartsWith("名片上是別顆", StringComparison.Ordinal)) iOut("· " + aDelMsg);
             }
             SCP_ProcessRegistry.Unregister(aSelf.Id, TagFor(aServerId));
         }
@@ -517,7 +567,7 @@ public static class ServerHost
     /// <para>走唯一入口 `SenatePathBinding.ResolveDataRoot`（TASK-0390）。
     /// 拿不到資料根的話：沒有端點卡、夜間結算／Discord／酒保全停。</para>
     /// </summary>
-    static string? TryResolveDataRoot(string iRepoRoot)
+    public static string? TryResolveDataRoot(string iRepoRoot)
     {
         try
         {
@@ -525,6 +575,57 @@ public static class ServerHost
             return aRoot != null && Directory.Exists(aRoot) ? aRoot : null;
         }
         catch (Exception) { return null; }
+    }
+
+    /// <summary>多久重量一次「名片上是不是我」（秒）。⚠ 不是每圈：每圈讀一次資料根上的檔是 2 次 IO／500ms，而名片幾乎不會變。</summary>
+    public const double OwnerCheckSeconds = 5.0;
+
+    /// <summary>「名片上是我」的狀態 —— 只在**轉換**時出聲（TASK-0468 驗收：不是名片上那顆時只警告一次）。</summary>
+    public sealed class CardOwnerState
+    {
+        public bool IsOwner;
+    }
+
+    /// <summary>名片上是不是這一顆（pid＋啟動時刻）。讀不開 ⇒ false。</summary>
+    public static bool IsCardMine(string iDataRoot, SCP_ServerEndpointInfo iMine)
+    {
+        SCP_ServerProbe p = SCP_ServerEndpoint.Probe(iDataRoot, iMine.ServerId);
+        return p.Info != null && p.Info.IsSameServer(iMine.Pid, iMine.StartedAtUtc);
+    }
+
+    /// <summary>
+    /// 重量一次名片主人，更新 <paramref name="ioState"/>；只在轉換時出聲。
+    /// <para>· 名片是我 ⇒ owner。</para>
+    /// <para>· 名片**不在**或是**遺體** ⇒ 握著資料根單例鎖的就是我 ⇒ 補寫回去、接手（🩸 舊 exe 收工時會一律刪名片，刪的可能是我的）。</para>
+    /// <para>· 名片上是**另一顆活著的** ⇒ 不是我 ⇒ 資料根單例工作停手（防沒有資料根鎖的舊 exe）。</para>
+    /// <para>· 讀不開 ⇒ 不知道 ⇒ **維持原判**（⛔ 不因為讀到半張就翻來翻去）。</para>
+    /// </summary>
+    public static void CheckCardOwner(string iDataRoot, SCP_ServerEndpointInfo iMine, CardOwnerState ioState,
+                                      Action<string> iOut, Action<string> iErr)
+    {
+        SCP_ServerProbe p = SCP_ServerEndpoint.Probe(iDataRoot, iMine.ServerId);
+        bool aNow;
+        string aWhy = "";
+        if (p.Info != null && p.Info.IsSameServer(iMine.Pid, iMine.StartedAtUtc)) aNow = true;
+        else if (p.State == SCP_ServerLiveness.NoEndpoint || p.State == SCP_ServerLiveness.StaleHeartbeat)
+        {
+            (SCP_EndpointWrite aRes, string aMsg) = SCP_ServerEndpoint.Write(iDataRoot, iMine);
+            aNow = aRes == SCP_EndpointWrite.Written;
+            aWhy = (p.State == SCP_ServerLiveness.NoEndpoint ? "名片不見了" : "名片是遺體（" + SCP_ServerEndpoint.Describe(p) + "）")
+                   + (aNow ? " ⇒ 我握著資料根單例鎖 ⇒ 已補寫" : " ⇒ 補寫失敗：" + aMsg);
+        }
+        else if (p.State == SCP_ServerLiveness.Alive) { aNow = false; aWhy = "名片上是另一顆活著的：" + SCP_ServerEndpoint.Describe(p); }
+        else return;
+
+        if (aNow == ioState.IsOwner)
+        {
+            if (aWhy.Length > 0 && aNow) iOut("· " + aWhy);   // 補寫了但本來就是 owner（名片被刪又補回）⇒ 說一聲
+            return;
+        }
+        ioState.IsOwner = aNow;
+        if (aNow) iOut($"· 名片上是本顆了（{aWhy}）⇒ Discord／酒保／每日結算**恢復**");
+        else iErr($"⚠ {aWhy} ⇒ 本顆的 Discord／酒保／每日結算**停手**（TASK-0468：同一棵資料根上同一個 id 只跑一份）。"
+                  + "收掉那一顆，或收掉本顆。");
     }
 
     /// <summary>單例鎖等多久（毫秒）。短 —— 這道鎖只保護「檢查＋登記」那一瞬間，等久了代表對方是**在跑**不是在啟動。</summary>

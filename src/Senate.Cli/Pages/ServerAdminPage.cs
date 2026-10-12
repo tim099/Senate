@@ -150,12 +150,58 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
         m_ProbeErrors.Clear();
         m_ConsolePrefs.Clear();
         foreach (string aId in ListIds()) ReloadOne(aId);
+        ReloadCards();
         // 兩格 TASK-0329 設定跟著同一個刷新點重讀（別處改了設定檔，這頁下一次刷新就看得到）
         m_RefreshSeconds = ServerLaunchAutoStart.ResolveRefreshSeconds(m_Model.RepoRoot, out m_RefreshSource);
         m_AutoStartOn = ServerLaunchAutoStart.ResolveEnabled(m_Model.RepoRoot, out m_AutoStartSource);
         m_LastReloadMs = aWatch.Elapsed.TotalMilliseconds;
         m_LastReloadLocal = DateTime.Now;
         m_SinceReload.Restart();
+    }
+
+    // ── 資料根上的名片（TASK-0468）────────────────────────────────────
+    // 🩸 上面那份清單只讀**本 repo** 的 registry／心跳 ⇒ 另一份 Senate（副本／測試用 exe）在同一棵資料根上開的 Server
+    //    在這頁上不存在 —— 2026-10-08 兩顆 tavern 雙送 Discord 時，Tim 的截圖只看得到本尊那兩顆。
+    //    ⇒ 再讀一次**資料根上的全部名片**（不分誰寫的），把 repo 根不是本 repo 的標出來。
+    List<(string ServerId, SCP_ServerProbe Probe)> m_Cards = new List<(string, SCP_ServerProbe)>();
+    string? m_DataRoot;
+    string? m_CardsError;
+
+    void ReloadCards()
+    {
+        m_Cards = new List<(string, SCP_ServerProbe)>();
+        m_CardsError = null;
+        try
+        {
+            m_DataRoot = ServerHost.TryResolveDataRoot(m_Model.RepoRoot);
+            if (m_DataRoot == null) { m_CardsError = "⚠ 解析不出資料根 ⇒ 讀不到名片（⛔ 不代表資料根上沒有別的 Server）。"; return; }
+            m_Cards = SCP_ServerEndpoint.ProbeAll(m_DataRoot);
+        }
+        catch (Exception e)
+        {
+            m_CardsError = "🔴 名片列舉失敗（" + e.GetType().Name + "：" + e.Message + "）—— ⛔ 不是「沒有名片」，是本頁量不到。";
+        }
+    }
+
+    void DrawCards(SCP_Ui g)
+    {
+        g.Separator();
+        g.Label("**資料根上的 Server 名片**（含其他工作副本／測試用 exe 開的；資料根 `" + (m_DataRoot ?? "?") + "`）");
+        g.Note("同一棵資料根上，同一個 id 只能有一顆（TASK-0468）。repo 根不是本 repo 的那幾列，**本頁的啟動／停止管不到** —— 要到那一份 Senate 去停。");
+        if (m_CardsError != null) { g.Note(m_CardsError); return; }
+        if (m_Cards.Count == 0) { g.Note("・沒有名片（這棵資料根上現在沒有 Server，或都正常收工了）。"); return; }
+        using (g.Table("serverId", "名片狀態", "pid", "repo 根", "對照"))
+        {
+            foreach (var (aId, p) in m_Cards)
+            {
+                string aRepo = p.Info?.RepoRoot ?? "";
+                string aMark = p.Info == null ? "？讀不開"
+                             : SCP_ServerEndpoint.SameRoot(aRepo, m_Model.RepoRoot) ? "本 repo"
+                             : "⚠ **其他 repo 根**";
+                g.TableRow(aId, p.State.ToString(), p.Info != null ? p.Info.Pid.ToString() : "—",
+                           aRepo.Length > 0 ? aRepo : "（名片上沒有）", aMark);
+            }
+        }
     }
 
     void ReloadOne(string iServerId)
@@ -358,6 +404,7 @@ public sealed class ServerAdminPage : SCP_GuiToolPage
                 g.TableRow((aKv.Key == aSel ? "▶ " : "") + aKv.Key, StateLabel(s), aPid, aHb);
             }
         }
+        DrawCards(g);
     }
 
     /// <summary>兩格「顯示 Console」勾選 —— 讀寫的是 <see cref="ServerConsolePref"/>（Server 那格跟 CLI `server console` 同一格）。</summary>

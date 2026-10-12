@@ -469,6 +469,22 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 `status` 的 `🔢 server_state` 五態：`not_running` / `alive_no_heartbeat` / `stale_heartbeat` /
 `running_build_mismatch` / `running`。⚠ 前三個都回 exit 3，腳本要分要看那個字不要看 exit code。
 
+#### 一棵資料根上同一個 id 只能有一顆（TASK-0468）
+
+上面那道單例鎖與 registry 住在**本 repo** 的 `SenateData/runtime/`；另一份 Senate（工作副本、測試用 exe）指向同一棵資料根時看不到彼此。
+所以 `start` 另外在**資料根**上量：
+
+| 檔（資料根上） | 作用 |
+|---|---|
+| `_server_singleton.<id>.lock` | 獨佔開檔、握到 process 結束。拿不到 ⇒ exit 1，印出握著那顆的 pid／repo 根 |
+| `_server_endpoint.<id>.json`（名片） | 多記 `repo_root`。**不蓋活的**（心跳新鮮且不是同一顆 process）、收工**只刪自己的**（pid＋啟動時刻） |
+
+- 名片上是另一顆**活著的**（沒有資料根鎖的舊 exe）⇒ `start` 也 exit 1。
+- 跑起來之後每 5 秒量一次名片主人：名片上是別顆 ⇒ Discord（收發與 Gateway）、酒保、每日結算**停手**，只警告一次；
+  名片不見了或變成遺體 ⇒ 握著資料根鎖的那顆補寫、恢復。
+- **測試用 Server**：換一個 `--id`（`main`／`tavern` 以外的 id 不跑 Discord／酒保／結算），或讓它的 `senate.local.json` 指向另一棵資料根。
+- 看得到別份開的 Server：ServerAdminPage 與 ProcessAdminPage 都列「資料根上的 Server 名片」，repo 根不是本 repo 的會標出來。
+
 #### 啟動 senate.exe 時拉起常駐 Server（TASK-0329）
 
 設定 `server.autostartOnLaunch`（`senate.pages.local.json`，**預設開**；ServerAdminPage 可切換）：
