@@ -43,8 +43,8 @@ namespace Senate.Cli.Pages;
 public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 {
     public const string PageKey = "sculpture";
-    /// <summary>手動渲染圖的顯示邊長（邏輯 px；ImageFit 照原比例縮進這個框）。</summary>
-    const float ViewSide = 720f;
+    /// <summary>渲染畫面的顯示邊長（邏輯 px；圖照原比例縮進這個框）—— 住預覽設定的 ViewSide（Tim 2026-10-12：可調）。</summary>
+    float ViewSide(SCP_Ui g) => DisplaySide(PreviewCfg(g)).Side;
     const float SmallSide = 320f;
     /// <summary>子行程最多等多久（一次全景渲染 + 重播事件，秒級；給寬一點）。</summary>
     const int CliTimeoutMs = 180000;
@@ -790,10 +790,10 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             return true;
         }
 
-        // ③0 作品載入後重置一次鏡頭（Tim 2026-10-12，等同按「重置鏡頭」）：看的是**場景屬於哪個對象**，不是欄位上的對象 ——
-        //     換對象到新場景準備好之間畫的還是舊場景，那段時間框住、釘住的是舊的；等新場景到了才重置，它才會被重新框住。
-        //     只比作品／展品／region ⇒ 同一件作品雕刻、換參數都不會重置。
-        string aLoaded = PlanSubject(aPlan.VoxelSig);
+        // ③0 作品載入後、切換正交／透視後各重置一次鏡頭（Tim 2026-10-12，等同按「重置鏡頭」）：看的是**載入的場景**，不是欄位 ——
+        //     換對象／換投影到新場景準備好之間畫的還是舊場景，那段時間框住、釘住的是舊的；等新場景到了才重置，它才會被重新框住。
+        //     只比作品／展品／region＋投影 ⇒ 同一件作品雕刻、換其他參數都不會重置。投影由工具列鈕或手動區下拉改，兩條路都走這裡。
+        string aLoaded = RefitKey(aPlan.VoxelSig, aPlan.Params.Projection);
         if (aLoaded != m_RefitLoaded)
         {
             m_RefitLoaded = aLoaded;
@@ -849,7 +849,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             m_GpuSceneSig = aGpuSig;
             m_PutPinKey = aPinKey; m_PutPinned = aPinned;
         }
-        SCP_GuiPointer? aPtr = g.ImageInteractive(SCP_GuiGpuViews.Ref(GpuKey), ViewSide, "雕刻即時預覽", P + "img/gpu");
+        SCP_GuiPointer? aPtr = g.ImageInteractive(SCP_GuiGpuViews.Ref(GpuKey), ViewSide(g), "雕刻即時預覽", P + "img/gpu");
         if (aPtr != null)
         {
             // 右鍵／中鍵：繞著目前的中心轉（像 Blender 抓著物體轉）—— 拖過整張圖寬 ＝ yaw 180°、整張圖高 ＝ pitch 180°；欄位空白 ⇒ 從鏈上的值起算
@@ -879,16 +879,19 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             // 重新框住（像 Blender 的 View All）：丟掉釘住的中心與距離、倍率回 1，下一幀渲染器重框一次
             if (g.Button("重置鏡頭（重新框住）", P + "btn/camera-refit")) { m_Pin = null; g.SetField(FViewScale, "1"); }
         }
-        using (var aPrev = g.Fold("預覽設定（檢視倍率範圍）", P + "fold/preview-settings", iDefaultOpen: false))
+        using (var aPrev = g.Fold("預覽設定（檢視倍率範圍、畫面大小）", P + "fold/preview-settings", iDefaultOpen: false))
         {
             if (aPrev.Open)
             {
                 g.Note("ViewScaleMin／ViewScaleMax：滾輪縮放的下限與上限（預設 " + SculptPreviewSettings.DefaultViewScaleMin + "–" + SculptPreviewSettings.DefaultViewScaleMax
                        + "；上限最多 " + SculptPreviewSettings.RendererViewScaleMax + "）。只管滾輪，現在的倍率不會被改。");
+                g.Note("ViewSide：渲染畫面在頁面上的顯示邊長（px，" + SculptPreviewSettings.MinViewSide + "–" + SculptPreviewSettings.MaxViewSide + "，預設 " + SculptPreviewSettings.DefaultViewSide
+                       + "）。只管顯示；**輸出解析度**是「相機與光影（手動）」的 width／height —— 顯示比解析度大會被放大而變糊。");
                 foreach (string n in DrawCfg(g, PreviewCfg(g), PreviewCfgKey, SPreviewCfg, ref m_PreviewCfgJson)) g.Note("（自動繪製）" + n);
             }
         }
         if (ViewScaleRange(PreviewCfg(g)).Why is string aRangeWhy) g.Note("[預覽設定] " + aRangeWhy);
+        if (DisplaySide(PreviewCfg(g)).Why is string aSideWhy) g.Note("[預覽設定] " + aSideWhy);
         // 文字資訊在圖下方（Tim 2026-10-12）
         g.Label("目前對象：" + SubjectText(aSubject));
         if (m_PlanError != null) g.Note("[場景準備失敗] " + m_PlanError);
@@ -912,6 +915,9 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
     /// <summary>上一次「載入後重置鏡頭」時的場景對象（見 <see cref="PlanSubject"/>）；"\0" ＝ 這個頁面實例還沒載入過。</summary>
     string m_RefitLoaded = "\0";
+
+    /// <summary>「這一版場景要不要重置鏡頭」的鍵（純函數）：對象（<see cref="PlanSubject"/>）＋投影 —— 任一個變了就重置一次。</summary>
+    public static string RefitKey(string iVoxelSig, SCP_SculptProjection iProjection) => PlanSubject(iVoxelSig) + "|" + iProjection;
 
     /// <summary>場景屬於哪個對象（純函數）：voxel 簽章裡的 work／exhibit／region 三格 —— 草稿、關聯開關、排除色變了都不算換對象。</summary>
     public static string PlanSubject(string iVoxelSig)
@@ -1068,7 +1074,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold("渲染結果", P + "fold/result", iDefaultOpen: true);
         if (!aFold.Open) return;
         if (aPath.Length == 0) { g.Note("（還沒渲染 —— 按「全景」「渲染展品」或「渲染」）"); return; }
-        g.ImageFit(aPath, ViewSide, "雕刻渲染圖 " + Path.GetFileName(aPath));
+        g.ImageFit(aPath, ViewSide(g), "雕刻渲染圖 " + Path.GetFileName(aPath));
         // 文字資訊在圖下方（Tim 2026-10-12）
         if (m_Job != null) g.Note("渲染中…（" + m_JobLabel + "）—— 上面是上一張" + (m_AutoWanted ? "；畫完會用最新參數再補一張" : ""));
         g.Label("目前對象：" + SubjectText(g.FieldValue(SSubject, SubjectFull)) + "（環繞／切投影／手動渲染都重渲這個對象）");

@@ -12,7 +12,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureViewerSettingsCleanRoom()
     {
-        const string name = "觀測頁三份設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件（淨室，TASK-0504）";
+        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取（淨室，TASK-0504）";
         var failures = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
         try
@@ -109,9 +109,41 @@ public static partial class SelfTest
             var prevIn = new SCP_GuiInput();
             prevIn.Fields["sculpt/preview/ViewScaleMin"] = "0.02";
             Check(SculptureViewerPage.ApplyPending(new SCP_Ui(prevIn), prev, "sculpt/preview") && prev.ViewScaleMin == 0.02, "小數欄位應先套進物件：" + prev.ViewScaleMin);
+
+            // ⑧ 切換正交／透視也重置一次鏡頭（Tim 2026-10-12）：同一件作品只換投影 ⇒ 鍵不同；只換草稿 ⇒ 鍵相同
+            string sig = "work=ship;exhibit=;region=;exclude_color=;draft=0;links=;hide_links=";
+            Check(SculptureViewerPage.RefitKey(sig, SCP_SculptProjection.Orthographic) != SculptureViewerPage.RefitKey(sig, SCP_SculptProjection.Perspective), "只換投影應重置鏡頭");
+            Check(SculptureViewerPage.RefitKey(sig, SCP_SculptProjection.Perspective) == SculptureViewerPage.RefitKey(sig.Replace("draft=0", "draft=1"), SCP_SculptProjection.Perspective), "反向對照：同投影只換草稿不該重置");
+
+            // ⑨ 渲染畫面顯示大小（Tim 2026-10-12）：預設 720；範圍內照用；超出 ⇒ 退回預設並說為什麼；整數欄位也先套
+            Check(SculptureViewerPage.DisplaySide(new SculptPreviewSettings()) == (720f, null), "預設顯示邊長應是 720");
+            Check(SculptureViewerPage.DisplaySide(new SculptPreviewSettings { ViewSide = 1200 }) == (1200f, null), "範圍內的 ViewSide 應照用");
+            foreach (int badSide in new[] { 0, 100, 5000 })
+            {
+                var r = SculptureViewerPage.DisplaySide(new SculptPreviewSettings { ViewSide = badSide });
+                Check(r.Side == 720f && r.Why != null, "ViewSide=" + badSide + " ⇒ 應退回 720 並說為什麼");
+            }
+            var sideIn = new SCP_GuiInput();
+            sideIn.Fields["sculpt/preview/ViewSide"] = "960";
+            var side = new SculptPreviewSettings();
+            Check(SculptureViewerPage.ApplyPending(new SCP_Ui(sideIn), side, "sculpt/preview") && side.ViewSide == 960, "ViewSide 應先套進物件：" + side.ViewSide);
+
+            // ⑩ 記住上次的選取（Tim 2026-10-12）：沒設過 ⇒ 空；記了讀得回來；換到共用展區只記空間、不洗掉上次的作品
+            string tmpRepo = Path.Combine(Path.GetTempPath(), "senate_sculpt_lastsel_" + Guid.NewGuid().ToString("N")[..8]);
+            try
+            {
+                Directory.CreateDirectory(tmpRepo);
+                var none = Senate.Core.SculptureWorkPrefs.ReadLastSelection(tmpRepo, out string? e0);
+                Check(none == ("", "") && e0 == null, "沒設過應回空：" + none + " " + e0);
+                Check(Senate.Core.SculptureWorkPrefs.SaveLastSelection(tmpRepo, "work", "ship").Ok, "記不下選取");
+                Check(Senate.Core.SculptureWorkPrefs.ReadLastSelection(tmpRepo, out _) == ("work", "ship"), "記了讀不回來");
+                Check(Senate.Core.SculptureWorkPrefs.SaveLastSelection(tmpRepo, "shared", null).Ok, "只記空間失敗");
+                Check(Senate.Core.SculptureWorkPrefs.ReadLastSelection(tmpRepo, out _) == ("shared", "ship"), "換到共用展區不該洗掉上次的作品");
+            }
+            finally { try { Directory.Delete(tmpRepo, true); } catch { } }
         }
         catch (Exception e) { failures.Add(e.GetType().Name + ": " + e.Message); }
-        return new(name, failures.Count == 0 ? "篩選 5 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入 全過" : string.Join("；", failures),
+        return new(name, failures.Count == 0 ? "篩選 5 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取 全過" : string.Join("；", failures),
                    failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 }

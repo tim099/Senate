@@ -50,14 +50,18 @@ public sealed class SculptWorkViewSettings
     string m_Links = "", m_HideLinks = "";
 }
 
-/// <summary>GPU 預覽的設定：檢視倍率（滾輪縮放）的範圍（成員名就是畫面上的標籤與 id）。</summary>
+/// <summary>預覽的設定：檢視倍率（滾輪縮放）的範圍、渲染畫面的顯示大小（成員名就是畫面上的標籤與 id）。</summary>
 public sealed class SculptPreviewSettings
 {
     public const double DefaultViewScaleMin = 0.05, DefaultViewScaleMax = 50;
     /// <summary>渲染端收的上限（SenateSculptRenderer：ViewScale 需在 (0, 1000]）。</summary>
     public const double RendererViewScaleMax = 1000;
+    /// <summary>渲染畫面顯示邊長（邏輯 px）的預設與範圍。</summary>
+    public const int DefaultViewSide = 720, MinViewSide = 160, MaxViewSide = 4096;
     public double ViewScaleMin { get; set; } = DefaultViewScaleMin;
     public double ViewScaleMax { get; set; } = DefaultViewScaleMax;
+    /// <summary>渲染畫面在頁面上的顯示邊長（邏輯 px；圖照原比例縮進這個方框）。⚠ 只管顯示，輸出解析度是手動區的 width／height。</summary>
+    public int ViewSide { get; set; } = DefaultViewSide;
 }
 
 public sealed partial class SculptureViewerPage
@@ -87,6 +91,17 @@ public sealed partial class SculptureViewerPage
                     : lo > hi ? "ViewScaleMin 大於 ViewScaleMax"
                     : null;
         return why == null ? (lo, hi, null) : (SculptPreviewSettings.DefaultViewScaleMin, SculptPreviewSettings.DefaultViewScaleMax, why + " ⇒ 先用預設 " + SculptPreviewSettings.DefaultViewScaleMin + "–" + SculptPreviewSettings.DefaultViewScaleMax);
+    }
+
+    /// <summary>
+    /// 設定 → 實際用的顯示邊長（純函數，淨室直接測）。超出範圍 ⇒ 退回預設並回一句為什麼（⛔ 不靜默夾成「看起來能用」的值）。
+    /// </summary>
+    public static (float Side, string? Why) DisplaySide(SculptPreviewSettings iCfg)
+    {
+        int v = iCfg.ViewSide;
+        if (v >= SculptPreviewSettings.MinViewSide && v <= SculptPreviewSettings.MaxViewSide) return (v, null);
+        return (SculptPreviewSettings.DefaultViewSide,
+                "ViewSide 要在 " + SculptPreviewSettings.MinViewSide + "–" + SculptPreviewSettings.MaxViewSide + "（收到 " + v + "）⇒ 先用預設 " + SculptPreviewSettings.DefaultViewSide);
     }
 
     /// <summary>滾輪一格 ×1.25（往下 ÷1.25），夾在範圍內（純函數）。</summary>

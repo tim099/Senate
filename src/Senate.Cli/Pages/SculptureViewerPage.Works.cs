@@ -27,11 +27,16 @@ public sealed partial class SculptureViewerPage
     int m_WorkMaxAxis = SCP_SculptWorks.DefaultMaxAxis;
     string m_WorkMaxAxisSource = "";
     string m_WorkMaxAxisMsg = "";
+    // 上次選的空間與作品（Tim 2026-10-12：下次進來自動切回去）—— 跟作品清單一起讀；這個頁面實例只套回一次（之後一律照人選的）。
+    (string Space, string Work) m_LastSel = ("", "");
+    string? m_LastSelError;
+    bool m_LastSelApplied;
 
     void ReloadWorks(SCP_DataRoot data)
     {
         m_WorksRoot = data.Value;
         m_WorkMaxAxis = SculptureWorkPrefs.ResolveMaxAxis(m_Model.RepoRoot, out m_WorkMaxAxisSource);
+        m_LastSel = SculptureWorkPrefs.ReadLastSelection(m_Model.RepoRoot, out m_LastSelError);
         m_Works = new(); m_WorkTexts.Clear(); m_WorkCredits = new(); m_WorkCreditErrors = new(); m_WorksError = ""; m_CreditJob = null;
         var paths = new List<(string Id, SCP_SculptPaths Paths)>();
         try
@@ -495,12 +500,14 @@ public sealed partial class SculptureViewerPage
     // ===========================================================
     void WorkTopBar(SCP_Ui g)
     {
+        RestoreLastSelection(g);
         g.Dropdown("雕刻空間", new List<SCP_GuiOption> { new("shared", "共用展區（256³）"), new("work", "個人作品（可調尺寸）") }, "shared", SpaceSel);
         if (!PersonalSpace(g)) { ExhibitTopBar(g); return; }
         string persona = g.FieldValue(PersonaSel + "/value", None);
         var shown = FilterWorks(m_Works, FilterCfg(g));
         var options = shown.Select(w => new SCP_GuiOption(w.id, w.title + "｜" + w.owner + "｜" + w.status)).ToList();
         string first = shown.Find(w => w.owner == persona && w.status == "ready")?.id ?? shown.Find(w => w.status == "ready")?.id ?? "";
+        if (m_Works.Exists(w => w.id == m_LastSel.Work && w.status == "ready")) first = m_LastSel.Work;   // 上次選的那件還在 ⇒ 預設是它（被篩選藏起來也算：篩選只管下拉列不列）
         if (g.FieldValue(WorkSel + "/value", "").Length == 0 && first.Length > 0)
             g.SetField(WorkSel + "/value", first);
         g.Dropdown("作品（" + shown.Count + "／" + m_Works.Count + "）", options, first, WorkSel);
@@ -529,6 +536,32 @@ public sealed partial class SculptureViewerPage
         }
     }
 
+    /// <summary>
+    /// 開頁時把空間切回上次那一個（只在這個頁面實例的第一次、而且這一場 session 還沒選過空間時）。
+    /// <para>⚠ 作品不在這裡套：作品下拉的「預設」本來就在 <see cref="WorkTopBar"/> 算，上次那件只是讓預設先指向它 ——
+    /// ⛔ 不另開一條「強制選它」的路（那會跟人在下拉上選的打架）。</para>
+    /// </summary>
+    void RestoreLastSelection(SCP_Ui g)
+    {
+        if (m_LastSelApplied) return;
+        m_LastSelApplied = true;
+        if (m_LastSelError != null) { m_Message = "⚠ 上次的選取讀不了（照預設開頁）：" + m_LastSelError; return; }
+        if (g.FieldValue(SpaceSel + "/value", "").Length > 0) return;   // 這一場已經選過 ⇒ 照這一場的
+        if (m_LastSel.Space == "work" || m_LastSel.Space == "shared") g.SetField(SpaceSel + "/value", m_LastSel.Space);
+    }
+
+    /// <summary>記下這一次的選取（只在換了的那一刻寫一次檔）。個人區還沒選到作品 ⇒ 不記（⛔ 不拿「空」蓋掉上次那件）。</summary>
+    void SaveLastSelection(SCP_Ui g)
+    {
+        string aSpace = PersonalSpace(g) ? "work" : "shared";
+        string? aWork = PersonalSpace(g) ? SelectedWork(g) : null;
+        if (aWork != null && aWork.Length == 0) return;
+        if (aSpace == m_LastSel.Space && (aWork == null || aWork == m_LastSel.Work)) return;
+        var (aOk, aMsg) = SculptureWorkPrefs.SaveLastSelection(m_Model.RepoRoot, aSpace, aWork);
+        if (!aOk) { m_Message = "⚠ 記不下這次的選取（下次開頁會照預設）：" + aMsg; return; }
+        m_LastSel = (aSpace, aWork ?? m_LastSel.Work);
+    }
+
     /// <summary>空間或作品換了 ⇒ 換對象、清掉上一件的欄位與結果、要求重渲。只讀欄位、不畫東西 ⇒ 放在自動渲染之前。</summary>
     void CheckWorkSelection(SCP_Ui g)
     {
@@ -537,6 +570,7 @@ public sealed partial class SculptureViewerPage
         if (seen != selection)
         {
             g.SetField(WorkSeen, selection);
+            if (m_LastSelApplied) SaveLastSelection(g);   // 套回上次之前的那幾幀（作品清單還沒讀）⛔ 不記，否則會拿預設蓋掉上次
             if (seen.Length > 0 || PersonalSpace(g))
             {
                 g.SetField(SSubject, selection); g.SetField(FRegion, ""); g.SetField(FExclude, "");

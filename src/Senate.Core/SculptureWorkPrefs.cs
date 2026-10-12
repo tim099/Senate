@@ -5,6 +5,7 @@
 //             ⇒ 把設定調小，既有的大作品照樣打得開、雕得動，只是不能再建新的大作品。
 // 數值影響：只讀寫 `senate.pages.local.json` 的 `sculpture.workMaxAxis` 一格（由 SenatePageStore 決定檔名）；
 //           預設 ＝ SCP_SculptWorks.DefaultMaxAxis（4096）；超出 1..結構上限的值夾回範圍，並在來源說出來。
+//           另外兩格 `sculpture.lastSpace`／`sculpture.lastWork`：觀測頁上次選的空間與作品（Tim 2026-10-12：下次進來自動切回去）。
 #nullable enable
 using SCP.Core.Prefs;
 using SCP.Core.Sculpture;
@@ -49,6 +50,40 @@ public static class SculptureWorkPrefs
             aVal = aClamped;
         }
         return (int)aVal;
+    }
+
+    /// <summary>觀測頁上次選的空間（shared｜work）與作品 id。</summary>
+    public static readonly SCP_PrefKey<string> LastSpace = SCP_PrefKey.String("sculpture", "lastSpace");
+    public static readonly SCP_PrefKey<string> LastWork = SCP_PrefKey.String("sculpture", "lastWork");
+
+    /// <summary>
+    /// 讀上次的選取。沒設過 ⇒ 空字串；讀不了 ⇒ 空字串並在 <paramref name="oError"/> 說出來
+    /// （⛔ 不讓壞檔擋住開頁 —— 最壞是退回預設挑選，而那是這個功能出現之前的行為）。
+    /// </summary>
+    public static (string Space, string Work) ReadLastSelection(string iRepoRoot, out string? oError)
+    {
+        oError = null;
+        if (string.IsNullOrWhiteSpace(iRepoRoot)) return ("", "");
+        var aStore = SenatePageStore.For(iRepoRoot);
+        string One(SCP_PrefKey<string> iKey, ref string? ioErr)
+        {
+            SCP_PrefRead<string> r = aStore.Read(iKey);
+            if (r.State == SCP_PrefState.Present) return r.Value ?? "";
+            if (r.State != SCP_PrefState.Missing) ioErr ??= iKey.Path + " 讀不了：" + (r.Error ?? "沒有說明");
+            return "";
+        }
+        string aSpace = One(LastSpace, ref oError), aWork = One(LastWork, ref oError);
+        return (aSpace, aWork);
+    }
+
+    /// <summary>記下這一次的選取。<paramref name="iWork"/> 為 null ⇒ 只記空間（換到共用展區時不洗掉上次的作品）。</summary>
+    public static (bool Ok, string Message) SaveLastSelection(string iRepoRoot, string iSpace, string? iWork)
+    {
+        if (string.IsNullOrWhiteSpace(iRepoRoot)) return (false, "宿主沒給 repo_root");
+        var aStore = SenatePageStore.For(iRepoRoot);
+        var r = aStore.Write(LastSpace, iSpace);
+        if (!r.Ok || iWork == null) return r;
+        return aStore.Write(LastWork, iWork);
     }
 
     public static (bool Ok, string Message) SaveMaxAxis(string iRepoRoot, int iMaxAxis)
