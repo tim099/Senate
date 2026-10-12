@@ -177,7 +177,7 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptRope? aOld = aIdx >= 0 ? aFile.ropes[aIdx] : null;
         if (aOld != null && !aEnds && !aProps) return Blocked(c, 2, "繩 `" + aName + "` 已經在了 —— 沒有要改什麼（color／thickness／slack／enabled／note 直接改；換兩端要 from=／to= 加 overwrite=1）");
         if (aOld != null && aEnds && !WorkOverwrite(c)) return Blocked(c, 2, "已經有繩 `" + aName + "`（" + aOld.from + " → " + aOld.to + "）—— ⛔ 不默默換端點；要換請加 overwrite=1");
-        if (aOld == null && (!c.Args.IsExplicit("from") || !c.Args.IsExplicit("to"))) return Blocked(c, 2, "加繩要 name=<名> from=<端點> to=<端點>（端點：固定點名｜關聯/…/固定點名｜x,y,z）");
+        if (aOld == null && (!c.Args.IsExplicit("from") || !c.Args.IsExplicit("to"))) return Blocked(c, 2, "加繩要 name=<名> from=<端點> to=<端點>（端點：固定點名｜關聯/…/固定點名｜x,y,z｜sail:帆名/角｜model:模型名/點）");
 
         var aRope = new SCP_SculptRope
         {
@@ -225,7 +225,8 @@ public sealed partial class Cmd_Sculpture
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return Blocked(c, 2, "關聯樹讀不了（端點驗不了）：" + e.Message + "；未寫入"); }
         // 帆角端點（sail:）要靠帆的觀測解 ⇒ 走 SCP_SculptSails.Rig（裡面是同一支 Resolve，帆角由它注入；沒模擬 ⇒ 長度是設計位置的讀數）
         SCP_SculptRopeReading? aReading = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
-                                                              new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }, null, aFile)
+                                                              new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }, null, aFile,
+                                                              ModelsForRig(c, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", "")))
                                           .Ropes.Find(r => r.Path == aRope.name);
         if (aReading == null) return Blocked(c, 1, "寫之前的回讀沒找到這條繩（不該發生）；未寫入");
         if (aReading.State == SCP_SculptRopeReading.Broken) return Blocked(c, 2, "端點解不到：" + aReading.Reason + "；未寫入（先 sub=anchor 加固定點，或用 sub=anchors 看有哪些）");
@@ -263,7 +264,8 @@ public sealed partial class Cmd_Sculpture
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { c.Report.Append("- ⚠ 關聯樹讀不了（綁在關聯上的繩會列成 broken）：").Append(e.Message).Append('\n'); }
         // 綁帆角的繩：位置是帆角的設計位置（沒模擬；模擬完的長度與下垂 ⇒ sub=sails）
         List<SCP_SculptRopeReading> aReadings = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
-                                                                    new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }).Ropes;
+                                                                    new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }, null, null,
+                                                                    ModelsForRig(c, iCard.id, aTree, new SCP_SculptLinkSelection())).Ropes;
         AppendRopeReport(c, aReadings, true);
         c.Result.AddValue("rope_count", aReadings.Count.ToString(CultureInfo.InvariantCulture));
         int aBroken = aReadings.FindAll(r => r.State == SCP_SculptRopeReading.Broken).Count;

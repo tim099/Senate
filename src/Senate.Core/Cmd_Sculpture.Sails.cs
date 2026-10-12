@@ -27,11 +27,12 @@ public sealed partial class Cmd_Sculpture
         string aRopes = c.Args.Get("ropes").Trim(), aHide = c.Args.Get("hide_ropes").Trim();
         string aSails = c.Args.Get("sails").Trim(), aHideSails = c.Args.Get("hide_sails").Trim();
         string aWind = c.Args.Get("wind").Trim(), aSec = c.Args.Get("sail_seconds").Trim();
-        bool aGiven = aRopes.Length > 0 || aHide.Length > 0 || aSails.Length > 0 || aHideSails.Length > 0 || aWind.Length > 0 || aSec.Length > 0;
+        string aModels = c.Args.Get("models").Trim(), aHideModels = c.Args.Get("hide_models").Trim();
+        bool aGiven = aRopes.Length > 0 || aHide.Length > 0 || aSails.Length > 0 || aHideSails.Length > 0 || aWind.Length > 0 || aSec.Length > 0 || aModels.Length > 0 || aHideModels.Length > 0;
         if (aRopes.Length > 0 && aRopes != "0" && aRopes != "1") return "ropes 要是 1 或 0（got '" + aRopes + "'）";
         if (aSails.Length > 0 && aSails != "0" && aSails != "1") return "sails 要是 1 或 0（got '" + aSails + "'）";
-        if (aGiven && Array.IndexOf(RopeViewOps, c.Op) < 0) return "ropes／hide_ropes／sails／hide_sails／wind／sail_seconds 只給 view／export（繩與帆不是格子：slice／section／stats 量的是 voxel）";
-        if (c.Work == null) return aGiven ? "繩與帆是作品的 —— 要帶 work=" : null;
+        if (aGiven && Array.IndexOf(RopeViewOps, c.Op) < 0) return "ropes／hide_ropes／sails／hide_sails／wind／sail_seconds／models／hide_models 只給 view／export（繩、帆、模型不是格子：slice／section／stats 量的是 voxel）";
+        if (c.Work == null) return aGiven ? "繩、帆、模型是作品的 —— 要帶 work=" : null;
         if (Array.IndexOf(RopeViewOps, c.Op) < 0) return null;
 
         List<SCP_SculptLinkNode>? aTree = c.LinkTree;
@@ -44,8 +45,10 @@ public sealed partial class Cmd_Sculpture
         if (ViewEnv(c, c.Work, out SCP_SculptSailEnv aEnv) is string aEnvBad) return aEnvBad;
         var aRopeSel = SCP_SculptRopeSelection.Parse(aRopes, aHide);
         var aSailSel = SCP_SculptSailSelection.Parse(aSails, aHideSails);
+        // 外部模型（TASK-0507）先解：繩的端點與帆角可以綁在模型上；要畫 ⇒ 讀網格（作品來源缺快取就現產生 —— 這裡在作品鎖外）
+        if (ResolveViewModels(c, c.Work, aTree, aSel, true, out SCP_SculptModelSet aModelSet) is string aModelBad) return aModelBad;
         SCP_SculptSailRig aRig;
-        try { aRig = SCP_SculptSails.Rig(c.Works, c.Work.id, aTree, aSel, aRopeSel, aSailSel, aEnv); }
+        try { aRig = SCP_SculptSails.Rig(c.Works, c.Work.id, aTree, aSel, aRopeSel, aSailSel, aEnv, null, null, aModelSet); }
         catch (InvalidOperationException e) { return "繩與帆：" + e.Message + "（只想看格子：ropes=0／sails=0 也救不了壞掉的檔 —— 先修檔）"; }
         // hide_ropes／hide_sails 點名的路徑要存在（⛔ 打錯字不會變成「什麼都沒關」）
         var aKnown = new HashSet<string>(aRig.Ropes.ConvertAll(r => r.Path), StringComparer.Ordinal);
@@ -243,7 +246,8 @@ public sealed partial class Cmd_Sculpture
         try { aTree = SCP_SculptLinks.Tree(c.Works, iCard.id); }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return Blocked(c, 2, "關聯樹讀不了（角驗不了）：" + e.Message + "；未寫入"); }
         SCP_SculptSailRig aRig = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
-                                                     new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel, Wind = aFile.wind.ToArray() }, aFile);
+                                                     new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel, Wind = aFile.wind.ToArray() }, aFile, null,
+                                                     ModelsForRig(c, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", "")));
         SCP_SculptSailReading? aReading = aRig.Sails.Find(r => r.Path == aSail.name);
         if (aReading == null) return Blocked(c, 1, "寫之前的回讀沒找到這面帆（不該發生）；未寫入");
         if (aReading.State == SCP_SculptSailReading.Broken) return Blocked(c, 2, "角解不到：" + aReading.Reason + "；未寫入（先 sub=anchor 加固定點，或用 sub=anchors 看有哪些）");
@@ -287,7 +291,8 @@ public sealed partial class Cmd_Sculpture
         try { aTree = SCP_SculptLinks.Tree(c.Works, iCard.id); }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { c.Report.Append("- ⚠ 關聯樹讀不了（綁在關聯上的會列成 broken）：").Append(e.Message).Append('\n'); }
         if (ViewEnv(c, iCard, out SCP_SculptSailEnv aEnv) is string aEnvBad) return Blocked(c, 2, aEnvBad);
-        SCP_SculptSailRig aRig = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(), aEnv);
+        SCP_SculptSailRig aRig = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(), aEnv,
+                                                     null, null, ModelsForRig(c, iCard.id, aTree, new SCP_SculptLinkSelection()));
         if (aRig.Animated) aRig.Simulate(aEnv.Seconds);
         AppendSailReport(c, aRig, true);
         var aOnSails = aRig.Ropes.FindAll(r => r.FromSail.Length > 0 || r.ToSail.Length > 0);
@@ -344,9 +349,14 @@ public sealed partial class Cmd_Sculpture
                 List<SCP_SculptLinkNode> aTree = SCP_SculptLinks.Tree(c.Works, w.id);
                 var aIds = new SortedSet<string>(StringComparer.Ordinal) { w.id };
                 SCP_SculptLinks.Closure(aTree, aIds);
+                // TASK-0507：作品來源的模型（繩可以綁那件作品的固定點）也算有關
+                foreach (string id in new List<string>(aIds))
+                    foreach (var m in SCP_SculptModels.ReadModels(c.Works.SpacePaths(id)).models)
+                        if (m.source == SCP_SculptModels.SourceWork) aIds.Add(m.work);
                 if (!aIds.Contains(iWorkId)) continue;
                 SCP_SculptSailRig aRig = SCP_SculptSails.Rig(c.Works, w.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
-                                                             new SCP_SculptSailEnv { MetersPerVoxel = w.MetersPerVoxel });
+                                                             new SCP_SculptSailEnv { MetersPerVoxel = w.MetersPerVoxel }, null, null,
+                                                             ModelsForRig(c, w.id, aTree, SCP_SculptLinkSelection.Parse("all", "")));
                 foreach (var r in aRig.Ropes) if (r.State == SCP_SculptRopeReading.Broken) { oRopes++; aOut.Add(w.id + " → 繩 `" + r.Path + "`｜" + r.Reason); }
                 foreach (var s in aRig.Sails) if (s.State == SCP_SculptSailReading.Broken) { oSails++; aOut.Add(w.id + " → 帆 `" + s.Path + "`｜" + s.Reason); }
             }

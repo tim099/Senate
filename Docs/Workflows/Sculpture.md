@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-12（作品 tags：sub＝子作品、沒標的是主作品（跟 parent_work 脫鉤）；觀測頁：工具列兩排、渲染圖置頂、三份設定 class 由 Inspector 自動畫、草稿預設開）
+last_updated: 2026-10-12（外部模型：obj 匯入、作品當模型、繩與帆角綁模型（§9.4.8）；網格建構在 SCP_Core）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -51,7 +51,7 @@ related:
 | `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用）；obj 預設省略封閉在模型裡的面，`sealed=keep` 照常輸出（§9.4.2） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
-| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6）；帆 `sail|unsail|sails|wind`（§9.4.7） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
+| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6）；帆 `sail|unsail|sails|wind`（§9.4.7）；外部模型 `model|unmodel|models`（§9.4.8） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
 
 ```bash
 senate cmd sculpture --arg op=box --arg persona=<P> --arg x1=10 --arg x2=12 --arg y1=10 --arg y2=12 --arg z1=0 --arg z2=0 --arg color=19
@@ -84,6 +84,7 @@ senate cmd sculpture --arg op=carvevox --arg work=<作品> --arg persona=<P> --a
 引擎是 in-process 的 SCP_Core `SCP_SculptEngine`（幾何／事件／快取／展品；不碰錢、不畫圖）。
 事實源是 `Sculpture/events/`（append-only），`sculpt_cache.json` 只是重播到某個水位的結果。
 圖由宿主註冊的渲染器畫（Senate.Desktop 的 OpenGL 實作，`senate.exe` 啟動時註冊）—— `renderer` 值印出這張圖是哪一條路畫的。
+網格（voxel 外露面＋AO＋合併、繩、帆、外部模型）由 SCP_Core `SCP_SculptMeshBuilder` 建，渲染器只上傳與畫 ⇒ 哪個宿主建的網格都同一個 digest。
 
 ## 2. 錢怎麼算（三段）
 
@@ -587,6 +588,35 @@ senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_
 - **匯出**：`export format=obj` 把帆（模擬到 `sail_seconds` 那一刻）接在繩後面輸出成雙面三角網格（每面一個 `o sail_n`＋材質 `sail_n`，mtl 有 Kd；有法線、繞序跟法線同向），綁帆角的繩也一起 ⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ `sails_exported=0`。
 - **讀數**（淨室 SculptureSailsCleanRoom，Release）：24 面帆、每面 25×25 布點，模擬 3 秒（180 步）約 1.2 秒、每步約 6.8 ms。
 - **之後**：貼圖（Tim 2026-10-11「貼圖可以先不處理」）、收帆（furled，捲在 yard 上）、縮帆（reef）本版不做 —— `sails.json` 的帆是可以加欄位的物件，加的時候舊檔照讀。
+
+### 9.4.8 外部模型 —— 匯入 obj、或拿另一件作品當模型（TASK-0507）
+
+作品可以擺**三角網格模型**：一個 obj 檔，或另一件雕刻作品（**不匯入 voxel**，而是匯出成 obj 快取在本地再畫）。存在 `models.json`（作品資料，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**，改的只有作者。模型可以任意角度旋轉、縮放 —— voxel 關聯只能轉 90°、不能縮。
+
+```bash
+# obj 檔：複製進作品（models/<名字>/），之後作品自己帶著它
+senate cmd sculpture --arg op=work --arg sub=model --arg work=ship --arg persona=<P> --arg name=lantern --arg file=D:/tmp/lantern.obj --arg axes=yup --arg at=512,160,140 --arg scale=10
+# 作品當模型：比例照兩件作品的一格幾公尺自動換算（0.02 m 的零件放進 0.1 m 的船 ⇒ scale 0.2）
+senate cmd sculpture --arg op=work --arg sub=model --arg work=ship --arg persona=<P> --arg name=wheel --arg source_work=ship-wheel --arg pivot=40,6,40 --arg at=180,160,131.5 --arg rotate=0,0,90
+senate cmd sculpture --arg op=work --arg sub=model --arg work=ship --arg persona=<P> --arg name=wheel --arg rotate=0,0,95   # 只改變換：不用 overwrite
+senate cmd sculpture --arg op=work --arg sub=models --arg work=ship                                                         # 每個模型的讀數
+# 繩綁在模型上：model:[關聯/…/]模型名/點（點 ＝ 模型自己的座標，或來源作品的固定點名）
+senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=tiller-rope --arg from=model:wheel/drum_p --arg to=tiller-block
+senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg out=<png>   # 這次拿掉；models=0 ＝ 一個都不畫
+```
+
+- **`sub=model name= (file=<obj> [axes=] | source_work=<作品>) [at=] [pivot=] [rotate=] [scale=] [mirror=] [color=] [enabled=] [note=]`**：
+  - **座標三層**：① 檔案座標（obj 自己的 x,y,z）→ ② 模型座標（z 朝上）→ ③ 作品座標。`axes` 管 ①→②：`yup`（預設；Blender／Maya 匯出的 obj）＝ (x, −z, y)、`zup` ＝ 原樣、`sculpt` ＝ 本引擎 `export` 出來的 obj（(x, z, y)，export 的反函數）。②→③：**p ＝ at ＋ R·(scale ⊙ mirror(p − pivot))**，`rotate=rx,ry,rz`（度）先繞 X、再 Y、再 Z（都繞作品的軸）；`scale` 一個數或三個數（> 0）；`mirror=x|y|z`（組合）在模型座標裡繞 pivot 翻面。at／pivot 可帶小數。
+  - **file 來源**：obj 與它 `mtllib` 引用的 mtl 一起複製進 `models/<名字>/`（⛔ 不指向作品外的檔）；記下位元組數與 SHA256。換檔 ＝ 同名＋`file=`＋`overwrite=1`。
+  - **work 來源**：那件作品（含它的關聯、繩、帆、模型）匯出成 obj，快取在 `<雕刻根>/model_cache/<作品>/<鍵>.obj`（⛔ 不入版控）；鍵 ＝ 那一整串作品的事件水位與資料檔雜湊 ⇒ 來源一改，下一次觀測**自動重出**（回報 `cache=produced|reused`）。模型座標 ＝ 那件作品的格座標。`scale` 不給 ⇒ 來源的一格幾公尺 ÷ 本作品的（寫進 models.json）。成環（A 用 B、B 又用 A；含經過關聯與隔層）⇒ exit 2。
+  - 同名已在：改 at／pivot／rotate／scale／mirror／color／enabled／note 直接改；**換來源**要 `overwrite=1`。寫之前先讀一次 obj（work 來源先產生快取）：讀不了、沒有面、索引越界 ⇒ exit 2、**一個檔都沒寫**。`sub=unmodel name=` 拿掉（file 來源連同 `models/<名字>/`；綁在它上面的繩當下全庫掃一次，`ropes_now_broken`）。
+  - 只讀幾何與顏色：`v`／`vn`／`f`（多邊形扇形切成三角形；索引可負）／`usemtl`／`mtllib` 的 `Kd`。沒有 `vn` ⇒ 面法線（平面著色）；缺 mtl 或材質 ⇒ 預設灰並列警告；`color=` ⇒ 整個模型一個色。貼圖、曲面、線段不讀。上限 256 MB、800 萬個三角形。
+- **繩與帆角綁模型**：端點寫 `model:[關聯/…/]模型名/點`（相對於繩所在的作品，同固定點路徑）。點 ＝ `x,y,z`：file 來源是**檔案座標**（照 axes 換）、work 來源是那件作品的格座標（整數 ⇒ 格心）；work 來源也可以寫那件作品的**固定點名**。模型搬、轉、縮、跟著關聯走 ⇒ 端點跟著動。帆的角同一種寫法（`corners="model:mast/12,0,40|…"`）。
+- **跟著關聯走**：被關聯進來的作品自己的模型照那條關聯的 mirror→turn→at 換座標（模型路徑 ＝ `關聯/…/模型名`）。所在那一層這次沒畫 ⇒ `hidden`（綁在上面的繩跟著 hidden）；自己 `enabled=0` ⇒ `disabled`；`models=0`／`hide_models=路徑,…` ⇒ 這次**不畫**（綁在上面的繩照畫；打錯路徑 ⇒ exit 2）。檔不見、來源作品不在、成環、快取產生失敗 ⇒ `broken`：⛔ 不靜默消失，觀測照樣出圖、回傳行大聲列 🔴。
+- **讀數**（`sub=models` 與 view／export 每個模型一行）：狀態、來源（檔名＋SHA 前 8 碼／作品＋快取鍵與 produced|reused）、變換、三角形數、在組裝件裡的外框；回傳值 `models_drawn／hidden／disabled／broken`。
+- **畫**：view 與觀測頁的 GPU 預覽另一趟畫（靜態 ⇒ 內容沒變不重傳；同一組燈、會投影子也接影子）；不是 voxel ⇒ `visible_voxels` 不變；slice／section／stats 量的是格子，不畫模型。觀測頁「模型」區：總開關＋一個一個勾（只影響這次觀測，⛔ 不寫回 models.json）。
+- **匯出**：`export format=obj` 把模型接在帆後面（每個模型 `o model_n`、一色一個材質 `model_n_k`）；list／vox 只有格子 ⇒ `models_exported=0`。只有繩／帆／模型、沒有 voxel 的作品也匯得出 obj。
+- ⚠ **已知的洞**：`work sub=link` 的成環檢查只看關聯 —— 加一條關聯讓「關聯＋模型」繞成環時，寫入當下**不擋**；觀測時那個模型列 `broken`（「模型來源成環」），不會無限遞迴。`sub=model` 寫入時兩種邊都看。
 
 ### 9.5 建築與家具的相對比例尺
 

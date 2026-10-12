@@ -148,6 +148,47 @@ public sealed partial class SculptureViewerPage
             if (wind.Length > 0) args["wind"] = wind;
             if (secs.Length > 0) args["sail_seconds"] = secs;
         }
+        // 外部模型（TASK-0507）：同一種開關（models=／hide_models=）
+        if ((op == "view" || op == "export") && ModelRows(id).Rows is { Count: > 0 } modelRows)
+        {
+            var (aModels, aHideModels) = RopeToggleArgs(g.ToggleValue(TModelsAll, true), modelRows.ConvertAll(r => new RopeRow(r.Path, r.Model.enabled)),
+                                                        path => g.ToggleValue(ModelToggleId(id, path), true));
+            if (aModels.Length > 0) args["models"] = aModels;
+            if (aHideModels.Length > 0) args["hide_models"] = aHideModels;
+        }
+    }
+
+    // ===========================================================
+    // 區塊職責：外部模型的開關（TASK-0507）—— 跟繩索開關同一種用法（同一支純函數 RopeToggleArgs ⇒ models=／hide_models=）。
+    // 物理意義：開關只決定**這一次觀測**畫不畫（⛔ 不寫回 models.json；綁在被拿掉的模型上的繩照畫）。清單只讀矩陣與狀態（不讀網格、不產生快取）。
+    // ===========================================================
+    const string TModelsAll = P + "t/models-all";
+    const string TModelPrefix = P + "t/model/";
+    static string ModelToggleId(string iWork, string iPath) => TModelPrefix + iWork + "/" + iPath;
+
+    (List<SCP_SculptModelReading>? Rows, string Error) ModelRows(string iId) { var (rig, error) = RigRows(iId); return (rig?.Models?.Models, error); }
+
+    void DrawModelToggles(SCP_Ui g)
+    {
+        string id = SelectedWork(g);
+        var (rows, error) = ModelRows(id);
+        if (error.Length > 0) { g.Note("⚠ 模型讀不了（觀測那邊會說哪裡壞）：" + error); return; }
+        if (rows == null || rows.Count == 0) return;   // 沒有模型的作品不顯示這一塊
+        using var fold = g.Fold("外部模型（" + rows.Count + " 個，開關只影響這次觀測）", P + "fold/model-toggles", iDefaultOpen: true);
+        if (!fold.Open) return;
+        g.Note("總開關關掉 ⇒ 這次不畫任何模型（models=0）；一個一個勾 ⇒ 取消勾的那個這次不畫（hide_models=）。綁在模型上的繩照畫。⛔ 不寫回作品（長期開關用 work sub=model enabled=0|1）。");
+        g.Toggle("畫模型", true, TModelsAll);
+        bool allOn = g.ToggleValue(TModelsAll, true);
+        foreach (var r in rows)
+        {
+            string info = (r.Model.source == SCP_SculptModels.SourceFile ? "obj " + r.Model.file : "作品 " + r.Model.work) + "｜" + SCP_SculptModels.DescribeTransform(r.Model);
+            if (r.State == SCP_SculptModelReading.Broken) { g.Note("🔴 `" + r.Path + "` 壞了（不畫）：" + r.Reason); continue; }
+            if (!r.Model.enabled) { g.Label("◌ " + r.Path + "　" + info + "｜作品裡設為關"); continue; }
+            using (g.Row())
+            {
+                g.Toggle(r.Path + "　" + info + (allOn ? "" : "　◌ 總開關關著 ⇒ 不畫"), true, ModelToggleId(id, r.Path));
+            }
+        }
     }
 
     // ===========================================================
@@ -234,7 +275,9 @@ public sealed partial class SculptureViewerPage
             var store = new SCP_SculptWorks(new SCP_DataRoot(m_WorksRoot));
             List<SCP_SculptLinkNode>? tree = null;
             try { tree = SCP_SculptLinks.Tree(store, iId); } catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { tree = null; }
-            rig = SCP_SculptSails.Rig(store, iId, tree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(), new SCP_SculptSailEnv());
+            // TASK-0507：模型只要矩陣與狀態（綁在模型上的繩才解得到）—— ⛔ 不讀網格、不產生快取（清單每秒都會問）
+            var models = SCP_SculptModels.Resolve(store, iId, tree, new SCP_SculptLinkSelection(), new SCP_SculptModelSelection(), false);
+            rig = SCP_SculptSails.Rig(store, iId, tree, new SCP_SculptLinkSelection(), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(), new SCP_SculptSailEnv(), null, null, models);
         }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is IOException) { rig = null; error = e.Message; }
         m_RigRows[iId] = (rig, error, now);
@@ -481,6 +524,7 @@ public sealed partial class SculptureViewerPage
             DrawLinkToggles(g);
             DrawRopeToggles(g);
             DrawSailToggles(g);
+            DrawModelToggles(g);
             g.Note("⚠ 被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組 —— 場景快取只認這一頁送出的參數。");
         }
     }

@@ -56,7 +56,11 @@ public sealed partial class Cmd_Sculpture
             id = SCP_SculptWorks.NormalizeId(id);
             if (sub == "create") return CreateWork(c, id);
             if (sub == "assemble") return AssembleWork(c, id);
-            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind");
+            // TASK-0507：外部模型 —— 作品當模型要產生快取（拿來源作品的鎖）⇒ 自己管鎖（先驗、產生快取，最後才拿本作品鎖寫）
+            if (sub == "model") return WorkModel(c, id);
+            if (sub == "unmodel") return WorkUnmodel(c, id);
+            if (sub == "models") return WorkModels(c, id);
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|model|unmodel|models");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
             List<SCP_SculptLinkNode>? tree = null;
