@@ -73,7 +73,7 @@ public sealed partial class SculptureViewerPage
         return m_Works.Exists(w => w.id == id && w.status == "ready") ? id : "";
     }
     // 草稿模式（TASK-0493）與關聯的一次性開關（TASK-0494）—— 送出去的參數跟 CLI 同名，規則由 Cmd_Sculpture 判（⛔ 頁面不另寫一份）
-    const string TWorkDraft = P + "t/work-draft", FLinks = P + "f/links", FHideLinks = P + "f/hide_links";
+    // 草稿與關聯文字欄住在觀測設定（SculptWorkViewSettings，TASK-0504）；FLinks／FHideLinks 是 Inspector 那兩格的 id
     static readonly string[] s_DraftOps = { "box", "carve", "carvevox", "stamp2d", "stampimg", "stampvox", "view", "slice", "section", "stats", "export", "diff" };
     static readonly string[] s_LinkViewOps = { "view", "slice", "section", "stats", "export" };
 
@@ -110,14 +110,15 @@ public sealed partial class SculptureViewerPage
         // 沒有 op ＝ view（手動渲染／GPU 預覽）。草稿：開關開 ⇒ draft=1；關 ⇒ 明寫 draft=0（草稿開著時寫入類要明寫，頁面替使用者寫清楚）
         string op = args.TryGetValue("op", out string? o) ? o : "view";
         string sub = args.TryGetValue("sub", out string? s) ? s : "";
-        bool draftOn = g.ToggleValue(TWorkDraft, false);
+        SculptWorkViewSettings viewCfg = ViewCfg(g);
+        bool draftOn = viewCfg.Draft;
         bool view = Array.IndexOf(s_LinkViewOps, op) >= 0 || op == "diff";
         if (Array.IndexOf(s_DraftOps, op) >= 0 || (op == "work" && (sub == "undo" || sub == "redo" || sub == "move" || sub == "assemble")))
             // 觀測：這件作品（或它組進來的關聯）真的有開著的草稿才送 1 —— 否則開關開著也只會換來「沒有草稿」的錯
             args["draft"] = draftOn && (!view || HasDraftToShow(id)) ? "1" : "0";
         if (Array.IndexOf(s_LinkViewOps, op) >= 0)
         {
-            string links = g.FieldValue(FLinks, "").Trim(), hide = g.FieldValue(FHideLinks, "").Trim();
+            string links = viewCfg.Links.Trim(), hide = viewCfg.HideLinks.Trim();
             if (links.Length > 0) args["links"] = links;
             if (hide.Length > 0) args["hide_links"] = hide;
             // 文字欄有填 ⇒ 以文字欄為準（頁面上有寫）；都空 ⇒ 照一條一個的開關（TASK-0499）
@@ -395,7 +396,8 @@ public sealed partial class SculptureViewerPage
         if (rows == null || rows.Count == 0) return;   // 沒有關聯的作品不顯示這一塊
         using var fold = g.Fold("關聯開關（" + rows.Count + " 條，只影響這次觀測）", P + "fold/link-toggles", iDefaultOpen: true);
         if (!fold.Open) return;
-        bool textGiven = g.FieldValue(FLinks, "").Trim().Length > 0 || g.FieldValue(FHideLinks, "").Trim().Length > 0;
+        var viewCfg = ViewCfg(g);
+        bool textGiven = viewCfg.Links.Trim().Length > 0 || viewCfg.HideLinks.Trim().Length > 0;
         g.Note(textGiven
             ? "⚠ 上面的 links=／hide_links= 文字欄有填 ⇒ **以文字欄為準**，下面這些開關這一次不生效（清空文字欄就換回開關）。"
             : "一條一個開關（像 Unity 的 Hierarchy）：預設照那一條在作品裡的開關；關掉上一層 ⇒ 底下每一層都不畫，但它們自己的勾照留（標「上層關著」），上一層打開就照自己的勾回來。▶／▼ 只折疊列表、不影響畫不畫（預設折起來）。⛔ 開關與折疊都不寫回作品（長期開關用 work sub=link enabled=0|1）。");
@@ -426,24 +428,66 @@ public sealed partial class SculptureViewerPage
             }
         }
     }
-    void DrawWorkSelector(SCP_Ui g, string persona)
+    /// <summary>
+    /// 工具列先於內容畫 ⇒ 作品與展品清單要在工具列那一刻就讀好（文字模式一道指令只畫一輪，等內容區讀就來不及了）。
+    /// 讀過之後記一筆，內容區的 Reload 這一輪不再重讀。
+    /// </summary>
+    void EnsureWorks()
+    {
+        string root = m_Model.AgentCommandsRoot.Value ?? "";
+        if (root.Length == 0 || !Directory.Exists(root)) return;
+        if (!m_Dirty && m_WorksRoot == root) return;
+        var data = new SCP_DataRoot(root);
+        ReloadWorks(data);
+        ReloadExhibits(data);
+        m_WorksFresh = true;
+    }
+    bool m_WorksFresh;
+
+    // ===========================================================
+    // 區塊職責：工具列第二排（TASK-0504）—— 空間下拉 ＋ 作品下拉（個人區）／展品下拉（共用展區）。
+    //          作品下拉只列篩選後的作品（篩選條件在內容區「作品篩選」）。
+    // 物理意義：沒選過 ⇒ 預設選篩選後第一件「自己的、已付款」的，沒有就第一件已付款的。
+    //          目前選的作品被篩掉 ⇒ 選取不動（下拉標「不在清單裡」）—— 篩選只管列不列，⛔ 不替使用者換作品。
+    // ===========================================================
+    void WorkTopBar(SCP_Ui g)
     {
         g.Dropdown("雕刻空間", new List<SCP_GuiOption> { new("shared", "共用展區（256³）"), new("work", "個人作品（可調尺寸）") }, "shared", SpaceSel);
+        if (!PersonalSpace(g)) { ExhibitTopBar(g); return; }
+        string persona = g.FieldValue(PersonaSel + "/value", None);
+        var shown = FilterWorks(m_Works, FilterCfg(g));
+        var options = shown.Select(w => new SCP_GuiOption(w.id, w.title + "｜" + w.owner + "｜" + w.status)).ToList();
+        string first = shown.Find(w => w.owner == persona && w.status == "ready")?.id ?? shown.Find(w => w.status == "ready")?.id ?? "";
+        if (g.FieldValue(WorkSel + "/value", "").Length == 0 && first.Length > 0)
+            g.SetField(WorkSel + "/value", first);
+        g.Dropdown("作品（" + shown.Count + "／" + m_Works.Count + "）", options, first, WorkSel);
+    }
+
+    void DrawWorkSelector(SCP_Ui g)
+    {
         if (PersonalSpace(g))
         {
-            var options = m_Works.Select(w => new SCP_GuiOption(w.id, w.title + "｜" + w.owner + "｜" + w.status)).ToList();
-            string first = m_Works.Find(w => w.owner == persona && w.status == "ready")?.id ?? m_Works.Find(w => w.status == "ready")?.id ?? "";
-            if (g.FieldValue(WorkSel + "/value", "").Length == 0 && first.Length > 0)
-                g.SetField(WorkSel + "/value", first);
-            g.Dropdown("作品", options, first, WorkSel);
-            g.Toggle("草稿模式（draft=1：刀落在草稿、看「作品＋草稿」；套進作品／丟掉用 work sub=apply／discard）", false, TWorkDraft);
-            Field(g, "只組這些關聯 links=（none｜all｜路徑,…；巢狀用 /；空 ＝ 照每條的開關）", FLinks);
-            Field(g, "拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）", FHideLinks);
+            using (var filter = g.Fold("作品篩選（作品下拉在上方工具列）", P + "fold/work-filter", iDefaultOpen: false))
+            {
+                if (filter.Open)
+                {
+                    g.Note("MainOnly：只列主作品（不是任務子作品的）｜Owner：只列這位作者的（空 ＝ 不限）｜Keyword：ID 或名稱含這段字（空 ＝ 不限）。篩選只管下拉列不列，目前選的作品被篩掉也不換。");
+                    foreach (string n in DrawCfg(g, FilterCfg(g), FilterCfgKey, SFilterCfg, ref m_FilterCfgJson)) g.Note("（自動繪製）" + n);
+                }
+            }
+            g.Label("作品觀測設定");
+            g.Note("Draft：草稿模式（預設開）—— 刀落在草稿、看「作品＋草稿」；套進作品／丟掉用 work sub=apply／discard｜Links：只組這些關聯 links=（none｜all｜路徑,…；巢狀用 /；空 ＝ 照每條的開關）｜HideLinks：拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）");
+            foreach (string n in DrawCfg(g, ViewCfg(g), ViewCfgKey, SViewCfg, ref m_ViewCfgJson)) g.Note("（自動繪製）" + n);
             DrawLinkToggles(g);
             DrawRopeToggles(g);
             DrawSailToggles(g);
             g.Note("⚠ 被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組 —— 場景快取只認這一頁送出的參數。");
         }
+    }
+
+    /// <summary>空間或作品換了 ⇒ 換對象、清掉上一件的欄位與結果、要求重渲。只讀欄位、不畫東西 ⇒ 放在自動渲染之前。</summary>
+    void CheckWorkSelection(SCP_Ui g)
+    {
         string selection = PersonalSpace(g) ? SubjectWork + SelectedWork(g) : SubjectFull;
         string seen = g.FieldValue(WorkSeen, "");
         if (seen != selection)
@@ -452,7 +496,7 @@ public sealed partial class SculptureViewerPage
             if (seen.Length > 0 || PersonalSpace(g))
             {
                 g.SetField(SSubject, selection); g.SetField(FRegion, ""); g.SetField(FExclude, "");
-                g.SetField(FLinks, ""); g.SetField(FHideLinks, "");   // 關聯名是那件作品的 ⇒ 換作品就清掉（⛔ 帶著舊名字去看下一件只會一直報錯）
+                ClearViewLinks(g);   // 關聯名是那件作品的 ⇒ 換作品就清掉（⛔ 帶著舊名字去看下一件只會一直報錯）
                 g.SetField(SViewPath, ""); g.SetField(SSlicePath, ""); g.SetField(SExportPath, "");
                 RequestRender("切換雕刻空間", iForce: true);
             }

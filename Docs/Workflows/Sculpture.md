@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-11（帆：work sub=sail／unsail／sails／wind、布料模擬（重力＋風、決定性）、bind 整條邊、free 角＋帆腳索（繩端點 sail:帆/角，綁帆角的繩 slack 可以小於 1）、view／觀測頁持續模擬／export obj —— §9.4.7，TASK-0503）；2026-10-11（固定點與繩索：work sub=anchor／rope、懸鏈線、跨關聯綁定、view／觀測頁／export obj 畫成管子、壞掉的綁定大聲列 —— §9.4.6，TASK-0502）；2026-10-11（GPU 預覽鏡頭只框一次、右鍵轉左鍵平移 —— §5.3，TASK-0501）；2026-10-11（觀測頁關聯開關改 Unity Hierarchy 式：多層、activeSelf／activeInHierarchy、折疊 —— §9.4.4，TASK-0500）；2026-10-11（觀測頁關聯一條一個開關 —— §9.4.4，TASK-0499）；2026-10-11（關聯與 assemble 加鏡像 `mirror=x|y|z`（可組合）：先在零件自己的框裡翻、再 turn；用了鏡像的 links.json 寫 schema 2 —— §9.3、§9.4.4，TASK-0497）；2026-10-11（新 op `spray` 噴漆：射線／一束／沿線平行複製、only_color、depth、接縫規則、預覽→expect_plan、草稿 —— §9.4.5，TASK-0495）；2026-10-11（export obj 預設省略封閉在模型裡的面、`sealed=keep` 照常輸出 —— §9.4.2，TASK-0498）；2026-10-11（§9.4.3 草稿：draft=1、work sub=draft／apply／discard —— TASK-0493；§9.4.4 關聯匯入：work sub=link／unlink／links、觀測 links=／hide_links= —— TASK-0494；外部程式讀作品走 export format=list、mark= 吃事件檔）；2026-10-11（新 op `carvevox` 照清單刻、`diff` 兩個時間點的差異、stats 的結構讀數 structure／mirror、export format=list —— §9.4.2，TASK-0492）；2026-10-11（§9.4.1 時間標記：work sub=mark／marks，觀測類 op 的 mark／hide／only —— TASK-0491）；2026-10-11（新 op `stampvox` 3D 格子清單 —— TASK-0487；§0 加「照圖紙雕大型作品」指路 → Sculpture_Blueprint_Build；§0 加「op 不夠用可以擴充引擎」）；2026-10-10（作品尺寸上限改成設定 `sculpture.workMaxAxis`、渲染網格拿掉 64M 外框上限 —— TASK-0479；剖面＋參考圖疊圖 op=section、作品比例 meters_per_voxel —— TASK-0480）
+last_updated: 2026-10-12（觀測頁：工具列兩排（匯出／正交切換／空間／作品或展品下拉）、渲染圖置頂、作品篩選／觀測設定／匯出設定三份 class 由 Inspector 自動畫、草稿預設開）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -327,7 +327,7 @@ senate cmd sculpture --arg op=work --arg sub=import --arg work=meadow-chair --ar
 
 只對實際落地收費`⌈voxel/100⌉`，既有格子跳過不收費；付款不足或版本不符不落地、不扣費。提交事件`importwork`保存每顆原色、來源作品ID／作者／版本，不依賴作品後續狀態即可重播；展品以實際落地範圍登錄，描述保留來源版本。原作品保留，續雕不更新已展出的副本。若已落地但結算未收齊，exit1並回傳event_file，按`sculpture:<事件檔名>`對帳，不要重跑匯入。
 
-後台`senate ui --page sculpture`的「雕刻空間」可切換共用展區／個人作品；個人區可建立作品、保存心得與TODO、預覽及確認匯入。名稱／筆記欄位依作品ID保存草稿，切換作品不會套用上一件的文字；長筆記派送UTF-8 arg-file，鏡頭、切片與匯出仍走同一支CLI。
+後台`senate ui --page sculpture`：工具列兩排 —— 第一排「匯出」「切換 正交／透視」與開資料夾，第二排「雕刻空間」下拉＋「作品」（個人作品）或「展品」（共用展區）下拉；渲染圖在內容區最上面。個人區可建立作品、保存心得與TODO、預覽及確認匯入。三份設定由`SCP_GuiInspector`自動畫、存在session（文字模式跨指令記得）：「作品篩選」`MainOnly`（預設開＝只列主作品，即`parent_work`空的）／`Owner`／`Keyword`，目前選的作品被篩掉也不換；「作品觀測設定」`Draft`（草稿模式，預設開）／`Links`／`HideLinks`；「匯出設定」`Format`（obj｜vox）／`MergeFaces`／`OutDir`。名稱／筆記欄位依作品ID保存草稿，切換作品不會套用上一件的文字；長筆記派送UTF-8 arg-file，鏡頭、切片與匯出仍走同一支CLI。
 
 ### 9.2 使用者指定的委託作品
 
@@ -448,7 +448,7 @@ senate cmd sculpture --arg op=work --arg sub=discard --arg work=<作品> --arg p
 - **無痕**：草稿的讀寫一個位元組都不碰作品（events／快取／marks.json／歷史索引；讀作品走「只讀」，作品沒快取也不會替它建）。export／展品等輸出檔仍落在作品資料夾，不會跟著 draft/ 被刪。
 - **apply** ＝ 一筆 workedit（action=draft，舊版 senate.exe 重播得出來）：套完逐格驗 ＝ 草稿才刪草稿；`work sub=undo` 一次就整份回到草稿前；草稿裡 undo 掉的刀不在最終狀態裡 ⇒ 不會被帶進去。不受單刀 1,000,000 格上限（草稿是很多刀累積的）。
 - **底過期 ⇒ apply 擋下、零寫入**：照**內容**判（尺寸＋每一格的雜湊）—— 開草稿之後作品被改過（含插進較早的事件、改尺寸）就算過期；漏帶 draft 落了一刀再 undo 回來（內容一樣）不算。出口：discard、照現在的作品重開（不做 rebase）。
-- **草稿開著時，寫入作品的刀要明寫** `draft=1`（落草稿）或 `draft=0`（直接落作品）—— 沒寫 ⇒ exit 2。觀測頁的「草稿模式」開關替你寫好。
+- **草稿開著時，寫入作品的刀要明寫** `draft=1`（落草稿）或 `draft=0`（直接落作品）—— 沒寫 ⇒ exit 2。觀測頁的「作品觀測設定」`Draft`（預設開）替你寫好。
 - 擋下（exit 2）：draft＋mark／hide／only、共用展區、不收 draft 的 op、draft＋exhibit_id、沒開草稿就觀測／undo、殘留的 draft/（沒有 base.json：上次刪到一半）⇒ 先 `sub=discard`。
 - 跟關聯合用：觀測 `draft=1` 時，被關聯的作品有開著的草稿也一起用草稿（甲板在草稿裡試刻，回船殼裡看合不合）；`links_used` 會標 `(草稿)`。
 

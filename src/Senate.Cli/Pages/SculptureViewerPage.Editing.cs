@@ -10,7 +10,7 @@ public sealed partial class SculptureViewerPage
         args["op"] = "work"; args["work"] = selected; args["persona"] = persona;
         // 草稿模式（TASK-0493）：這幾個 sub 在作品開著草稿時要明寫 draft=1|0 —— 照頁面上的開關替使用者寫
         string sub = args.TryGetValue("sub", out string? s) ? s : "";
-        if (sub == "undo" || sub == "redo" || sub == "move" || sub == "assemble") args["draft"] = g.ToggleValue(TWorkDraft, false) ? "1" : "0";
+        if (sub == "undo" || sub == "redo" || sub == "move" || sub == "assemble") args["draft"] = ViewCfg(g).Draft ? "1" : "0";
         Start(g, label, () =>
         {
             var result = RunCli(args);

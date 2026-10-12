@@ -70,8 +70,6 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     const string Pending = P + "pending";
     const string FSliceRegion = P + "f/slice_region", FSliceAxis = P + "f/slice_axis";
     const string FStampRegion = P + "f/stamp_region", FStampAt = P + "f/stamp_at", FStampFacing = P + "f/stamp_facing", FStampThick = P + "f/stamp_thickness";
-    const string FExportDir = P + "f/export_dir";
-    const string TMerge = P + "t/export_merge";
     // 結果（頁面自己寫的 session 欄位；畫面上沒有元件 ⇒ 不會被 --set 動到）
     const string SViewPath = P + "state/view_path", SViewInfo = P + "state/view_info", SRenderer = P + "state/renderer", SLayers = P + "state/layers";
     const string SSlicePath = P + "state/slice_path", SSliceInfo = P + "state/slice_info";
@@ -195,15 +193,17 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     // ===========================================================
     void Reload(string iPersona, string iScope)
     {
-        // 作品清單與 persona／層無關：只換 persona（進頁第二幀下拉補上預設值就是這種）⛔ 不重讀作品（TASK-0473 第二次凍結）
-        bool aWorks = m_Dirty || m_WorksRoot != (m_Model.AgentCommandsRoot.Value ?? "");
+        // 作品與展品清單與 persona／層無關：只換 persona（進頁第二幀下拉補上預設值就是這種）⛔ 不重讀（TASK-0473 第二次凍結）
+        // 工具列這一輪剛讀過（EnsureWorks，兩個下拉都在工具列）⇒ 不再讀第二次
+        bool aWorks = (m_Dirty && !m_WorksFresh) || m_WorksRoot != (m_Model.AgentCommandsRoot.Value ?? "");
+        m_WorksFresh = false;
         m_Dirty = false;
         m_LoadedPersona = iPersona;
         m_LoadedScope = iScope;
         m_Error = null;
         m_DataRoot = m_Model.AgentCommandsRoot.Value ?? "";
         m_LettersRoot = m_Model.LettersRoot.Value ?? "";
-        m_Exhibits.Clear(); m_Skyboxes = new(); m_Floors = new(); m_Profiles = new(); m_ProfJson.Clear();
+        m_Skyboxes = new(); m_Floors = new(); m_Profiles = new(); m_ProfJson.Clear();
         m_ScopeDir = null; m_ProfActive = null; m_Resolved = null; m_ResolvedLayers = new(); m_ResolveError = "";
         if (m_DataRoot.Length == 0 || !Directory.Exists(m_DataRoot))
         {
@@ -211,12 +211,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             return;
         }
         var aData = new SCP_DataRoot(m_DataRoot);
-        if (aWorks) ReloadWorks(aData);
-        try
-        {
-            foreach (var kv in new SCP_SculptEngine(aData).LoadExhibits()) m_Exhibits.Add((kv.Key, kv.Value));
-        }
-        catch (Exception e) { m_Error = "展品讀不了：" + e.GetType().Name + ": " + e.Message; }
+        if (aWorks) { ReloadWorks(aData); ReloadExhibits(aData); }
 
         m_Personas = m_LettersRoot.Length > 0 && Directory.Exists(m_LettersRoot) ? SCP_PersonaDisplay.ListPersonas(m_LettersRoot) : new();
 
@@ -265,16 +260,25 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     string PageTempDir => Path.Combine(SenatePaths.RuntimeDir(m_Model.RepoRoot), PageTempDirName);
 
     // ===========================================================
-    // 區塊職責：工具列 —— 重新讀取／匯出 obj・vox／開 Sculpture 資料夾／開匯出資料夾／開暫存資料夾。
+    // 區塊職責：工具列（兩排，TASK-0504）—— 第一排：重新讀取／匯出（格式在匯出設定）／開 Sculpture 資料夾／開匯出資料夾／開暫存資料夾；
+    //          第二排：空間與作品下拉。兩排都在 base 的 TopBar 範圍裡 ⇒ 不跟內容一起捲。
     // ===========================================================
+    protected override void DrawTopBar(SCP_Ui iUi)
+    {
+        base.DrawTopBar(iUi);   // 第一排：導覽鈕 ＋ TopBarButtons（EnsureWorks 在那裡，第二排用得到）
+        using (iUi.Row()) WorkTopBar(iUi);
+    }
+
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", P + "btn/reload")) { m_Dirty = true; m_Message = "已重新讀取"; }
-        ExportButtons(iUi);
+        EnsureWorks();   // 匯出鈕與作品／展品下拉都要問清單
+        ExportButton(iUi);
+        ProjectionButton(iUi);
         // ⚠ TopBar 先於 DrawContent 畫 ⇒ 第一次 Reload 前 m_DataRoot 還是空的，直接問 model
         string aRoot = m_Model.AgentCommandsRoot.Value ?? "";
         OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_SculptRenderProfiles.SculptureDir(new SCP_DataRoot(aRoot)) : null, P + "btn/open-dir");
-        string aExp = iUi.FieldValue(FExportDir, "").Trim();
+        string aExp = ExportCfg(iUi).OutDir.Trim();
         string aExpPath = iUi.FieldValue(SExportPath, "");
         string? aExpDir = aExp.Length > 0 ? aExp
             : aExpPath.Length > 0 ? Path.GetDirectoryName(aExpPath)
@@ -292,8 +296,15 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         if (m_Dirty || aPersona != m_LoadedPersona || aScope != m_LoadedScope) Reload(aPersona, aScope);
         // ⚠ 放在畫任何區塊**之前**：文字模式的渲染是同步的 ⇒ 這一趟底下的結果區就看得到新圖
         //   （放在最後的話，`--set` 那一趟畫的是舊圖，要再下一道指令才看得到）。
-        DrawWorkSelector(g, aPersona);
-        if (!PersonalSpace(g) || SelectedWork(g).Length > 0) AutoRender(g, aPersona);
+        //   空間／作品下拉在工具列（先於這裡畫）⇒ 這一輪選的，這裡就看得到。
+        CheckWorkSelection(g);
+        ApplyProjectionFlip(g);   // 工具列按的；鏈這時已經讀好
+        bool aHasSubject = !PersonalSpace(g) || SelectedWork(g).Length > 0;
+        if (aHasSubject)
+        {
+            AutoRender(g, aPersona);
+            DrawResult(g);   // 渲染圖在最上面（TASK-0504）
+        }
 
         if (m_Error != null) g.Note("[注意] " + m_Error);
         if (m_Job != null)
@@ -304,6 +315,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         foreach (string p in m_Personas) aPersonaOpts.Add(new SCP_GuiOption(p));
         g.Dropdown("persona（個人設定檔層／貼圖預覽）", aPersonaOpts, None, PersonaSel);
 
+        DrawWorkSelector(g);
         if (PersonalSpace(g))
         {
             DrawWorks(g, aPersona);
@@ -311,7 +323,6 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         }
         else DrawExhibits(g, aPersona);
         DrawManual(g, aPersona);
-        DrawResult(g);
         DrawProfiles(g, aPersona, aScope);
         DrawSlice(g, aPersona);
         DrawStamp(g, aPersona);
@@ -320,20 +331,48 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     }
 
     // ===========================================================
-    // 區塊職責：展品導覽 —— 選展品（帶入 region／exclude）、渲染展品、全景。
+    // 區塊職責：展品 —— 工具列第二排選展品（帶入 region／exclude、換對象）；內容區是渲染展品／全景與選中那件的說明。
     // 物理意義：關鍵操作放折疊外層（收合也能按）；preset 由引擎讀，⛔ 本頁不重組 preset 參數。
+    //          展品清單跟作品清單同一個時機讀（工具列 EnsureWorks）—— 下拉在工具列，等內容區讀就來不及了。
     // ===========================================================
+    string m_ExhibitsError = "";
+
+    void ReloadExhibits(SCP_DataRoot iData)
+    {
+        m_Exhibits.Clear(); m_ExhibitsError = "";
+        try
+        {
+            foreach (var kv in new SCP_SculptEngine(iData).LoadExhibits()) m_Exhibits.Add((kv.Key, kv.Value));
+        }
+        catch (Exception e) { m_ExhibitsError = "展品讀不了：" + e.GetType().Name + ": " + e.Message; }
+    }
+
+    string FirstExhibit => m_Exhibits.Count > 0 ? m_Exhibits[0].Id : "";
+
+    /// <summary>工具列第二排（共用展區）：展品下拉 —— 作品下拉在展區的對應（TASK-0504）。選了別件 ⇒ 手動區的 region／exclude 帶入 preset、對象換成它。</summary>
+    void ExhibitTopBar(SCP_Ui g)
+    {
+        // 選項只留「名稱（id）｜作者」：工具列放不下 region 與說明 —— 那兩樣在內容區的展品導覽
+        var aOpts = m_Exhibits.Select(e => new SCP_GuiOption(e.Id, $"{S(e.Data, "title")} ({e.Id})｜{S(e.Data, "author")}")).ToList();
+        string aPick = g.Dropdown("展品（" + m_Exhibits.Count + "）", aOpts, FirstExhibit, ExhibitSel);
+        // 第一次畫不蓋（那是使用者留下的值）；「上一次看到的展品」存 session（不是成員）⇒ 文字模式每道指令是新實例也判得出「換了」
+        string aSeen = g.FieldValue(SExhibitSeen, "");
+        if (aPick == aSeen) return;
+        var aEx = m_Exhibits.Find(e => e.Id == aPick);
+        if (aSeen.Length > 0 && aEx.Id != null)
+        {
+            g.SetField(FRegion, S(aEx.Data, "region")); g.SetField(FExclude, S(aEx.Data, "exclude_color"));
+            g.SetField(SSubject, SubjectExhibit + aPick);   // 選了別件 ⇒ 對象換成它
+            // 直接要一張：「換了對象」靠上一輪的讀數比，文字模式每道指令是新實例比不出來（同作品下拉的 WorkSeen）
+            RequestRender("換了展品", iForce: true);
+        }
+        g.SetField(SExhibitSeen, aPick);
+    }
+
     void DrawExhibits(SCP_Ui g, string iPersona)
     {
-        var aOpts = new List<SCP_GuiOption>();
-        foreach (var (aId, d) in m_Exhibits)
-        {
-            string aDesc = S(d, "description");
-            if (aDesc.Length > 40) aDesc = aDesc.Substring(0, 40) + "…";
-            aOpts.Add(new SCP_GuiOption(aId, $"{S(d, "title")} ({aId})｜{S(d, "author")}｜{S(d, "region")}｜{aDesc}"));
-        }
-        string aFirst = m_Exhibits.Count > 0 ? m_Exhibits[0].Id : "";
-        string aSel = g.FieldValue(ExhibitSel + "/value", aFirst);
+        if (m_ExhibitsError.Length > 0) g.Note("[注意] " + m_ExhibitsError);
+        string aSel = g.FieldValue(ExhibitSel + "/value", FirstExhibit);
         using (g.Row())
         {
             if (g.Button("渲染展品", P + "btn/render-exhibit"))
@@ -346,28 +385,14 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold($"展品導覽（{m_Exhibits.Count} 件）", P + "fold/exhibits", iDefaultOpen: true);
         if (!aFold.Open) return;
         if (m_Exhibits.Count == 0) { g.Note("（沒有展品 —— `senate cmd sculpture --arg op=exhibit --arg sub=register …` 登錄）"); return; }
-        string aPick = g.Dropdown("展品", aOpts, aFirst, ExhibitSel);
-        // 選了別件 ⇒ 手動區的 region／exclude 帶入 preset（第一次畫不蓋 —— 那是使用者留下的值）
-        //   「上一次看到的展品」存 session（不是成員）⇒ 文字模式每道指令是新行程也判得出「換了」
-        string aSeen = g.FieldValue(SExhibitSeen, "");
-        if (aPick != aSeen)
-        {
-            var aEx = m_Exhibits.Find(e => e.Id == aPick);
-            if (aSeen.Length > 0 && aEx.Id != null)
-            {
-                g.SetField(FRegion, S(aEx.Data, "region")); g.SetField(FExclude, S(aEx.Data, "exclude_color"));
-                g.SetField(SSubject, SubjectExhibit + aPick);   // 選了別件 ⇒ 對象換成它（下一輪自動渲染畫它）
-            }
-            g.SetField(SExhibitSeen, aPick);
-        }
-        var aCur = m_Exhibits.Find(e => e.Id == aPick);
+        var aCur = m_Exhibits.Find(e => e.Id == aSel);
         if (aCur.Id != null)
         {
-            g.Label($"{aCur.Id}｜by {S(aCur.Data, "author")}｜region {S(aCur.Data, "region")}"
+            g.Label($"《{S(aCur.Data, "title")}》{aCur.Id}｜by {S(aCur.Data, "author")}｜region {S(aCur.Data, "region")}"
                     + (S(aCur.Data, "exclude_color").Length > 0 ? "｜exclude " + S(aCur.Data, "exclude_color") : ""));
             if (S(aCur.Data, "description").Length > 0) g.Paragraph(S(aCur.Data, "description"));
-            g.Note("選了展品會把它的 region／exclude 帶進手動區（手動渲染與匯出跟著走）。");
         }
+        g.Note("展品下拉在上方工具列；選了展品會把它的 region／exclude 帶進手動區（手動渲染與匯出跟著走）。");
     }
 
     // ===========================================================
@@ -378,13 +403,6 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         using (g.Row())
         {
             if (g.Button("渲染", P + "btn/render")) RequestRender("按了「渲染」", iForce: true);
-            if (g.Button("切換 正交／透視", P + "btn/proj-flip"))
-            {
-                string aNow = g.FieldValue(FProjection + "/value", None);
-                if (aNow == None) aNow = m_Resolved?.Projection == SCP_SculptProjection.Perspective ? "perspective" : "orthographic";
-                g.SetField(FProjection + "/value", aNow == "perspective" ? "orthographic" : "perspective");
-                RequestRender("切換投影 → " + g.FieldValue(FProjection + "/value"), iForce: true);
-            }
             Orbit(g, "yaw -45", FYaw, -45, iPersona);
             Orbit(g, "yaw -15", FYaw, -15, iPersona);
             Orbit(g, "yaw +15", FYaw, 15, iPersona);
@@ -486,6 +504,28 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             }
             else g.Note("沿用中（鏈）");
         }
+    }
+
+    /// <summary>
+    /// 工具列的「切換 正交／透視」（TASK-0504）：鈕只記一筆，內容區讀完設定檔鏈之後才切 ——
+    /// 欄位沿用中（空白）時要看鏈上是哪一種，而鏈在內容區才讀（工具列先畫，文字模式第一輪 m_Resolved 還是空的）。
+    /// </summary>
+    bool m_FlipProjection;
+
+    void ProjectionButton(SCP_Ui g)
+    {
+        if (PersonalSpace(g) && SelectedWork(g).Length == 0) return;   // 同匯出鈕：個人區沒選作品就沒有對象
+        if (g.Button("切換 正交／透視", P + "btn/proj-flip")) m_FlipProjection = true;
+    }
+
+    void ApplyProjectionFlip(SCP_Ui g)
+    {
+        if (!m_FlipProjection) return;
+        m_FlipProjection = false;
+        string aNow = g.FieldValue(FProjection + "/value", None);
+        if (aNow == None) aNow = m_Resolved?.Projection == SCP_SculptProjection.Perspective ? "perspective" : "orthographic";
+        g.SetField(FProjection + "/value", aNow == "perspective" ? "orthographic" : "perspective");
+        RequestRender("切換投影 → " + g.FieldValue(FProjection + "/value"), iForce: true);
     }
 
     void Orbit(SCP_Ui g, string iLabel, string iField, double iDelta, string iPersona)
@@ -1237,49 +1277,47 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     }
 
     // ===========================================================
-    // 區塊職責：匯出 obj／vox（範圍＝手動區 region／exclude；檔名由引擎產生，⛔ 本頁不組檔名）。
-    // 物理意義：按鈕住 TopBar（Tim 2026-10-08）；內容區只留匯出資料夾設定與上一次的路徑。
-    //   「開啟匯出資料夾」本來就在 TopBar，而它在沒設資料夾時就開上一次匯出檔那一層 ⇒ 不另放第二顆。
+    // 區塊職責：匯出（範圍＝手動區 region／exclude；檔名由引擎產生，⛔ 本頁不組檔名）。
+    // 物理意義：工具列只有一顆「匯出」（TASK-0504）；格式、合併同色面、資料夾都在匯出設定（SculptExportSettings，Inspector 自動畫）。
+    //   「開啟匯出資料夾」本來就在工具列，而它在沒設資料夾時就開上一次匯出檔那一層 ⇒ 不另放第二顆。
     // ===========================================================
-    void ExportButtons(SCP_Ui g)
+    void ExportButton(SCP_Ui g)
     {
-        // 個人區沒選到作品時內容區整段不畫 ⇒ TopBar 也不給按（不准變成對展區匯出）
+        // 個人區沒選到作品時內容區整段不畫 ⇒ 工具列也不給按（不准變成對展區匯出）
         if (PersonalSpace(g) && SelectedWork(g).Length == 0) return;
+        SculptExportSettings aCfg = ExportCfg(g);
+        string aFmt = aCfg.Format.ToString();
+        bool aObj = aCfg.Format == SculptExportFormat.obj;
+        string aKind = "." + aFmt + (aObj ? (aCfg.MergeFaces ? "（合併）" : "（不合併）") : "");
+        if (!g.Button("匯出 " + aKind, P + "btn/export")) return;
         string aPersona = g.FieldValue(PersonaSel + "/value", None);
         if (aPersona == None) aPersona = "";
-        // 勾＝obj 走 merge=greedy（同色共面合併）；不勾＝merge=none（逐 voxel 面，要 watertight 時用）。vox 不吃。
-        bool aMerge = g.Toggle("obj 合併同色面", true, TMerge);
-        foreach (string aFmt in new[] { "obj", "vox" })
+        var aArgs = new Dictionary<string, string> { ["op"] = "export", ["format"] = aFmt };
+        AddWorkTarget(g, aArgs);
+        string aRegion = g.FieldValue(FRegion, "").Trim(), aEx = g.FieldValue(FExclude, "").Trim(), aDir = aCfg.OutDir.Trim();
+        if (aRegion.Length > 0) aArgs["region"] = aRegion;
+        if (aEx.Length > 0) aArgs["exclude_color"] = aEx;
+        if (aDir.Length > 0) aArgs["out_dir"] = aDir;
+        if (aPersona.Length > 0) aArgs["persona"] = aPersona;
+        // 合併＝merge=greedy（同色共面合併）；不合併＝merge=none（逐 voxel 面，要 watertight 時用）。vox 不吃。
+        if (aObj) aArgs["merge"] = aCfg.MergeFaces ? "greedy" : "none";
+        string aLabel = "匯出 " + aKind + (aRegion.Length > 0 ? " region " + aRegion : "（全空間）");
+        Start(g, aLabel, () =>
         {
-            if (!g.Button("匯出 ." + aFmt, P + "btn/export-" + aFmt)) continue;
-            var aArgs = new Dictionary<string, string> { ["op"] = "export", ["format"] = aFmt };
-            AddWorkTarget(g, aArgs);
-            string aRegion = g.FieldValue(FRegion, "").Trim(), aEx = g.FieldValue(FExclude, "").Trim(), aDir = g.FieldValue(FExportDir, "").Trim();
-            if (aRegion.Length > 0) aArgs["region"] = aRegion;
-            if (aEx.Length > 0) aArgs["exclude_color"] = aEx;
-            if (aDir.Length > 0) aArgs["out_dir"] = aDir;
-            if (aPersona.Length > 0) aArgs["persona"] = aPersona;
-            if (aFmt == "obj") aArgs["merge"] = aMerge ? "greedy" : "none";
-            string aLabel = "匯出 ." + aFmt + (aFmt == "obj" ? (aMerge ? "（合併）" : "（不合併）") : "")
-                            + (aRegion.Length > 0 ? " region " + aRegion : "（全空間）");
-            Start(g, aLabel, () =>
-            {
-                CliRun r = RunCli(aArgs);
-                var o = new Outcome { Log = r.Log(aLabel) };
-                if (r.Exit == 0 && r.Value("path", "").Length > 0) o.Fields[SExportPath] = r.Value("path", "");
-                return o;
-            });
-        }
+            CliRun r = RunCli(aArgs);
+            var o = new Outcome { Log = r.Log(aLabel) };
+            if (r.Exit == 0 && r.Value("path", "").Length > 0) o.Fields[SExportPath] = r.Value("path", "");
+            return o;
+        });
     }
 
     void DrawExport(SCP_Ui g)
     {
-        using var aFold = g.Fold("匯出設定（按鈕在上方工具列）", P + "fold/export", iDefaultOpen: false);
+        using var aFold = g.Fold("匯出設定（匯出鈕在上方工具列）", P + "fold/export", iDefaultOpen: false);
         if (!aFold.Open) return;
         g.Note("範圍＝手動區的 region／exclude_color（空 region＝全空間）。");
-        g.Note("「obj 合併同色面」勾著＝同色共面合成矩形、頂點共用（面數大減）；不勾＝逐 voxel 面（要 watertight／3D 列印時用）。");
-        Field(g, "匯出資料夾（空＝預設）", FExportDir);
-        g.Note("預設：" + DefaultExportDir);
+        g.Note("Format：obj／vox｜MergeFaces（只有 obj）：勾著＝同色共面合成矩形、頂點共用（面數大減），不勾＝逐 voxel 面（要 watertight／3D 列印時用）｜OutDir：空＝預設 " + DefaultExportDir);
+        foreach (string n in DrawCfg(g, ExportCfg(g), ExportCfgKey, SExportCfg, ref m_ExportCfgJson)) g.Note("（自動繪製）" + n);
         string aPath = g.FieldValue(SExportPath, "");
         if (aPath.Length > 0) g.Label("上一次匯出：" + aPath);
     }
