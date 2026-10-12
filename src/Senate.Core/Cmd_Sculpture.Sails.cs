@@ -25,13 +25,14 @@ public sealed partial class Cmd_Sculpture
     {
         oRig = null;
         string aRopes = c.Args.Get("ropes").Trim(), aHide = c.Args.Get("hide_ropes").Trim();
+        string aRopeGroups = c.Args.Get("rope_groups").Trim(), aHideRopeGroups = c.Args.Get("hide_rope_groups").Trim();   // TASK-0512
         string aSails = c.Args.Get("sails").Trim(), aHideSails = c.Args.Get("hide_sails").Trim();
         string aWind = c.Args.Get("wind").Trim(), aSec = c.Args.Get("sail_seconds").Trim();
         string aModels = c.Args.Get("models").Trim(), aHideModels = c.Args.Get("hide_models").Trim();
-        bool aGiven = aRopes.Length > 0 || aHide.Length > 0 || aSails.Length > 0 || aHideSails.Length > 0 || aWind.Length > 0 || aSec.Length > 0 || aModels.Length > 0 || aHideModels.Length > 0;
+        bool aGiven = aRopes.Length > 0 || aHide.Length > 0 || aRopeGroups.Length > 0 || aHideRopeGroups.Length > 0 || aSails.Length > 0 || aHideSails.Length > 0 || aWind.Length > 0 || aSec.Length > 0 || aModels.Length > 0 || aHideModels.Length > 0;
         if (aRopes.Length > 0 && aRopes != "0" && aRopes != "1") return "ropes 要是 1 或 0（got '" + aRopes + "'）";
         if (aSails.Length > 0 && aSails != "0" && aSails != "1") return "sails 要是 1 或 0（got '" + aSails + "'）";
-        if (aGiven && Array.IndexOf(RopeViewOps, c.Op) < 0) return "ropes／hide_ropes／sails／hide_sails／wind／sail_seconds／models／hide_models 只給 view／export（繩、帆、模型不是格子：slice／section／stats 量的是 voxel）";
+        if (aGiven && Array.IndexOf(RopeViewOps, c.Op) < 0) return "ropes／hide_ropes／rope_groups／hide_rope_groups／sails／hide_sails／wind／sail_seconds／models／hide_models 只給 view／export（繩、帆、模型不是格子：slice／section／stats 量的是 voxel）";
         if (c.Work == null) return aGiven ? "繩、帆、模型是作品的 —— 要帶 work=" : null;
         if (Array.IndexOf(RopeViewOps, c.Op) < 0) return null;
 
@@ -43,7 +44,7 @@ public sealed partial class Cmd_Sculpture
         }
         SCP_SculptLinkSelection aSel = c.Links?.Selection ?? SCP_SculptLinkSelection.Parse(c.Args.Get("links"), c.Args.Get("hide_links"));
         if (ViewEnv(c, c.Work, out SCP_SculptSailEnv aEnv) is string aEnvBad) return aEnvBad;
-        var aRopeSel = SCP_SculptRopeSelection.Parse(aRopes, aHide);
+        var aRopeSel = SCP_SculptRopeSelection.Parse(aRopes, aHide, aRopeGroups, aHideRopeGroups);
         var aSailSel = SCP_SculptSailSelection.Parse(aSails, aHideSails);
         // 外部模型（TASK-0507）先解：繩的端點與帆角可以綁在模型上；要畫 ⇒ 讀網格（作品來源缺快取就現產生 —— 這裡在作品鎖外）
         if (ResolveViewModels(c, c.Work, aTree, aSel, !c.Parts, out SCP_SculptModelSet aModelSet) is string aModelBad) return aModelBad;   // parts=1：網格由子模型那一份讀（TASK-0509）
@@ -54,6 +55,12 @@ public sealed partial class Cmd_Sculpture
         var aKnown = new HashSet<string>(aRig.Ropes.ConvertAll(r => r.Path), StringComparer.Ordinal);
         foreach (string p in aRopeSel.Hide)
             if (!aKnown.Contains(p)) return "沒有繩 `" + p + "`（這次看得到的：" + (aKnown.Count == 0 ? "（沒有）" : string.Join("、", aKnown)) + "）";
+        // rope_groups／hide_rope_groups（TASK-0512）：點名的組要有繩（那一組或它底下的子組）—— 打錯字不會變成「什麼都沒關／全關」
+        var aKnownGroups = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var r in aRig.Ropes) if (r.Group.Length > 0) aKnownGroups.Add(r.Group);
+        foreach (string g in new List<string>(aRopeSel.OnlyGroups).Concat(aRopeSel.HideGroups))
+            if (!aKnownGroups.Any(k => k == g || k.StartsWith(g + "/", StringComparison.Ordinal)))
+                return "沒有繩的組 `" + g + "`（這次看得到的組：" + (aKnownGroups.Count == 0 ? "（沒有 —— work sub=rope group= 或 sub=ropegroup assign= 分組）" : string.Join("、", aKnownGroups)) + "）";
         var aKnownSails = new HashSet<string>(aRig.Sails.ConvertAll(s => s.Path), StringComparer.Ordinal);
         foreach (string p in aSailSel.Hide)
             if (!aKnownSails.Contains(p)) return "沒有帆 `" + p + "`（這次看得到的：" + (aKnownSails.Count == 0 ? "（沒有）" : string.Join("、", aKnownSails)) + "）";

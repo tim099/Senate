@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-12（外部模型：obj 匯入、作品當模型、繩與帆角綁模型（§9.4.8）；網格建構在 SCP_Core）
+last_updated: 2026-10-12（子繩 rope:繩名/比例、繩分組 sub=ropegroup／rope_groups／hide_rope_groups（§9.4.6））
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -543,22 +543,37 @@ senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=
 senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=main-stay --arg slack=1.1        # 改鬆緊／顏色／粗細／開關不用 overwrite
 senate cmd sculpture --arg op=work --arg sub=ropes --arg work=ship                   # 每條的長度、最大下垂、狀態（讀數）
 senate cmd sculpture --arg op=view --arg work=ship --arg hide_ropes=main-stay --arg out=<png>   # 這次拿掉一條；ropes=0 ＝ 這次一條都不畫
+# 子繩：端點寫 rope:[關聯/…/]繩名/比例（0..1，沿母繩的長度比）⇒ 掛在母繩上、跟著它動、兩端拉直
+senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=ratline-01 --arg from=rope:shroud-1/0.2 --arg to=rope:shroud-4/0.2 --arg thickness=0.3
+# 分組：一條一條歸組，或 regex 一次歸一批；一組（連同子組）平常開關
+senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=main-stay --arg group=standing/stays
+senate cmd sculpture --arg op=work --arg sub=ropegroup --arg work=ship --arg persona=<P> --arg name=standing/ratlines --arg assign="ratline-"
+senate cmd sculpture --arg op=work --arg sub=ropegroup --arg work=ship --arg persona=<P> --arg name=standing/ratlines --arg enabled=0
+senate cmd sculpture --arg op=view --arg work=ship --arg hide_rope_groups=standing/ratlines --arg out=<png>   # 這次拿掉一組；rope_groups= ＝ 這次只畫這幾組
 ```
 
 - **固定點** `sub=anchor name= at=x,y,z [note=]`：要在作品尺寸裡；同名搬位置要 `overwrite=1`（綁在上面的繩會跟著動，⛔ 不默默搬）。`sub=unanchor name=` 拿掉。名字的規矩同關聯名（不含 `: , | / \`、不是保留字）。
-- **繩** `sub=rope name= from= to= [slack=] [color=] [thickness=] [enabled=] [note=]`：
+- **繩** `sub=rope name= from= to= [slack=] [color=] [thickness=] [enabled=] [group=] [note=]`：
   - `slack` ＝ 繩長 ÷ 兩端直線距離（1 ＝ 拉直、1.02 微垂、1.2 明顯下垂；上限 10）。`color` ＝ 調色盤 index 1..255 或 `#RRGGBB`（存小寫）；`thickness` ＝ **直徑**（格，可帶小數，預設 0.5）。
-  - 同名已在：改 slack／color／thickness／enabled／note 直接改；**換兩端**要 `overwrite=1`。
-  - 寫之前先解一次：端點解不到（固定點或關聯路徑打錯）⇒ exit 2、**未寫入**（⛔ 打錯字不會變成一條壞繩）。`sub=unrope name=` 拿掉。
+  - 同名已在：改 slack／color／thickness／enabled／group／note 直接改；**換兩端**要 `overwrite=1`。
+  - 寫之前先解一次：端點解不到（固定點或關聯路徑打錯）⇒ exit 2、**未寫入**（⛔ 打錯字不會變成一條壞繩）。`sub=unrope name=` 拿掉；上面還掛著子繩 ⇒ exit 2、列出子繩（全庫掃）、未寫入。
 - **形狀**：只受重力（−z）⇒ 懸鏈線解析解（同輸入同形狀，決定性）。拉直 ⇒ 直線；兩端在同一條鉛直線上 ⇒ 畫直線並標明（鬆度沒有往旁邊垂的方向）。⚠ **沒有碰撞**：繩會穿過格子（垂得太多就穿進船身）——鬆度自己控制，看 `rope_max_sag`。風與其他力等帆那張單（TASK-0503）。
 - **讀數**：`sub=rope` 寫完印 `rope_length`／`rope_chord`／`rope_max_sag`；`sub=ropes` 與 view／export 的回報每條一行：狀態、兩端（名字＋座標）、長、直線距離、slack、最大下垂（離兩端連線往下最多幾格）、色、粗。
 - **跨作品**：端點寫關聯路徑（`主桅/masthead`、`甲板2/船長室/hook`），座標照路徑上每一層關聯的 `mirror`→`turn`→`at` 換到組裝件 —— 跟 voxel 同一個公式（格心換過去正好是那一格換過去的格心）。⇒ 搬關聯（`at`）、轉向、鏡像（右舷那根桅的固定點翻到另一舷）繩都跟著走。被關聯進來的作品**自己的繩**也照那條關聯換座標、一起畫（繩路徑 ＝ `關聯/…/繩名`）。
 - **跟著不畫**：綁在某一層上的繩，那一層這次沒畫（`links=none`、`hide_links`、那條關聯 `enabled=0`）⇒ 繩 `hidden`；繩自己 `enabled=0` ⇒ `disabled`；`ropes=0`／`hide_ropes=繩路徑,…` ⇒ 這次不畫（打錯路徑 ⇒ exit 2）。
 - **壞掉的綁定**（固定點刪了／改名、關聯路徑不在了、固定點檔壞了）⇒ `broken`：⛔ 不靜默消失 —— 觀測照樣出圖，但回傳行大聲列 🔴 與原因（`ropes_broken`）；`sub=unanchor` 當下就全庫掃一次，印出哪幾條繩（含上層作品用關聯路徑綁的）現在壞了（`ropes_now_broken`）。把固定點用原名加回去就接上。
 - **畫**：view 與觀測頁的 GPU 預覽把繩畫成管子，跟 voxel 同一個網格（吃同一組燈、會投影子、也接影子）；繩不是 voxel ⇒ `visible_voxels` 不變。回傳值 `ropes_drawn`／`ropes_hidden`／`ropes_disabled`／`ropes_broken`。`slice`／`section`／`stats` 量的是格子，不畫繩。
-- **觀測頁**：選了有繩的作品，「繩索開關」列出每一條（長度、下垂）：總開關「畫繩索」＋一條一個勾（像關聯開關，只影響這次觀測、⛔ 不寫回 ropes.json）；壞掉的列 🔴＋原因；作品裡設為關的只列不勾。
+- **觀測頁**：選了有繩的作品，「繩索開關」：總開關「畫繩索」＋**一組一個勾**（照組樹排，取消勾 ⇒ `hide_rope_groups`，連同子組）；組裡的繩收在折疊裡、一條一個勾（`hide_ropes`），沒分組的收在「（未分組）」；完全沒分組的作品照舊一條一個勾。只影響這次觀測、⛔ 不寫回 ropes.json；壞掉的列 🔴＋原因；作品裡設為關（自己或組）的只列不勾。
 - **匯出**：`export format=obj` 把繩接在 voxel 面後面輸出成管狀網格（每條一個 `o rope_n`＋材質 `rope_n`，mtl 有 Kd；有法線、繞序跟法線同向）⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ 繩不輸出、`ropes_exported=0`。
 - **帆**：端點寫帆角 `sail:[關聯/…/]帆名/角` ⇒ 繩綁在帆的角上（TASK-0503，見 §9.4.7）；其他 `種類:` 一律 exit 2（不猜）。固定點與繩的格式就是帆共用的那一份。
+- **子繩**（TASK-0511）：端點寫 `rope:[關聯/…/]繩名/比例`（相對於繩所在的作品；比例 0..1 ＝ 沿母繩**實際的曲線**量的長度比，0 ＝ 母繩的 from、1 ＝ to）⇒ 那一端掛在母繩上。
+  - **不算物理**：兩端之間拉直（`slack` 只能是 1）；另一端可以是固定點、座標、模型上的點或另一條繩，⛔ 不能是帆角。子繩上可以再掛子繩。
+  - **跟著母繩**：母繩換端點、改 slack、跟著關聯搬、被帆拉動（觀測頁持續模擬時每幀跟）⇒ 子繩跟著走，不用重下。母繩這次沒畫（`hide_ropes`、`hide_rope_groups`、`enabled=0`、組關著、所在關聯沒組進來）⇒ 子繩跟著不畫；母繩只是沒被 `rope_groups` 點到 ⇒ 子繩照自己的組判（點名只畫 ratlines 就看得到 ratlines）。
+  - **擋**：沒有這條母繩、比例超出 0..1、繞成環（印出環）⇒ 寫入 exit 2、未寫入；手改檔弄出來的環 ⇒ 觀測時環上每條都 `broken`。
+  - **畫**：3 邊的細管（一段 6 個三角形；一般細繩 16 個）—— view、觀測頁、`export obj` 同一支。回傳值多 `ropes_child`。
+- **分組**（TASK-0512）：繩的 `group` ＝ 組路徑（`/` 分層，例 `standing/shrouds`；`group=none` 不分組）。`sub=ropegroup name=<組> [assign=<繩名 regex>] [enabled=0|1] [note=]`：`assign` 把本作品名字符合的繩歸進這組（一條都沒符合 ⇒ exit 2）；`enabled=0` ⇒ 這組連同子組**平常**不畫（state `disabled`，原因寫哪一組）；組裡沒有繩 ⇒ exit 2。
+  - **全路徑** ＝ 繩所在那一層的關聯路徑＋`/`＋組路徑（組裝件自己的就是組路徑；桅上的 `stays` 在組裝件看是 `主桅/stays`）。觀測 `rope_groups=全路徑,…`（這次只畫這幾組）／`hide_rope_groups=全路徑,…`（這次拿掉），都連同子組；打錯 ⇒ exit 2。`sub=ropes` 多一段「繩的組」：每組幾條（含子組）、各狀態幾條、平常開關。
+  - 用到組或子繩的 `ropes.json` 寫 `schema 2` ⇒ 沒更新的 senate.exe 讀到會**大聲讀不了**（⛔ 不會默默丟掉組再寫回去）；都沒用的照舊 `schema 1`。
 
 ### 9.4.7 帆 —— 布料模擬，綁在固定點與繩上（TASK-0503）
 

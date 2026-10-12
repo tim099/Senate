@@ -141,6 +141,12 @@ public sealed partial class SculptureViewerPage
                                                       path => g.ToggleValue(RopeToggleId(id, path), true));
             if (aRopes.Length > 0) args["ropes"] = aRopes;
             if (aHideRopes.Length > 0) args["hide_ropes"] = aHideRopes;
+            // 分組（TASK-0512）：取消勾的組 ⇒ hide_rope_groups（上層組已經取消的，子組不重送）
+            if (aRopes.Length == 0)
+            {
+                string aHideGroups = RopeGroupToggleArgs(RopeGroupRows(ropeRows).ConvertAll(r => r.Path), path => g.ToggleValue(RopeGroupToggleId(id, path), true));
+                if (aHideGroups.Length > 0) args["hide_rope_groups"] = aHideGroups;
+            }
         }
         // 帆（TASK-0503）：同一種開關（sails=／hide_sails=）＋風與秒數欄位（空 ＝ 作品預設）
         if ((op == "view" || op == "export") && SailRows(id).Rows is { Count: > 0 } sailRows)
@@ -300,19 +306,91 @@ public sealed partial class SculptureViewerPage
         if (rows == null || rows.Count == 0) return;   // 沒有繩的作品不顯示這一塊
         using var fold = g.Fold("繩索開關（" + rows.Count + " 條，只影響這次觀測）", P + "fold/rope-toggles", iDefaultOpen: true);
         if (!fold.Open) return;
-        g.Note("總開關關掉 ⇒ 這次不畫任何繩（ropes=0）；一條一個勾 ⇒ 取消勾的那條這次不畫（hide_ropes=）。綁在關聯上的繩：那條關聯關掉，繩就跟著不畫。⛔ 不寫回作品（長期開關用 work sub=rope enabled=0|1）。");
+        g.Note("總開關關掉 ⇒ 這次不畫任何繩（ropes=0）；一組一個勾（hide_rope_groups=，連同子組）；組裡一條一個勾收在折疊裡（hide_ropes=）。母繩不畫 ⇒ 掛在它上面的子繩跟著不畫；綁在關聯上的繩：那條關聯關掉，繩就跟著不畫。"
+               + "⛔ 不寫回作品（長期開關用 work sub=ropegroup／sub=rope enabled=0|1）。");
         g.Toggle("畫繩索", true, TRopesAll);
         bool allOn = g.ToggleValue(TRopesAll, true);
+        // 分組（TASK-0512）：組照樹的順序列，每組一個勾＋一個折疊（裡面是直接在這組的繩）；沒分組的收在最後一個折疊
+        foreach (RopeGroupRow gr in RopeGroupRows(rows))
+        {
+            var mine = rows.FindAll(r => r.Group == gr.Path);
+            using (g.Row())
+            {
+                g.Toggle(new string('　', gr.Depth) + "組 " + gr.Path + "（" + gr.Count + " 條" + (gr.Count != mine.Count ? "，含子組" : "") + "）" + (allOn ? "" : "　◌ 總開關關著 ⇒ 不畫"), true, RopeGroupToggleId(id, gr.Path));
+            }
+            if (mine.Count == 0) continue;
+            using var gf = g.Fold(new string('　', gr.Depth + 1) + "組 " + gr.Path + " 的繩（" + mine.Count + " 條）", P + "fold/ropegroup/" + id + "/" + gr.Path, iDefaultOpen: false);
+            if (gf.Open) DrawRopeRows(g, id, mine, allOn);
+        }
+        var loose = rows.FindAll(r => r.Group.Length == 0);
+        if (loose.Count == rows.Count) { DrawRopeRows(g, id, loose, allOn); return; }   // 完全沒分組的作品：照舊一條一個勾
+        if (loose.Count == 0) return;
+        using var lf = g.Fold("（未分組）" + loose.Count + " 條", P + "fold/ropeloose/" + id, iDefaultOpen: false);
+        if (lf.Open) DrawRopeRows(g, id, loose, allOn);
+    }
+
+    /// <summary>一條一個勾（TASK-0502 的那一列；分組之後畫在組的折疊裡）。</summary>
+    static void DrawRopeRows(SCP_Ui g, string id, List<SCP_SculptRopeReading> rows, bool allOn)
+    {
         foreach (var r in rows)
         {
-            string info = r.Rope.from + " → " + r.Rope.to + (r.From != null && r.To != null ? "｜長 " + r.Length.ToString("0.##", CultureInfo.InvariantCulture) + "、下垂 " + r.MaxSag.ToString("0.##", CultureInfo.InvariantCulture) : "");
+            string info = r.Rope.from + " → " + r.Rope.to + (r.From != null && r.To != null ? "｜長 " + r.Length.ToString("0.##", CultureInfo.InvariantCulture) + "、下垂 " + r.MaxSag.ToString("0.##", CultureInfo.InvariantCulture) : "")
+                          + (r.Child ? "｜子繩" : "");
             if (r.State == SCP_SculptRopeReading.Broken) { g.Note("🔴 `" + r.Path + "` 綁定壞了（不畫）：" + r.Reason); continue; }
             if (!r.Rope.enabled) { g.Label("◌ " + r.Path + "　" + info + "｜作品裡設為關"); continue; }
+            if (r.State == SCP_SculptRopeReading.Disabled) { g.Label("◌ " + r.Path + "　" + info + "｜" + r.Reason); continue; }   // 組平常關著
             using (g.Row())
             {
                 g.Toggle(r.Path + "　" + info + (allOn ? "" : "　◌ 總開關關著 ⇒ 不畫"), true, RopeToggleId(id, r.Path));
             }
         }
+    }
+
+    // ===========================================================
+    // 區塊職責：繩的分組開關（TASK-0512，Tim「繩太多，應該可以分組開關控制，而非單條控制」）。
+    // 物理意義：一組一個勾 ⇒ 取消勾的組這次不畫（hide_rope_groups=，連同子組；跟 CLI 同名、由 Cmd_Sculpture 驗）；⛔ 不寫回作品（平常開關用 work sub=ropegroup enabled=0|1）。
+    //          組的全路徑 ＝ 繩所在那一層的關聯路徑＋組路徑（同 CLI）；列的是「真的是組」的那幾段（關聯路徑那幾段不是組）。勾的 id 帶作品 id（同關聯開關）。
+    // ===========================================================
+    const string TRopeGroupPrefix = P + "t/ropegroup/";
+    static string RopeGroupToggleId(string iWork, string iPath) => TRopeGroupPrefix + iWork + "/" + iPath;
+
+    /// <summary>組開關的一列：組全路徑、在組裡第幾層（0 ＝ 最上層組）、幾條（含子組）。</summary>
+    public readonly record struct RopeGroupRow(string Path, int Depth, int Count);
+
+    /// <summary>從繩的讀數攤出組樹（純函數）：每條繩的組路徑每一層都是一列（前面接它所在的關聯路徑）；照樹的順序（父在子前、同層照名字）。</summary>
+    public static List<RopeGroupRow> RopeGroupRows(IReadOnlyList<SCP_SculptRopeReading> iRows)
+    {
+        var count = new Dictionary<string, int>(StringComparer.Ordinal);
+        var depth = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var r in iRows)
+        {
+            if (r.Group.Length == 0) continue;
+            string frame = r.Group.Length > r.Rope.group.Length ? r.Group.Substring(0, r.Group.Length - r.Rope.group.Length - 1) : "";
+            string prefix = frame;
+            string[] segs = r.Rope.group.Split('/');
+            for (int i = 0; i < segs.Length; i++)
+            {
+                prefix = prefix.Length == 0 ? segs[i] : prefix + "/" + segs[i];
+                count[prefix] = count.TryGetValue(prefix, out int n) ? n + 1 : 1;
+                depth[prefix] = i;
+            }
+        }
+        var keys = new List<string>(count.Keys);
+        keys.Sort((a, b) => string.CompareOrdinal(a.Replace('/', '\u0001'), b.Replace('/', '\u0001')));   // 「a/b」緊跟在「a」後面（⛔ 不讓「a-c」插進來）
+        return keys.ConvertAll(k => new RopeGroupRow(k, depth[k], count[k]));
+    }
+
+    /// <summary>組開關 → hide_rope_groups=（純函數，淨室直接測）：取消勾的組，上層已經取消的子組不重送；全勾 ⇒ ""。</summary>
+    public static string RopeGroupToggleArgs(IReadOnlyList<string> iGroups, Func<string, bool> iIsOn)
+    {
+        var off = new List<string>();
+        foreach (string gp in iGroups)
+        {
+            if (iIsOn(gp)) continue;
+            if (off.Exists(o => gp.StartsWith(o + "/", StringComparison.Ordinal))) continue;
+            off.Add(gp);
+        }
+        return string.Join(",", off);
     }
 
     // ===========================================================

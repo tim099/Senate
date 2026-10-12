@@ -253,7 +253,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         r.Ropes = m.RopeCount; r.RopeTriangles = m.RopeTriangles;
     }
 
-    /// <summary>繩的內容雜湊（點、半徑、顏色逐位元）—— 繩動了網格就要重建；沒有繩 ⇒ 固定值。</summary>
+    /// <summary>繩的內容雜湊（點、半徑、顏色、管子邊數逐位元）—— 繩動了網格就要重建；沒有繩 ⇒ 固定值。</summary>
     static ulong RopeHash(IReadOnlyList<SCP_SculptRopeGeom>? iRopes)
     {
         ulong h = 1469598103934665603UL;
@@ -262,6 +262,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         {
             h = (h ^ (ulong)BitConverter.DoubleToInt64Bits(r.Radius)) * 1099511628211UL;
             h = (h ^ ((uint)r.R | ((uint)r.G << 8) | ((uint)r.B << 16))) * 1099511628211UL;
+            h = (h ^ (ulong)(uint)r.Sides) * 1099511628211UL;   // TASK-0511：同一條改成子繩（3 邊）、兩端沒動 ⇒ 也要重建
             foreach (double d in r.Points) h = (h ^ (ulong)BitConverter.DoubleToInt64Bits(d)) * 1099511628211UL;
             h = (h ^ 0xFFUL) * 1099511628211UL;   // 條與條之間的分隔（⛔ 不讓兩條接起來跟一條長的同雜湊）
         }

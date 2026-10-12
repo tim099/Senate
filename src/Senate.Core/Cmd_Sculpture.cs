@@ -53,6 +53,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         + "· 關聯匯入：work sub=link name= source_work= at= [turn=] 只記關聯不複製 voxel（巢狀可），觀測時現組；links=none|all|路徑、hide_links=路徑|self 一次性開關；sub=links 看整棵樹。\n"
         + "· 繩索（TASK-0502，不是 voxel）：work sub=anchor name= at= 加固定點；sub=rope name= from= to= [slack=] [color=] [thickness=] 拉繩（端點：固定點｜關聯/…/固定點｜x,y,z）；"
         + "受重力下垂（懸鏈線），跟著關聯的 at／turn／mirror 走；sub=ropes 印每條的長度與最大下垂；view／export obj 畫成管子（ropes=0｜hide_ropes=路徑 一次性關掉）。\n"
+        + "  子繩（TASK-0511）：端點寫 rope:繩名/比例（0..1）⇒ 掛在那條繩上、跟著它動、兩端拉直不算物理、畫成省面數的細管。"
+        + "分組（TASK-0512）：sub=rope group=組路徑、sub=ropegroup name=組 [assign=繩名 regex] [enabled=0|1]；觀測 rope_groups=／hide_rope_groups= 一次只畫／拿掉幾組。\n"
         + "· 帆（TASK-0503，不是 voxel）：work sub=sail name= corners=\"角0|角1|角2[|角3]\" [bind=邊] [free=角] [color=] 掛帆（角 ＝ 固定點｜關聯/…/固定點｜x,y,z）；"
         + "布料模擬（重力＋風），view／export 帶 wind=x,y,z（m/s）sail_seconds=秒 取那一刻；繩端點 sail:帆名/角 ⇒ 繩拉住 free 角；sub=sails 印讀數、sub=wind 設預設風；sails=0｜hide_sails= 一次性不畫。\n"
         + "· 預授權用**最壞費用**擋餘額 —— 不夠 ⇒ 引擎不跑、一毛不扣（exit 3）。\n"
@@ -141,10 +143,14 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("only", "view／slice／section／stats／export：只看這個區間改動到的格"),
         new SCP_CmdArgSpec("links", "view／slice／section／stats／export：這次組進哪些關聯（TASK-0494）—— none｜all（含停用的）｜路徑,路徑（巢狀用 /：甲板2/船長室；點名的連同祖先、它底下照開關）；不給 ⇒ 每條照 enabled"),
         new SCP_CmdArgSpec("hide_links", "view／slice／section／stats／export：這次拿掉哪些關聯（路徑,路徑；連同底下）；self ＝ 不畫本作品自己的格（例：只看甲板 links=甲板2 hide_links=self）"),
-        new SCP_CmdArgSpec("enabled", "work link：這條關聯平常開不開（1／0；只給 enabled／note ⇒ 只改這兩格）／work rope：這條繩平常畫不畫／work sail：這面帆平常在不在（0 ＝ 不畫也不模擬）／work model：這個模型平常畫不畫"),
-        new SCP_CmdArgSpec("slack", "work rope：鬆緊 ＝ 繩長 ÷ 兩端直線距離（1 ＝ 拉直、1.05 ＝ 微垂；1.." + SCP_SculptRopes.MaxSlack + "）"),
+        new SCP_CmdArgSpec("enabled", "work link：這條關聯平常開不開（1／0；只給 enabled／note ⇒ 只改這兩格）／work rope：這條繩平常畫不畫／work ropegroup：這一組（連同子組）平常畫不畫／work sail：這面帆平常在不在（0 ＝ 不畫也不模擬）／work model：這個模型平常畫不畫"),
+        new SCP_CmdArgSpec("slack", "work rope：鬆緊 ＝ 繩長 ÷ 兩端直線距離（1 ＝ 拉直、1.05 ＝ 微垂；1.." + SCP_SculptRopes.MaxSlack + "；子繩只能是 1）"),
         new SCP_CmdArgSpec("ropes", "view／export：1（預設）畫繩｜0 ＝ 這次不畫繩（TASK-0502）"),
-        new SCP_CmdArgSpec("hide_ropes", "view／export：這次拿掉哪幾條繩（繩路徑,…：組裝件自己的寫名字，關聯裡的寫 關聯/…/名字；打錯 ⇒ 擋）"),
+        new SCP_CmdArgSpec("hide_ropes", "view／export：這次拿掉哪幾條繩（繩路徑,…：組裝件自己的寫名字，關聯裡的寫 關聯/…/名字；打錯 ⇒ 擋；掛在它上面的子繩跟著不畫）"),
+        new SCP_CmdArgSpec("rope_groups", "view／export：這次只畫這幾組繩（組的全路徑,…：組裝件自己的寫組路徑，關聯裡的寫 關聯/…/組路徑；連同子組；打錯 ⇒ 擋；TASK-0512）"),
+        new SCP_CmdArgSpec("hide_rope_groups", "view／export：這次拿掉這幾組繩（同 rope_groups 的寫法；連同子組；打錯 ⇒ 擋；TASK-0512）"),
+        new SCP_CmdArgSpec("group", "work rope：這條繩歸到哪一組（組路徑，/ 分層，例 standing/shrouds；none ＝ 不分組；TASK-0512）"),
+        new SCP_CmdArgSpec("assign", "work ropegroup：把名字符合這個 regex 的繩（本作品的）都歸到 name= 這一組（一個都沒符合 ⇒ 擋、零寫入）"),
         new SCP_CmdArgSpec("sails", "view／export：1（預設）畫帆｜0 ＝ 這次不畫帆（照樣模擬；TASK-0503）"),
         new SCP_CmdArgSpec("hide_sails", "view／export：這次拿掉哪幾面帆（帆路徑,…；照樣模擬；打錯 ⇒ 擋）"),
         new SCP_CmdArgSpec("wind", "view／export／work sails：這次的風 x,y,z（m/s，世界座標；例 0,-8,0 ＝ 往 −y 吹的 8 m/s）—— 蓋過作品預設／work wind：寫進作品預設"),
@@ -158,7 +164,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("draft","1 ＝ 草稿（TASK-0493）：落子／刻（box/carve/carvevox/stamp*）與 work sub=move|assemble|undo|redo 只動草稿（沒開就開）；觀測（view/slice/section/stats/export）看「作品＋草稿」；diff ＝ 作品現在 → 草稿。開／看狀態 sub=draft、套進作品 sub=apply、丟掉 sub=discard"),
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
-        new SCP_CmdArgSpec("note", "work mark／link／anchor／rope／sail／model：備註"),
+        new SCP_CmdArgSpec("note", "work mark／link／anchor／rope／ropegroup／sail／model：備註"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽／spray：1 才落刀（要帶 expect_plan）；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
         new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數／spray：預覽的換色格數（選帶）"),
@@ -252,9 +258,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|model|unmodel|models；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|model|unmodel|models；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
                            iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links",
-                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "sail", "unsail", "sails", "wind", "model", "unmodel", "models" }),
+                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "model", "unmodel", "models" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
@@ -263,7 +269,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
         new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）／work anchor／unanchor／rope／unrope／sail／unsail／model／unmodel：固定點名／繩名／帆名／模型名（同關聯名的規矩）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
-        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）／spray：射線起點 x,y,z（整數 ＝ 格心，可帶小數）／work rope：一端（固定點名｜關聯/…/固定點名｜x,y,z｜sail:帆名/角｜model:模型名/點）"),
+        new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）／spray：射線起點 x,y,z（整數 ＝ 格心，可帶小數）／work rope：一端（固定點名｜關聯/…/固定點名｜x,y,z｜sail:帆名/角｜model:模型名/點｜rope:繩名/比例 ＝ 掛在另一條繩上、比例 0..1 ⇒ 子繩）"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
         new SCP_CmdArgSpec("to", "render-profile copy：目標設定名／diff：終點（同 from 的寫法；不給 ＝ now）／spray：射線終點 x,y,z（含終點那格）／work rope：另一端（同 from）"),
         new SCP_CmdArgSpec("background", "render-profile set：純色背景 #RRGGBB（skybox=none 時用）"),
