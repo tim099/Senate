@@ -12,7 +12,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureViewerSettingsCleanRoom()
     {
-        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取（淨室，TASK-0504）";
+        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取與預覽設定（淨室，TASK-0504）";
         var failures = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
         try
@@ -139,11 +139,22 @@ public static partial class SelfTest
                 Check(Senate.Core.SculptureWorkPrefs.ReadLastSelection(tmpRepo, out _) == ("work", "ship"), "記了讀不回來");
                 Check(Senate.Core.SculptureWorkPrefs.SaveLastSelection(tmpRepo, "shared", null).Ok, "只記空間失敗");
                 Check(Senate.Core.SculptureWorkPrefs.ReadLastSelection(tmpRepo, out _) == ("shared", "ship"), "換到共用展區不該洗掉上次的作品");
+
+                // ⑪ 預覽設定跨重開保留（Tim 2026-10-12）：沒設過 ⇒ 空；頁面寫的那份 JSON 落盤、讀回、填回物件，值一格不差
+                Check(Senate.Core.SculptureWorkPrefs.ReadPreviewJson(tmpRepo, out string? pe0) == "" && pe0 == null, "預覽設定沒設過應回空：" + pe0);
+                var keep = new SculptPreviewSettings { ViewScaleMin = 0.01, ViewScaleMax = 300, ViewSide = 960 };
+                string keepJson = SCP.Core.Json.SCP_JsonMapper.ToJson(keep).ToJson(false);
+                Check(Senate.Core.SculptureWorkPrefs.SavePreviewJson(tmpRepo, keepJson).Ok, "預覽設定存不進去");
+                string prevBack = Senate.Core.SculptureWorkPrefs.ReadPreviewJson(tmpRepo, out _);
+                var restored = new SculptPreviewSettings();
+                SCP.Core.Json.SCP_JsonMapper.Populate(restored, SCP.Core.Json.SCP_JsonData.Parse(prevBack));
+                Check(prevBack == keepJson && restored.ViewScaleMin == 0.01 && restored.ViewScaleMax == 300 && restored.ViewSide == 960,
+                      "預覽設定讀回不一致：" + prevBack);
             }
             finally { try { Directory.Delete(tmpRepo, true); } catch { } }
         }
         catch (Exception e) { failures.Add(e.GetType().Name + ": " + e.Message); }
-        return new(name, failures.Count == 0 ? "篩選 5 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取 全過" : string.Join("；", failures),
+        return new(name, failures.Count == 0 ? "篩選 5 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
                    failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 }

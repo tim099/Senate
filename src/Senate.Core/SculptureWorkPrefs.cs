@@ -5,7 +5,8 @@
 //             ⇒ 把設定調小，既有的大作品照樣打得開、雕得動，只是不能再建新的大作品。
 // 數值影響：只讀寫 `senate.pages.local.json` 的 `sculpture.workMaxAxis` 一格（由 SenatePageStore 決定檔名）；
 //           預設 ＝ SCP_SculptWorks.DefaultMaxAxis（4096）；超出 1..結構上限的值夾回範圍，並在來源說出來。
-//           另外兩格 `sculpture.lastSpace`／`sculpture.lastWork`：觀測頁上次選的空間與作品（Tim 2026-10-12：下次進來自動切回去）。
+//           另外兩格 `sculpture.lastSpace`／`sculpture.lastWork`：觀測頁上次選的空間與作品（Tim 2026-10-12：下次進來自動切回去）；
+//           `sculpture.preview`：觀測頁的預覽設定（檢視倍率範圍、畫面大小）整份 JSON（Tim 2026-10-12：重開視窗也保留）。
 #nullable enable
 using SCP.Core.Prefs;
 using SCP.Core.Sculpture;
@@ -85,6 +86,23 @@ public static class SculptureWorkPrefs
         if (!r.Ok || iWork == null) return r;
         return aStore.Write(LastWork, iWork);
     }
+
+    /// <summary>觀測頁預覽設定（SculptPreviewSettings）整份 JSON —— 欄位由頁面那一側的類別決定，這裡只存字串。</summary>
+    public static readonly SCP_PrefKey<string> PreviewJson = SCP_PrefKey.String("sculpture", "preview");
+
+    /// <summary>讀預覽設定 JSON。沒設過 ⇒ 空字串；讀不了 ⇒ 空字串並在 <paramref name="oError"/> 說出來（照預設開頁）。</summary>
+    public static string ReadPreviewJson(string iRepoRoot, out string? oError)
+    {
+        oError = null;
+        if (string.IsNullOrWhiteSpace(iRepoRoot)) return "";
+        SCP_PrefRead<string> r = SenatePageStore.For(iRepoRoot).Read(PreviewJson);
+        if (r.State == SCP_PrefState.Present) return r.Value ?? "";
+        if (r.State != SCP_PrefState.Missing) oError = PreviewJson.Path + " 讀不了：" + (r.Error ?? "沒有說明");
+        return "";
+    }
+
+    public static (bool Ok, string Message) SavePreviewJson(string iRepoRoot, string iJson)
+        => string.IsNullOrWhiteSpace(iRepoRoot) ? (false, "宿主沒給 repo_root") : SenatePageStore.For(iRepoRoot).Write(PreviewJson, iJson);
 
     public static (bool Ok, string Message) SaveMaxAxis(string iRepoRoot, int iMaxAxis)
     {

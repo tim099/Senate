@@ -8,6 +8,7 @@ using SCP.Core.Gui;
 using SCP.Core.Json;
 using SCP.Core.Reflect;
 using SCP.Core.Sculpture;
+using Senate.Core;
 
 namespace Senate.Cli.Pages;
 
@@ -71,12 +72,39 @@ public sealed partial class SculptureViewerPage
     SculptPreviewSettings? m_PreviewCfg;
     string? m_PreviewCfgJson;
 
-    /// <summary>預覽設定 —— 滾輪在圖上（比畫設定的 Inspector 先跑）⇒ 讀的時候先套這一輪的輸入（同 <see cref="ViewCfg"/>）。</summary>
+    /// <summary>
+    /// 預覽設定 —— 滾輪在圖上（比畫設定的 Inspector 先跑）⇒ 讀的時候先套這一輪的輸入（同 <see cref="ViewCfg"/>）。
+    /// <para>跨重開保留（Tim 2026-10-12）：session 那一格是這一場的真相；磁碟（SculptureWorkPrefs.PreviewJson）只在
+    /// 這一場還沒有值時拿來填一次，之後 session 的 JSON 一變就寫回磁碟（⛔ 不每幀寫：比的是上次落盤的字串）。</para>
+    /// </summary>
     SculptPreviewSettings PreviewCfg(SCP_Ui g)
     {
+        SeedPreviewFromDisk(g);
         var cfg = LoadCfg(g, SPreviewCfg, ref m_PreviewCfg, ref m_PreviewCfgJson);
         if (ApplyPending(g, cfg, PreviewCfgKey)) SaveCfg(g, SPreviewCfg, cfg, ref m_PreviewCfgJson);
+        PersistPreview(g);
         return cfg;
+    }
+
+    /// <summary>上次落盤（或從磁碟讀到）的預覽設定 JSON；null ＝ 這個頁面實例還沒讀過磁碟。</summary>
+    string? m_PreviewDiskJson;
+
+    void SeedPreviewFromDisk(SCP_Ui g)
+    {
+        if (m_PreviewDiskJson != null) return;
+        m_PreviewDiskJson = SculptureWorkPrefs.ReadPreviewJson(m_Model.RepoRoot, out string? err);
+        if (err != null) m_Message = "⚠ 預覽設定讀不了（照預設）：" + err;
+        if (g.FieldValue(SPreviewCfg, "").Length == 0 && m_PreviewDiskJson.Length > 0) g.SetField(SPreviewCfg, m_PreviewDiskJson);
+    }
+
+    /// <summary>session 的預覽設定跟上次落盤的不同 ⇒ 寫回磁碟。寫失敗也記成「已處理」，⛔ 不每幀重試（說一次就好）。</summary>
+    void PersistPreview(SCP_Ui g)
+    {
+        string json = g.FieldValue(SPreviewCfg, "");
+        if (json.Length == 0 || json == m_PreviewDiskJson) return;
+        m_PreviewDiskJson = json;
+        var (ok, msg) = SculptureWorkPrefs.SavePreviewJson(m_Model.RepoRoot, json);
+        if (!ok) m_Message = "⚠ 預覽設定存不進磁碟（這一場照用，重開會回預設）：" + msg;
     }
 
     /// <summary>
