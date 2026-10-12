@@ -1480,10 +1480,18 @@ public static partial class SelfTest
         bool aPersisted = aBack.Folds.TryGetValue("probe/box", out bool aVal) && !aVal
                           && aBack.ToInput(null).Folds["probe/box"] == false;
 
-        bool aOk = aOpenOk && aShutOk && aListed && aPersisted;
+        // ⑤ 只問不畫（FoldOpen）：跟 Fold 讀同一份狀態；先問再畫 ⇒ id 照樣是 probe/box（⛔ 不能被問的那一次佔走變成 #2）、不建節點
+        var aAskUi = new SCP_Ui(aInput);
+        bool aAskShut = !aAskUi.FoldOpen("probe/box") && new SCP_Ui().FoldOpen("probe/box") && !new SCP_Ui().FoldOpen("probe/box", false);
+        int aNodesBefore = SCP_GuiQuery.Interactive(aAskUi.Root).Count;
+        DrawFoldProbe(aAskUi);
+        bool aAskOk = aAskShut && aNodesBefore == 0 && SCP_GuiQuery.Find(aAskUi.Root, "probe/box") is { On: false }
+                      && SCP_GuiQuery.Find(aAskUi.Root, "probe/box#2") == null;
+
+        bool aOk = aOpenOk && aShutOk && aListed && aPersisted && aAskOk;
         return new CheckRow("摺疊",
             $"展開時內容在={aOpenOk}／收合時子節點不存在={aShutOk}／出現在可互動清單（--fold）={aListed}"
-            + $"／session 存讀={aPersisted}",
+            + $"／session 存讀={aPersisted}／只問不畫（FoldOpen 同狀態、先問再畫 id 不變）={aAskOk}",
             aOk ? CheckResult.Pass : CheckResult.Fail);
     }
 

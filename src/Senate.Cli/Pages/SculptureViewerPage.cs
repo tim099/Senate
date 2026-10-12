@@ -278,14 +278,28 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         // ⚠ TopBar 先於 DrawContent 畫 ⇒ 第一次 Reload 前 m_DataRoot 還是空的，直接問 model
         string aRoot = m_Model.AgentCommandsRoot.Value ?? "";
         OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_SculptRenderProfiles.SculptureDir(new SCP_DataRoot(aRoot)) : null, P + "btn/open-dir");
-        string aExp = ExportCfg(iUi).OutDir.Trim();
-        string aExpPath = iUi.FieldValue(SExportPath, "");
-        string? aExpDir = aExp.Length > 0 ? aExp
-            : aExpPath.Length > 0 ? Path.GetDirectoryName(aExpPath)
-            : aRoot.Length > 0 ? new SCP_SculptPaths(new SCP_DataRoot(aRoot)).Exports : null;
-        OpenFolderButton(iUi, aExpDir, P + "btn/open-export", "開啟匯出資料夾");
+        OpenFolderButton(iUi, ExportDirFor(iUi, aRoot), P + "btn/open-export", "開啟匯出資料夾");
         OpenFolderButton(iUi, Directory.Exists(PageTempDir) ? PageTempDir : null, P + "btn/open-temp", "開啟暫存圖資料夾");
     }
+
+    /// <summary>
+    /// 「開啟匯出資料夾」開哪裡：匯出設定的 OutDir ＞ 選了個人作品 ⇒ 那件作品的 `works/&lt;id&gt;/exports`（引擎預設寫這裡）
+    /// ＞ 上一次匯出檔那一層 ＞ 資料根的 `Sculpture/exports`（共用展區）。
+    /// 🩸 以前作品也走「上一次匯出檔那一層」：換作品會清掉那一格、匯出跑完才填回 ⇒ 匯出中按下去開到 `Sculpture/exports`（Tim 2026-10-12）。
+    /// </summary>
+    string? ExportDirFor(SCP_Ui g, string iRoot)
+    {
+        string aOut = ExportCfg(g).OutDir.Trim();
+        if (aOut.Length > 0) return aOut;
+        if (iRoot.Length == 0) return null;
+        if (WorkExportDir(g, iRoot) is string aWorkDir) return aWorkDir;
+        string aLast = g.FieldValue(SExportPath, "");
+        return aLast.Length > 0 ? Path.GetDirectoryName(aLast) : new SCP_SculptPaths(new SCP_DataRoot(iRoot)).Exports;
+    }
+
+    /// <summary>選了個人作品 ⇒ 引擎匯出那件作品的預設資料夾（`works/&lt;id&gt;/exports`）；否則 null。</summary>
+    string? WorkExportDir(SCP_Ui g, string iRoot)
+        => iRoot.Length > 0 && PersonalSpace(g) && SelectedWork(g) is { Length: > 0 } aWork ? new SCP_SculptWorks(new SCP_DataRoot(iRoot)).SpacePaths(aWork).Exports : null;
 
     protected override void DrawContent(SCP_Ui g)
     {
@@ -638,6 +652,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
         // GPU 即時預覽（TASK-0472）：畫面每幀由 DrawGpuResult 跟著欄位走 ⇒ ⛔ 不 spawn 出圖（要求照收、直接清掉）
         if (UseGpu(g)) { m_AutoWanted = false; m_AutoForce = false; m_AutoWhy = ""; return; }
+        if (!g.FoldOpen(FResultFold)) return;   // 「渲染結果」收起來 ⇒ 不畫；要求留著，展開那一輪再畫（Tim 2026-10-12）
         if (!m_AutoWanted || m_Job != null) return;   // 正在跑 ⇒ 等它跑完（PumpJob 收掉之後的那一輪再來）
         if (SCP_GuiHost.RedrawsContinuously && DateTime.UtcNow - m_LastAutoStartUtc < AutoMinInterval) return;
         Dictionary<string, string> a = ManualRequest(g, iPersona, out _);
@@ -734,11 +749,13 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     //          ② 參數：其他欄位變了 ⇒ 背景重新準備場景（同一支 Cmd_Sculpture.TryPrepareView，疊層規則只有一份），網格照用；
     //          ③ 相機（yaw／pitch／roll／fov／zoom／distance＋檢視倍率）：每幀套在參數副本上，什麼都不重建。
     //          場景準備時**拿掉相機鍵** ⇒ plan 手上是鏈／展品給的相機；欄位有值才覆寫（清空 ＝ 回到鏈上的值）。
-    // 數值影響：宿主不能畫（文字模式、SENATE_SCULPT_GPU=off）、開關關掉、或宿主回報這一幀失敗 ⇒ 退回 spawn 出圖，原因印在頁面上。
+    // 數值影響：宿主不能畫（文字模式、SENATE_SCULPT_GPU=off）、或宿主回報這一幀失敗 ⇒ 退回 spawn 出圖，原因印在頁面上。
+    //          沒有開關（Tim 2026-10-12「取消 GPU 即時渲染的選項，直接根據渲染結果是否摺疊來決定是否渲染」）：
+    //          「渲染結果」收起來 ⇒ 不準備場景、不畫、不 spawn；展開 ⇒ 照最新參數畫。
     //          合併同色面一律開（MergeFaces）；CLI `op=view` 不受影響（它不開）。
     // ===========================================================
     const string GpuKey = "sculpture/gpu-view";
-    const string TGpu = P + "t/gpu";
+    const string FResultFold = P + "fold/result";
     const string FViewScale = P + "f/view_scale";
     static readonly string[] s_CamKeys = { "yaw", "pitch", "roll", "fov", "zoom", "distance" };
     static readonly string[] s_VoxelKeys = { "work", "exhibit", "region", "exclude_color", "draft", "links", "hide_links" };
@@ -753,10 +770,10 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     string m_GpuSceneSig = "";
     long m_GpuPut;
 
-    /// <summary>這一幀要不要走 GPU：宿主能畫 ＋ 開關開著 ＋ 宿主沒有回報「這一版畫失敗」。</summary>
+    /// <summary>這一幀要不要走 GPU：宿主能畫 ＋ 宿主沒有回報「這一版畫失敗」。</summary>
     bool UseGpu(SCP_Ui g)
     {
-        if (!GpuPainterAvailable || !g.ToggleValue(TGpu, true)) return false;
+        if (!GpuPainterAvailable) return false;
         return !(SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus s) && s.Version == m_GpuPut && s.Error != null);
     }
 
@@ -764,10 +781,12 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     bool DrawGpuResult(SCP_Ui g, string iPersona)
     {
         if (!GpuPainterAvailable) { g.Note("這個宿主沒有 GPU 即時預覽（文字模式，或環境變數 SENATE_SCULPT_GPU=off）⇒ 用 spawn 出圖。"); return false; }
-        g.Toggle("GPU 即時預覽（右鍵／中鍵拖曳旋轉、左鍵拖曳水平平移、滾輪縮放）", true, TGpu);
-        if (!g.ToggleValue(TGpu, true)) { g.Note("GPU 即時預覽關著 ⇒ 用 spawn 出圖。"); return false; }
         if (SCP_GuiGpuViews.TryGetStatus(GpuKey, out SCP_GuiGpuStatus aSt) && aSt.Version == m_GpuPut && aSt.Error != null)
         { g.Note("GPU 預覽這一幀失敗 ⇒ 退回 spawn 出圖：" + aSt.Error); return false; }
+
+        // 收起來 ⇒ 不準備場景、不畫（展開才照最新參數畫；拖曳／滾輪說明在圖下方）
+        using var aFold = g.Fold("渲染結果（GPU 即時；右鍵／中鍵拖曳旋轉、左鍵拖曳水平平移、滾輪縮放）", FResultFold, iDefaultOpen: true);
+        if (!aFold.Open) return true;
 
         Dictionary<string, string> aReq = ManualRequest(g, iPersona, out string aSubject);
         if (iPersona.Length > 0) aReq["persona"] = iPersona;
@@ -783,8 +802,6 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         PlanSnap? aPlan = m_Plan;
         if ((aPlan == null || aPlan.SceneSig != aSceneSig) && m_PlanJob == null && m_PlanJobSig != aSceneSig + "|failed") StartPlan(aReq, aSceneSig, aVoxelSig);
 
-        using var aFold = g.Fold("渲染結果（GPU 即時）", P + "fold/result", iDefaultOpen: true);
-        if (!aFold.Open) return true;
         if (aPlan == null)
         {
             // 還沒有圖 ⇒ 說明照舊放在這裡（有圖時文字資訊一律在圖下方，Tim 2026-10-12）
@@ -1112,8 +1129,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         string aGpuPersona = g.FieldValue(PersonaSel + "/value", None);
         if (DrawGpuResult(g, aGpuPersona == None ? "" : aGpuPersona)) return;
         string aPath = g.FieldValue(SViewPath, "");
-        using var aFold = g.Fold("渲染結果", P + "fold/result", iDefaultOpen: true);
-        if (!aFold.Open) return;
+        using var aFold = g.Fold("渲染結果", FResultFold, iDefaultOpen: true);
+        if (!aFold.Open) return;   // 收起來 ⇒ 自動渲染也不 spawn（AutoRender 先問 g.FoldOpen）
         if (aPath.Length == 0) { g.Note("（還沒渲染 —— 按「全景」「渲染展品」或「渲染」）"); return; }
         g.ImageFit(aPath, ViewSide(g), "雕刻渲染圖 " + Path.GetFileName(aPath));
         // 文字資訊在圖下方（Tim 2026-10-12）
@@ -1407,7 +1424,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold("匯出設定（匯出鈕在上方工具列）", P + "fold/export", iDefaultOpen: false);
         if (!aFold.Open) return;
         g.Note("範圍＝手動區的 region／exclude_color（空 region＝全空間）。");
-        g.Note("Format：obj／vox｜MergeFaces（只有 obj）：勾著＝同色共面合成矩形、頂點共用（面數大減），不勾＝逐 voxel 面（要 watertight／3D 列印時用）｜OutDir：空＝預設 " + DefaultExportDir);
+        g.Note("Format：obj／vox｜MergeFaces（只有 obj）：勾著＝同色共面合成矩形、頂點共用（面數大減），不勾＝逐 voxel 面（要 watertight／3D 列印時用）｜OutDir：空＝預設 " + (WorkExportDir(g, m_DataRoot) ?? DefaultExportDir) + "（個人作品 ⇒ 那件作品的 exports；共用展區 ⇒ Sculpture/exports）");
         foreach (string n in DrawCfg(g, ExportCfg(g), ExportCfgKey, SExportCfg, ref m_ExportCfgJson)) g.Note("（自動繪製）" + n);
         string aPath = g.FieldValue(SExportPath, "");
         if (aPath.Length > 0) g.Label("上一次匯出：" + aPath);

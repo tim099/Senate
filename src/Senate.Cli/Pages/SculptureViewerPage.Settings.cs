@@ -21,7 +21,7 @@ public sealed class SculptExportSettings
     public SculptExportFormat Format { get; set; } = SculptExportFormat.obj;
     /// <summary>obj 合併同色共面（merge=greedy）；關掉 ＝ 逐 voxel 面（merge=none）。vox 不吃。</summary>
     public bool MergeFaces { get; set; } = true;
-    /// <summary>匯出資料夾；空 ＝ 預設（Sculpture/exports）。</summary>
+    /// <summary>匯出資料夾；空 ＝ 引擎預設（個人作品 ⇒ Sculpture/works/&lt;id&gt;/exports；共用展區 ⇒ Sculpture/exports）。</summary>
     /// <remarks>⚠ Inspector 把清空的字串欄位寫成 null（參考型別）⇒ setter 收成空字串，讀的人不必每處判 null。</remarks>
     public string OutDir { get => m_OutDir; set => m_OutDir = value ?? ""; }
     string m_OutDir = "";
