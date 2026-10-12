@@ -481,7 +481,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
   - ⚠ links.json 只要有一條用了鏡像就寫 **schema 2**（沒用的維持 1）：沒更新的 senate.exe 讀到會 exit 2「schema=2」，⛔ 而不是默默畫成沒翻面的零件。
   - 實例：`apex-one-constitution-mirror-hall`《憲法號的鏡廳》—— basecamp 兩版憲法號，一對 `mirror=z` 龍骨相接、一對 `mirror=x` 船頭相對（常駐展覽）。
 - **寫入只動本作品**：父作品的刀碰不到被關聯的作品（要改去改那件作品）；落子後回報 `linked_hits`（這一刀的範圍裡有幾格是關聯進來的，沒被動到）。
-- **擋下**：成環（含隔好幾層、含停用的關聯）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`、非作者改關聯。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
+- **擋下**：成環（含隔好幾層、含停用的關聯；跟「作品當模型」一起繞成的也算，見 §9.4.8）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`、非作者改關聯。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
 - **攤平**：`work sub=import`（匯入展區）與 `work sub=assemble`（來源有關聯）照 enabled 攤平成實際 voxel，Credit 逐件記；import 的 revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上。`work show` 另給 `composed_revision`／`composed_voxels`；Credit 多一段「關聯（現組）」。export 檔頭記每條用了哪個版本。
 - **效能與鎖**：被關聯的作品讀它自己的快取（只讀、不寫回）；同一件只讀一次（28 門砲關聯同一件 cannon 也只讀一次）。鎖：作品＋關聯樹上所有作品依 ID 排序一次拿齊（全系統只有這一種鎖序）。
 - `diff` 只比本作品自己的事件（不含關聯）；`mark` 回到過去時，被關聯的作品照現在。觀測頁：「只組這些關聯／拿掉這些關聯」兩欄；被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組。
@@ -608,7 +608,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg
 - **`sub=model name= (file=<obj> [axes=] | source_work=<作品>) [at=] [pivot=] [rotate=] [scale=] [mirror=] [color=] [enabled=] [note=]`**：
   - **座標三層**：① 檔案座標（obj 自己的 x,y,z）→ ② 模型座標（z 朝上）→ ③ 作品座標。`axes` 管 ①→②：`yup`（預設；Blender／Maya 匯出的 obj）＝ (x, −z, y)、`zup` ＝ 原樣、`sculpt` ＝ 本引擎 `export` 出來的 obj（(x, z, y)，export 的反函數）。②→③：**p ＝ at ＋ R·(scale ⊙ mirror(p − pivot))**，`rotate=rx,ry,rz`（度）先繞 X、再 Y、再 Z（都繞作品的軸）；`scale` 一個數或三個數（> 0）；`mirror=x|y|z`（組合）在模型座標裡繞 pivot 翻面。at／pivot 可帶小數。
   - **file 來源**：obj 與它 `mtllib` 引用的 mtl 一起複製進 `models/<名字>/`（⛔ 不指向作品外的檔）；記下位元組數與 SHA256。換檔 ＝ 同名＋`file=`＋`overwrite=1`。
-  - **work 來源**：那件作品（含它的關聯、繩、帆、模型）匯出成 obj，快取在 `<雕刻根>/model_cache/<作品>/<鍵>.obj`（⛔ 不入版控）；鍵 ＝ 那一整串作品的事件水位與資料檔雜湊 ⇒ 來源一改，下一次觀測**自動重出**（回報 `cache=produced|reused`）。模型座標 ＝ 那件作品的格座標。`scale` 不給 ⇒ 來源的一格幾公尺 ÷ 本作品的（寫進 models.json）。成環（A 用 B、B 又用 A；含經過關聯與隔層）⇒ exit 2。
+  - **work 來源**：那件作品（含它的關聯、繩、帆、模型）匯出成 obj，快取在 `<雕刻根>/model_cache/<作品>/<鍵>.obj`（⛔ 不入版控）；鍵 ＝ 那一整串作品的事件水位與資料檔雜湊 ⇒ 來源一改，下一次觀測**自動重出**（回報 `cache=produced|reused`）。模型座標 ＝ 那件作品的格座標。`scale` 不給 ⇒ 來源的一格幾公尺 ÷ 本作品的（寫進 models.json）。成環（A 用 B、B 又用 A；含經過關聯與隔層）⇒ exit 2 —— `sub=model` 與 `sub=link` 寫入時都看關聯＋模型兩種邊，零寫入並印出那條環。
   - 同名已在：改 at／pivot／rotate／scale／mirror／color／enabled／note 直接改；**換來源**要 `overwrite=1`。寫之前先讀一次 obj（work 來源先產生快取）：讀不了、沒有面、索引越界 ⇒ exit 2、**一個檔都沒寫**。`sub=unmodel name=` 拿掉（file 來源連同 `models/<名字>/`；綁在它上面的繩當下全庫掃一次，`ropes_now_broken`）。
   - 只讀幾何與顏色：`v`／`vn`／`f`（多邊形扇形切成三角形；索引可負）／`usemtl`／`mtllib` 的 `Kd`。沒有 `vn` ⇒ 面法線（平面著色）；缺 mtl 或材質 ⇒ 預設灰並列警告；`color=` ⇒ 整個模型一個色。貼圖、曲面、線段不讀。上限 256 MB、800 萬個三角形。
 - **繩與帆角綁模型**：端點寫 `model:[關聯/…/]模型名/點`（相對於繩所在的作品，同固定點路徑）。點 ＝ `x,y,z`：file 來源是**檔案座標**（照 axes 換）、work 來源是那件作品的格座標（整數 ⇒ 格心）；work 來源也可以寫那件作品的**固定點名**。模型搬、轉、縮、跟著關聯走 ⇒ 端點跟著動。帆的角同一種寫法（`corners="model:mast/12,0,40|…"`）。
@@ -616,7 +616,6 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg
 - **讀數**（`sub=models` 與 view／export 每個模型一行）：狀態、來源（檔名＋SHA 前 8 碼／作品＋快取鍵與 produced|reused）、變換、三角形數、在組裝件裡的外框；回傳值 `models_drawn／hidden／disabled／broken`。
 - **畫**：view 與觀測頁的 GPU 預覽另一趟畫（靜態 ⇒ 內容沒變不重傳；同一組燈、會投影子也接影子）；不是 voxel ⇒ `visible_voxels` 不變；slice／section／stats 量的是格子，不畫模型。觀測頁「模型」區：總開關＋一個一個勾（只影響這次觀測，⛔ 不寫回 models.json）。
 - **匯出**：`export format=obj` 把模型接在帆後面（每個模型 `o model_n`、一色一個材質 `model_n_k`）；list／vox 只有格子 ⇒ `models_exported=0`。只有繩／帆／模型、沒有 voxel 的作品也匯得出 obj。
-- ⚠ **已知的洞**：`work sub=link` 的成環檢查只看關聯 —— 加一條關聯讓「關聯＋模型」繞成環時，寫入當下**不擋**；觀測時那個模型列 `broken`（「模型來源成環」），不會無限遞迴。`sub=model` 寫入時兩種邊都看。
 
 ### 9.5 建築與家具的相對比例尺
 

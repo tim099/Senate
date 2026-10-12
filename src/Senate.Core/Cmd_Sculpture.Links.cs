@@ -3,7 +3,7 @@
 // 物理意義：關聯只記在 links.json（不進 events）⇒ 觀測時現組；寫入類 op 只動本作品，落子後回報「這一刀的範圍裡有幾格是關聯進來的」
 //          （那些格沒被動到 —— 要改去改那件作品）。「子作品就是獨立作品，只是創作時切出來的」⇒ 任何作品都能被關聯。
 // 失敗處置：links／hide_links 給在非觀測類 op、名字不存在、關聯成環、被關聯的作品讀不了 ⇒ exit 2；
-//          加關聯時放不下、成環（連同還沒存的那一筆一起驗、含停用的關聯）⇒ exit 2、零寫入。關聯的增刪先拿 registry 鎖（全庫序列化）。
+//          加關聯時放不下、成環（連同還沒存的那一筆一起驗、含停用的關聯；關聯＋模型繞成的也算）⇒ exit 2、零寫入。關聯的增刪先拿 registry 鎖（全庫序列化）。
 using System.Globalization;
 using SCP.Core.Io;
 using SCP.Core.Sculpture;
@@ -192,7 +192,7 @@ public sealed partial class Cmd_Sculpture
 
     /// <summary>
     /// work sub=link：加（或改）一條關聯。同名已存在：只給 enabled／note ⇒ 只改這兩格；要改作品／位置／轉向 ⇒ overwrite=1。
-    /// 驗：被關聯的作品存在且 ready、不是自己、轉向後放得進、整棵樹（連同這一筆、含停用的）不成環。呼叫端已握 registry 鎖與本作品鎖。
+    /// 驗：被關聯的作品存在且 ready、不是自己、轉向後放得進、整棵樹（連同這一筆、含停用的）不成環、關聯＋模型也不繞回本作品。呼叫端已握 registry 鎖與本作品鎖。
     /// </summary>
     static string? WorkLink(Ctx c, SCP_SculptWork iCard)
     {
@@ -252,6 +252,12 @@ public sealed partial class Cmd_Sculpture
         List<SCP_SculptLinkNode> aTree;
         try { aTree = SCP_SculptLinks.Tree(c.Works, iCard.id, (iCard.id, aFile)); }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return Blocked(c, 2, e.Message + "；未寫入"); }
+        // 關聯樹只走關聯；「作品當模型」是另一種用到的邊 ⇒ 從被關聯的那件出發、兩種邊都走，走回本作品就是環（同 sub=model 的判法）。
+        // 新的這一筆還沒存也不影響：那條路一走到本作品就停，用不到本作品自己的 links.json。
+        List<string>? aLoop;
+        try { aLoop = SCP_SculptModels.PathTo(c.Works, aLink.work, iCard.id); }
+        catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is IOException) { return Blocked(c, 2, "成環檢查讀不了作品：" + e.Message + "；未寫入"); }
+        if (aLoop != null) return Blocked(c, 2, "關聯＋模型成環：" + iCard.id + " → " + string.Join(" → ", aLoop) + "（關聯與模型都算）；未寫入");
         SCP_SculptLinks.Save(aPaths, aFile);
         c.Result.AddValue("link", aLink.name);
         c.Result.AddValue("link_work", aLink.work);

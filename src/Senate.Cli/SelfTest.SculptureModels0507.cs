@@ -5,6 +5,7 @@
 //    含行列式 < 0 的兩種（mirror=x、axes=sculpt）。
 // ④ CLI：file 匯入（檔收進作品、讀數）、只改變換不用 overwrite、換來源沒給 overwrite ⇒ 擋；🔴 壞 obj ⇒ exit 2、models.json 與 models/ 一個都沒寫。
 // ⑤ 作品當模型：比例自動（0.02 ÷ 0.1 ＝ 0.2）、快取 produced → reused → 來源改了 ⇒ produced（鍵換了）；外框 ＝ 手算；🔴 成環（直接、經過關聯）⇒ 擋、零寫入。
+//    反方向也擋（TASK-0508）：加**關聯**讓「關聯＋模型」繞成環（直接、隔層）⇒ exit 2、印出環的路徑、links.json 零寫入；不成環的關聯照常加。
 // ⑥ 繩綁模型：固定點名／作品格座標／obj 檔案座標三種端點 ＝ 手算；轉模型 ⇒ 端點跟著到手算的位置；拿掉模型 ⇒ 全庫掃到、觀測列 broken。
 // ⑦ 觀測：渲染器收到的模型數 ＝ ok 數；models=0／hide_models／links=none（關聯裡的模型跟著不畫）；hide_models 打錯 ⇒ 擋。
 // ⑧ 匯出 obj：o model_n、索引在範圍內、繞序跟 vn 同向；list ⇒ models_exported=0。
@@ -211,6 +212,19 @@ public static partial class SelfTest
             var loop2 = Sub("part", "model", ("name", "loop"), ("source_work", "top"));
             Check(loop2.ExitCode == 2 && SculptRoom.All(loop2).Contains("成環") && (File.Exists(store.SpacePaths("part").ModelsFile) ? File.ReadAllText(store.SpacePaths("part").ModelsFile) : "") == partModels,
                   "🔴 經過關聯與模型的環（part → top → m(mid) → part）⇒ 擋、零寫入：" + SculptRoom.All(loop2).Split('\n')[0]);
+            // 🔴 反方向（TASK-0508）：同一個環改由加關聯來閉合 —— 都選放得進的（10³ 進 10³），⛔ 不讓「放不下」先擋掉而測不到環
+            string LinksText(string id) => File.Exists(store.SpacePaths(id).LinksFile) ? File.ReadAllText(store.SpacePaths(id).LinksFile) : "";
+            string partLinks = LinksText("part");
+            string Said(SCP_CmdResult r) => SculptRoom.All(r).Split('\n').FirstOrDefault(l => l.Contains("成環") || l.Contains("關聯 `")) ?? "";
+            var lk1 = Sub("part", "link", ("name", "back"), ("source_work", "mid"), ("at", "0,0,0"));
+            Check(lk1.ExitCode == 2 && Said(lk1).Contains("part → mid → part") && LinksText("part") == partLinks,
+                  "🔴 加關聯閉合「模型」的環（part → link mid → model part）⇒ 擋、印路徑、links.json 零寫入：exit " + lk1.ExitCode + " " + Said(lk1));
+            var lk2 = Sub("part", "link", ("name", "back2"), ("source_work", "top"), ("at", "0,0,0"));
+            Check(lk2.ExitCode == 2 && Said(lk2).Contains("part → top → mid → part") && LinksText("part") == partLinks,
+                  "🔴 隔層（part → link top → link mid → model part）⇒ 擋、印路徑、零寫入：exit " + lk2.ExitCode + " " + Said(lk2));
+            readings.Add("加關聯成環 exit " + lk1.ExitCode + "／" + lk2.ExitCode);
+            Check(Create("leaf", "10,10,10") && Sub("leaf", "link", ("name", "m"), ("source_work", "mid"), ("at", "0,0,0")).ExitCode == 0 && LinksText("leaf").Contains("\"mid\""),
+                  "正向對照：不成環的關聯（leaf → mid → model part）照常加得進去");
 
             // ── ⑥ 繩綁模型 ─────────────────────────────────────────────────
             // tip 格心 (9.5,0.5,0.5) ⇒ ×0.2＋(5,5,5) ⇒ (6.9,5.1,5.1)
