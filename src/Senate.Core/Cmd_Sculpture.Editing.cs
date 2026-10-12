@@ -25,11 +25,12 @@ public sealed partial class Cmd_Sculpture
         if (root.commission.Length == 0) return Blocked(c, 2, "免費子作品必須屬於使用者委託任務");
         string title = c.Args.Get("title").Trim();
         if (title.Length == 0) return Blocked(c, 2, "建立子作品需要title");
+        var tags = c.Args.IsExplicit("tags") ? SCP_SculptWorks.ParseTags(c.Args.Get("tags")) : new List<string>();   // 先驗，不合法就不建
         var card = new SCP_SculptWork { schema = 1, id = id, owner = c.Persona, title = title, parent_work = parent,
             status = "ready", payment_ref = "sculpture-child:" + Guid.NewGuid().ToString("N"),
-            created_at = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture) };
+            created_at = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), tags = tags };
         SCP_SculptWorks.SetSize(card, dimensions); c.Works.Save(card); c.Works.SpacePaths(id).EnsureBase();
-        c.Result.AddValue("work", id); c.Result.AddValue("parent_work", parent); c.Result.AddValue("root_work", root.id);
+        c.Result.AddValue("work", id); c.Result.AddValue("parent_work", parent); c.Result.AddValue("root_work", root.id); c.Result.AddValue("tags", string.Join(",", tags));
         c.Result.AddValue("space_size", card.Dimensions); c.Result.AddValue("charged", "0"); c.Result.AddValue("reward", "0");
         WorkNextSteps(c, id);
         return Finish(c, 0, "✓ 任務子作品 " + id + "｜免費建立，不重複領薪");

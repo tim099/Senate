@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-12（觀測頁：工具列兩排（匯出／正交切換／空間／作品或展品下拉）、渲染圖置頂、作品篩選／觀測設定／匯出設定三份 class 由 Inspector 自動畫、草稿預設開）
+last_updated: 2026-10-12（作品 tags：sub＝子作品、沒標的是主作品（跟 parent_work 脫鉤）；觀測頁：工具列兩排、渲染圖置頂、三份設定 class 由 Inspector 自動畫、草稿預設開）
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -25,6 +25,7 @@ related:
 - 模組化：work sub=assemble把source_work的副本放入目前work，可用別人的作品，並自動Credit來源作品、作者、版本及上游來源；原作保留。可選turn繞Z軸旋轉、mirror=x|y|z（可組合）翻面（先翻再轉），at指定旋轉後原點。
 - 區域編輯：work sub=move以region選區、delta平移；work sub=undo/redo撤銷／重做voxel操作，history查歷史。作品內全部免費；碰撞預設整筆拒絕，只有顯式overwrite=1才覆蓋。
 - 建築與家具預設比例尺：1公尺＝32 voxel（每格3.125公分），尺寸與at、delta用同一比例換算；常用尺寸見§9.5。
+- 子作品標籤：`parent_work`只管任務歸屬與計費，不代表「這是零件」。切出來的部件（甲板、床、椅子）建立時帶`tags=sub`（或事後`work sub=update tags=sub`）；沒標`sub`的一律當主作品——例如把部件組成整艘船的那件，雖然也掛在任務底下。觀測頁的作品下拉預設只列主作品。
 - 匯入展區仍另收實際落地費；委託免的是建立費。
 - 照圖紙雕大型作品（船、建築；要分階段、要對得上一張圖）：流程、驗證兩本帳、踩過的坑 → `senate cmd doc --arg op=show --arg name=Sculpture_Blueprint_Build`。
 - 現有的op不夠用時（例如要拆成幾十刀才做得到、或做不到），可以擴充引擎、新增可操作的指令（Tim 2026-10-11）：引擎在SCP_Core的Sculpture資料層、CLI在Cmd_Sculpture；照coding流程開單、認領帶scope，補selftest與本檔，新op的事件要能重播。
@@ -327,7 +328,7 @@ senate cmd sculpture --arg op=work --arg sub=import --arg work=meadow-chair --ar
 
 只對實際落地收費`⌈voxel/100⌉`，既有格子跳過不收費；付款不足或版本不符不落地、不扣費。提交事件`importwork`保存每顆原色、來源作品ID／作者／版本，不依賴作品後續狀態即可重播；展品以實際落地範圍登錄，描述保留來源版本。原作品保留，續雕不更新已展出的副本。若已落地但結算未收齊，exit1並回傳event_file，按`sculpture:<事件檔名>`對帳，不要重跑匯入。
 
-後台`senate ui --page sculpture`：工具列兩排 —— 第一排「匯出」「切換 正交／透視」與開資料夾，第二排「雕刻空間」下拉＋「作品」（個人作品）或「展品」（共用展區）下拉；渲染圖在內容區最上面。個人區可建立作品、保存心得與TODO、預覽及確認匯入。三份設定由`SCP_GuiInspector`自動畫、存在session（文字模式跨指令記得）：「作品篩選」`MainOnly`（預設開＝只列主作品，即`parent_work`空的）／`Owner`／`Keyword`，目前選的作品被篩掉也不換；「作品觀測設定」`Draft`（草稿模式，預設開）／`Links`／`HideLinks`；「匯出設定」`Format`（obj｜vox）／`MergeFaces`／`OutDir`。名稱／筆記欄位依作品ID保存草稿，切換作品不會套用上一件的文字；長筆記派送UTF-8 arg-file，鏡頭、切片與匯出仍走同一支CLI。
+後台`senate ui --page sculpture`：工具列兩排 —— 第一排「匯出」「切換 正交／透視」與開資料夾，第二排「雕刻空間」下拉＋「作品」（個人作品）或「展品」（共用展區）下拉；渲染圖在內容區最上面。個人區可建立作品、保存心得與TODO、預覽及確認匯入。三份設定由`SCP_GuiInspector`自動畫、存在session（文字模式跨指令記得）：「作品篩選」`MainOnly`（預設開＝只列主作品，即沒標`sub`的）／`Owner`／`Keyword`（也比標籤），目前選的作品被篩掉也不換；「作品觀測設定」`Draft`（草稿模式，預設開）／`Links`／`HideLinks`；「匯出設定」`Format`（obj｜vox）／`MergeFaces`／`OutDir`。名稱／筆記欄位依作品ID保存草稿，切換作品不會套用上一件的文字；長筆記派送UTF-8 arg-file，鏡頭、切片與匯出仍走同一支CLI。
 
 ### 9.2 使用者指定的委託作品
 
@@ -342,6 +343,8 @@ senate cmd sculpture --arg op=work --arg sub=create --arg persona=<作者> --arg
 ### 9.3 任務子作品、零件組裝與Credit
 
 任務作者可用`parent_work`指定已ready的主任務或其子作品，建立任意層級子作品。子作品建立與續雕免費，`charged=0`、`reward=0`；10 token由主任務領一次。子作品有自己的尺寸、筆記與編輯歷史，可重複使用。別人的作品不用改掛父層，直接組裝副本即可共同創作。
+
+**標籤`tags`**：書卡上的標籤清單（逗號分隔給；轉小寫、去重；每個1–32字的英數／底線／連字號，最多16個；`tags=`空字串＝清空）。保留標籤`sub`＝子作品，**沒標的一律是主作品**，跟`parent_work`無關。建立子作品時可直接帶`tags=`，事後用`work sub=update tags=`改（只有作者能改；不合法整份擋下、零寫入）；`work sub=list`印出標籤。
 
 ```bash
 # room是已建立的委託任務；空間設成6×6×3公尺，床的空間為2×1×1公尺（含床頭）。

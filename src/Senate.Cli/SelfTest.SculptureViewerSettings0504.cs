@@ -20,15 +20,18 @@ public static partial class SelfTest
             var works = new List<SCP_SculptWork>
             {
                 new() { id = "ship", title = "憲法號", owner = "basecamp", status = "ready" },
-                new() { id = "ship-deck", title = "甲板", owner = "basecamp", status = "ready", parent_work = "ship" },
+                new() { id = "ship-deck", title = "甲板", owner = "basecamp", status = "ready", parent_work = "ship", tags = new() { "sub" } },
+                // TASK-0505 反向對照：掛在任務底下（parent_work）但沒標 sub ⇒ 仍是主作品（憲法號（組裝）的形狀）
+                new() { id = "ship-assembly", title = "組裝", owner = "basecamp", status = "ready", parent_work = "ship", tags = new() { "wip" } },
                 new() { id = "rain", title = "雨後留白", owner = "meadow", status = "ready" },
             };
             string Ids(SculptWorkFilter f) => string.Join(",", SculptureViewerPage.FilterWorks(works, f).Select(w => w.id));
 
             // ① 篩選
-            Check(Ids(new SculptWorkFilter()) == "ship,rain", "預設應只列主作品：" + Ids(new SculptWorkFilter()));
-            Check(Ids(new SculptWorkFilter { MainOnly = false }) == "ship,ship-deck,rain", "關掉 MainOnly 應列全部");
-            Check(Ids(new SculptWorkFilter { Owner = "BASECAMP" }) == "ship", "作者應不分大小寫、且仍只列主作品");
+            Check(Ids(new SculptWorkFilter()) == "ship,ship-assembly,rain", "預設應只列沒標 sub 的（有 parent_work 沒標的也算主作品）：" + Ids(new SculptWorkFilter()));
+            Check(Ids(new SculptWorkFilter { MainOnly = false }) == "ship,ship-deck,ship-assembly,rain", "關掉 MainOnly 應列全部");
+            Check(Ids(new SculptWorkFilter { Owner = "BASECAMP" }) == "ship,ship-assembly", "作者應不分大小寫、且仍只列主作品");
+            Check(Ids(new SculptWorkFilter { Keyword = "WIP" }) == "ship-assembly", "關鍵字應也比標籤");
             Check(Ids(new SculptWorkFilter { MainOnly = false, Keyword = "甲" }) == "ship-deck", "關鍵字應比名稱");
             Check(Ids(new SculptWorkFilter { MainOnly = false, Keyword = "DECK" }) == "ship-deck", "關鍵字應比 ID、不分大小寫");
 
@@ -50,7 +53,7 @@ public static partial class SelfTest
             Check(filter.Owner == "", "清空 Owner 後應是空字串，實際：" + (filter.Owner == null ? "null" : "「" + filter.Owner + "」"));
             string afterClear = "";
             try { afterClear = Ids(filter); } catch (Exception e) { failures.Add("清空 Owner 後篩選炸了：" + e.GetType().Name); }
-            Check(afterClear == "ship,rain", "清空 Owner 後應回到只看 MainOnly：" + afterClear);
+            Check(afterClear == "ship,ship-assembly,rain", "清空 Owner 後應回到只看 MainOnly：" + afterClear);
 
             // ④ session JSON：存一圈值不變；沒存過 ⇒ 預設；JSON 沒變 ⇒ 沿用同一個物件
             var save = new SCP_Ui();

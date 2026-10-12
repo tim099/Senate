@@ -471,7 +471,7 @@ public sealed partial class SculptureViewerPage
             {
                 if (filter.Open)
                 {
-                    g.Note("MainOnly：只列主作品（不是任務子作品的）｜Owner：只列這位作者的（空 ＝ 不限）｜Keyword：ID 或名稱含這段字（空 ＝ 不限）。篩選只管下拉列不列，目前選的作品被篩掉也不換。");
+                    g.Note("MainOnly：只列主作品（沒標 sub 的；標籤在作品區編）｜Owner：只列這位作者的（空 ＝ 不限）｜Keyword：ID、名稱或標籤含這段字（空 ＝ 不限）。篩選只管下拉列不列，目前選的作品被篩掉也不換。");
                     foreach (string n in DrawCfg(g, FilterCfg(g), FilterCfgKey, SFilterCfg, ref m_FilterCfgJson)) g.Note("（自動繪製）" + n);
                 }
             }
@@ -554,7 +554,7 @@ public sealed partial class SculptureViewerPage
         string selected = SelectedWork(g);
         if (selected.Length == 0) { g.Note("請建立或選擇付款完成的作品；待付款作品可用同一 ID 再按建立對帳。"); return; }
         var card = m_Works.Find(w => w.id == selected)!;
-        g.Label(card.title + "｜" + selected + "｜作者 " + card.owner + "｜" + card.Dimensions);
+        g.Label(card.title + "｜" + selected + "｜作者 " + card.owner + "｜" + card.Dimensions + (card.tags.Count > 0 ? "｜tags " + string.Join(",", card.tags) : ""));
         if (card.commission.Length > 0) g.Note("委託：" + card.commission + "｜來源 " + card.commission_ref + "｜建立免費、報酬10 token（" + card.status + "）");
         if (card.parent_work.Length > 0) g.Note("任務子作品｜父作品 " + card.parent_work + "｜建立免費，不另領薪");
         PumpCredits();
@@ -577,10 +577,12 @@ public sealed partial class SculptureViewerPage
                 g.Note("調整空間不移動或縮放作品；縮小若會切掉內容，整次保存會拒絕。");
                 string notes = g.TextArea("心得／進度／下次從哪開始", text.Notes, notesKey, 6);
                 string todo = g.TextArea("TODO", text.Todo, todoKey, 4);
+                // 標籤（TASK-0505）：sub ＝ 子作品，沒標的一律是主作品（作品下拉的「只列主作品」看這一格）
+                string tags = g.TextField("標籤 tags（逗號分隔；sub ＝ 子作品）", string.Join(",", card.tags), P + "work/" + selected + "/tags").Trim();
                 if (persona == card.owner)
                 {
                     if (g.Button("保存尺寸與筆記（免費）", P + "btn/work-save"))
-                        Start(g, "保存尺寸與筆記", () => new Outcome { Log = RunCli(new() { ["op"] = "work", ["sub"] = "update", ["work"] = selected, ["persona"] = persona, ["title"] = title, ["size"] = dimensions, ["notes"] = notes, ["todo"] = todo }).Log("保存尺寸與筆記"), Reload = true });
+                        Start(g, "保存尺寸與筆記", () => new Outcome { Log = RunCli(new() { ["op"] = "work", ["sub"] = "update", ["work"] = selected, ["persona"] = persona, ["title"] = title, ["size"] = dimensions, ["notes"] = notes, ["todo"] = todo, ["tags"] = tags }).Log("保存尺寸與筆記"), Reload = true });
                 }
                 else g.Note("目前 persona 不是作者；可觀測，不能修改。");
             }

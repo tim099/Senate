@@ -46,7 +46,8 @@ public sealed partial class Cmd_Sculpture
             if (sub == "list")
             {
                 var cards = c.Works.List(c.Persona);
-                foreach (var card in cards) c.Report.Append("- ").Append(card.id).Append("｜").Append(card.title).Append("｜by ").Append(card.owner).Append("｜").Append(card.status).Append("｜").Append(card.Dimensions).Append('\n');
+                foreach (var card in cards) c.Report.Append("- ").Append(card.id).Append("｜").Append(card.title).Append("｜by ").Append(card.owner).Append("｜").Append(card.status).Append("｜").Append(card.Dimensions)
+                    .Append(card.tags.Count > 0 ? "｜tags " + string.Join(",", card.tags) : "").Append('\n');
                 c.Result.AddValue("count", cards.Count.ToString(CultureInfo.InvariantCulture));
                 return Finish(c, 0, "✓ 作品 " + cards.Count + " 件");
             }
@@ -156,11 +157,13 @@ public sealed partial class Cmd_Sculpture
                 if (!TryPositive(c.Args.Get("meters_per_voxel"), out double mpv) || mpv > 1000) return Blocked(c, 2, "meters_per_voxel 要是 0–1000 的正數（一格幾公尺；0.1 ＝ 每格 10 公分）");
                 cardNow.meters_per_voxel = mpv;
             }
+            if (c.Args.IsExplicit("tags")) cardNow.tags = SCP_SculptWorks.ParseTags(c.Args.Get("tags"));   // 不合法 ⇒ ArgumentException ⇒ exit 2、零寫入
             if (c.Args.IsExplicit("notes")) c.Works.WriteText(id, false, c.Args.Get("notes"));
             if (c.Args.IsExplicit("todo")) c.Works.WriteText(id, true, c.Args.Get("todo"));
             c.Works.Save(cardNow);
             c.Result.AddValue("space_size", cardNow.Dimensions);
-            return Finish(c, 0, "✓ 作品尺寸與筆記已保存（免費）｜" + cardNow.Dimensions);
+            c.Result.AddValue("tags", string.Join(",", cardNow.tags));
+            return Finish(c, 0, "✓ 作品尺寸與筆記已保存（免費）｜" + cardNow.Dimensions + (cardNow.tags.Count > 0 ? "｜tags " + string.Join(",", cardNow.tags) : ""));
         }
         catch (SCP_FileLockTimeoutException e) { return Blocked(c, 4, "作品鎖：" + e.Message); }
         catch (ArgumentException e) { return Blocked(c, 2, e.Message); }

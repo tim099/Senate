@@ -29,7 +29,7 @@ public sealed class SculptExportSettings
 /// <summary>工具列作品下拉的篩選條件（成員名就是畫面上的標籤與 id）。</summary>
 public sealed class SculptWorkFilter
 {
-    /// <summary>只列主作品（<c>parent_work</c> 沒填的）。</summary>
+    /// <summary>只列主作品（沒標 <c>sub</c> 的；TASK-0505）。</summary>
     public bool MainOnly { get; set; } = true;
     /// <summary>只列這位作者的；空 ＝ 不限。（null 收成空字串，理由同 <see cref="SculptExportSettings.OutDir"/>）</summary>
     public string Owner { get => m_Owner; set => m_Owner = value ?? ""; }
@@ -147,17 +147,21 @@ public sealed partial class SculptureViewerPage
         return r.Notes;
     }
 
-    /// <summary>篩選作品清單（純函數，淨室直接測）：主作品＝<c>parent_work</c> 空；作者完全相符（不分大小寫）；關鍵字比 ID 與名稱。</summary>
+    /// <summary>
+    /// 篩選作品清單（純函數，淨室直接測）：主作品＝沒標 <c>sub</c>（⛔ 不看 parent_work —— 那是計費的任務歸屬，TASK-0505）；
+    /// 作者完全相符（不分大小寫）；關鍵字比 ID、名稱與標籤。
+    /// </summary>
     public static List<SCP_SculptWork> FilterWorks(IReadOnlyList<SCP_SculptWork> iWorks, SculptWorkFilter iFilter)
     {
         string owner = iFilter.Owner.Trim(), key = iFilter.Keyword.Trim();
         var outList = new List<SCP_SculptWork>();
         foreach (var w in iWorks)
         {
-            if (iFilter.MainOnly && w.parent_work.Length > 0) continue;
+            if (iFilter.MainOnly && w.IsSub) continue;
             if (owner.Length > 0 && !w.owner.Equals(owner, StringComparison.OrdinalIgnoreCase)) continue;
             if (key.Length > 0 && w.id.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0
-                && w.title.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                && w.title.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0
+                && !w.tags.Exists(t => t.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)) continue;
             outList.Add(w);
         }
         return outList;

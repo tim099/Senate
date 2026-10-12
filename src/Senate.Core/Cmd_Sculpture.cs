@@ -119,6 +119,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("work", "作品 ID；既有雕刻／觀測指定它即操作作品的獨立空間"),
         new SCP_CmdArgSpec("size", "work create/update：邊長或X,Y,Z，各軸 1–上限（設定 `sculpture.workMaxAxis`，預設 4096；後台雕刻頁可改）；建立預設64。調尺寸免費，縮小不可切掉現有voxel"),
         new SCP_CmdArgSpec("parent_work", "work create：任務作品或其子作品ID；同作者免費建立子作品，不另領薪"),
+        new SCP_CmdArgSpec("tags", "work update／建立子作品：標籤，逗號分隔（英數＿-，每個 1–32 字、最多 16 個；空 ＝ 清空）。`sub` ＝ 子作品，沒標的一律是主作品（跟 parent_work 無關）"),
         new SCP_CmdArgSpec("source_work", "work assemble：零件來源作品ID，可用其他作者作品；自動Credit並保留原作（來源有關聯 ⇒ 照 enabled 攤平）／work link：要關聯的作品（任何作品都行，TASK-0494）"),
         new SCP_CmdArgSpec("delta", "work move：選區平移量dx,dy,dz；選區用region=x1..x2,y1..y2,z1..z2"),
         new SCP_CmdArgSpec("turn", "work assemble／link：繞Z軸旋轉0/90/180/270度，旋轉後原點放在at", iDefault: "0"),

@@ -208,6 +208,8 @@ public static partial class SelfTest
         One(nameof(SculptureLinkTogglesCleanRoom), "sculpture", SculptureLinkTogglesCleanRoom),
         // 觀測頁匯出設定與作品篩選（TASK-0504）：本體在 SelfTest.SculptureViewerSettings0504.cs
         One(nameof(SculptureViewerSettingsCleanRoom), "sculpture", SculptureViewerSettingsCleanRoom),
+        // 雕刻作品 tags（TASK-0505）：本體在 SelfTest.SculptureTags0505.cs
+        One(nameof(SculptureTagsCleanRoom), "sculpture", SculptureTagsCleanRoom),
         // 雕刻繩索（TASK-0502）：本體在 SelfTest.SculptureRopes0502.cs
         One(nameof(SculptureRopesCleanRoom), "sculpture", SculptureRopesCleanRoom),
         One(nameof(SculptRopeGpuCleanRoom), "sculpture", SculptRopeGpuCleanRoom),
