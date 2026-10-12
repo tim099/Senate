@@ -255,7 +255,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("probe", "section：參考圖像素 x,y;x,y;… ⇒ 印出它落在作品哪一格、離最近的 voxel 差幾格"),
         new SCP_CmdArgSpec("voxel_alpha", "section：voxel 疊色的不透明度 0–1（有參考圖預設 0.55，沒有預設 1）"),
         new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑／diff：差異清單（每行 x,y,z,before,after）／spray：換色清單（同 diff 的格式；**絕對路徑**）"),
-        new SCP_CmdArgSpec("format", "export：obj|vox|list|parts（list ＝ 純格子清單 x,y,z,color；parts ＝ 部件清單 JSON：每條關聯／每個模型的外框、meta、固定點（組裝件座標），TASK-0517）", iChoices: new[] { "obj", "vox", "list", "parts" }),
+        new SCP_CmdArgSpec("format", "export：obj|vox|list|parts|vxk（list ＝ 純格子清單 x,y,z,color；parts ＝ 部件清單 JSON：每條關聯／每個模型的外框、meta、固定點（組裝件座標），TASK-0517；vxk ＝ VoxelKit 封裝（HTML 遊戲／影片用），TASK-0518）", iChoices: new[] { "obj", "vox", "list", "parts", "vxk" }),
+        new SCP_CmdArgSpec("include", "export format=vxk：header 多帶哪幾段（逗號分隔）—— rig（繩、帆）、models（配 rig：模型網格）、parts（關聯外框）、meta（關聯與模型的 meta＋固定點）；同 voxel_export.py 的 --rig／--models／--parts／--meta"),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
@@ -1394,6 +1395,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         string aFormat = c.Args.Get("format").Trim();
         if (aFormat.Length == 0) return Blocked(c, 2, "export 需要 --arg format=obj|vox");
         if (aFormat == "parts") return ExportParts(c);   // TASK-0517：部件清單（不讀 voxel）
+        if (aFormat == SCP_SculptVxk.Format) return ExportVxk(c);   // TASK-0518：VoxelKit 封裝
         var aArgs = new SCP_SculptExportArgs
         {
             Format = aFormat,

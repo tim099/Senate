@@ -674,6 +674,21 @@ senate cmd sculpture --arg op=export --arg work=ship --arg format=parts --arg ou
 - **VoxelKit**：`voxel_export.py --meta`（配 `--parts`、`--rig --models`）把 meta／points 接進 `.vxk` header（形狀：平的 `meta`＋`points: {名字: [x,y,z]}`，ame 2026-10-12 酒館 seq 24096 議定）；不帶 `--meta` ⇒ header 跟以前逐欄一樣。
 - 驗收：淨室 `SculptureMetaCleanRoom`（固定點＝手算、加了再清 ⇒ 檔逐位元組回原樣、壞 meta 零寫入、手改 schema 讀不了）。
 
+### 9.4.10 `.vxk` 封裝 —— HTML 遊戲／影片吃的那一份由 senate 直接產（TASK-0518）
+
+VoxelKit（ArtGallery/VoxelKit，瀏覽器端 `voxelkit.js`）吃的 `.vxk` 以前由 `voxel_export.py` 產（叫 senate 匯 list＋obj 再自己封）；現在 senate 直接產，格式一個位元都不改（規格在 `ArtGallery/VoxelKit/README.md`）。
+
+```bash
+senate cmd sculpture --arg op=export --arg format=vxk --arg work=<作品> --arg out=<絕對路徑.vxk> [--arg include=rig,models,parts,meta] [--arg links=… --arg hide_links=…]
+```
+
+- **include**（同 Python 的旗標）：`rig`（繩中線、帆三角網格）、`models`（配 rig：模型網格，同網格只存一份）、`parts`（關聯外框）、`meta`（關聯與模型的 meta＋固定點，§9.4.9）。不帶 ⇒ 只有格子（header 不多任何一欄）。打錯、`models` 沒配 `rig`、給 `region`／`exclude_color`（`.vxk` 是整件作品）⇒ exit 2、不寫檔。
+- **跟 Python 那支同一份東西**：繩中線 ＝ 管子（同 obj 的 `Tube`）每一圈的平均、帆 ＝ 雙面網格（同 obj 的 `TwoSided`）、模型網格照 obj「同色一組」的三角形順序；頂點先照 obj 的 4 位小數取一次、再照 numpy 的半數取偶取到 0.01 ⇒ 憲法號實測**每一個數都跟 Python 那份相等**（繩中線 22,596 個、帆頂點 50,274 個、模型網格頂點 357,252 個、外框與固定點，最大差 0）。`meters_per_voxel` 讀書卡的原始欄位（沒記 ⇒ 0.1，同 Python；⛔ 不是 1/32）。
+- ⚠ **刻意不同的一格**：繩／帆／模型也照 `links=`／`hide_links=` 的選擇（Python 那支只有格子帶 links，obj 那一趟沒帶）。不帶 links 時兩邊一樣。
+- **寫檔前回讀對拍**：封裝解回來跟這次的格子逐格逐色比、checksum 也比，對不上 ⇒ 不寫（同 Python）。回傳值 `path`、`sha256`、`voxels`、`vxk_ropes／vxk_sails／vxk_models／vxk_meshes／vxk_parts`、`vxk_with_meta／vxk_points`。
+- **對拍工具**：`python -I ArtGallery/VoxelKit/vxk_compare.py <a.vxk> <b.vxk> [--tamper]` —— 解開之後比（格子逐格逐色、header 逐欄；⛔ 不比壓縮後的位元組，deflate 實作不同就不同；不比 exported_at）；容差只給浮點那幾格（中線與頂點 0.01、顏色 0.0001），模型網格比內容與去重分組。`--tamper` ＝ 反向對照（改一格再比，一定要報不同）。
+- 驗收：淨室 `SculptureVxkCleanRoom`（格子＝list 匯出、checksum 另一種寫法手算、區塊數與字典序、raw 版面、header 欄位順序、模型去重、關聯外框＝手算、壞參數零寫入、改一格就判不同）；憲法號整份：C# 與 Python 兩份 vxk_compare 相同、voxelkit.js 的 `verify`（ame 遊戲載入時那一支）逐格 checksum 通過、改一格的那份判失敗。
+
 ### 9.5 建築與家具的相對比例尺
 
 **預設1公尺＝32 voxel；1 voxel＝0.03125公尺＝3.125公分。** 房間、家具、人物與放置座標共用此比例，方便不同作者的作品組裝。這是建造參考，CLI仍輸入整數voxel，不是自動物理單位轉換。

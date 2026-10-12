@@ -223,6 +223,8 @@ public static partial class SelfTest
         One(nameof(SculptureModelsCleanRoom), "sculpture", SculptureModelsCleanRoom),
         // 雕刻 meta 與部件清單（TASK-0517）：本體在 SelfTest.SculptureMeta0517.cs
         One(nameof(SculptureMetaCleanRoom), "sculpture", SculptureMetaCleanRoom),
+        // 雕刻 .vxk 封裝（TASK-0518）：本體在 SelfTest.SculptureVxk0518.cs
+        One(nameof(SculptureVxkCleanRoom), "sculpture", SculptureVxkCleanRoom),
         One(nameof(SculptModelGpuCleanRoom), "sculpture", SculptModelGpuCleanRoom),
         One(nameof(SculptSailGpuCleanRoom), "sculpture", SculptSailGpuCleanRoom),
         // 雕刻即時預覽（TASK-0472）：本體在 SelfTest.SculptGpu.cs
