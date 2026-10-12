@@ -771,10 +771,14 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
         Dictionary<string, string> aReq = ManualRequest(g, iPersona, out string aSubject);
         if (iPersona.Length > 0) aReq["persona"] = iPersona;
+        PartsSel? aPartsSel = PartsRequest(aReq);   // TASK-0509：子模型分開畫 ⇒ 子模型的開關改成每幀的顯示
         var aCam = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (string k in s_CamKeys) if (aReq.Remove(k, out string? v)) aCam[k] = v;
         string aSceneSig = RequestSig(aReq, iPersona);
-        string aVoxelSig = string.Join(";", s_VoxelKeys.Select(k => k + "=" + (aReq.TryGetValue(k, out string? v) ? v : "")));
+        // 分開畫時關聯選取不改 voxel（主作品只帶自己的格）⇒ 不進 voxel 簽章（切關聯不換對象、不重置鏡頭）
+        string aVoxelSig = string.Join(";", s_VoxelKeys.Where(k => aPartsSel == null || (k != "links" && k != "hide_links"))
+                                                     .Select(k => k + "=" + (aReq.TryGetValue(k, out string? v) ? v : "")))
+                           + (aPartsSel != null ? ";parts=1" : "");
         PumpPlan();
         PlanSnap? aPlan = m_Plan;
         if ((aPlan == null || aPlan.SceneSig != aSceneSig) && m_PlanJob == null && m_PlanJobSig != aSceneSig + "|failed") StartPlan(aReq, aSceneSig, aVoxelSig);
@@ -804,6 +808,24 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
         // ③ 相機：每幀套在副本上
         SCP_SculptRenderParams p = aPlan.Params.Clone();
+        // ③00 子模型的顯示（TASK-0509）：每幀照開關算，⛔ 不動場景的來源與矩陣 ⇒ 渲染器不重建網格
+        string aVisSig = "";
+        string? aPartsNote = null;
+        if (p.Parts != null)
+        {
+            PartsSel aSel = aPartsSel ?? new PartsSel("", "", "", "");
+            SCP_SculptParts.Shown aShown = SCP_SculptParts.Visibility(p.Parts, SCP_SculptLinkSelection.Parse(aSel.Links, aSel.HideLinks),
+                                                                      SCP_SculptModelSelection.Parse(aSel.Models, aSel.HideModels));
+            p.PartVisible = aShown.Visible;
+            p.OwnVisible = aShown.Own;
+            aVisSig = ";vis=" + (aShown.Own ? "1" : "0") + new string(aShown.Visible.Select(b => b ? '1' : '0').ToArray());
+            var aNotes = new List<string>(p.Parts.Notes);
+            if (aShown.Unknown.Count > 0) aNotes.Add("開關點名、但這次沒有：" + string.Join("、", aShown.Unknown));
+            int aShownCount = aShown.Visible.Count(b => b);
+            aPartsNote = $"子模型分開畫：{p.Parts.Sources.Count} 份網格、{p.Parts.Instances.Count} 個實例（顯示 {aShownCount}"
+                         + (aShown.Own ? "" : "，主作品自己的格藏起來") + "）—— 開關只切顯示、不重建網格；跟主作品貼合處各自完整（不剔除）"
+                         + (aNotes.Count > 0 ? "　⚠ " + string.Join("；", aNotes) : "");
+        }
         p.MergeFaces = true;
         string? aBad = ApplyCamera(p, aCam, g.FieldValue(FViewScale, "1"));
         if (aBad != null) { g.Note("[相機欄位] " + aBad); return true; }
@@ -842,7 +864,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             aSailInfo = $"帆：模擬到 {aRig.Time:0.00} 秒（{aRig.Steps:N0} 步，每步 {aRig.LastStepMs:0.###} ms）"
                         + (aLive ? $"　持續模擬中（每 {SailUpdateSeconds:0.#} 秒更新一次、一次最多約 {SailBudgetMs:0} ms；算不完就慢動作）" : "　持續模擬關著 ⇒ 停在這一刻");
         }
-        string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig + aSailSig;
+        string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig + aSailSig + aVisSig;
         if (aGpuSig != m_GpuSceneSig || !SCP_GuiGpuViews.Has(GpuKey))
         {
             m_GpuPut = SCP_GuiGpuViews.Put(GpuKey, new SCP_SculptGpuScene(aPlan.Voxels, p), p.Width, p.Height);
@@ -899,6 +921,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         g.Label("layers：" + aPlan.Layers);
         g.Label($"場景準備 {aPlan.Ms:0} ms（voxel {(aPlan.VoxelsReused ? "沿用同一份" : "新的一份")}，{aPlan.Voxels.Count:N0}／{aPlan.Total:N0}）");
         if (aSailInfo != null) g.Note(aSailInfo);
+        if (aPartsNote != null) g.Note(aPartsNote);
         g.Note(m_Pin != null
             ? $"鏡頭已釘住：中心 ({m_Pin.TargetX:0.#}, {m_Pin.TargetY:0.#}, {m_Pin.TargetZ:0.#})" + (p.Projection == SCP_SculptProjection.Perspective ? $"、距離 {m_Pin.Distance:0.#}" : $"、縮放 {m_Pin.Zoom:0.###}")
               + " —— 轉、拖、縮放都不再重新框住（換對象／換投影／按重置才重框）"
@@ -912,6 +935,24 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     SCP_SculptSailRig? m_SailRigSeen;
     /// <summary>持續模擬多久更新一次（秒）與一次最多花多少毫秒算（Tim 2026-10-11「不用頻繁模擬 模擬頻率可以降低」）。</summary>
     const double SailUpdateSeconds = 0.1, SailBudgetMs = 8;
+
+    /// <summary>子模型的開關（TASK-0509）：跟 CLI 同名的四格，分開畫時改成每幀的顯示。</summary>
+    sealed record PartsSel(string Links, string HideLinks, string Models, string HideModels);
+
+    /// <summary>
+    /// GPU 預覽的請求改成子模型分開畫（TASK-0509）：個人作品、沒有 region／exclude_color ⇒ 送 parts=1，回這一幀的開關；否則回 null（照舊合併）。
+    /// models 兩格不送（模型只切顯示）；links 兩格只在作品有繩或帆時才送 —— 繩與帆照關聯選取算（那一半這次不拆：切關聯會重算繩，但不碰任何網格）。
+    /// </summary>
+    PartsSel? PartsRequest(Dictionary<string, string> ioReq)
+    {
+        if (!ioReq.TryGetValue("work", out string? aWork) || aWork.Length == 0 || aWork.StartsWith("__", StringComparison.Ordinal)) return null;
+        if (ioReq.ContainsKey("region") || ioReq.ContainsKey("exclude_color")) return null;
+        bool aKeepLinks = (RopeRows(aWork).Rows?.Count ?? 0) > 0 || (SailRows(aWork).Rows?.Count ?? 0) > 0;
+        string Take(string k, bool iRemove) { string v = ioReq.TryGetValue(k, out string? x) ? x : ""; if (iRemove) ioReq.Remove(k); return v; }
+        var aSel = new PartsSel(Take("links", !aKeepLinks), Take("hide_links", !aKeepLinks), Take("models", true), Take("hide_models", true));
+        ioReq["parts"] = "1";
+        return aSel;
+    }
 
     /// <summary>上一次「載入後重置鏡頭」時的場景對象（見 <see cref="PlanSubject"/>）；"\0" ＝ 這個頁面實例還沒載入過。</summary>
     string m_RefitLoaded = "\0";

@@ -128,6 +128,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("scale", "work model：縮放（一個數或 x,y,z，> 0）；作品來源不給 ⇒ 來源的一格幾公尺 ÷ 本作品的"),
         new SCP_CmdArgSpec("models", "view／export：1（預設）畫外部模型｜0 ＝ 這次不畫（綁在上面的繩照畫；TASK-0507）"),
         new SCP_CmdArgSpec("hide_models", "view／export：這次拿掉哪幾個模型（模型路徑,…；打錯 ⇒ 擋）"),
+        new SCP_CmdArgSpec("parts", "view：1 ⇒ 子模型分開畫（TASK-0509，觀測頁 GPU 預覽用）—— 主作品只帶自己的格；每個關聯節點（含設為關的）、每個外部模型各自一份網格、同件共用，"
+                                    + "**各自完整**（不剔除貼合面、重疊兩份都在）；畫不畫由呼叫端每幀決定。不跟 region／exclude_color／exhibit 一起用；匯出見 TASK-0510"),
         new SCP_CmdArgSpec("delta", "work move：選區平移量dx,dy,dz；選區用region=x1..x2,y1..y2,z1..z2"),
         new SCP_CmdArgSpec("turn", "work assemble／link：繞Z軸旋轉0/90/180/270度，旋轉後原點放在at", iDefault: "0"),
         new SCP_CmdArgSpec("commission", "work create：使用者指定的委託內容；有委託才可填，免建立費並立即發10 token（可用 --arg-file）"),
@@ -365,6 +367,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         public SCP_SculptSailRig? SailRig;
         /// <summary>這次觀測的外部模型（TASK-0507；view／export）—— null ＝ 沒算。</summary>
         public SCP_SculptModelSet? Models;
+        /// <summary>parts=1（TASK-0509）：子模型分開畫 —— 繩與帆的模型只要矩陣（網格由子模型那一份讀，⛔ 不烘兩次）。</summary>
+        public bool Parts;
 
         public Ctx(SCP_MorningRoots iRoots, SCP_CmdArgs iArgs, SCP_CmdResult iResult, string iOp, string iPersona)
         {
@@ -919,13 +923,21 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         oPlan = new SCP_SculptViewPlan(); oLayersText = ""; oError = "";
         if (!TryBase(c, out SCP_SculptRenderParams aBase, out List<string> aLayers, out string aBaseErr)) { oError = aBaseErr; return 2; }
         if (!TryViewArgs(c, out SCP_SculptViewArgs aViewArgs, out ViewAutos aAutos, out string aArgBad)) { oError = aArgBad; return 2; }
+        if (ConfigureParts(c, aViewArgs) is string aPartsBad) { oError = aPartsBad; return 2; }
+        SCP_SculptParts? aParts = c.Parts ? new SCP_SculptParts() : null;
 
         try
         {
             using (LockWorks(c))   // 作品＋關聯樹上所有作品，依 ID 排序（TASK-0494）
-                oPlan = NewEngine(c).PrepareView(aViewArgs, aBase);
+            {
+                SCP_SculptEngine aEngine = NewEngine(c);
+                if (aParts != null) aEngine.Links = null;   // TASK-0509：主作品只帶自己的格；關聯改成實例（下面那一行）
+                oPlan = aEngine.PrepareView(aViewArgs, aBase);
+                if (aParts != null && oPlan.ExitCode == 0 && c.LinkTree != null) aParts.AddLinks(c.Works, c.LinkTree, c.Links?.UseDrafts ?? c.Draft);
+            }
         }
         catch (SCP_FileLockTimeoutException e) { oError = "拿不到雕刻鎖：" + e.Message; return 4; }
+        catch (ArgumentException e) when (aParts != null) { oError = "子模型：" + e.Message; return 2; }
         if (oPlan.ExitCode != 0) { oError = "引擎：" + oPlan.Error; return oPlan.ExitCode == 2 ? 2 : 1; }
         if (!TryApplyViewTail(c, oPlan.Params, aAutos, out string aTailBad)) { oError = aTailBad; return 2; }
         // 繩索（TASK-0502）與帆（TASK-0503）：算好形狀交給渲染器 —— CLI view 與觀測頁走這同一支。
@@ -940,6 +952,19 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             oPlan.Params.SailRig = aRig.Animated ? aRig : null;
             if (aRig.Models != null) { c.Models = aRig.Models; oPlan.Params.Models = aRig.Models.Geoms(); }   // TASK-0507：外部模型（靜態，另一趟）
         }
+        if (aParts != null)
+        {
+            // TASK-0509：外部模型也是實例 —— 每一層（含設為關的關聯裡的）都讀網格、⛔ 不烘；畫不畫由呼叫端每幀決定
+            try
+            {
+                SCP_SculptModelSet aSet = SCP_SculptModels.Resolve(c.Works, c.Work!.id, c.LinkTree, new SCP_SculptLinkSelection { All = true },
+                                                                   new SCP_SculptModelSelection(), true, ModelCacheProducer(c), null, false);
+                aParts.AddModels(aSet);
+            }
+            catch (InvalidOperationException e) { oError = "模型：" + e.Message; return 2; }
+            oPlan.Params.Models = new List<SCP_SculptModelGeom>();
+            oPlan.Params.Parts = aParts;
+        }
         if (!c.Args.IsExplicit("fit_upscale") && (c.Work != null || aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
             oPlan.Params.FitUpscale = true;
 
@@ -950,6 +975,28 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         if (aCli.Count > 0) aLayers.Add("CLI（" + string.Join(", ", aCli) + "）");
         oLayersText = string.Join(" → ", aLayers);
         return 0;
+    }
+
+    /// <summary>
+    /// parts=1（TASK-0509）的檢查與準備：只給有作品的 view、不跟 region／exclude_color／exhibit 一起用；關聯樹沒讀過（例：links=none）⇒ 這裡讀整棵。
+    /// 回 null ＝ 可以；否則是一句人話（exit 2）。
+    /// </summary>
+    static string? ConfigureParts(Ctx c, SCP_SculptViewArgs iArgs)
+    {
+        string a = c.Args.Get("parts").Trim();
+        if (a.Length > 0 && a != "0" && a != "1") return "parts 要是 1 或 0（got '" + a + "'）";
+        c.Parts = a == "1";
+        if (!c.Parts) return null;
+        if (c.Op != "view") return "parts 只給 view（觀測頁 GPU 預覽；匯出見 TASK-0510）";
+        if (c.Work == null) return "parts=1 是作品的（子模型 ＝ 作品的關聯與外部模型）—— 要帶 work=";
+        if (iArgs.Region.Length > 0 || iArgs.ExcludeColor.Length > 0 || iArgs.Exhibit.Length > 0)
+            return "parts=1 不跟 region／exclude_color／exhibit 一起用（子模型各自完整顯示，不裁切）";
+        if (c.LinkTree == null)
+        {
+            try { var t = SCP_SculptLinks.Tree(c.Works, c.Work.id); c.LinkTree = t.Count > 0 ? t : null; }
+            catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return "關聯樹讀不了：" + e.Message; }
+        }
+        return null;
     }
 
     /// <summary>

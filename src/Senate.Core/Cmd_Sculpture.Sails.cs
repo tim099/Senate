@@ -46,7 +46,7 @@ public sealed partial class Cmd_Sculpture
         var aRopeSel = SCP_SculptRopeSelection.Parse(aRopes, aHide);
         var aSailSel = SCP_SculptSailSelection.Parse(aSails, aHideSails);
         // 外部模型（TASK-0507）先解：繩的端點與帆角可以綁在模型上；要畫 ⇒ 讀網格（作品來源缺快取就現產生 —— 這裡在作品鎖外）
-        if (ResolveViewModels(c, c.Work, aTree, aSel, true, out SCP_SculptModelSet aModelSet) is string aModelBad) return aModelBad;
+        if (ResolveViewModels(c, c.Work, aTree, aSel, !c.Parts, out SCP_SculptModelSet aModelSet) is string aModelBad) return aModelBad;   // parts=1：網格由子模型那一份讀（TASK-0509）
         SCP_SculptSailRig aRig;
         try { aRig = SCP_SculptSails.Rig(c.Works, c.Work.id, aTree, aSel, aRopeSel, aSailSel, aEnv, null, null, aModelSet); }
         catch (InvalidOperationException e) { return "繩與帆：" + e.Message + "（只想看格子：ropes=0／sails=0 也救不了壞掉的檔 —— 先修檔）"; }

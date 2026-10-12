@@ -90,10 +90,18 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         /// <summary>外部模型（TASK-0507，另一趟）：幾個、幾個三角形（不含在 Triangles 裡）；這一幀有沒有重傳。</summary>
         public int Models, ModelTriangles;
         public bool ModelsUploaded;
+        /// <summary>
+        /// 子模型分開畫（TASK-0509）：幾份共用網格、幾個實例、這一幀畫了幾個；這一幀新建（並上傳）了幾份網格與花的時間。
+        /// ⭐ 開關只切顯示 ⇒ 切開關前後 <see cref="PartBuilds"/> 是 0（selftest 與觀測頁讀這一格）。
+        /// </summary>
+        public int PartSources, PartInstances, PartShown, PartTriangles, PartBuilds;
+        public double PartBuildMs;
+        /// <summary>分開畫時繩自己那一趟這一幀有沒有重建重傳。</summary>
+        public bool RopesUploaded;
         /// <summary>頂點＋索引陣列的 FNV-1a 雜湊 —— 「網格逐位元相同」的讀數（改網格建法時拿來比前後）。</summary>
         public ulong MeshDigest;
         public override string ToString() =>
-            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}{(Models > 0 ? $"｜模型 {Models} 個 {ModelTriangles:N0} 三角形（{(ModelsUploaded ? "重傳" : "沿用")}）" : "")}｜這一幀 {DrawMs:0.0} ms";
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}{(Models > 0 ? $"｜模型 {Models} 個 {ModelTriangles:N0} 三角形（{(ModelsUploaded ? "重傳" : "沿用")}）" : "")}{(PartInstances > 0 ? $"｜子模型 {PartSources} 份網格、{PartInstances} 個實例（畫 {PartShown}，{PartTriangles:N0} 三角形；這一幀新建 {PartBuilds}" + (PartBuilds > 0 ? $"，{PartBuildMs:0} ms" : "") + "）" : "")}｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
     /// <summary>上一次成功出圖實際用的鏡頭（TASK-0501；GPU 預覽交回頁面釘住用）。</summary>
@@ -188,19 +196,26 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         FloorTexture? aFloorTex = null;
         if (iParams.Floor?.Texture != null && !ResolveFloorTexture(iParams.Floor.Texture, out aFloorTex, out oError)) return null;
         var aReading = new Reading();
-        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, iParams.Ropes, aReading);
+        bool aParts = iParams.Parts != null;
+        // 子模型分開畫（TASK-0509）：繩另外一趟（⛔ 不併進 voxel 網格 —— 切關聯時繩會換，併在一起整塊 voxel 網格要重建）
+        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, aParts ? null : iParams.Ropes, aReading);
         // 帆（TASK-0503）：另一趟；框景／地板／燈用「voxel 網格＋帆的外框」的淺複本，畫 voxel 仍用快取的那顆 VAO
         Mesh aDyn = SCP_SculptMeshBuilder.Dynamic(iParams.Sails, iParams.SailRopes);
         UploadDynamic(aDyn);
         aReading.Sails = aDyn.SailCount; aReading.SailTriangles = aDyn.SailTriangles; aReading.SailRopes = aDyn.RopeCount;
         // 外部模型（TASK-0507）：第三趟、靜態 ⇒ 同一份清單（或內容雜湊相同）不重建、不重傳
         Mesh aModels = GetModels(iParams.Models, aReading);
-        Mesh aScene = aMesh.WithExtra(aDyn, aModels);
+        Mesh aRopes = aParts ? GetRopes(iParams.Ropes, aReading) : new Mesh();
+        List<Vector3> aCorners = new List<Vector3>();
+        int aPartIdx = 0;
+        List<PartDraw>? aPartDraws = aParts ? GetParts(iParams, aReading, aCorners, out aPartIdx) : null;
+        Mesh aScene = aMesh.WithExtra(aDyn, aModels, aRopes);
+        if (aParts) aScene = aScene.WithPoints(aCorners, aPartIdx);
         FloorSetup? aFloor = SolveFloor(aScene, iParams, aFloorTex);
         if (!SolveCamera(aScene, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError, out SCP_SculptResolvedCamera aCam)) return null;
         LastCamera = aCam;
         var aLights = SolveLights(aScene, aFloor, iParams);
-        byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo);
+        byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo, aPartDraws);
         var aErr = m_Gl!.GetError();
         if (aErr != GLEnum.NoError) { oError = "OpenGL 錯誤：" + aErr; return null; }
         aReading.DrawMs = sw.Elapsed.TotalMilliseconds;
@@ -323,6 +338,18 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         if (!Finite(iP.ViewScale) || iP.ViewScale <= 0 || iP.ViewScale > 1000) { oError = "ViewScale 需在 (0, 1000]：" + iP.ViewScale; return false; }
         if (iP.Lights.Count > SCP_SculptRenderParams.MaxLights)
         { oError = $"光源 {iP.Lights.Count} 盞，超過上限 {SCP_SculptRenderParams.MaxLights}"; return false; }
+        if (iP.Parts != null)
+        {
+            foreach (SCP_SculptPartInstance i in iP.Parts.Instances)
+            {
+                if (i.Source < 0 || i.Source >= iP.Parts.Sources.Count) { oError = "子模型 `" + i.Path + "` 指到不存在的來源 " + i.Source; return false; }
+                if (i.ToWorld == null || i.ToWorld.Length != 12) { oError = "子模型 `" + i.Path + "` 的矩陣不是 3×4"; return false; }
+                foreach (double v in i.ToWorld) if (!Finite(v)) { oError = "子模型 `" + i.Path + "` 的矩陣含 NaN／無限大"; return false; }
+                if (Math.Abs(SCP_SculptParts.Det3(i.ToWorld)) < 1e-12) { oError = "子模型 `" + i.Path + "` 的矩陣退化（行列式 0）"; return false; }
+            }
+            if (iP.PartVisible != null && iP.PartVisible.Length != iP.Parts.Instances.Count)
+            { oError = $"PartVisible 長度 {iP.PartVisible.Length} ≠ 實例數 {iP.Parts.Instances.Count}"; return false; }
+        }
         int aCasters = 0;
         for (int i = 0; i < iP.Lights.Count; i++)
         {
@@ -434,17 +461,21 @@ uniform mat4 uViewProj;
 uniform mat4 uLightVP0;
 uniform mat4 uLightVP1;
 uniform float uNormalOffset;
+uniform mat4 uModel;
+uniform mat3 uNormalMat;
 out vec3 vNormal;
 out vec3 vColor;
 out float vAo;
 out vec4 vLightPos0;
 out vec4 vLightPos1;
 void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    vNormal = aNormal;
+    vec4 wp = uModel * vec4(aPos, 1.0);
+    vec3 wn = uNormalMat * aNormal;
+    gl_Position = uViewProj * wp;
+    vNormal = wn;
     vColor = aColorAo.rgb;
     vAo = aColorAo.a;
-    vec4 aOff = vec4(aPos + aNormal * uNormalOffset, 1.0);
+    vec4 aOff = vec4(wp.xyz + wn * uNormalOffset, 1.0);
     vLightPos0 = uLightVP0 * aOff;
     vLightPos1 = uLightVP1 * aOff;
 }";
@@ -506,7 +537,8 @@ void main() {
     const string ShadowVs = @"#version 330 core
 layout(location=0) in vec3 aPos;
 uniform mat4 uLightVP;
-void main() { gl_Position = uLightVP * vec4(aPos, 1.0); }";
+uniform mat4 uModel;
+void main() { gl_Position = uLightVP * (uModel * vec4(aPos, 1.0)); }";
 
     const string ShadowFs = @"#version 330 core
 void main() { }";
@@ -1638,16 +1670,18 @@ void main() {
     // 區塊職責：GPU 三趟 —— 陰影圖 → MSAA 主畫（背景＋網格）→ blit 解析 → ReadPixels（翻成由上到下）。
     // ════════════════════════════════════════════════════════════════════════════════════
     unsafe byte[] RenderGpu(Mesh iMesh, FloorSetup? iFloor, SCP_SculptRenderParams iP, Matrix4x4 iViewProj, LightSetup iLights,
-                            SkyTexture? iSky, SkyView iSkyView, uint iTargetFbo = 0)
+                            SkyTexture? iSky, SkyView iSkyView, uint iTargetFbo = 0, List<PartDraw>? iParts = null)
     {
         var gl = m_Gl!;
         int aW = iP.Width, aH = iP.Height;
         EnsureTargets(aW, aH);
 
         uint aFloorVao = 0, aFloorVbo = 0;
-        bool aHasMesh = iMesh.IndexCount > 0 && m_MeshVao != 0;
+        bool aHasMesh = iMesh.IndexCount > 0 && m_MeshVao != 0 && iP.OwnVisible;   // hide_links=self（TASK-0509 分開畫時只切顯示）
         bool aHasDyn = m_DynIndexCount > 0 && m_DynVao != 0;   // 帆（TASK-0503）：另一趟
         bool aHasModels = m_ModelIndexCount > 0 && m_ModelVao != 0;   // 外部模型（TASK-0507）：第三趟
+        bool aHasRopes = iP.Parts != null && m_RopeGpu.IndexCount > 0 && m_RopeGpu.Vao != 0;   // TASK-0509：分開畫時繩自己一趟
+        bool aHasParts = iParts != null && iParts.Count > 0;
         // 網格的 VAO 是快取的那一顆（GetMesh 上傳；換網格才重建）
         uint aVao = m_MeshVao;
         // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
@@ -1669,6 +1703,7 @@ void main() {
                 gl.CullFace(TriangleFace.Front);
                 gl.UseProgram(m_ShadowProg);
                 SetMat(m_ShadowProg, "uLightVP", iLights.ShadowVp[m]);
+                SetModel(m_ShadowProg, false, Matrix4x4.Identity, s_Identity3);   // 合併的那幾趟已在世界座標（單位矩陣 ⇒ 乘出來逐位元不變）
                 if (aHasMesh)
                 {
                     gl.BindVertexArray(aVao);
@@ -1685,6 +1720,8 @@ void main() {
                     gl.BindVertexArray(m_ModelVao);
                     gl.DrawElements(PrimitiveType.Triangles, (uint)m_ModelIndexCount, DrawElementsType.UnsignedInt, (void*)0);
                 }
+                if (aHasRopes) DrawGpu(m_RopeGpu);
+                if (aHasParts) DrawParts(iParts!, m_ShadowProg, false);
             }
 
             // ② 主畫：MSAA FBO。
@@ -1761,7 +1798,7 @@ void main() {
                 gl.Disable(EnableCap.Blend);
             }
 
-            if (aHasMesh || aHasDyn || aHasModels)
+            if (aHasMesh || aHasDyn || aHasModels || aHasRopes || aHasParts)
             {
                 gl.Enable(EnableCap.DepthTest);
                 gl.DepthFunc(DepthFunction.Less);
@@ -1772,6 +1809,7 @@ void main() {
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uNormalOffset"), 0.08f);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uAoMin"), 0.5f);
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uHemiGround"), aHg.X, aHg.Y, aHg.Z);
+                SetModel(m_MainProg, true, Matrix4x4.Identity, s_Identity3);   // 合併的那幾趟已在世界座標
                 if (aHasMesh)
                 {
                     gl.BindVertexArray(aVao);
@@ -1787,6 +1825,8 @@ void main() {
                     gl.BindVertexArray(m_ModelVao);
                     gl.DrawElements(PrimitiveType.Triangles, (uint)m_ModelIndexCount, DrawElementsType.UnsignedInt, (void*)0);
                 }
+                if (aHasRopes) DrawGpu(m_RopeGpu);
+                if (aHasParts) DrawParts(iParts!, m_MainProg, true);
             }
 
             // ③' 視窗即時預覽：MSAA 直接解析進呼叫端的 FBO（貼圖），⛔ 不讀回 CPU（TASK-0472）。
@@ -1870,6 +1910,225 @@ void main() {
     /// <summary>與 shader 的 shoulder() 同式（CPU 端算 uToneScale 用）。</summary>
     static float Shoulder(float x) => x > 0.85f ? 0.85f + 0.15f * (1f - MathF.Exp(-(x - 0.85f) / 0.15f)) : x;
 
+    // ════════════════════════════════════════════════════════════════════════════════════
+    // 區塊職責：子模型分開畫（TASK-0509，觀測頁 GPU 預覽）—— 每份共用來源一顆 VAO（以 Key 快取），每個實例一次 DrawElements＋自己的矩陣。
+    // 物理意義：Tim 2026-10-12：子模型不合併到主模型、同樣的共用 mesh、開關只切顯示。
+    //          ⇒ 網格只在「這個 Key 沒見過」時建一次；顯示（PartVisible）與矩陣每幀換都不碰網格。場景不再引用的 Key ⇒ 刪掉那顆 VAO。
+    //          矩陣：來源網格已是 GL 座標（世界 x,−y,z）⇒ 世界的 3×4（L, t）換成 GL 是 F·L·F 與 F·t（F ＝ diag(1,−1,1)）。
+    //          法線：逆轉置再乘 ∛|det|（等比縮放時長度回到 1 —— 陰影查表的法線偏移才不會跟著縮放變）；fragment 端照樣單位化。
+    //          鏡像（det &lt; 0）：三角形繞序反了 ⇒ 那一個實例畫的時候正面改成順時針（剔除才剔對面）。
+    // 數值影響：讀數多「子模型 N 份網格、M 個實例（畫 k）、這一幀新建 b」。合併的那幾趟（voxel／帆／模型／繩）用單位矩陣 ⇒ 逐位元不變。
+    // ════════════════════════════════════════════════════════════════════════════════════
+    struct GpuMesh
+    {
+        public uint Vao, Vbo, Ibo;
+        public int IndexCount;
+    }
+
+    /// <summary>上傳一份網格（同 voxel 網格的頂點格式）；上傳完 CPU 那份就清掉（外框與框景點留著）。空的 ⇒ 回空的那顆。</summary>
+    unsafe GpuMesh UploadGpu(Mesh iMesh)
+    {
+        var g = new GpuMesh();
+        if (iMesh.IndexCount == 0) return g;
+        var gl = m_Gl!;
+        g.Vao = gl.GenVertexArray();
+        gl.BindVertexArray(g.Vao);
+        g.Vbo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, g.Vbo);
+        gl.BufferData<float>(BufferTargetARB.ArrayBuffer, iMesh.Vertices.AsSpan(), BufferUsageARB.StaticDraw);
+        g.Ibo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, g.Ibo);
+        gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, iMesh.Indices.AsSpan(), BufferUsageARB.StaticDraw);
+        const uint aStride = 7 * sizeof(float);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, aStride, (void*)0);
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, aStride, (void*)(3 * sizeof(float)));
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, aStride, (void*)(6 * sizeof(float)));
+        gl.BindVertexArray(0);
+        g.IndexCount = iMesh.IndexCount;
+        iMesh.Vertices = Array.Empty<float>();
+        iMesh.Indices = Array.Empty<uint>();
+        return g;
+    }
+
+    void DeleteGpu(ref GpuMesh ioG)
+    {
+        var gl = m_Gl!;
+        if (ioG.Vbo != 0) gl.DeleteBuffer(ioG.Vbo);
+        if (ioG.Ibo != 0) gl.DeleteBuffer(ioG.Ibo);
+        if (ioG.Vao != 0) gl.DeleteVertexArray(ioG.Vao);
+        ioG = new GpuMesh();
+    }
+
+    unsafe void DrawGpu(GpuMesh iG)
+    {
+        var gl = m_Gl!;
+        gl.BindVertexArray(iG.Vao);
+        gl.DrawElements(PrimitiveType.Triangles, (uint)iG.IndexCount, DrawElementsType.UnsignedInt, (void*)0);
+    }
+
+    // ── 繩（分開畫時自己一趟）：內容雜湊沒變 ⇒ 不重建、不重傳 ──
+    GpuMesh m_RopeGpu;
+    ulong m_RopeGpuHash;
+    Mesh m_RopeMesh = new();
+
+    Mesh GetRopes(IReadOnlyList<SCP_SculptRopeGeom>? iRopes, Reading ioReading)
+    {
+        if (iRopes == null || iRopes.Count == 0)
+        {
+            DeleteGpu(ref m_RopeGpu); m_RopeGpuHash = 0; m_RopeMesh = new Mesh();
+            return m_RopeMesh;
+        }
+        ulong aHash = RopeHash(iRopes);
+        if (aHash != m_RopeGpuHash || m_RopeGpu.Vao == 0)
+        {
+            var m = new Mesh();
+            SCP_SculptMeshBuilder.AppendRopes(m, iRopes);
+            DeleteGpu(ref m_RopeGpu);
+            m_RopeGpu = UploadGpu(m);
+            m_RopeMesh = m; m_RopeGpuHash = aHash;
+            ioReading.RopesUploaded = true;
+        }
+        ioReading.Ropes = m_RopeMesh.RopeCount; ioReading.RopeTriangles = m_RopeMesh.RopeTriangles;
+        return m_RopeMesh;
+    }
+
+    // ── 子模型：每份來源一顆 VAO ──
+    sealed class PartGpu
+    {
+        public GpuMesh Gpu;
+        public Vector3 Min, Max;
+        public int Triangles;
+    }
+
+    readonly Dictionary<string, PartGpu> m_Parts = new(StringComparer.Ordinal);
+
+    /// <summary>行程內累計新建了幾份子模型網格（selftest 讀：切開關前後不該變）。</summary>
+    public long PartBuildsTotal { get; private set; }
+
+    /// <summary>一個要畫的實例：GL 座標的 model 矩陣（System.Numerics 列向量慣例，同 uViewProj 的上傳法）、法線矩陣（直行優先 9 個）、鏡像。</summary>
+    readonly struct PartDraw
+    {
+        public PartDraw(GpuMesh iGpu, Matrix4x4 iModel, float[] iNormal, bool iFlip) { Gpu = iGpu; Model = iModel; Normal = iNormal; Flip = iFlip; }
+        public GpuMesh Gpu { get; }
+        public Matrix4x4 Model { get; }
+        public float[] Normal { get; }
+        public bool Flip { get; }
+    }
+
+    static readonly float[] s_Identity3 = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+
+    /// <summary>
+    /// 備好這一幀的子模型：沒見過的 Key 建網格＋上傳；不再引用的 Key 刪掉；每個實例算矩陣。
+    /// <paramref name="ioCorners"/> 收**所有**實例（畫不畫都算）的世界外框八角 —— 切開關時框景、地板、陰影範圍不跳。
+    /// <paramref name="oIndexCount"/>：這一幀畫的實例的索引數總和（只給「有沒有東西會投影子」判斷用）。
+    /// </summary>
+    List<PartDraw> GetParts(SCP_SculptRenderParams iP, Reading ioReading, List<Vector3> ioCorners, out int oIndexCount)
+    {
+        SCP_SculptParts aParts = iP.Parts!;
+        oIndexCount = 0;
+        var aKeys = new string[aParts.Sources.Count];
+        var aLive = new HashSet<string>(StringComparer.Ordinal);
+        for (int s = 0; s < aParts.Sources.Count; s++)
+        {
+            SCP_SculptPartSource src = aParts.Sources[s];
+            // voxel 來源的網格跟 AO／合併旗標有關 ⇒ 旗標進 Key；模型的不看這兩格
+            string aKey = src.Voxels != null ? src.Key + "|ao" + (iP.AmbientOcclusion ? 1 : 0) + "|m" + (iP.MergeFaces ? 1 : 0) : src.Key;
+            aKeys[s] = aKey;
+            aLive.Add(aKey);
+            if (m_Parts.ContainsKey(aKey)) continue;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Mesh m = src.Voxels != null ? SCP_SculptMeshBuilder.Voxels(src.Voxels, iP.AmbientOcclusion, iP.MergeFaces)
+                   : src.Model != null ? SCP_SculptMeshBuilder.Models(new[] { src.Model })
+                   : new Mesh();
+            var pg = new PartGpu { Min = m.Min, Max = m.Max, Triangles = m.IndexCount / 3 };
+            pg.Gpu = UploadGpu(m);
+            m_Parts[aKey] = pg;
+            ioReading.PartBuilds++;
+            ioReading.PartBuildMs += sw.Elapsed.TotalMilliseconds;
+            PartBuildsTotal++;
+        }
+        foreach (string k in new List<string>(m_Parts.Keys))
+            if (!aLive.Contains(k)) { PartGpu dead = m_Parts[k]; DeleteGpu(ref dead.Gpu); m_Parts.Remove(k); }
+
+        var aDraws = new List<PartDraw>();
+        for (int i = 0; i < aParts.Instances.Count; i++)
+        {
+            SCP_SculptPartInstance inst = aParts.Instances[i];
+            PartGpu pg = m_Parts[aKeys[inst.Source]];
+            if (pg.Gpu.IndexCount == 0) continue;
+            double[] A = inst.ToWorld;
+            for (int c = 0; c < 8; c++)
+            {
+                double x = (c & 1) != 0 ? pg.Max.X : pg.Min.X, y = (c & 2) != 0 ? pg.Max.Y : pg.Min.Y, z = (c & 4) != 0 ? pg.Max.Z : pg.Min.Z;
+                ioCorners.Add(new Vector3((float)(A[0] * x + A[1] * y + A[2] * z + A[3]),
+                                          (float)(A[4] * x + A[5] * y + A[6] * z + A[7]),
+                                          (float)(A[8] * x + A[9] * y + A[10] * z + A[11])));
+            }
+            if (iP.PartVisible != null && !iP.PartVisible[i]) continue;
+            aDraws.Add(InstanceDraw(pg.Gpu, A));
+            oIndexCount += pg.Gpu.IndexCount;
+            ioReading.PartTriangles += pg.Triangles;
+        }
+        ioReading.PartSources = aParts.Sources.Count;
+        ioReading.PartInstances = aParts.Instances.Count;
+        ioReading.PartShown = aDraws.Count;
+        return aDraws;
+    }
+
+    /// <summary>世界的 3×4 → GL 的 model 矩陣與法線矩陣（見區塊說明）。</summary>
+    static PartDraw InstanceDraw(GpuMesh iGpu, double[] A)
+    {
+        double[] f = { 1, -1, 1 };
+        var L = new double[3, 3];
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) L[r, c] = A[r * 4 + c];
+        double det = L[0, 0] * (L[1, 1] * L[2, 2] - L[1, 2] * L[2, 1]) - L[0, 1] * (L[1, 0] * L[2, 2] - L[1, 2] * L[2, 0]) + L[0, 2] * (L[1, 0] * L[2, 1] - L[1, 1] * L[2, 0]);
+        // GL：F·L·F（元素 (r,c) 乘 f_r·f_c）、F·t；System.Numerics 是列向量慣例 ⇒ M[i,j] ＝ Lgl[j,i]、第 4 列是平移
+        var g = new double[3, 3];
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) g[r, c] = L[r, c] * f[r] * f[c];
+        var M = new Matrix4x4(
+            (float)g[0, 0], (float)g[1, 0], (float)g[2, 0], 0,
+            (float)g[0, 1], (float)g[1, 1], (float)g[2, 1], 0,
+            (float)g[0, 2], (float)g[1, 2], (float)g[2, 2], 0,
+            (float)A[3], (float)-A[7], (float)A[11], 1);
+        // 法線：逆轉置 ＝ 餘因子 ÷ det，再乘 ∛|det|；GL 一樣夾 F
+        double k = Math.Cbrt(Math.Abs(det)) / det;
+        var C = new double[3, 3]
+        {
+            { L[1, 1] * L[2, 2] - L[1, 2] * L[2, 1], -(L[1, 0] * L[2, 2] - L[1, 2] * L[2, 0]), L[1, 0] * L[2, 1] - L[1, 1] * L[2, 0] },
+            { -(L[0, 1] * L[2, 2] - L[0, 2] * L[2, 1]), L[0, 0] * L[2, 2] - L[0, 2] * L[2, 0], -(L[0, 0] * L[2, 1] - L[0, 1] * L[2, 0]) },
+            { L[0, 1] * L[1, 2] - L[0, 2] * L[1, 1], -(L[0, 0] * L[1, 2] - L[0, 2] * L[1, 0]), L[0, 0] * L[1, 1] - L[0, 1] * L[1, 0] },
+        };
+        var aN = new float[9];   // 直行優先（GLSL mat3 的上傳順序）：aN[c*3+r] ＝ N[r,c]
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) aN[c * 3 + r] = (float)(C[r, c] * k * f[r] * f[c]);
+        return new PartDraw(iGpu, M, aN, det < 0);
+    }
+
+    /// <summary>設 model 矩陣（＋主畫那支 shader 的法線矩陣）。</summary>
+    unsafe void SetModel(uint iProg, bool iWithNormal, Matrix4x4 iModel, float[] iNormal)
+    {
+        var gl = m_Gl!;
+        SetMat(iProg, "uModel", iModel);
+        if (!iWithNormal) return;
+        fixed (float* p = iNormal) gl.UniformMatrix3(gl.GetUniformLocation(iProg, "uNormalMat"), 1, false, p);
+    }
+
+    /// <summary>畫子模型的實例；畫完把 model 矩陣與正面繞序還原（後面若還有合併的那幾趟，才不會套到最後一個實例的矩陣）。</summary>
+    void DrawParts(List<PartDraw> iDraws, uint iProg, bool iWithNormal)
+    {
+        var gl = m_Gl!;
+        foreach (PartDraw d in iDraws)
+        {
+            SetModel(iProg, iWithNormal, d.Model, d.Normal);
+            if (d.Flip) gl.FrontFace(FrontFaceDirection.CW);
+            DrawGpu(d.Gpu);
+            if (d.Flip) gl.FrontFace(FrontFaceDirection.Ccw);
+        }
+        SetModel(iProg, iWithNormal, Matrix4x4.Identity, s_Identity3);
+    }
+
     unsafe void SetMat(uint iProg, string iName, Matrix4x4 iM)
     {
         m_Gl!.UniformMatrix4(m_Gl.GetUniformLocation(iProg, iName), 1, false, (float*)&iM);
@@ -1890,6 +2149,9 @@ void main() {
                 DeleteMeshBuffers();
                 DeleteDynamicBuffers();
                 DeleteModelBuffers();
+                DeleteGpu(ref m_RopeGpu);
+                foreach (var aPart in m_Parts.Values) DeleteGpu(ref aPart.Gpu);
+                m_Parts.Clear();
                 m_Mesh = null;
                 DeleteTargets();
                 for (int m = 0; m < MaxShadowMaps; m++) { m_Gl.DeleteFramebuffer(m_ShadowFbo[m]); m_Gl.DeleteTexture(m_ShadowTex[m]); }
