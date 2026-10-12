@@ -98,6 +98,7 @@ public sealed partial class Cmd_Sculpture
             if (m.Geom != null) c.Report.Append("｜").Append((m.Geom.Triangles.Length / 3).ToString("N0", CultureInfo.InvariantCulture)).Append(" 三角形");
             if (m.Min != null && m.Max != null) c.Report.Append("｜外框 (").Append(SCP_SculptRopes.Fmt(m.Min)).Append(")–(").Append(SCP_SculptRopes.Fmt(m.Max)).Append(")");
             if (m.Model.color.Length > 0) c.Report.Append("｜色 ").Append(m.Model.color);
+            if (m.Model.meta.Count > 0) c.Report.Append("｜meta ").Append(SCP_SculptMeta.Describe(m.Model.meta));
             if (m.Reason.Length > 0) c.Report.Append("｜").Append(m.Reason);
             c.Report.Append('\n');
         }
@@ -141,9 +142,9 @@ public sealed partial class Cmd_Sculpture
         bool aFileGiven = c.Args.IsExplicit("file"), aWorkGiven = c.Args.IsExplicit("source_work");
         if (aFileGiven && aWorkGiven) return Blocked(c, 2, "file= 與 source_work= 只能給一個（obj 檔，或另一件作品）");
         bool aSource = aFileGiven || aWorkGiven;
-        string[] aPropKeys = { "axes", "at", "pivot", "rotate", "scale", "mirror", "color", "enabled", "note" };
+        string[] aPropKeys = { "axes", "at", "pivot", "rotate", "scale", "mirror", "color", "enabled", "note", "meta" };
         bool aProps = Array.Exists(aPropKeys, k => c.Args.IsExplicit(k));
-        if (aOld != null && !aSource && !aProps) return Blocked(c, 2, "模型 `" + aName + "` 已經在了 —— 沒有要改什麼（at／pivot／rotate／scale／mirror／color／enabled／note 直接改；換來源要 file=／source_work= 加 overwrite=1）");
+        if (aOld != null && !aSource && !aProps) return Blocked(c, 2, "模型 `" + aName + "` 已經在了 —— 沒有要改什麼（at／pivot／rotate／scale／mirror／color／enabled／note／meta 直接改；換來源要 file=／source_work= 加 overwrite=1）");
         if (aOld != null && aSource && !WorkOverwrite(c)) return Blocked(c, 2, "已經有模型 `" + aName + "`（" + (aOld.source == SCP_SculptModels.SourceFile ? aOld.file : "作品 " + aOld.work) + "）—— ⛔ 不默默換來源；要換請加 overwrite=1");
         if (aOld == null && !aSource) return Blocked(c, 2, "加模型要 name=<名> 加 file=<obj 絕對路徑> 或 source_work=<作品>");
 
@@ -164,6 +165,9 @@ public sealed partial class Cmd_Sculpture
             persona = aOld?.persona ?? c.Persona,
             created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
         };
+        // meta（TASK-0517）：從既有那一筆出發合併（⛔ 改個位置不該把 meta 清掉）；換來源也留著 —— 它說的是「這個位置放的是什麼」
+        if (aOld != null) foreach (var kv in aOld.meta) m.meta[kv.Key] = kv.Value;
+        if (c.Args.IsExplicit("meta") && SCP_SculptMeta.Merge(m.meta, c.Args.Get("meta")) is string aBadMeta) return Blocked(c, 2, aBadMeta + "；未寫入");
         string aSrcObj = "";
         SCP_SculptObjMesh? aMesh = null;
         if (m.source == SCP_SculptModels.SourceWork)

@@ -221,6 +221,8 @@ public static partial class SelfTest
         // 雕刻帆（TASK-0503）：本體在 SelfTest.SculptureSails0503.cs
         One(nameof(SculptureSailsCleanRoom), "sculpture", SculptureSailsCleanRoom),
         One(nameof(SculptureModelsCleanRoom), "sculpture", SculptureModelsCleanRoom),
+        // 雕刻 meta 與部件清單（TASK-0517）：本體在 SelfTest.SculptureMeta0517.cs
+        One(nameof(SculptureMetaCleanRoom), "sculpture", SculptureMetaCleanRoom),
         One(nameof(SculptModelGpuCleanRoom), "sculpture", SculptModelGpuCleanRoom),
         One(nameof(SculptSailGpuCleanRoom), "sculpture", SculptSailGpuCleanRoom),
         // 雕刻即時預覽（TASK-0472）：本體在 SelfTest.SculptGpu.cs

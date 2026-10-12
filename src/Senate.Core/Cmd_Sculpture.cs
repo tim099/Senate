@@ -165,6 +165,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
         new SCP_CmdArgSpec("note", "work mark／link／anchor／rope／ropegroup／sail／model：備註"),
+        new SCP_CmdArgSpec("meta", "work model／link：給下游認部件的資訊（TASK-0517）—— 一個 JSON 物件 {鍵: 字串或數字}，**合併**進現有的（值給 null ⇒ 刪那個鍵）；none ＝ 全清。例 {\"kind\":\"gun\",\"gun\":\"24l\"}、{\"kind\":\"magazine\",\"powder_lb\":9000}"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽／spray：1 才落刀（要帶 expect_plan）；預設只預覽"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),
         new SCP_CmdArgSpec("expect_placed", "work import：預覽的實際落地 voxel 數／spray：預覽的換色格數（選帶）"),
@@ -254,7 +255,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("probe", "section：參考圖像素 x,y;x,y;… ⇒ 印出它落在作品哪一格、離最近的 voxel 差幾格"),
         new SCP_CmdArgSpec("voxel_alpha", "section：voxel 疊色的不透明度 0–1（有參考圖預設 0.55，沒有預設 1）"),
         new SCP_CmdArgSpec("out", "view／slice／section：輸出 PNG **絕對路徑**（不給 ⇒ persona 的 cmd 夾）／export：輸出檔路徑／diff：差異清單（每行 x,y,z,before,after）／spray：換色清單（同 diff 的格式；**絕對路徑**）"),
-        new SCP_CmdArgSpec("format", "export：obj|vox|list（list ＝ 純格子清單 x,y,z,color）", iChoices: new[] { "obj", "vox", "list" }),
+        new SCP_CmdArgSpec("format", "export：obj|vox|list|parts（list ＝ 純格子清單 x,y,z,color；parts ＝ 部件清單 JSON：每條關聯／每個模型的外框、meta、固定點（組裝件座標），TASK-0517）", iChoices: new[] { "obj", "vox", "list", "parts" }),
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
@@ -1392,6 +1393,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     {
         string aFormat = c.Args.Get("format").Trim();
         if (aFormat.Length == 0) return Blocked(c, 2, "export 需要 --arg format=obj|vox");
+        if (aFormat == "parts") return ExportParts(c);   // TASK-0517：部件清單（不讀 voxel）
         var aArgs = new SCP_SculptExportArgs
         {
             Format = aFormat,

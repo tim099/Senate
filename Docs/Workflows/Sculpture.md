@@ -504,6 +504,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
 - **觀測頁的關聯開關**（TASK-0499）：選了有關聯的作品，「作品」下拉底下列出整棵關聯樹（巢狀縮排），**一條一個 toggle**，預設照那一條在作品裡的 `enabled`。關掉一條 ⇒ 連同底下都不畫；只關底下那條 ⇒ 上一層照畫；作品裡設為關的也可以這次打開。頁面把開關換成 `links=`（畫的那幾條全部點名）＋`hide_links=`（關掉而上一層有畫的）送出去 —— ⚠ 只送 `links=` 不夠：點名那條底下沒點名的會照自己的 enabled 被畫回來。全部在預設 ⇒ 什麼都不送；全關 ⇒ `links=none`。⛔ 開關**不寫回** links.json（長期開關用 `work sub=link enabled=0|1`）。開關的 id 帶作品 id ⇒ 換作品清單就換。**兩個文字欄有填 ⇒ 以文字欄為準**，開關這一次不生效（頁面上有寫）。GPU 預覽每幀照開關組參數；spawn 出圖（文字模式）要按渲染。
   - **Unity Hierarchy 式**（TASK-0500）：子模組的子模組（幾層都行）一樣列、一樣開關。勾 ＝ 那一條**自己的**開關（像 activeSelf）；上一層關了 ⇒ 底下每一層都不畫，但它們的勾照留、標「◌ 上層關著 ⇒ 不畫」（像 activeInHierarchy），上一層打開就照自己的勾回來。有子關聯的那一條前面有 ▶／▼ 折疊鈕（方形、跟勾選框一樣大；**預設折起來**），折起來標「底下 N 條」；另有「全部展開／全部折疊」。**折疊只管列不列，不管畫不畫**。開關與折疊都住頁面 session，⛔ 不寫回 links.json。
 - ⭐ 慣例（甲板這種切出來的區域）：子作品尺寸 ＝ 父作品、`at=0,0,0`、`turn=0` ⇒ 子作品直接用父作品的座標雕，剖面校準也能共用。
+- **meta**（TASK-0517）：關聯可以帶一包給下游認部件的資訊，寫法與規則同外部模型（§9.4.9）；只改 meta 不用 overwrite，overwrite 搬位置 meta 照留。用到 meta 的 links.json 寫 **schema 3**。
 
 ### 9.4.5 噴漆 —— 打出去，碰到哪格就漆哪格（TASK-0495）
 
@@ -647,6 +648,31 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg
 - **讀數**（`sub=models` 與 view／export 每個模型一行）：狀態、來源（檔名＋SHA 前 8 碼／作品＋快取鍵與 produced|reused）、變換、三角形數、在組裝件裡的外框；回傳值 `models_drawn／hidden／disabled／broken`。
 - **畫**：view 與觀測頁的 GPU 預覽另一趟畫（靜態 ⇒ 內容沒變不重傳；同一組燈、會投影子也接影子）；不是 voxel ⇒ `visible_voxels` 不變；slice／section／stats 量的是格子，不畫模型。觀測頁「模型」區：總開關＋一個一個勾（只影響這次觀測，⛔ 不寫回 models.json）。
 - **匯出**：`export format=obj` 把模型接在帆後面（每個模型 `o model_n`、一色一個材質 `model_n_k`）；list／vox 只有格子 ⇒ `models_exported=0`。只有繩／帆／模型、沒有 voxel 的作品也匯得出 obj。
+- **meta**：`sub=model name= meta=<JSON 物件>`（只改 meta 不用 overwrite）—— 見下一節。
+
+### 9.4.9 部件的 meta 與部件清單 —— 給遊戲認「這是什麼、關鍵點在哪」（TASK-0517）
+
+外部模型與關聯可以帶一包 **meta**：平的 `{鍵: 字串或數字}`，給下游（遊戲、VoxelKit）認部件用（例：砲 `kind=gun`、`gun=24l`；彈藥庫 `kind=magazine`、`powder_lb=9000`）。引擎自己不讀它的意思 —— 不影響組裝、觀測、繩、帆。關鍵點不另外存：用來源作品的**固定點**（砲的 `muzzle`／`breech` ⇒ 砲軸；彈藥庫的 `blast`）。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=model --arg work=deck --arg persona=<P> --arg name=砲-S01 --arg 'meta={"kind":"gun","gun":"24l","hp":100}'
+senate cmd sculpture --arg op=work --arg sub=model --arg work=deck --arg persona=<P> --arg name=砲-S01 --arg 'meta={"hp":null}'   # 合併：null ⇒ 刪那個鍵
+senate cmd sculpture --arg op=work --arg sub=link  --arg work=ship --arg persona=<P> --arg name=彈藥庫-後 --arg 'meta={"kind":"magazine","powder_lb":9000}'
+senate cmd sculpture --arg op=work --arg sub=model --arg work=deck --arg persona=<P> --arg name=砲-S01 --arg meta=none          # 全清
+senate cmd sculpture --arg op=export --arg work=ship --arg format=parts --arg out=<絕對路徑.json>                            # 部件清單
+```
+
+- **meta=**：一個 JSON 物件，**合併**進現有的（給的鍵覆寫；值 `null` ⇒ 刪那個鍵）；`none` ⇒ 全清。值只收**字串或有限的數字**（⛔ 巢狀、陣列、布林、null 都擋）；鍵 ≤ 64 字、不含空白與 `: , | = "`；至多 64 個鍵。壞了 ⇒ exit 2、**未寫入**。改位置、換來源、改開關都不動 meta。
+- **存法**：models.json／links.json 每一筆的 `meta` 物件（數字就是 JSON 數字，⛔ 不轉字串；依鍵排序）。⚠ **用到 meta 的檔升 schema**（models 2、links 3）：沒更新的 senate.exe 讀到會大聲讀不了 —— ⛔ 而不是默默丟掉、下一次寫回去清光。全部清掉 ⇒ 降回原本的 schema，檔逐位元組回到加之前。手改成「schema 舊、卻有 meta」⇒ 讀不了。
+- **讀數**：`sub=models`、`sub=links`（與 view／export 的模型行）每一筆後面印 `meta k=v, …`。
+- **部件清單**（`export format=parts out=<.json>`）：不讀 voxel、不改任何作品檔（模型外框要網格 ⇒ work 來源缺快取會現產生）。JSON：
+  - `format: "sculpt-parts"`、`version: 1`、`work`、`size`、`meters_per_voxel`、`points`（本作品自己的固定點）；
+  - `links[]`：整棵關聯樹（含巢狀、停用的）每條一筆 —— `path`、`work`、`turn`、`mirror`、`enabled`、`drawn`（這次的 links=／hide_links= 有沒有畫到）、`box`（那件作品的框換到組裝件 `[x0,y0,z0,x1,y1,z1]`）、`meta`、`points`；
+  - `models[]`：每個外部模型（含關聯裡的）—— `path`、`frame`、`name`、`source`、`work`／`file`、`state`、`box`（有讀到網格才有）、`meta`、`points`（work 來源才有）。
+  - **座標**：組裝件的連續座標（格 k 佔 [k, k+1]，固定點取格心 k＋0.5），跟繩的端點同一個公式（關聯：鏡像 → 轉向 → at，逐層；模型：它的 3×4 矩陣）。⇒ 砲軸 ＝ `muzzle − breech`，⛔ 下游不用再從外框猜朝向。
+  - 某個部件的固定點檔讀不了 ⇒ 那一筆 `points` 空、`points_error` 寫原因、回傳值 `parts_points_errors`（⛔ 不靜默給空的）。
+- **VoxelKit**：`voxel_export.py --meta`（配 `--parts`、`--rig --models`）把 meta／points 接進 `.vxk` header（形狀：平的 `meta`＋`points: {名字: [x,y,z]}`，ame 2026-10-12 酒館 seq 24096 議定）；不帶 `--meta` ⇒ header 跟以前逐欄一樣。
+- 驗收：淨室 `SculptureMetaCleanRoom`（固定點＝手算、加了再清 ⇒ 檔逐位元組回原樣、壞 meta 零寫入、手改 schema 讀不了）。
 
 ### 9.5 建築與家具的相對比例尺
 
