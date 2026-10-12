@@ -50,10 +50,48 @@ public sealed class SculptWorkViewSettings
     string m_Links = "", m_HideLinks = "";
 }
 
+/// <summary>GPU 預覽的設定：檢視倍率（滾輪縮放）的範圍（成員名就是畫面上的標籤與 id）。</summary>
+public sealed class SculptPreviewSettings
+{
+    public const double DefaultViewScaleMin = 0.05, DefaultViewScaleMax = 50;
+    /// <summary>渲染端收的上限（SenateSculptRenderer：ViewScale 需在 (0, 1000]）。</summary>
+    public const double RendererViewScaleMax = 1000;
+    public double ViewScaleMin { get; set; } = DefaultViewScaleMin;
+    public double ViewScaleMax { get; set; } = DefaultViewScaleMax;
+}
+
 public sealed partial class SculptureViewerPage
 {
-    const string ExportCfgKey = P + "export", FilterCfgKey = P + "filter", ViewCfgKey = P + "view";
-    const string SExportCfg = P + "state/export_cfg", SFilterCfg = P + "state/filter_cfg", SViewCfg = P + "state/view_cfg";
+    const string ExportCfgKey = P + "export", FilterCfgKey = P + "filter", ViewCfgKey = P + "view", PreviewCfgKey = P + "preview";
+    const string SExportCfg = P + "state/export_cfg", SFilterCfg = P + "state/filter_cfg", SViewCfg = P + "state/view_cfg", SPreviewCfg = P + "state/preview_cfg";
+    SculptPreviewSettings? m_PreviewCfg;
+    string? m_PreviewCfgJson;
+
+    /// <summary>預覽設定 —— 滾輪在圖上（比畫設定的 Inspector 先跑）⇒ 讀的時候先套這一輪的輸入（同 <see cref="ViewCfg"/>）。</summary>
+    SculptPreviewSettings PreviewCfg(SCP_Ui g)
+    {
+        var cfg = LoadCfg(g, SPreviewCfg, ref m_PreviewCfg, ref m_PreviewCfgJson);
+        if (ApplyPending(g, cfg, PreviewCfgKey)) SaveCfg(g, SPreviewCfg, cfg, ref m_PreviewCfgJson);
+        return cfg;
+    }
+
+    /// <summary>
+    /// 設定 → 實際用的倍率範圍（純函數，淨室直接測）。不合法（不是正數、超過渲染端上限、最小大於最大）⇒ 整組退回預設，
+    /// 並回一句為什麼 —— ⛔ 不靜默修成「看起來能用」的值（使用者會以為自己設的生效了）。
+    /// </summary>
+    public static (double Min, double Max, string? Why) ViewScaleRange(SculptPreviewSettings iCfg)
+    {
+        double lo = iCfg.ViewScaleMin, hi = iCfg.ViewScaleMax, cap = SculptPreviewSettings.RendererViewScaleMax;
+        string? why = !(lo > 0) || double.IsInfinity(lo) ? "ViewScaleMin 要是正數"
+                    : !(hi > 0) || hi > cap ? "ViewScaleMax 要在 (0, " + cap + "]（渲染端的上限）"
+                    : lo > hi ? "ViewScaleMin 大於 ViewScaleMax"
+                    : null;
+        return why == null ? (lo, hi, null) : (SculptPreviewSettings.DefaultViewScaleMin, SculptPreviewSettings.DefaultViewScaleMax, why + " ⇒ 先用預設 " + SculptPreviewSettings.DefaultViewScaleMin + "–" + SculptPreviewSettings.DefaultViewScaleMax);
+    }
+
+    /// <summary>滾輪一格 ×1.25（往下 ÷1.25），夾在範圍內（純函數）。</summary>
+    public static double WheelViewScale(double iCurrent, double iWheel, double iMin, double iMax)
+        => Math.Max(iMin, Math.Min(iMax, iCurrent * Math.Pow(1.25, iWheel)));
     /// <summary>關聯文字欄的 id（＝ Inspector 畫出來的那兩格）—— 自動渲染認它們的「編輯完成」。</summary>
     const string FLinks = ViewCfgKey + "/" + nameof(SculptWorkViewSettings.Links), FHideLinks = ViewCfgKey + "/" + nameof(SculptWorkViewSettings.HideLinks);
 

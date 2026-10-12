@@ -781,12 +781,26 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
 
         using var aFold = g.Fold("渲染結果（GPU 即時）", P + "fold/result", iDefaultOpen: true);
         if (!aFold.Open) return true;
-        g.Label("目前對象：" + SubjectText(aSubject));
-        if (m_PlanError != null) g.Note("[場景準備失敗] " + m_PlanError);
-        if (m_PlanJob != null) g.Note("準備場景中…（作品／參數變了；畫面是上一版）");
-        if (aPlan == null) { g.Note(m_PlanError == null ? "第一次準備場景中…" : "沒有可畫的場景。"); return true; }
-        g.Label("layers：" + aPlan.Layers);
-        g.Label($"場景準備 {aPlan.Ms:0} ms（voxel {(aPlan.VoxelsReused ? "沿用同一份" : "新的一份")}，{aPlan.Voxels.Count:N0}／{aPlan.Total:N0}）");
+        if (aPlan == null)
+        {
+            // 還沒有圖 ⇒ 說明照舊放在這裡（有圖時文字資訊一律在圖下方，Tim 2026-10-12）
+            g.Label("目前對象：" + SubjectText(aSubject));
+            if (m_PlanError != null) g.Note("[場景準備失敗] " + m_PlanError);
+            g.Note(m_PlanError == null ? "第一次準備場景中…" : "沒有可畫的場景。");
+            return true;
+        }
+
+        // ③0 作品載入後重置一次鏡頭（Tim 2026-10-12，等同按「重置鏡頭」）：看的是**場景屬於哪個對象**，不是欄位上的對象 ——
+        //     換對象到新場景準備好之間畫的還是舊場景，那段時間框住、釘住的是舊的；等新場景到了才重置，它才會被重新框住。
+        //     只比作品／展品／region ⇒ 同一件作品雕刻、換參數都不會重置。
+        string aLoaded = PlanSubject(aPlan.VoxelSig);
+        if (aLoaded != m_RefitLoaded)
+        {
+            m_RefitLoaded = aLoaded;
+            m_Pin = null;
+            m_PutPinned = true;   // 上一版是舊場景 ⇒ 它交回的鏡頭不准拿來釘（這一幀下面會照新場景重放一版自動框的）
+            if (g.FieldValue(FViewScale, "1") != "1") g.SetField(FViewScale, "1");
+        }
 
         // ③ 相機：每幀套在副本上
         SCP_SculptRenderParams p = aPlan.Params.Clone();
@@ -809,6 +823,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         // ③c 帆（TASK-0503）：持續模擬開著 ⇒ 每 SailUpdateSeconds 秒（不是每幀；Tim「不用頻繁模擬」）照真實經過的時間把 rig 往前推（固定 dt 補步），
         //     一次最多花約 SailBudgetMs 毫秒的步數 —— 帆多、算不完就慢動作（⛔ 不改 dt、不拖垮畫面）；推過才換一版場景
         string aSailSig = "";
+        string? aSailInfo = null;   // 圖畫完才印（文字資訊在圖下方）
         if (p.SailRig is SCP_SculptSailRig aRig)
         {
             long aNow = Stopwatch.GetTimestamp();
@@ -824,8 +839,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             p.Sails = aRig.SailGeoms();
             p.SailRopes = aRig.RopeGeoms(true);
             aSailSig = ";sail=" + aRig.Steps.ToString(CultureInfo.InvariantCulture);
-            g.Note($"帆：模擬到 {aRig.Time:0.00} 秒（{aRig.Steps:N0} 步，每步 {aRig.LastStepMs:0.###} ms）"
-                   + (aLive ? $"　持續模擬中（每 {SailUpdateSeconds:0.#} 秒更新一次、一次最多約 {SailBudgetMs:0} ms；算不完就慢動作）" : "　持續模擬關著 ⇒ 停在這一刻"));
+            aSailInfo = $"帆：模擬到 {aRig.Time:0.00} 秒（{aRig.Steps:N0} 步，每步 {aRig.LastStepMs:0.###} ms）"
+                        + (aLive ? $"　持續模擬中（每 {SailUpdateSeconds:0.#} 秒更新一次、一次最多約 {SailBudgetMs:0} ms；算不完就慢動作）" : "　持續模擬關著 ⇒ 停在這一刻");
         }
         string aGpuSig = RuntimeHelpers_Id(aPlan) + "|" + aCamSig + aSailSig;
         if (aGpuSig != m_GpuSceneSig || !SCP_GuiGpuViews.Has(GpuKey))
@@ -851,17 +866,36 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
                 PanPin(m_Pin, m_ViewCam, aPtr.DragX, aPtr.DragY, p.ViewScale);
             if (aPtr.Wheel != 0)
             {
-                double vs = Math.Max(0.1, Math.Min(50, p.ViewScale * Math.Pow(1.25, aPtr.Wheel)));
+                var (aMin, aMax, _) = ViewScaleRange(PreviewCfg(g));
+                double vs = WheelViewScale(p.ViewScale, aPtr.Wheel, aMin, aMax);
                 g.SetField(FViewScale, vs.ToString("0.###", CultureInfo.InvariantCulture));
             }
         }
         using (g.Row())
         {
-            g.Label($"檢視倍率 ×{p.ViewScale:0.##}");
+            var (aLo, aHi, _) = ViewScaleRange(PreviewCfg(g));
+            g.Label($"檢視倍率 ×{p.ViewScale:0.###}（滾輪範圍 {aLo:0.###}–{aHi:0.###}）");
             if (g.Button("倍率歸 1", P + "btn/view-scale-reset")) g.SetField(FViewScale, "1");
             // 重新框住（像 Blender 的 View All）：丟掉釘住的中心與距離、倍率回 1，下一幀渲染器重框一次
             if (g.Button("重置鏡頭（重新框住）", P + "btn/camera-refit")) { m_Pin = null; g.SetField(FViewScale, "1"); }
         }
+        using (var aPrev = g.Fold("預覽設定（檢視倍率範圍）", P + "fold/preview-settings", iDefaultOpen: false))
+        {
+            if (aPrev.Open)
+            {
+                g.Note("ViewScaleMin／ViewScaleMax：滾輪縮放的下限與上限（預設 " + SculptPreviewSettings.DefaultViewScaleMin + "–" + SculptPreviewSettings.DefaultViewScaleMax
+                       + "；上限最多 " + SculptPreviewSettings.RendererViewScaleMax + "）。只管滾輪，現在的倍率不會被改。");
+                foreach (string n in DrawCfg(g, PreviewCfg(g), PreviewCfgKey, SPreviewCfg, ref m_PreviewCfgJson)) g.Note("（自動繪製）" + n);
+            }
+        }
+        if (ViewScaleRange(PreviewCfg(g)).Why is string aRangeWhy) g.Note("[預覽設定] " + aRangeWhy);
+        // 文字資訊在圖下方（Tim 2026-10-12）
+        g.Label("目前對象：" + SubjectText(aSubject));
+        if (m_PlanError != null) g.Note("[場景準備失敗] " + m_PlanError);
+        if (m_PlanJob != null) g.Note("準備場景中…（作品／參數變了；畫面是上一版）");
+        g.Label("layers：" + aPlan.Layers);
+        g.Label($"場景準備 {aPlan.Ms:0} ms（voxel {(aPlan.VoxelsReused ? "沿用同一份" : "新的一份")}，{aPlan.Voxels.Count:N0}／{aPlan.Total:N0}）");
+        if (aSailInfo != null) g.Note(aSailInfo);
         g.Note(m_Pin != null
             ? $"鏡頭已釘住：中心 ({m_Pin.TargetX:0.#}, {m_Pin.TargetY:0.#}, {m_Pin.TargetZ:0.#})" + (p.Projection == SCP_SculptProjection.Perspective ? $"、距離 {m_Pin.Distance:0.#}" : $"、縮放 {m_Pin.Zoom:0.###}")
               + " —— 轉、拖、縮放都不再重新框住（換對象／換投影／按重置才重框）"
@@ -875,6 +909,15 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     SCP_SculptSailRig? m_SailRigSeen;
     /// <summary>持續模擬多久更新一次（秒）與一次最多花多少毫秒算（Tim 2026-10-11「不用頻繁模擬 模擬頻率可以降低」）。</summary>
     const double SailUpdateSeconds = 0.1, SailBudgetMs = 8;
+
+    /// <summary>上一次「載入後重置鏡頭」時的場景對象（見 <see cref="PlanSubject"/>）；"\0" ＝ 這個頁面實例還沒載入過。</summary>
+    string m_RefitLoaded = "\0";
+
+    /// <summary>場景屬於哪個對象（純函數）：voxel 簽章裡的 work／exhibit／region 三格 —— 草稿、關聯開關、排除色變了都不算換對象。</summary>
+    public static string PlanSubject(string iVoxelSig)
+        => string.Join(";", iVoxelSig.Split(';').Where(k => k.StartsWith("work=", StringComparison.Ordinal)
+                                                           || k.StartsWith("exhibit=", StringComparison.Ordinal)
+                                                           || k.StartsWith("region=", StringComparison.Ordinal)));
 
     // ── TASK-0501：釘住的鏡頭（只在視窗行程裡活著 —— 視窗以外的宿主不走 GPU 預覽）──
     /// <summary>釘住的鏡頭（中心＋距離／縮放）；null ＝ 下一幀讓渲染器自動框。</summary>
@@ -1025,13 +1068,14 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         using var aFold = g.Fold("渲染結果", P + "fold/result", iDefaultOpen: true);
         if (!aFold.Open) return;
         if (aPath.Length == 0) { g.Note("（還沒渲染 —— 按「全景」「渲染展品」或「渲染」）"); return; }
-        if (m_Job != null) g.Note("渲染中…（" + m_JobLabel + "）" + (m_AutoWanted ? "　畫完會用最新參數再補一張" : ""));
+        g.ImageFit(aPath, ViewSide, "雕刻渲染圖 " + Path.GetFileName(aPath));
+        // 文字資訊在圖下方（Tim 2026-10-12）
+        if (m_Job != null) g.Note("渲染中…（" + m_JobLabel + "）—— 上面是上一張" + (m_AutoWanted ? "；畫完會用最新參數再補一張" : ""));
         g.Label("目前對象：" + SubjectText(g.FieldValue(SSubject, SubjectFull)) + "（環繞／切投影／手動渲染都重渲這個對象）");
         g.Label("renderer：" + g.FieldValue(SRenderer, "?"));
         g.Label("layers：" + g.FieldValue(SLayers, "?"));
         g.Label(g.FieldValue(SViewInfo, ""));
-        g.Note("檔案：" + aPath + (m_Job != null ? "（執行中 —— 下面是上一張）" : ""));
-        g.ImageFit(aPath, ViewSide, "雕刻渲染圖 " + Path.GetFileName(aPath));
+        g.Note("檔案：" + aPath);
     }
 
     // ===========================================================

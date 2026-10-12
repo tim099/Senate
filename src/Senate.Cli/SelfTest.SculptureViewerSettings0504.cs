@@ -86,6 +86,29 @@ public static partial class SelfTest
             Check(pendUi.Root.Children.Count == 0, "ApplyPending 不該畫任何東西");
             var badNum = new SculptExportSettings();
             Check(!SculptureViewerPage.ApplyPending(new SCP_Ui(), badNum, "x"), "反向對照：沒輸入的 export 設定不該被改");
+
+            // ⑥ 預覽設定：檢視倍率範圍（預設 0.05–50）；滾輪夾在範圍內；不合法整組退回預設並說為什麼；小數欄位也先套
+            var prev = new SculptPreviewSettings();
+            var (lo, hi, why) = SculptureViewerPage.ViewScaleRange(prev);
+            Check(lo == 0.05 && hi == 50 && why == null, "預設倍率範圍應是 0.05–50");
+            Check(Math.Abs(SculptureViewerPage.WheelViewScale(0.1, -1, lo, hi) - 0.08) < 1e-9, "往下滾一格應是 ÷1.25");
+            Check(SculptureViewerPage.WheelViewScale(0.1, -4, lo, hi) == 0.05, "往下滾到底應停在下限 0.05（0.1 時代的下限擋不到這裡）");
+            Check(SculptureViewerPage.WheelViewScale(40, 3, lo, hi) == 50, "往上滾到頂應停在上限");
+            var custom = SculptureViewerPage.ViewScaleRange(new SculptPreviewSettings { ViewScaleMin = 0.01, ViewScaleMax = 200 });
+            Check(custom.Min == 0.01 && custom.Max == 200 && custom.Why == null && SculptureViewerPage.WheelViewScale(0.02, -5, custom.Min, custom.Max) == 0.01, "自訂範圍應生效");
+            foreach (var (bad, label) in new[] { (new SculptPreviewSettings { ViewScaleMin = 0 }, "下限 0"), (new SculptPreviewSettings { ViewScaleMax = 2000 }, "上限超過渲染端"), (new SculptPreviewSettings { ViewScaleMin = 5, ViewScaleMax = 2 }, "下限大於上限") })
+            {
+                var r = SculptureViewerPage.ViewScaleRange(bad);
+                Check(r.Min == 0.05 && r.Max == 50 && r.Why != null, label + " ⇒ 應整組退回預設並說為什麼");
+            }
+            // ⑦ 載入後重置鏡頭的判準：只看作品／展品／region（草稿、關聯、排除色變了不算換對象）
+            string a = SculptureViewerPage.PlanSubject("work=ship;exhibit=;region=;exclude_color=;draft=0;links=;hide_links=");
+            Check(a == SculptureViewerPage.PlanSubject("work=ship;exhibit=;region=;exclude_color=5;draft=1;links=deck;hide_links=self"), "草稿／關聯／排除色變了不該算換對象");
+            Check(a != SculptureViewerPage.PlanSubject("work=rain;exhibit=;region=;exclude_color=;draft=0;links=;hide_links="), "換作品應算換對象");
+            Check(SculptureViewerPage.PlanSubject("work=;exhibit=a;region=1..2,1..2,1..2") != SculptureViewerPage.PlanSubject("work=;exhibit=b;region=1..2,1..2,1..2"), "換展品應算換對象");
+            var prevIn = new SCP_GuiInput();
+            prevIn.Fields["sculpt/preview/ViewScaleMin"] = "0.02";
+            Check(SculptureViewerPage.ApplyPending(new SCP_Ui(prevIn), prev, "sculpt/preview") && prev.ViewScaleMin == 0.02, "小數欄位應先套進物件：" + prev.ViewScaleMin);
         }
         catch (Exception e) { failures.Add(e.GetType().Name + ": " + e.Message); }
         return new(name, failures.Count == 0 ? "篩選 5 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入 全過" : string.Join("；", failures),
