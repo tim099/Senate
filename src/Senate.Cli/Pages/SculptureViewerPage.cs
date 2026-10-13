@@ -260,8 +260,8 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     string PageTempDir => Path.Combine(SenatePaths.RuntimeDir(m_Model.RepoRoot), PageTempDirName);
 
     // ===========================================================
-    // 區塊職責：工具列（兩排，TASK-0504）—— 第一排：重新讀取／匯出（格式在匯出設定）／開 Sculpture 資料夾／開匯出資料夾／開暫存資料夾；
-    //          第二排：空間與作品下拉。兩排都在 base 的 TopBar 範圍裡 ⇒ 不跟內容一起捲。
+    // 區塊職責：工具列（兩排，TASK-0504）—— 第一排：重新讀取／匯出（格式在匯出設定）／切換投影／重置鏡頭／開 Sculpture 資料夾／開匯出資料夾／開暫存資料夾；
+    //          第二排：空間、類型與作品下拉。兩排都在 base 的 TopBar 範圍裡 ⇒ 不跟內容一起捲。
     // ===========================================================
     protected override void DrawTopBar(SCP_Ui iUi)
     {
@@ -275,6 +275,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         EnsureWorks();   // 匯出鈕與作品／展品下拉都要問清單
         ExportButton(iUi);
         ProjectionButton(iUi);
+        CameraRefitButton(iUi);
         // ⚠ TopBar 先於 DrawContent 畫 ⇒ 第一次 Reload 前 m_DataRoot 還是空的，直接問 model
         string aRoot = m_Model.AgentCommandsRoot.Value ?? "";
         OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_SculptRenderProfiles.SculptureDir(new SCP_DataRoot(aRoot)) : null, P + "btn/open-dir");
@@ -530,6 +531,16 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     {
         if (PersonalSpace(g) && SelectedWork(g).Length == 0) return;   // 同匯出鈕：個人區沒選作品就沒有對象
         if (g.Button("切換 正交／透視", P + "btn/proj-flip")) m_FlipProjection = true;
+    }
+
+    /// <summary>
+    /// 工具列的「重置鏡頭」（重新框住，像 Blender 的 View All；Tim 2026-10-13 從圖下方搬上來）：丟掉釘住的中心與距離、倍率回 1，
+    /// 渲染器下一版重框一次。工具列先於內容區畫 ⇒ 這一幀的渲染就看得到（⛔ 不必像投影鈕那樣延後到內容區：這裡不讀設定檔鏈）。
+    /// </summary>
+    void CameraRefitButton(SCP_Ui g)
+    {
+        if (PersonalSpace(g) && SelectedWork(g).Length == 0) return;   // 同投影鈕：個人區沒選作品就沒有對象
+        if (g.Button("重置鏡頭", P + "btn/camera-refit")) { m_Pin = null; g.SetField(FViewScale, "1"); }
     }
 
     void ApplyProjectionFlip(SCP_Ui g)
@@ -915,8 +926,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
             var (aLo, aHi, _) = ViewScaleRange(PreviewCfg(g));
             g.Label($"檢視倍率 ×{p.ViewScale:0.###}（滾輪範圍 {aLo:0.###}–{aHi:0.###}）");
             if (g.Button("倍率歸 1", P + "btn/view-scale-reset")) g.SetField(FViewScale, "1");
-            // 重新框住（像 Blender 的 View All）：丟掉釘住的中心與距離、倍率回 1，下一幀渲染器重框一次
-            if (g.Button("重置鏡頭（重新框住）", P + "btn/camera-refit")) { m_Pin = null; g.SetField(FViewScale, "1"); }
+            // 「重置鏡頭」在工具列（CameraRefitButton，Tim 2026-10-13）
         }
         using (var aPrev = g.Fold("預覽設定（檢視倍率範圍、畫面大小）", P + "fold/preview-settings", iDefaultOpen: false))
         {

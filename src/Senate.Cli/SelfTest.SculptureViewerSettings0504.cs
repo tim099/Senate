@@ -12,7 +12,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureViewerSettingsCleanRoom()
     {
-        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取與預覽設定（淨室，TASK-0504）";
+        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／類型（船看 meta kind、🔴 子作品不算船）／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取與預覽設定（淨室，TASK-0504）";
         var failures = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
         try
@@ -34,6 +34,22 @@ public static partial class SelfTest
             Check(Ids(new SculptWorkFilter { Keyword = "WIP" }) == "ship-assembly", "關鍵字應也比標籤");
             Check(Ids(new SculptWorkFilter { MainOnly = false, Keyword = "甲" }) == "ship-deck", "關鍵字應比名稱");
             Check(Ids(new SculptWorkFilter { MainOnly = false, Keyword = "DECK" }) == "ship-deck", "關鍵字應比 ID、不分大小寫");
+
+            // ①b 類型（Tim 2026-10-13）：船 ＝ 主作品自己的 meta kind 有造船規格那幾種；🔴 子作品帶了砲也不是船（它是部件）；
+            //     kind 不認得（lantern）／沒讀到 ⇒ 其他；反向對照：把 ShipKinds 那一格換掉，同一份資料就不該再判成船
+            var kinds = new Dictionary<string, IReadOnlyCollection<string>>
+            {
+                ["ship-assembly"] = new[] { "magazine" },
+                ["ship-deck"] = new[] { "gun", "ladders" },
+                ["rain"] = new[] { "lantern" },
+            };
+            string IdsT(SculptWorkFilter f, SculptWorkType t) => string.Join(",", SculptureViewerPage.FilterWorks(works, f, t, kinds).Select(w => w.id));
+            Check(IdsT(new SculptWorkFilter(), SculptWorkType.ship) == "ship-assembly", "類型＝船應只列帶 magazine 的組裝件：" + IdsT(new SculptWorkFilter(), SculptWorkType.ship));
+            Check(IdsT(new SculptWorkFilter { MainOnly = false }, SculptWorkType.ship) == "ship-assembly", "🔴 關掉 MainOnly，帶砲的子作品也不該算船：" + IdsT(new SculptWorkFilter { MainOnly = false }, SculptWorkType.ship));
+            Check(IdsT(new SculptWorkFilter { MainOnly = false }, SculptWorkType.other) == "ship,ship-deck,rain", "其他 ＝ 不是船的全部（含子作品、不認得的 kind、沒有 kind）：" + IdsT(new SculptWorkFilter { MainOnly = false }, SculptWorkType.other));
+            Check(IdsT(new SculptWorkFilter(), SculptWorkType.all) == Ids(new SculptWorkFilter()), "類型＝全部應跟沒給類型一樣");
+            Check(SculptureViewerPage.FilterWorks(works, new SculptWorkFilter(), SculptWorkType.ship, null).Count == 0, "沒有 kind 表 ⇒ 一艘船都沒有（不是全部）");
+            Check(SculptureViewerPage.WorkTypeOf(works[2], new[] { "magazine-x" }) == SculptWorkType.other, "反向對照：kind 名不在表上就不是船");
 
             // ② Inspector 真的改到物件（點 enum 鈕／取消勾／填欄位）
             var cfg = new SculptExportSettings();

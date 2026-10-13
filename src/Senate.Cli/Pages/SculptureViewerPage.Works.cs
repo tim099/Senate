@@ -3,6 +3,7 @@
 using System.Globalization;
 using System.Text;
 using SCP.Core.Gui;
+using SCP.Core.Json;
 using SCP.Core.Paths;
 using SCP.Core.Sculpture;
 using Senate.Core;
@@ -38,6 +39,7 @@ public sealed partial class SculptureViewerPage
         m_WorkMaxAxis = SculptureWorkPrefs.ResolveMaxAxis(m_Model.RepoRoot, out m_WorkMaxAxisSource);
         m_LastSel = SculptureWorkPrefs.ReadLastSelection(m_Model.RepoRoot, out m_LastSelError);
         m_Works = new(); m_WorkTexts.Clear(); m_WorkCredits = new(); m_WorkCreditErrors = new(); m_WorksError = ""; m_CreditJob = null;
+        m_WorkKinds.Clear(); m_WorkKindErrors.Clear();
         var paths = new List<(string Id, SCP_SculptPaths Paths)>();
         try
         {
@@ -47,6 +49,7 @@ public sealed partial class SculptureViewerPage
             {
                 m_WorkTexts[card.id] = (store.ReadText(card.id, false), store.ReadText(card.id, true));
                 paths.Add((card.id, store.SpacePaths(card.id)));
+                ReadWorkKinds(card, store.SpacePaths(card.id));
             }
         }
         catch (Exception e) { m_WorksError = "作品讀取失敗：" + e.Message; return; }
@@ -64,6 +67,29 @@ public sealed partial class SculptureViewerPage
         if (SCP_GuiHost.RedrawsContinuously) m_CreditJob = Task.Run(job);
         else (m_WorkCredits, m_WorkCreditErrors) = job();   // 不會重畫的宿主（CLI 單次 render）：背景算等於把答案丟掉
     }
+    // 作品類型（工具列「類型」下拉，Tim 2026-10-13）：作品自己的 links.json／models.json 的 meta kind，跟作品清單一起讀（⛔ 不每幀讀檔）。
+    // 子作品不讀：它們一律不是船（WorkTypeOf），讀了也用不到。
+    readonly Dictionary<string, IReadOnlyCollection<string>> m_WorkKinds = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> m_WorkKindErrors = new(StringComparer.Ordinal);
+
+    void ReadWorkKinds(SCP_SculptWork iCard, SCP_SculptPaths iPaths)
+    {
+        if (iCard.IsSub) return;
+        var aKinds = new SortedSet<string>(StringComparer.Ordinal);
+        try
+        {
+            foreach (var l in SCP_SculptLinks.Read(iPaths).links) AddKind(aKinds, l.meta);
+            foreach (var m in SCP_SculptModels.ReadModels(iPaths).models) AddKind(aKinds, m.meta);
+        }
+        catch (Exception e) { m_WorkKindErrors[iCard.id] = e.Message; }   // 一件讀不了 ⇒ 工具列說出來（⛔ 不當成「不是船」靜靜藏掉）
+        if (aKinds.Count > 0) m_WorkKinds[iCard.id] = aKinds;
+    }
+
+    static void AddKind(SortedSet<string> ioKinds, SortedDictionary<string, SCP_JsonData> iMeta)
+    {
+        if (iMeta.TryGetValue("kind", out SCP_JsonData? v) && v != null && v.IsString && v.AsString().Length > 0) ioKinds.Add(v.AsString());
+    }
+
     void PumpCredits()
     {
         if (m_CreditJob == null || !m_CreditJob.IsCompleted) return;
@@ -571,18 +597,32 @@ public sealed partial class SculptureViewerPage
     bool m_WorksFresh;
 
     // ===========================================================
-    // 區塊職責：工具列第二排（TASK-0504）—— 空間下拉 ＋ 作品下拉（個人區）／展品下拉（共用展區）。
-    //          作品下拉只列篩選後的作品（篩選條件在內容區「作品篩選」）。
+    // 區塊職責：工具列第二排（TASK-0504）—— 空間下拉 ＋ 類型下拉＋作品下拉（個人區）／展品下拉（共用展區）。
+    //          作品下拉只列篩選後的作品（篩選條件在內容區「作品篩選」；類型在工具列，Tim 2026-10-13）。
     // 物理意義：沒選過 ⇒ 預設選篩選後第一件「自己的、已付款」的，沒有就第一件已付款的。
     //          目前選的作品被篩掉 ⇒ 選取不動（下拉標「不在清單裡」）—— 篩選只管列不列，⛔ 不替使用者換作品。
     // ===========================================================
+    public const string TypeSel = P + "sel/type";
+
     void WorkTopBar(SCP_Ui g)
     {
         RestoreLastSelection(g);
         g.Dropdown("雕刻空間", new List<SCP_GuiOption> { new("shared", "共用展區（256³）"), new("work", "個人作品（可調尺寸）") }, "shared", SpaceSel);
         if (!PersonalSpace(g)) { ExhibitTopBar(g); return; }
         string persona = g.FieldValue(PersonaSel + "/value", None);
-        var shown = FilterWorks(m_Works, FilterCfg(g));
+        // 類型的件數照其他篩選條件算（⛔ 不含類型自己）⇒ 選項上的數字 ＝ 選了它之後作品下拉會有幾件
+        var cfg = FilterCfg(g);
+        int nShip = FilterWorks(m_Works, cfg, SculptWorkType.ship, m_WorkKinds).Count, nAll = FilterWorks(m_Works, cfg).Count;
+        string typePick = g.Dropdown("類型", new List<SCP_GuiOption>
+        {
+            new(nameof(SculptWorkType.all), "全部（" + nAll + "）"),
+            new(nameof(SculptWorkType.ship), "船（" + nShip + "）"),
+            new(nameof(SculptWorkType.other), "其他（" + (nAll - nShip) + "）"),
+        }, nameof(SculptWorkType.all), TypeSel);
+        var type = Enum.TryParse(typePick, out SculptWorkType t) ? t : SculptWorkType.all;
+        var shown = FilterWorks(m_Works, cfg, type, m_WorkKinds);
+        if (m_WorkKindErrors.Count > 0)
+            g.Note("⚠ 類型判不了 " + m_WorkKindErrors.Count + " 件（算成「其他」）：" + string.Join("；", m_WorkKindErrors.Take(3).Select(kv => kv.Key + "：" + kv.Value)));
         var options = shown.Select(w => new SCP_GuiOption(w.id, w.title + "｜" + w.owner + "｜" + w.status)).ToList();
         string first = shown.Find(w => w.owner == persona && w.status == "ready")?.id ?? shown.Find(w => w.status == "ready")?.id ?? "";
         if (m_Works.Exists(w => w.id == m_LastSel.Work && w.status == "ready")) first = m_LastSel.Work;   // 上次選的那件還在 ⇒ 預設是它（被篩選藏起來也算：篩選只管下拉列不列）

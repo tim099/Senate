@@ -27,6 +27,10 @@ public sealed class SculptExportSettings
     string m_OutDir = "";
 }
 
+/// <summary>工具列的作品類型（值名＝下拉選項的 id；Tim 2026-10-13）。</summary>
+/// <remarks>作品卡沒有類型欄位 ⇒ 從作品**自己**的 links.json／models.json 的 meta `kind` 推（Tim 選的做法），見 <see cref="SculptureViewerPage.WorkTypeOf"/>。</remarks>
+public enum SculptWorkType { all, ship, other }
+
 /// <summary>工具列作品下拉的篩選條件（成員名就是畫面上的標籤與 id）。</summary>
 public sealed class SculptWorkFilter
 {
@@ -229,16 +233,35 @@ public sealed partial class SculptureViewerPage
     }
 
     /// <summary>
-    /// 篩選作品清單（純函數，淨室直接測）：主作品＝沒標 <c>sub</c>（⛔ 不看 parent_work —— 那是計費的任務歸屬，TASK-0505）；
-    /// 作者完全相符（不分大小寫）；關鍵字比 ID、名稱與標籤。
+    /// 算「船」的 meta kind：造船規格 §9 的表（Senate Docs/Workflows/Sculpture_Shipbuilding.md：gun／magazine／powder／yard／ladders／
+    /// wheel／binnacle／capstan／boat）＋ 船殼關聯的 <c>ship</c>（ame 給遊戲定的水線那一格；不在 §9 表上）。
+    /// <para>⚠ 規格表加了新的 kind，這裡要跟著加 —— 漏了不會叫，只會有一艘船沒被列進來。</para>
     /// </summary>
-    public static List<SCP_SculptWork> FilterWorks(IReadOnlyList<SCP_SculptWork> iWorks, SculptWorkFilter iFilter)
+    public static readonly IReadOnlyCollection<string> ShipKinds = new HashSet<string>(StringComparer.Ordinal)
+        { "ship", "gun", "magazine", "powder", "yard", "ladders", "wheel", "binnacle", "capstan", "boat" };
+
+    /// <summary>
+    /// 作品類型（純函數，淨室直接測）：⛔ 子作品（標 <c>sub</c>）一律不是船 —— 甲板、砲、帆桁那些是船的部件（Tim 2026-10-13）；
+    /// 主作品自己的關聯／模型 meta 帶 <see cref="ShipKinds"/> 任一個 ⇒ <see cref="SculptWorkType.ship"/>；其餘 <see cref="SculptWorkType.other"/>。
+    /// 只看自己這一層，⛔ 不往關聯進去的子作品找：砲的 meta 掛在甲板子作品上，而三艘船的組裝件自己的關聯就帶 kind
+    /// （2026-10-13 量組裝件自己的 links.json：夜隼號 ship＋magazine、餘燼號 magazine、憲法號 magazine×2）—— 往下找只會多讀檔、不會多認出一艘。
+    /// </summary>
+    public static SculptWorkType WorkTypeOf(SCP_SculptWork iWork, IReadOnlyCollection<string>? iKinds)
+        => !iWork.IsSub && iKinds != null && iKinds.Any(ShipKinds.Contains) ? SculptWorkType.ship : SculptWorkType.other;
+
+    /// <summary>
+    /// 篩選作品清單（純函數，淨室直接測）：主作品＝沒標 <c>sub</c>（⛔ 不看 parent_work —— 那是計費的任務歸屬，TASK-0505）；
+    /// 作者完全相符（不分大小寫）；關鍵字比 ID、名稱與標籤；類型見 <see cref="WorkTypeOf"/>（<paramref name="iKinds"/>：作品 id → 它自己的 meta kind；沒有那件 ＝ 沒有 kind）。
+    /// </summary>
+    public static List<SCP_SculptWork> FilterWorks(IReadOnlyList<SCP_SculptWork> iWorks, SculptWorkFilter iFilter,
+                                                   SculptWorkType iType = SculptWorkType.all, IReadOnlyDictionary<string, IReadOnlyCollection<string>>? iKinds = null)
     {
         string owner = iFilter.Owner.Trim(), key = iFilter.Keyword.Trim();
         var outList = new List<SCP_SculptWork>();
         foreach (var w in iWorks)
         {
             if (iFilter.MainOnly && w.IsSub) continue;
+            if (iType != SculptWorkType.all && WorkTypeOf(w, iKinds != null && iKinds.TryGetValue(w.id, out var aKinds) ? aKinds : null) != iType) continue;
             if (owner.Length > 0 && !w.owner.Equals(owner, StringComparison.OrdinalIgnoreCase)) continue;
             if (key.Length > 0 && w.id.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0
                 && w.title.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0
