@@ -477,7 +477,9 @@ Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 
 | 檔（資料根上） | 作用 |
 |---|---|
 | `_server_singleton.<id>.lock` | 獨佔開檔、握到 process 結束。拿不到 ⇒ exit 1，印出握著那顆的 pid／repo 根 |
-| `_server_endpoint.<id>.json`（名片） | 多記 `repo_root`。**不蓋活的**（心跳新鮮且不是同一顆 process）、收工**只刪自己的**（pid＋啟動時刻） |
+| `_server_endpoint.<id>.json`（名片） | 多記 `repo_root`。**不蓋活的**（心跳新鮮、心跳上寫的是名片上那一顆，且不是同一顆 process）、收工**只刪自己的**（pid＋啟動時刻） |
+
+- 名片判活看心跳檔的**新鮮度與寫的人**：心跳檔照 id 取路徑，同一份 repo 的下一代寫的是同一個檔 ⇒ 心跳上的 pid／啟動時刻不是名片上那一顆 ⇒ 名片是遺體（TASK-0527）。心跳檔沒寫 pid（舊格式）⇒ 只看新鮮度。
 
 - 名片上是另一顆**活著的**（沒有資料根鎖的舊 exe）⇒ `start` 也 exit 1。
 - 跑起來之後每 5 秒量一次名片主人：名片上是別顆 ⇒ Discord（收發與 Gateway）、酒保、每日結算**停手**，只警告一次；

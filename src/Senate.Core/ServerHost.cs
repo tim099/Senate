@@ -434,8 +434,15 @@ public static class ServerHost
                 StaleSeconds = HeartbeatStaleSeconds,
                 RepoRoot = iRepoRoot.Replace('\\', '/'),
             };
+            // 蓋掉的是遺物就說出來（TASK-0527）—— 上一顆沒收工就死了，那一格要在 log 裡讀得到。
+            SCP_ServerProbe aCardBefore = SCP_ServerEndpoint.Probe(aEndpointDataRoot, aServerId);
             (SCP_EndpointWrite aCardRes, string aCardMsg) = SCP_ServerEndpoint.Write(aEndpointDataRoot, aCard);
-            if (aCardRes == SCP_EndpointWrite.Written) iOut("· 名片：" + aCardMsg + "（讀名片的一方靠它找到執行器與心跳）");
+            if (aCardRes == SCP_EndpointWrite.Written)
+            {
+                if (aCardBefore.State == SCP_ServerLiveness.StaleHeartbeat)
+                    iOut("· 名片是遺體（" + SCP_ServerEndpoint.Describe(aCardBefore) + "；" + aCardBefore.Detail + "）⇒ 已補寫");
+                iOut("· 名片：" + aCardMsg + "（讀名片的一方靠它找到執行器與心跳）");
+            }
             else iErr("⚠ " + aCardMsg);
         }
         // 「名片上是我」＝ 資料根單例工作（Discord／酒保／每日結算）的資格；每 OwnerCheckSeconds 重量一次（見 CheckCardOwner）。

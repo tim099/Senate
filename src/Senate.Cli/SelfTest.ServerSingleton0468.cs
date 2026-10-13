@@ -31,10 +31,11 @@ public static partial class SelfTest
                 Directory.CreateDirectory(d);
             const string aId = "tavern";
 
-            void Beat(string iHb, double iAgoSeconds)
+            void Beat(string iHb, double iAgoSeconds, SCP_ServerEndpointInfo? iBy = null)
             {
                 string aAt = DateTime.UtcNow.AddSeconds(-iAgoSeconds).ToString("o", CultureInfo.InvariantCulture);
-                File.WriteAllText(iHb, "{\"beat_at_utc\":\"" + aAt + "\"}", new UTF8Encoding(false));
+                string aWho = iBy == null ? "" : "\"pid\":" + iBy.Pid + ",\"started_at_utc\":\"" + iBy.StartedAtUtc + "\",";
+                File.WriteAllText(iHb, "{" + aWho + "\"beat_at_utc\":\"" + aAt + "\"}", new UTF8Encoding(false));
             }
             SCP_ServerEndpointInfo Card(string iRepo, int iPid) => new SCP_ServerEndpointInfo
             {
@@ -103,8 +104,38 @@ public static partial class SelfTest
             var aOld = SCP_ServerEndpoint.Probe(aData, "old");
             Check(aOld.Info?.RepoRoot == "D:/X/Senate", "⑩ 舊名片推不回 repo 根：" + aOld.Info?.RepoRoot);
 
+            // ⑪ TASK-0527：心跳檔照 id 取路徑 ⇒ 同一份 repo 的下一代寫的是同一個檔。
+            //    名片上那顆已死、心跳由下一代新鮮地寫 ⇒ 名片是遺物（StaleHeartbeat），⛔ 不是 Alive。
+            //    正向對照：心跳是名片上那一顆寫的 ⇒ Alive；心跳檔沒寫 pid（舊格式）⇒ 照舊只看新不新。
+            string aSharedRepo = Path.Combine(aTmp, "repoC").Replace('\\', '/');
+            Directory.CreateDirectory(aSharedRepo + "/SenateData/runtime");
+            string aDead = Path.Combine(aTmp, "data-dead").Replace('\\', '/');
+            Directory.CreateDirectory(aDead);
+            SCP_ServerEndpointInfo aCardDead = Card(aSharedRepo, 33333);
+            SCP_ServerEndpointInfo aCardNext = Card(aSharedRepo, 44444);
+            aCardNext.StartedAtUtc = DateTime.UtcNow.AddSeconds(5).ToString("o", CultureInfo.InvariantCulture);
+            Beat(aCardDead.HeartbeatPath, 0.1, aCardDead);
+            SCP_ServerEndpoint.Write(aDead, aCardDead);
+            var aOwnBeat = SCP_ServerEndpoint.Probe(aDead, aId);
+            Check(aOwnBeat.State == SCP_ServerLiveness.Alive, "⑪ 正向對照：名片上那顆自己的心跳竟然不是 Alive（" + aOwnBeat.State + "）");
+            Beat(aCardDead.HeartbeatPath, 0.1);
+            var aNoPid = SCP_ServerEndpoint.Probe(aDead, aId);
+            Check(aNoPid.State == SCP_ServerLiveness.Alive, "⑪ 舊格式心跳（沒有 pid）竟然不是 Alive（" + aNoPid.State + "）");
+            Beat(aCardNext.HeartbeatPath, 0.1, aCardNext);
+            var aRelic = SCP_ServerEndpoint.Probe(aDead, aId);
+            Check(aRelic.State == SCP_ServerLiveness.StaleHeartbeat && aRelic.Detail.Contains("44444"),
+                  "⑪ 下一代的心跳替死掉的名片作證：" + aRelic.State + "　" + aRelic.Detail);
+            aReads.Add("⑪ " + aRelic.State + "：" + aRelic.Detail);
+
+            // ⑫ 下一代起來（它自己的心跳先跳）⇒ 寫名片蓋得掉遺物；名片主人量一次就是它
+            var (aResNext, aMsgNext) = SCP_ServerEndpoint.Write(aDead, aCardNext);
+            var aStateNext = new ServerHost.CardOwnerState { IsOwner = false };
+            ServerHost.CheckCardOwner(aDead, aCardNext, aStateNext, _ => { }, _ => { });
+            Check(aResNext == SCP_EndpointWrite.Written && aStateNext.IsOwner && ServerHost.IsCardMine(aDead, aCardNext),
+                  "⑫ 下一代接不了手：" + aResNext + "　" + aMsgNext);
+
             aReads.Add("③ " + aMsgB);
-            string aReading = (aFails.Count == 0 ? "①～⑩ 全過：" : "✗ " + string.Join("／", aFails) + "　讀數：")
+            string aReading = (aFails.Count == 0 ? "①～⑫ 全過：" : "✗ " + string.Join("／", aFails) + "　讀數：")
                               + string.Join("　", aReads);
             return new CheckRow(aName, aReading, aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
