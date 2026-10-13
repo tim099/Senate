@@ -157,6 +157,12 @@ related:
 | `powder` | 火藥桶模型 | `powder_lb=100` | — |
 | `yard` | 帆桁模型 | 見 §5 | pivot、earing… |
 | `ladders` | 梯子所在的關聯（一個關聯可放好幾座） | — | 每座 4 個：`<梯名>.foot`／`.lo`／`.hi`／`.head` |
+| `wheel` | 舵輪模型 | — | 來源作品有的照給（憲法號 -wheel：`hub-aft`、`hub-fore`、`drum-rope-a／b`）|
+| `binnacle` | 羅經櫃模型 | — | 沒有（用模型外框）|
+| `capstan` | 絞盤模型 | — | 沒有（用模型外框）|
+| `boat` | 小艇模型 | `boat=cutter`、`length_m`（⚠ 照一般比例，未查證）| 沒有（用模型外框）|
+
+- `wheel`／`binnacle`／`capstan`／`boat` 只說「這是什麼」：站位、血量、能不能放下水這些由遊戲決定，⛔ 不寫進 meta（餘燼號階段十七～二十、2026-10-13 補）。
 
 - meta 是平的 `{鍵: 字串或數字}`，`work sub=model｜link meta=` 合併進去；有 meta 的檔 schema 會升（models 2、links 3），舊 exe 讀不了會大聲擋。
 - 梯子的四個點都取「腳踩的那一格」＝ 地板或踏板上面第一格空氣（讀的人取格心）：foot ＝ 下層甲板、最低一階往下梯方向站著等的那一格；lo／hi ＝ 最低／最高那一階；head ＝ 上層甲板、跨過艙口圍欄站穩的那一格（往外第一段連續 3 欄一樣高的平地）。哪兩層甲板由 foot／head 的高度判斷，不另外標。
@@ -166,7 +172,7 @@ related:
 ## 10. 換一艘船時的檢查表
 
 - [ ] 組裝件與每件子作品記了 meters_per_voxel；每個模型明寫 scale
-- [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點
+- [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點；羅經櫃、絞盤、小艇這類甲板上的東西也要帶 `kind`
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
 - [ ] 每門砲退到零碰撞、砲口在船殼外；追擊砲照角度搜
 - [ ] 繩與帆的端點綁 `model:` 路徑；`ropes_broken 0`、`sails_broken 0`、`models_broken 0`
