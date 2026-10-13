@@ -36,7 +36,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>拿作品鎖之後才分派的 sub（create／list／assemble 自己管鎖）。</summary>
     static readonly string[] s_WorkLockedSubs =
         { "show", "update", "import", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links",
-          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind" };
+          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "split-events" };
 
     static string? OpWork(Ctx c)
     {
@@ -60,7 +60,7 @@ public sealed partial class Cmd_Sculpture
             if (sub == "model") return WorkModel(c, id);
             if (sub == "unmodel") return WorkUnmodel(c, id);
             if (sub == "models") return WorkModels(c, id);
-            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|model|unmodel|models");
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|model|unmodel|models|split-events");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
             List<SCP_SculptLinkNode>? tree = null;
@@ -132,6 +132,7 @@ public sealed partial class Cmd_Sculpture
             }
             if (c.Persona.Length == 0 || c.Persona != cardNow.owner) return Blocked(c, 2, "只有作品作者 " + cardNow.owner + " 可以修改原作");
             if (sub == "move" || sub == "undo" || sub == "redo") return EditWork(c, cardNow, sub);
+            if (sub == "split-events") return WorkSplitEvents(c, cardNow);   // TASK-0521：舊的大事件就地拆檔
             string title = c.Args.Get("title");
             if (c.Args.IsExplicit("title") && string.IsNullOrWhiteSpace(title)) return Blocked(c, 2, "作品名稱不可空白");
             if (c.Args.IsExplicit("size"))

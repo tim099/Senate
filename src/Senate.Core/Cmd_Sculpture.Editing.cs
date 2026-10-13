@@ -94,6 +94,8 @@ public sealed partial class Cmd_Sculpture
         string file = engine.CommitEdit(edit, c.Persona);
         c.Result.AddValue("work", card.id); c.Result.AddValue("changed", edit.after.Count.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("charged", "0"); c.Result.AddValue("event_file", file);
+        c.Result.AddValue("event_parts", engine.LastParts.ToString(CultureInfo.InvariantCulture));   // TASK-0521：>1 ⇒ 這一刀拆成頭檔＋續檔，event_file 是最後一段
+        if (engine.LastParts > 1) c.Report.Append("- 這一刀超過單檔上限，拆成 ").Append(engine.LastParts).Append(" 個事件檔（頭檔＋續檔；undo／redo 照整刀算）\n");
         c.Result.AddValue("revision", SCP_SculptWorks.Revision(engine.LoadSpace(), card.Dimensions));
         if (c.Draft) return Finish(c, 0, "✓ 草稿 " + edit.action + "｜" + edit.after.Count + "格變動｜作品本身沒動；草稿裡可用 work sub=undo/redo draft=1");
         AppendCredits(c, card.id);
@@ -108,6 +110,46 @@ public sealed partial class Cmd_Sculpture
         if (credits.Count == 0) c.Report.Append("（尚未匯入零件）\n");
         c.Result.AddValue("credit_count", credits.Count.ToString(CultureInfo.InvariantCulture));
         AppendLinkCredits(c, id);   // TASK-0494：關聯進來的作品（現組，不在 events）
+    }
+    /// <summary>TASK-0521：舊的超大 workedit 事件就地拆成頭檔＋續檔。預設只試算；confirm=1 才改寫。</summary>
+    static string? WorkSplitEvents(Ctx c, SCP_SculptWork card)
+    {
+        string confirm = c.Args.Get("confirm").Trim();
+        if (confirm != "" && confirm != "0" && confirm != "1") return Blocked(c, 2, "confirm需為0或1");
+        bool apply = confirm == "1";
+        var engine = c.Works.Engine(card, c.Roots.DataRoot);
+        var items = engine.SplitOversizeEvents(apply);
+        long limit = SCP_SculptStore.MaxEventBytes;
+        c.Report.Append("## 超過單檔上限（").Append(limit / 1048576).Append(" MB）的事件\n");
+        int split = 0;
+        foreach (var it in items)
+        {
+            c.Report.Append("- `").Append(it.Rel.Replace('\\', '/')).Append("`　").Append((it.Bytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture)).Append(" MB");
+            if (it.Skip.Length > 0) { c.Report.Append("　⚠ 不拆：").Append(it.Skip).Append('\n'); continue; }
+            split++;
+            c.Report.Append(apply ? "　✓ 拆成 " : "　→ 會拆成 ").Append(it.Parts).Append(" 檔（");
+            for (int i = 0; i < it.PartBytes.Count; i++) c.Report.Append(i == 0 ? "" : "／").Append((it.PartBytes[i] / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture));
+            c.Report.Append(" MB）\n");
+        }
+        if (items.Count == 0) c.Report.Append("（沒有）\n");
+        c.Result.AddValue("over_limit", items.Count.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue(apply ? "split" : "would_split", split.ToString(CultureInfo.InvariantCulture));
+        // ⚠ 不只拿快取算：快取的水位還有效時根本不會重播拆出來的檔 ⇒ 那個數一定相同、證明不了什麼。從頭重播（不讀不寫快取）才是拆檔之後的事實。
+        // ⚠ 也不拿 revision 比：它把水位檔名與格子的列舉順序也雜湊進去 ⇒ 內容一樣、走的路不同就會不同。比的是格子本身（不管順序）。
+        static List<(int X, int Y, int Z, int Color)> Cells(SCP_SculptSpace s)
+        {
+            var l = new List<(int X, int Y, int Z, int Color)>(s.Voxels.Count);
+            foreach (var v in s.Voxels.Entries()) l.Add((v.X, v.Y, v.Z, v.Color));
+            return l;
+        }
+        var replayed = Cells(SCP_SculptStore.LoadView(c.Works.SpacePaths(card.id), new SCP_SculptViewFilter()));
+        var cachedSpace = engine.LoadSpace();
+        c.Result.AddValue("revision", SCP_SculptWorks.Revision(cachedSpace, card.Dimensions));
+        c.Result.AddValue("voxels", replayed.Count.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("checksum", SCP_SculptVxk.Checksum(replayed).ToString(CultureInfo.InvariantCulture));   // 同 voxel_export.py／.vxk 的 checksum
+        if (!SCP_SculptVxk.SameVoxels(replayed, Cells(cachedSpace))) return Finish(c, 1, "✗ 從頭重播的格子 ≠ 快取的格子 —— 先別提交，查是哪一檔");
+        if (!apply) return Finish(c, 0, "✓ 試算：" + items.Count + " 個超過上限、" + split + " 個會拆 —— 一個位元組都沒寫；要改寫加 confirm=1");
+        return Finish(c, 0, "✓ 拆了 " + split + " 個事件（" + (items.Count - split) + " 個不拆）—— 重播結果不變；revision 在回傳值裡");
     }
     static string? WorkHistory(Ctx c, string id)
     {

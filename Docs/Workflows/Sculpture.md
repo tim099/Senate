@@ -51,7 +51,7 @@ related:
 | `export` | 匯出 `.obj`（＋`.mtl`）、MagicaVoxel `.vox`，或純格子清單 `format=list`（每行 `x,y,z,color`，§9.4.2）；obj 的 `merge=greedy`（預設，同色共面合成矩形、頂點共用）／`none`（逐 voxel 面，要 watertight 時用）；obj 預設省略封閉在模型裡的面，`sealed=keep` 照常輸出（§9.4.2） | 免費 | 選填 |
 | `exhibit` | `sub=list` 展品目錄／`sub=register` 登錄展品（＋出展品照） | 免費 | 選填 |
 | `render-profile` | 渲染設定檔：`sub=list|show|set|use|copy|delete|reset` | 免費 | persona 層必填 |
-| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6）；帆 `sail|unsail|sails|wind`（§9.4.7）；外部模型 `model|unmodel|models`（§9.4.8） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
+| `work` | 個人作品：`sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks`；草稿 `draft|apply|discard`（§9.4.3）；關聯 `link|unlink|links`（§9.4.4）；固定點與繩 `anchor|unanchor|anchors|rope|unrope|ropes`（§9.4.6）；帆 `sail|unsail|sails|wind`（§9.4.7）；外部模型 `model|unmodel|models`（§9.4.8）；舊大事件拆檔 `split-events`（§9.4 大事件拆檔） | 建立固定10；匯入⌈實際落地/100⌉；其餘免費 | 建立／修改／匯入要作者 |
 
 ```bash
 senate cmd sculpture --arg op=box --arg persona=<P> --arg x1=10 --arg x2=12 --arg y1=10 --arg y2=12 --arg z1=0 --arg z2=0 --arg color=19
@@ -391,6 +391,24 @@ senate cmd sculpture --arg op=work --arg sub=history --arg work=room
 移動只處理選區非空voxel，保留各自顏色。來源與目的地重疊可整體平移，不會搬到一半擦掉自己；目的地有選區外內容則預設拒絕，可顯式`overwrite=1`。零平移或空選區沒有變動，不新增事件。
 
 Undo/Redo僅限作品作者，免費、可連續操作，支援既有box/carve/stamp及新assemble/move。每次撤銷最後一筆尚未撤銷的voxel操作；新增一刀會清除Redo分支。Undo也能還原覆蓋前的顏色。事件只追加、不刪歷史，刪快取重播結果一致。尺寸與筆記不在voxel Undo範圍；若作品已縮小，還原內容超出目前尺寸時整筆拒絕，先擴大空間再還原。共用展區、建立費與薪水不受作品Undo影響。
+
+#### 大事件拆檔（TASK-0521）
+
+一個事件檔寫到磁碟最多 **40 MB**（GitHub 單檔 50 MB 起警告、100 MB 拒收）。整件前後快照的刀（assemble、move、undo／redo、草稿 apply、噴漆）超過就自動拆成**頭檔＋續檔**：
+
+- 名字：頭檔 `X.json`，續檔 `X_p2.json`、`X_p3.json`…（排序緊跟在頭檔後面）。每一格只落在其中一段 ⇒ 依序重播各段 ＝ 重播整刀。
+- 頭檔：這一刀的 `action`／`target_event`／`credits`／`source`，最上層多 `parts`（共幾段）。續檔：`edit.action` 是 `part`，最上層帶 `part_of`（頭檔）與 `part`（第幾段）。
+- **一刀還是一刀**：history 只數頭檔；undo／redo 整刀來回（undo 本身大也照樣拆）；時間點（`mark`、`upto`、`from`／`to`、草稿的底）指到頭檔或中間的續檔 ⇒ 都延伸到最後一段，不會停在半刀上。回傳值 `event_parts` ＞ 1 ＝ 這一刀拆過，`event_file` 是最後一段。
+- 舊版 senate.exe 重播得出拆過的刀（只讀 `edit.after`）；它的 undo 會把每一段當一刀 ⇒ 撤拆過的刀之前先更新 exe。
+
+拆檔之前就寫下的大檔用 `split-events` 就地拆（頭檔留原名 ⇒ undo 目標、標記照舊指得到；格式跟原檔一樣，縮排的照縮排、單行的照單行）：
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=split-events --arg work=<作品> --arg persona=<作者>               # 試算：列出超過上限的、會拆成幾檔，一個位元組都不寫
+senate cmd sculpture --arg op=work --arg sub=split-events --arg work=<作品> --arg persona=<作者> --arg confirm=1  # 改寫
+```
+
+回傳 `voxels`／`checksum`（同 `.vxk` 的 checksum）是**從頭重播**（不讀快取）的格子，並跟快取逐格比 —— 不同 ⇒ exit 1，先別提交。不是 workedit 的大檔不拆、照實列出。
 
 ### 9.4.1 時間標記 —— 看某一刻、撤掉或只看某一段（TASK-0491）
 
