@@ -156,14 +156,18 @@ related:
 | `magazine` | 彈藥庫關聯 | `powder_lb`（＝ 桶數 × 100，⚠ 不是史料）| blast、door |
 | `powder` | 火藥桶模型 | `powder_lb=100` | — |
 | `yard` | 帆桁模型 | 見 §5 | pivot、earing… |
+| `ladders` | 梯子所在的關聯（一個關聯可放好幾座） | — | 每座 4 個：`<梯名>.foot`／`.lo`／`.hi`／`.head` |
 
 - meta 是平的 `{鍵: 字串或數字}`，`work sub=model｜link meta=` 合併進去；有 meta 的檔 schema 會升（models 2、links 3），舊 exe 讀不了會大聲擋。
+- 梯子的四個點都取「腳踩的那一格」＝ 地板或踏板上面第一格空氣（讀的人取格心）：foot ＝ 下層甲板、最低一階往下梯方向站著等的那一格；lo／hi ＝ 最低／最高那一階；head ＝ 上層甲板、跨過艙口圍欄站穩的那一格（往外第一段連續 3 欄一樣高的平地）。哪兩層甲板由 foot／head 的高度判斷，不另外標。
+  算點：餘燼號 `design/tools/ladder_points.py <組裝件> <甲板子作品>:<關聯名>:<梯子子作品>…`（梯名與方向從扶手繩固定點 `manrope-<梯名>-<P|S>-<top|bot>` 讀；不帶 `--apply` 只算）。
 - 匯出：`op=export format=parts`（外框＋meta＋固定點的 JSON）、`format=vxk include=rig,models,parts,meta`（給遊戲；out 要絕對路徑）。改完任何部件都重匯一次，**格數與 checksum 會變**，要跟遊戲那側說。
 
 ## 10. 換一艘船時的檢查表
 
 - [ ] 組裝件與每件子作品記了 meters_per_voxel；每個模型明寫 scale
 - [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點
+- [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
 - [ ] 每門砲退到零碰撞、砲口在船殼外；追擊砲照角度搜
 - [ ] 繩與帆的端點綁 `model:` 路徑；`ropes_broken 0`、`sails_broken 0`、`models_broken 0`
 - [ ] 組裝件 1 元件、空腔 0、link_overlap 0；一舷＋鏡像的部件兩舷逐格對稱
