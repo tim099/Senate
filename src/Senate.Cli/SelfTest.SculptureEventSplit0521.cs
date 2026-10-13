@@ -5,6 +5,8 @@
 // ④ undo／redo 整刀來回（undo 本身也大 ⇒ 也拆），快取 ＝ 從頭重播。
 // ⑤ split-events：試算一個位元組都不寫；confirm=1 就地拆、頭檔留原名、重播不變、拆完照樣 undo。
 // ⑥ 🔴 反向對照：門檻照預設時同一刀是單一個檔、沒有 parts／part_of 欄；拆完再跑一次 split-events ⇒ 沒有超過上限的。
+// ⑦ 單行格式（TASK-0528）：新寫的事件（workedit、box、拆出來的段）一律單行且比 indent=2 小；縮排的舊檔照讀、拆出來照縮排、
+//    新舊格式混在同一件作品裡重播照常；🔴 Dumps 原本的兩種 python 格式一字不變。
 using Senate.Core;
 using SCP.Core.Canvas;
 using SCP.Core.Cmd;
@@ -18,7 +20,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureEventSplitCleanRoom()
     {
-        const string name = "雕刻大事件拆檔：大刀拆成頭檔＋續檔且每檔 ≤ 上限、重播＝不拆的同一刀／歷史只數刀／標記指頭檔延伸到整刀／undo・redo 整刀來回／split-events 試算零寫入、就地拆後重播不變／🔴 預設門檻單檔無新欄、拆完再掃為零（淨室，TASK-0521）";
+        const string name = "雕刻大事件拆檔：大刀拆成頭檔＋續檔且每檔 ≤ 上限、重播＝不拆的同一刀／歷史只數刀／標記指頭檔延伸到整刀／undo・redo 整刀來回／split-events 試算零寫入、就地拆後重播不變／🔴 預設門檻單檔無新欄、拆完再掃為零／新寫的事件單行且比縮排小、縮排舊檔照讀照拆、新舊混用重播照常（淨室，TASK-0521／0528）";
         var failures = new List<string>();
         var readings = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
@@ -77,6 +79,19 @@ public static partial class SelfTest
             long bytesB = new FileInfo(Events("b")[^1].Full).Length;
             readings.Add("整刀單檔 " + bytesB + " B");
 
+            // TASK-0528：新寫的事件一律單行（緊湊分隔符）；同一刀照 indent=2 寫會大多少
+            bool OneLine(SCP_SculptStore.EventFile f) { string t = File.ReadAllText(f.Full); return t.IndexOf('\n') < 0 && t.StartsWith("{\"op\":\"", StringComparison.Ordinal); }
+            bool Indented(SCP_SculptStore.EventFile f) { string t = File.ReadAllText(f.Full); return t.StartsWith("{" + Environment.NewLine + "  \"", StringComparison.Ordinal); }
+            long indentedB = SCP_SculptStore.DiskBytes(SCP_SculptPy.Dumps(lastB, true));
+            Check(OneLine(Events("b")[^1]) && bytesB < indentedB, "新寫的 workedit 是單行、而且比 indent=2 小：單行 " + bytesB + " B／縮排 " + indentedB + " B");
+            Check(OneLine(Events("b")[0]), "新寫的 box 事件也是單行（所有 op 同一個寫入口）");
+            readings.Add("單行 " + bytesB + " B vs 縮排 " + indentedB + " B");
+            // 🔴 反向對照：Dumps 原本的兩種 python 格式（展品 preset、回傳值在用）一字不變
+            var probe = new SCP_SculptPyObj().Put("a", new[] { 1, 2 }).Put("b", "x");
+            Check(SCP_SculptPy.Dumps(probe, false) == "{\"a\": [1, 2], \"b\": \"x\"}", "🔴 Dumps(false) 仍是 json.dumps() 的樣子：" + SCP_SculptPy.Dumps(probe, false));
+            Check(SCP_SculptPy.Dumps(probe, true) == "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": \"x\"\n}", "🔴 Dumps(true) 仍是 indent=2 的樣子");
+            Check(SCP_SculptPy.DumpsCompact(probe) == "{\"a\":[1,2],\"b\":\"x\"}", "DumpsCompact ＝ separators=(\",\", \":\")：" + SCP_SculptPy.DumpsCompact(probe));
+
             // ① 門檻調小 ⇒ 拆
             SCP_SculptStore.MaxEventBytes = Small;
             int before = Events("a").Count;
@@ -93,6 +108,7 @@ public static partial class SelfTest
                 Check(evA.Skip(before + 1).All(f => Ev(f)["part_of"].AsString() == head.Rel.Replace('\\', '/')), "續檔帶 part_of ＝ 頭檔");
                 Check(Replay("a") == revLift && Cached("a") == revLift && revLift != revSlab, "從頭重播 ＝ 快取 ＝ 不拆的同一刀（作品 b），且跟刀前不同");
                 readings.Add("拆成 " + parts + " 檔（上限 " + Small + " B）");
+                Check(evA.Skip(before).All(OneLine), "新寫的大刀拆出來的每一段也是單行");
 
                 // ② 歷史只數刀
                 var h = Sub("a", "history");
@@ -123,6 +139,9 @@ public static partial class SelfTest
             Check(Lift("c").ExitCode == 0, "c 用預設門檻寫一刀（單檔）");
             var evC = Events("c");
             string bigRel = evC[^1].Rel;
+            // 舊資料的樣子：TASK-0528 之前寫的事件是 indent=2 ⇒ 把 c 的兩個事件改寫回縮排（內容不動），之後新舊格式混在同一件作品裡
+            foreach (var f in evC) SCP_SculptPy.WriteTextFile(f.Full, SCP_SculptPy.Dumps(Ev(f), true));
+            Check(evC.All(Indented) && Replay("c") == revLift, "c 的事件改寫成 indent=2 之後照讀、重播不變");
             SCP_SculptStore.MaxEventBytes = Small;
             string trace0 = Trace("c");
             var dry = Sub("c", "split-events");
@@ -134,10 +153,12 @@ public static partial class SelfTest
             Check(ap.ExitCode == 0 && V(ap, "split") == "1" && cParts > 1, "confirm=1 拆了：" + SculptRoom.All(ap));
             Check(evC2[evC.Count - 1].Rel == bigRel && evC2.Skip(evC.Count).All(f => SCP_SculptStore.IsPartOf(f.Rel, bigRel)), "頭檔留原名、續檔緊跟在後");
             Check(evC2.All(f => !OverLimit(f)), "拆完每個檔 ≤ 上限");
+            Check(evC2.All(Indented), "縮排的舊檔拆出來照縮排（跟原檔同格式）");
             Check(Replay("c") == revLift && V(ap, "voxels") == "1024" && V(ap, "checksum") == V(dry, "checksum") && V(ap, "checksum").Length > 0, "就地拆完重播不變（＝ b；checksum 拆前拆後相同）");
             var hc = Sub("c", "history");
             Check(V(hc, "undo_count") == "2", "拆完歷史仍是 2 刀");
             Check(Sub("c", "undo").ExitCode == 0 && Replay("c") == revSlab, "拆完照樣 undo 整刀");
+            Check(OneLine(Events("c")[^1]) && Indented(Events("c")[0]), "新舊格式混在同一件作品裡（縮排的舊刀＋單行的 undo）重播照常");
             var again = Sub("c", "split-events");
             Check(again.ExitCode == 0 && V(again, "over_limit") == "0", "🔴 拆完再掃：沒有超過上限的：" + SculptRoom.All(again));
             readings.Add("就地拆 " + cParts + " 檔");

@@ -83,6 +83,7 @@ senate cmd sculpture --arg op=carvevox --arg work=<作品> --arg persona=<P> --a
 
 引擎是 in-process 的 SCP_Core `SCP_SculptEngine`（幾何／事件／快取／展品；不碰錢、不畫圖）。
 事實源是 `Sculpture/events/`（append-only），`sculpt_cache.json` 只是重播到某個水位的結果。
+事件檔是**單行 JSON**（分隔符不帶空白，＝ python `separators=(",", ":")`；TASK-0528）—— 之前寫的是 indent=2（同一刀約大 2.7 倍），舊檔照讀、不回頭轉；讀事件一律用 JSON 解析，⛔ 不要逐行讀。
 圖由宿主註冊的渲染器畫（Senate.Desktop 的 OpenGL 實作，`senate.exe` 啟動時註冊）—— `renderer` 值印出這張圖是哪一條路畫的。
 網格（voxel 外露面＋AO＋合併、繩、帆、外部模型）由 SCP_Core `SCP_SculptMeshBuilder` 建，渲染器只上傳與畫 ⇒ 哪個宿主建的網格都同一個 digest。
 
