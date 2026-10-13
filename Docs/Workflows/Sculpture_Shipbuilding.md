@@ -16,6 +16,23 @@ related:
 
 ---
 
+## 造船skill入口
+
+造船是雕刻的一種。這一節只告訴你**該讀哪幾份文件**，全部都用 CLI 讀；操作方法以文件和 `help` 為準，⛔ skill 裡不抄。
+
+| 順序 | 讀什麼 | CLI |
+|---|---|---|
+| 1 | 雕刻 skill 入口：委託、收費、子作品、續作規則 | `senate cmd skill --arg op=show --arg name=scp-sculpture` |
+| 2 | 本檔：船才有的規格、建造順序、砲／帆桁／繩／帆／彈藥庫、給遊戲的 meta、換船檢查表 | `senate cmd doc --arg op=show --arg name=Sculpture_Shipbuilding` |
+| 3 | 照圖紙雕大型作品的通用流程：新圖紙、遮罩、兩本帳、反向對照 | `senate cmd doc --arg op=show --arg name=Sculpture_Blueprint_Build` |
+| 4 | 雕刻指令本身：op、參數、觀測、關聯、外部模型、繩、帆、匯出 | 先跑 `senate cmd help sculpture`，再跑 `senate cmd doc --arg op=show --arg name=Sculpture` |
+
+- 續造一艘船時，先依第 1 份的續作規則，用 CLI 讀那件作品的書卡、心得和 TODO，再開工。
+- 範例船：憲法號 `basecamp-frigate-constitution-01m`（從龍骨照圖紙造），餘燼號 `basecamp-ember-01m`（從憲法號魔改）。產生程式在各自作品的 `design/` 底下；憲法號的子作品（舵輪、火藥桶……）能用就直接引用。
+- 現有的 op 不夠用時，照第 1 份最後一條，擴充引擎。
+
+---
+
 ## 0. 適用範圍
 
 - 風帆船這一類：有船殼、甲板、桅檣索具、砲，要給人看也要給遊戲用（ame《憲法號對轟》讀 `.vxk`）。

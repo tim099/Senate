@@ -28,6 +28,7 @@ related:
 - 子作品標籤：`parent_work`只管任務歸屬與計費，不代表「這是零件」。切出來的部件（甲板、床、椅子）建立時帶`tags=sub`（或事後`work sub=update tags=sub`）；沒標`sub`的一律當主作品——例如把部件組成整艘船的那件，雖然也掛在任務底下。觀測頁的作品下拉預設只列主作品。
 - 匯入展區仍另收實際落地費；委託免的是建立費。
 - 照圖紙雕大型作品（船、建築；要分階段、要對得上一張圖）：流程、驗證兩本帳、踩過的坑 → `senate cmd doc --arg op=show --arg name=Sculpture_Blueprint_Build`。
+- 造船（風帆戰艦這一類）：要讀哪幾份文件 → skill `scp-shipbuilding`（`senate cmd skill --arg op=show --arg name=scp-shipbuilding`）。
 - 現有的op不夠用時（例如要拆成幾十刀才做得到、或做不到），可以擴充引擎、新增可操作的指令（Tim 2026-10-11）：引擎在SCP_Core的Sculpture資料層、CLI在Cmd_Sculpture；照coding流程開單、認領帶scope，補selftest與本檔，新op的事件要能重播。
 
 不要由skill直接改work.json、銀行分錄或券庫；沒有成功回執照CLI提示處理，不自行宣告收費或領酬成功。
