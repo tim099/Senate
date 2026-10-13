@@ -613,18 +613,23 @@ senate cmd sculpture --arg op=work --arg sub=sails --arg work=ship              
 senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_seconds=2 --arg out=<png>                  # 這次換風、換秒數
 ```
 
-- **帆** `sub=sail name= corners=角0|角1|角2[|角3] [corner_names=名|名|…] [bind=邊,…] [free=角,…] [color=] [res=] [fullness=] [enabled=] [note=]`：
+- **帆** `sub=sail name= corners=角0|角1|角2[|角3] [corner_names=名|名|…] [bind=邊,…] [free=角,…] [color=] [texture=<png>|none] [res=] [fullness=] [enabled=] [note=]`：
   - 角 3 個 ＝ 三角帆（jib、staysail）、4 個 ＝ 四邊形（方帆、梯形的縱帆 spanker）；**依序繞一圈**，`|` 分隔。
   - `bind=k`：**邊 k ＝ 角 k → 角 k+1** 整條釘在兩角之間的線段上（方帆上緣沿 yard、縱帆沿 gaff／boom）—— 那條邊上的每一個布點都釘住，不是只釘兩個角。
   - 角預設**釘住**；`free=` 的角（名字或序號）跟著布動。綁在 free 角上的繩會拉住它（見下）；沒綁繩的 free 角就隨風亂飛。
   - `color` ＝ 調色盤 index 1..255 或 `#RRGGBB`（存小寫；預設 `#f2ead8` 帆布色）。`res` ＝ 布料每邊幾格（0 ＝ 照大小自動，6..24）。`fullness` ＝ 布比角圍出來的框多幾成（預設 1.06；1 ＝ 繃平、鼓不起來；上限 1.5）。
-  - 同名已在：改 free／bind／color／res／fullness／enabled／note／corner_names 直接改；**換角的位置**要 `overwrite=1`。寫之前先解一次：角解不到 ⇒ exit 2、**未寫入**。`sub=unsail name=` 拿掉（綁它角的繩之後會是 broken，當下全庫掃一次印出來）。
+  - **貼圖**（TASK-0530；例：拿帆當旗，圖用像素畫）`texture=<png 路徑>`：PNG 每邊 ≤ 128 像素，**複製進作品**的 `textures/<帆名>.png`（帆名不是英數＿- ⇒ `textures/sail_<8 碼>.png`），`sails.json` 記相對路徑；`texture=none` 拿掉（沒有別的帆用那張圖 ⇒ 圖檔刪掉，`sub=unsail` 同）。
+    - 對應：圖的**左上角 ＝ 角 0**、欄 → 角 0→角 1、列 → 角 0→角 3（三角帆：角 0→角 2，像素中心落在斜邊外的不畫）；alpha < 128 的像素不畫（燕尾旗）；背面是鏡像。
+    - 圖跟著布鼓、像素保持銳利（每個像素一塊平色，不內插）。貼圖不影響模擬：形狀跟沒貼圖時逐位元相同。
+    - 有任何一面帆用貼圖 ⇒ `sails.json` schema 2（舊版 exe 讀到大聲擋）；都沒有 ⇒ schema 1、檔裡不出現 `texture`。壞圖、太大、不是 PNG ⇒ exit 2、**未寫入**。
+  - 同名已在：改 free／bind／color／texture／res／fullness／enabled／note／corner_names 直接改；**換角的位置**要 `overwrite=1`。寫之前先解一次：角解不到 ⇒ exit 2、**未寫入**。`sub=unsail name=` 拿掉（綁它角的繩之後會是 broken，當下全庫掃一次印出來）。
 - **模擬**：PBD 布料（距離約束：相鄰／對角／隔一格）＋**重力**＋**風**（只算布面法線方向的風壓，含固定的陣風起伏）；固定 dt 1/60 秒、每步固定迭代次數、單執行緒依序走 ⇒ **同樣的輸入＋同樣的秒數 ⇒ 逐位元同樣的形狀**。不用算到靜止（Tim）：
   - CLI `view`／`export`：取「模擬 `sail_seconds` 秒後」那一刻（不給 ⇒ 作品預設，預設 3 秒；上限 60）。
   - 觀測頁：「持續模擬」開著 ⇒ 帆會動；**每 0.1 秒更新一次、一次最多約 8 ms**（Tim「不用頻繁模擬」）—— 帆多、算不完就慢動作播放，⛔ 不改 dt、不拖垮畫面。關掉 ⇒ 停在 `sail_seconds` 那一刻（跟 CLI 同一張）。
   - 單位：重力 9.81 m/s²、風 `wind=x,y,z`（**m/s，世界座標**；例 `0,-8,0` ＝ 往 −y 吹的 8 m/s 風），照**組裝件**的 `meters_per_voxel` 換成格 ⇒ 比例對了，鼓的程度才對（憲法號一格 0.1 m）。預設風存在組裝件的 `sails.json`（`sub=wind`），`view`／`export`／`sub=sails` 的 `wind=`／`sail_seconds=` 一次性蓋過。
   - ⚠ **沒有碰撞**：帆會穿過格子與繩（同繩）—— 綁點與 fullness 自己控制，看讀數。
-- **讀數**（`sub=sails` 與 view／export 的回報，每面帆一行）：狀態、角（名字＋座標、哪幾個 free）、釘住的邊、解析度與布點數、**最鼓**（離綁點平面最遠那一點幾格，帶正負號：正 ＝ 往「角依序繞一圈的右手法線」那側）、**平均位移**（全部布點離設計位置，世界座標 —— 沒風 ⇒ 幾乎只往 −z）、牽繩條數；環境一行：風、一格幾公尺、模擬了幾秒幾步、平均每步幾毫秒。回傳值 `sails_drawn／hidden／disabled／broken`、`sail_seconds`、`sail_steps`、`sail_step_ms`、`sail_max_billow`。
+- **讀數**（`sub=sails` 與 view／export 的回報，每面帆一行）：狀態、角（名字＋座標、哪幾個 free）、釘住的邊、解析度與布點數、**最鼓**（離綁點平面最遠那一點幾格，帶正負號：正 ＝ 往「角依序繞一圈的右手法線」那側）、**平均位移**（全部布點離設計位置，世界座標 —— 沒風 ⇒ 幾乎只往 −z）、牽繩條數、貼圖（尺寸、幾色、畫幾個像素）；環境一行：風、一格幾公尺、模擬了幾秒幾步、平均每步幾毫秒。回傳值 `sails_drawn／hidden／disabled／broken`、`sail_seconds`、`sail_steps`、`sail_step_ms`、`sail_max_billow`。
+  - 貼圖讀不了（檔不見、壞掉）⇒ 照 `color` 畫、那一行印 ⚠ 與原因、回傳 `sail_texture_broken`（⛔ 不靜默）。
 - **帆角當繩的端點**：繩的 `from`／`to` 寫 `sail:[關聯/…/]帆名/角`（相對於繩所在的作品，同固定點路徑）。
   - 綁在 **free** 角上 ⇒ 那條繩是**牽繩**：繩長 L ＝ `slack` × 設計時兩端的距離；帆角離繩另一端超過 L 就被拉回（繩繃住），沒超過就不拉（鬆的繩不出力）。⇒ 風把帆角往外吹時繩繃住；**拉繩的另一頭（搬固定點）或改 slack，帆的形狀就跟著變**。
   - **綁帆角的繩 slack 可以小於 1**（下限 0.3）：繩比設計時短 ⇒ 把帆角拉過去（收帆腳索）。拉不到那麼近時繩畫成拉直。沒綁帆角的繩照舊 1..10。
@@ -636,9 +641,10 @@ senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_
   - **壞掉的綁定**（固定點刪了／改名、關聯路徑不在了、角幾乎在一條線上）⇒ `broken`：⛔ 不靜默消失 —— 觀測照樣出圖，回傳行大聲列 🔴（`sails_broken`）；`sub=unanchor`／`sub=unsail` 當下全庫掃一次（`sails_now_broken`／`ropes_now_broken`）。用原名把固定點加回去就接上。
 - **畫**：view 與觀測頁的 GPU 預覽把帆畫成**雙面**的布（正反各一份、各往法線推半個布厚 ⇒ 兩面都看得到、也不會自己遮自己的影子），吃同一組燈、會投影子也接影子。帆與綁帆角的繩是**另一趟**（每次換形狀只重傳帆，⛔ voxel 網格不重建）。帆不是 voxel ⇒ `visible_voxels` 不變。
 - **觀測頁**：選了有帆的作品，「帆」區：風／秒數欄位（空 ＝ 作品預設）、「持續模擬」開關、總開關「畫帆」＋一面一個勾（只影響這次觀測，⛔ 不寫回 sails.json）；壞掉的列 🔴＋原因；作品裡設為關的只列不勾。
-- **匯出**：`export format=obj` 把帆（模擬到 `sail_seconds` 那一刻）接在繩後面輸出成雙面三角網格（每面一個 `o sail_n`＋材質 `sail_n`，mtl 有 Kd；有法線、繞序跟法線同向），綁帆角的繩也一起 ⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ `sails_exported=0`。
+- **匯出**：`export format=obj` 把帆（模擬到 `sail_seconds` 那一刻）接在繩後面輸出成雙面三角網格（每份網格一個 `o sail_n`＋材質 `sail_n`，mtl 有 Kd；有法線、繞序跟法線同向；帶貼圖的帆每色一份），綁帆角的繩也一起 ⇒ 匯進 Unity 看得到。`sails_exported` ＝ 幾面帆、`sail_meshes_exported` ＝ 幾份網格。`format=list|vox` 只有格子 ⇒ `sails_exported=0`。
+  - `format=vxk include=rig`：帆**一面一份**（遊戲拿它跑布料物理）；帶貼圖的多一個 `texture`：`file`、`w`／`h`、`rgba`（RGBA8 列優先、第 0 列是圖的最上面、base64）、`alpha_min`、`uv`（跟 `verts` 一一對應、每頂點 2 個；u ＝ 角 0→角 1、v ＝ 角 0→角 3／三角帆角 0→角 2）。沒貼圖的帆輸出不變。
 - **讀數**（淨室 SculptureSailsCleanRoom，Release）：24 面帆、每面 25×25 布點，模擬 3 秒（180 步）約 1.2 秒、每步約 6.8 ms。
-- **之後**：貼圖（Tim 2026-10-11「貼圖可以先不處理」）、收帆（furled，捲在 yard 上）、縮帆（reef）本版不做 —— `sails.json` 的帆是可以加欄位的物件，加的時候舊檔照讀。
+- 收帆（furled，捲在 yard 上）、縮帆（reef）不做。
 
 ### 9.4.8 外部模型 —— 匯入 obj、或拿另一件作品當模型（TASK-0507）
 

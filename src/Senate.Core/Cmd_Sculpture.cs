@@ -161,6 +161,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("bind", "work sail：哪幾條邊整條釘在兩角之間的線段上（邊 k ＝ 角 k → 角 k+1，逗號分隔；例：方帆上緣沿 yard）"),
         new SCP_CmdArgSpec("res", "work sail：布料解析度，每邊幾格（0 ＝ 照大小自動；" + SCP_SculptSails.MinRes + ".." + SCP_SculptSails.MaxRes + "）"),
         new SCP_CmdArgSpec("fullness", "work sail：布比角圍出來的框多幾成（1 ＝ 繃平、鼓不起來；預設 " + SCP_SculptSails.DefaultFullness.ToString(CultureInfo.InvariantCulture) + "；上限 " + SCP_SculptSails.MaxFullness.ToString(CultureInfo.InvariantCulture) + "）"),
+        new SCP_CmdArgSpec("texture", "work sail：貼圖（TASK-0530，例：拿帆當旗）—— PNG 的路徑（每邊 ≤ " + SCP_SculptSails.MaxTextureSide + " 像素，像素畫）⇒ 複製進作品的 " + SCP_SculptSails.TextureDir + "/<帆名>.png；none ＝ 拿掉。圖的左上角 ＝ 角 0、欄 → 角 0→角 1、列 → 角 0→角 3（三角帆角 0→角 2）；alpha < " + SCP_SculptSails.TextureAlpha + " 的像素不畫"),
         new SCP_CmdArgSpec("draft","1 ＝ 草稿（TASK-0493）：落子／刻（box/carve/carvevox/stamp*）與 work sub=move|assemble|undo|redo 只動草稿（沒開就開）；觀測（view/slice/section/stats/export）看「作品＋草稿」；diff ＝ 作品現在 → 草稿。開／看狀態 sub=draft、套進作品 sub=apply、丟掉 sub=discard"),
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
@@ -956,7 +957,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             c.Ropes = aRig.Ropes; c.SailRig = aRig;
             oPlan.Params.Ropes = aRig.RopeGeoms(false);
             oPlan.Params.SailRopes = aRig.RopeGeoms(true);
-            oPlan.Params.Sails = aRig.SailGeoms();
+            oPlan.Params.Sails = aRig.SailDrawGeoms();   // TASK-0530：帶貼圖的帆展開成每色一份
             oPlan.Params.SailRig = aRig.Animated ? aRig : null;
             if (aRig.Models != null) { c.Models = aRig.Models; oPlan.Params.Models = aRig.Models.Geoms(); }   // TASK-0507：外部模型（靜態，另一趟）
         }
@@ -1414,7 +1415,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             AppendRopeReport(c, aRig.Ropes);
             AppendSailReport(c, aRig);
             aArgs.Ropes = SCP_SculptRopes.Drawable(aRig.Ropes);   // 匯出是靜態的一刻 ⇒ 綁帆角的繩也一起
-            aArgs.Sails = aRig.SailGeoms();
+            aArgs.Sails = aRig.SailDrawGeoms();   // TASK-0530：obj 一色一個材質 ⇒ 貼圖展開成每色一份
             if (aRig.Models != null) { AppendModelReport(c, aRig.Models); aArgs.Models = aRig.Models.Geoms(); }   // TASK-0507
         }
         if (!TryLocked(c, e => e.Export(aArgs), out SCP_SculptResult aRes, out string? aBlocked)) return aBlocked;
@@ -1427,7 +1428,13 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         if (aEx.MtlPath.Length > 0) c.Result.AddValue("mtl_path", aEx.MtlPath.Replace('\\', '/'));
         if (aEx.Sha256.Length > 0) c.Result.AddValue("sha256", aEx.Sha256);
         if (aArgs.Ropes.Count > 0) c.Result.AddValue("ropes_exported", aEx.RopesExported.ToString(CultureInfo.InvariantCulture));
-        if (aArgs.Sails.Count > 0) c.Result.AddValue("sails_exported", aEx.SailsExported.ToString(CultureInfo.InvariantCulture));
+        if (aArgs.Sails.Count > 0)
+        {
+            // TASK-0530：帶貼圖的帆展開成每色一份 ⇒ 引擎數的是網格份數；「幾面帆」數不同的帆路徑（同一面帆的份在清單裡相鄰）
+            int aSailsOut = aEx.SailsExported == 0 ? 0 : aArgs.Sails.Select(s => s.Path).Distinct(StringComparer.Ordinal).Count();
+            c.Result.AddValue("sails_exported", aSailsOut.ToString(CultureInfo.InvariantCulture));
+            c.Result.AddValue("sail_meshes_exported", aEx.SailsExported.ToString(CultureInfo.InvariantCulture));
+        }
         if (aArgs.Models.Count > 0) c.Result.AddValue("models_exported", aEx.ModelsExported.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("voxels", aEx.VoxelCount.ToString(CultureInfo.InvariantCulture));
         if (aEx.Merge.Length > 0)

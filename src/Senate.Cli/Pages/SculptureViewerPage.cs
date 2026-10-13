@@ -875,7 +875,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
                 aRig.Advance(aSince, aMax);
                 m_SailTick = aNow;
             }
-            p.Sails = aRig.SailGeoms();
+            p.Sails = aRig.SailDrawGeoms();   // TASK-0530：帶貼圖的帆展開成每色一份
             p.SailRopes = aRig.RopeGeoms(true);
             aSailSig = ";sail=" + aRig.Steps.ToString(CultureInfo.InvariantCulture);
             aSailInfo = $"帆：模擬到 {aRig.Time:0.00} 秒（{aRig.Steps:N0} 步，每步 {aRig.LastStepMs:0.###} ms）"

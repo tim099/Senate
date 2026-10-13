@@ -220,6 +220,8 @@ public static partial class SelfTest
         One(nameof(SculptureRopeGroupsCleanRoom), "sculpture", SculptureRopeGroupsCleanRoom),
         // 雕刻帆（TASK-0503）：本體在 SelfTest.SculptureSails0503.cs
         One(nameof(SculptureSailsCleanRoom), "sculpture", SculptureSailsCleanRoom),
+        // 雕刻帆貼圖（TASK-0530）：本體在 SelfTest.SculptureSailTexture0530.cs
+        One(nameof(SculptureSailTextureCleanRoom), "sculpture", SculptureSailTextureCleanRoom),
         One(nameof(SculptureModelsCleanRoom), "sculpture", SculptureModelsCleanRoom),
         // 雕刻 meta 與部件清單（TASK-0517）：本體在 SelfTest.SculptureMeta0517.cs
         One(nameof(SculptureMetaCleanRoom), "sculpture", SculptureMetaCleanRoom),

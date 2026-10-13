@@ -98,7 +98,7 @@ public sealed partial class Cmd_Sculpture
     {
         List<SCP_SculptSailReading> aList = iOnly ?? iRig.Sails;
         if (aList.Count == 0 && !iAlways) return;
-        int aOk = 0, aHidden = 0, aBroken = 0, aDisabled = 0;
+        int aOk = 0, aHidden = 0, aBroken = 0, aDisabled = 0, aTexBad = 0;
         double aMax = 0;
         c.Report.Append("\n## 帆（不是 voxel；布料模擬 —— 長度單位：格）\n");
         SCP_SculptSailEnv e = iRig.Env;
@@ -135,8 +135,21 @@ public sealed partial class Cmd_Sculpture
                 if (Math.Abs(r.Billow) > Math.Abs(aMax)) aMax = r.Billow;
             }
             c.Report.Append("｜色 ").Append(r.Sail.color).Append("、fullness ").Append(F2(r.Sail.fullness));
+            if (r.Sail.texture.Length > 0)
+            {
+                // 貼圖（TASK-0530）：讀得了 ⇒ 尺寸與色數；讀不了 ⇒ ⚠（照底色畫，⛔ 不靜默）
+                if (r.Texture != null)
+                    c.Report.Append("｜貼圖 ").Append(r.Sail.texture).Append(' ').Append(r.Texture.Width).Append('×').Append(r.Texture.Height)
+                            .Append("、").Append(r.Texture.Colors).Append(" 色、畫 ").Append(r.Texture.Opaque).Append(" 像素");
+                else { aTexBad++; c.Report.Append("｜⚠ 貼圖 ").Append(r.Sail.texture).Append(" 讀不了（照底色畫）：").Append(r.TextureError); }
+            }
             if (r.Reason.Length > 0) c.Report.Append("｜").Append(r.Reason);
             c.Report.Append('\n');
+        }
+        if (aTexBad > 0)
+        {
+            c.Result.AddValue("sail_texture_broken", aTexBad.ToString(CultureInfo.InvariantCulture));
+            c.Result.Lines.Add("⚠ 帆：" + aTexBad + " 面的貼圖讀不了（照底色畫）—— 原因見回傳檔");
         }
         c.Result.AddValue("sails_drawn", aOk.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("sails_hidden", aHidden.ToString(CultureInfo.InvariantCulture));
@@ -169,10 +182,10 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptSailFile aFile = SCP_SculptSails.ReadSails(aPaths);
         int aIdx = aFile.sails.FindIndex(s => s.name == aName);
         SCP_SculptSail? aOld = aIdx >= 0 ? aFile.sails[aIdx] : null;
-        string[] aPropKeys = { "corner_names", "free", "bind", "color", "res", "fullness", "enabled", "note" };
+        string[] aPropKeys = { "corner_names", "free", "bind", "color", "res", "fullness", "enabled", "note", "texture" };
         bool aProps = Array.Exists(aPropKeys, k => c.Args.IsExplicit(k));
         bool aCorners = c.Args.IsExplicit("corners");
-        if (aOld != null && !aCorners && !aProps) return Blocked(c, 2, "帆 `" + aName + "` 已經在了 —— 沒有要改什麼（free／bind／color／res／fullness／enabled／note／corner_names 直接改；換角的位置要 corners= 加 overwrite=1）");
+        if (aOld != null && !aCorners && !aProps) return Blocked(c, 2, "帆 `" + aName + "` 已經在了 —— 沒有要改什麼（free／bind／color／res／fullness／enabled／note／corner_names／texture 直接改；換角的位置要 corners= 加 overwrite=1）");
         if (aOld != null && aCorners && !WorkOverwrite(c)) return Blocked(c, 2, "已經有帆 `" + aName + "`（" + string.Join(" | ", aOld.corners.ConvertAll(k => k.at)) + "）—— ⛔ 不默默換角；要換請加 overwrite=1");
         if (aOld == null && !aCorners) return Blocked(c, 2, "加帆要 name=<名> corners=\"<角0>|<角1>|<角2>[|<角3>]\"（3 個 ＝ 三角帆、4 個 ＝ 四邊形，依序繞一圈；角：固定點名｜關聯/…/固定點名｜x,y,z）");
 
@@ -186,7 +199,24 @@ public sealed partial class Cmd_Sculpture
             note = c.Args.IsExplicit("note") ? c.Args.Get("note").Trim() : aOld?.note ?? "",
             persona = aOld?.persona ?? c.Persona,
             created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+            texture = aOld?.texture ?? "",
         };
+        // 貼圖（TASK-0530）：先解一次（壞圖、太大 ⇒ 擋、未寫入）；檔要等角驗過才複製進作品（⛔ 被擋的那一刀不留檔）
+        byte[]? aTexBytes = null;
+        SCP_SculptSailTexture? aTexNew = null;
+        if (c.Args.IsExplicit("texture"))
+        {
+            string aSrc = c.Args.Get("texture").Trim();
+            if (aSrc.Length == 0 || aSrc == "none") aSail.texture = "";
+            else
+            {
+                string aSrcFull = Path.GetFullPath(aSrc);
+                if (!File.Exists(aSrcFull)) return Blocked(c, 2, "texture 的檔不在：" + aSrcFull.Replace('\\', '/') + "；未寫入");
+                aSail.texture = SCP_SculptSails.TextureDir + "/" + TextureFileName(aName);
+                try { aTexBytes = File.ReadAllBytes(aSrcFull); aTexNew = SCP_SculptSails.DecodeTexture(aTexBytes, aSail.texture); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidOperationException) { return Blocked(c, 2, "texture：" + e.Message + "；未寫入"); }
+            }
+        }
         if (aCorners)
             foreach (string at in c.Args.Get("corners").Split('|')) aSail.corners.Add(new SCP_SculptSailCorner { at = at.Trim() });
         else
@@ -258,7 +288,23 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptSailReading? aReading = aRig.Sails.Find(r => r.Path == aSail.name);
         if (aReading == null) return Blocked(c, 1, "寫之前的回讀沒找到這面帆（不該發生）；未寫入");
         if (aReading.State == SCP_SculptSailReading.Broken) return Blocked(c, 2, "角解不到：" + aReading.Reason + "；未寫入（先 sub=anchor 加固定點，或用 sub=anchors 看有哪些）");
+        if (aTexBytes != null && aTexNew != null)
+        {
+            // 圖先落檔、再寫 sails.json ⇒ sails.json 永遠不會指到一張不在的圖
+            string aDst = SCP_SculptSails.TextureFile(aPaths, aSail.texture), aTmp = aDst + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(aDst)!);
+                File.WriteAllBytes(aTmp, aTexBytes);
+                if (File.Exists(aDst)) File.Replace(aTmp, aDst, null); else File.Move(aTmp, aDst);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return Blocked(c, 1, "貼圖複製進作品失敗（" + aDst.Replace('\\', '/') + "）：" + e.Message + "；sails.json 未寫入"); }
+            finally { try { if (File.Exists(aTmp)) File.Delete(aTmp); } catch (Exception) { } }
+            aReading.Texture = aTexNew; aReading.TextureError = "";   // 寫之前那次解的時候檔還沒在 —— 讀數換成剛落檔的那一份（同一串位元組）
+            c.Result.AddValue("texture_file", aDst.Replace('\\', '/'));
+        }
         SCP_SculptSails.SaveSails(aPaths, aFile);
+        if (aOld != null && aOld.texture.Length > 0 && aOld.texture != aSail.texture) DropTextureIfUnused(c, aPaths, aFile, aOld.texture);
         c.Result.AddValue("sail", aSail.name);
         c.Result.AddValue("sail_corners", n.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("sail_count", aFile.sails.Count.ToString(CultureInfo.InvariantCulture));
@@ -266,6 +312,29 @@ public sealed partial class Cmd_Sculpture
         AppendSailReport(c, aRig, false, new List<SCP_SculptSailReading> { aReading });
         c.Report.Append("\n形狀要看模擬 ⇒ `--arg op=work --arg sub=sails --arg work=").Append(iCard.id).Append("`（讀數）或 `--arg op=view --arg work=").Append(iCard.id).Append(" [--arg wind=x,y,z]`（圖）\n");
         return Finish(c, 0, "✓ 帆 `" + aSail.name + "`（" + (n == 3 ? "三角帆" : "四邊形") + "、" + aReading.Particles + " 布點" + (aSail.enabled ? "" : "、關") + "）｜不是 voxel，一格都沒動");
+    }
+
+    /// <summary>
+    /// 帆的貼圖在作品裡的檔名（TASK-0530）：帆名本身是英數＿- ⇒ <c>&lt;帆名&gt;.png</c>；
+    /// 帆名用了別的字（中文…）⇒ <c>sail_&lt;帆名 UTF-8 的 SHA-256 前 8 碼&gt;.png</c>（檔名要過 <see cref="SCP_SculptSails.CheckTexturePath"/>）。
+    /// </summary>
+    static string TextureFileName(string iSailName)
+    {
+        bool aPlain = iSailName.Length > 0 && !iSailName.StartsWith(".", StringComparison.Ordinal);
+        foreach (char ch in iSailName) aPlain &= ch < 128 && (char.IsLetterOrDigit(ch) || ch == '_' || ch == '-');
+        if (aPlain) return iSailName + ".png";
+        using var aSha = System.Security.Cryptography.SHA256.Create();
+        byte[] h = aSha.ComputeHash(Encoding.UTF8.GetBytes(iSailName));
+        return "sail_" + BitConverter.ToString(h, 0, 4).Replace("-", "").ToLowerInvariant() + ".png";
+    }
+
+    /// <summary>換掉／拿掉貼圖之後：這件作品沒有別的帆用那張圖 ⇒ 刪檔（版控裡還有）；有人用 ⇒ 留著。結果寫進回傳值。</summary>
+    static void DropTextureIfUnused(Ctx c, SCP_SculptPaths iPaths, SCP_SculptSailFile iFile, string iRel)
+    {
+        if (iFile.sails.Exists(s => s.texture == iRel)) { c.Result.AddValue("texture_kept", iRel); return; }
+        string aFull = SCP_SculptSails.TextureFile(iPaths, iRel);
+        try { if (File.Exists(aFull)) { File.Delete(aFull); c.Result.AddValue("texture_removed", iRel); } }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { c.Result.Lines.Add("⚠ 舊貼圖沒刪掉（" + aFull.Replace('\\', '/') + "：" + e.Message + "）—— 沒有帆用它了，可以手動刪"); }
     }
 
     /// <summary>work sub=unsail name=：拿掉一面帆；綁在它角上的繩（全庫掃）⇒ 列出來（它們之後每次觀測都會是 broken）。</summary>
@@ -277,8 +346,10 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptSailFile aFile = SCP_SculptSails.ReadSails(aPaths);
         int aIdx = aFile.sails.FindIndex(s => s.name == aName);
         if (aIdx < 0) return Blocked(c, 2, "沒有帆 `" + aName + "`（現有：" + (aFile.sails.Count == 0 ? "（沒有）" : string.Join("、", aFile.sails.ConvertAll(s => s.name))) + "）");
+        string aOldTexture = aFile.sails[aIdx].texture;
         aFile.sails.RemoveAt(aIdx);
         SCP_SculptSails.SaveSails(aPaths, aFile);
+        if (aOldTexture.Length > 0) DropTextureIfUnused(c, aPaths, aFile, aOldTexture);
         c.Result.AddValue("sail_count", aFile.sails.Count.ToString(CultureInfo.InvariantCulture));
         List<string> aBroken = BrokenRiggingAcrossWorks(c, iCard.id, out int aRopesBroken, out _);
         c.Result.AddValue("ropes_now_broken", aRopesBroken.ToString(CultureInfo.InvariantCulture));
