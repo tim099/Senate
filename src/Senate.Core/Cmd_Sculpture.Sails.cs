@@ -135,6 +135,7 @@ public sealed partial class Cmd_Sculpture
                 if (Math.Abs(r.Billow) > Math.Abs(aMax)) aMax = r.Billow;
             }
             c.Report.Append("｜色 ").Append(r.Sail.color).Append("、fullness ").Append(F2(r.Sail.fullness));
+            if (r.Sail.meta.Count > 0) c.Report.Append("｜meta ").Append(SCP_SculptMeta.Describe(r.Sail.meta));   // TASK-0539（沒 meta 的帆這一行一個字都不差）
             if (r.Sail.texture.Length > 0)
             {
                 // 貼圖（TASK-0530）：讀得了 ⇒ 尺寸與色數；讀不了 ⇒ ⚠（照底色畫，⛔ 不靜默）
@@ -200,6 +201,7 @@ public sealed partial class Cmd_Sculpture
             persona = aOld?.persona ?? c.Persona,
             created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
             texture = aOld?.texture ?? "",
+            meta = aOld?.meta ?? SCP_SculptMeta.New(),   // TASK-0539：改屬性、換角都不動 meta（⛔ 沒帶過去 ⇒ 作者一改就默默清掉）；meta 走 sub=meta
         };
         // 貼圖（TASK-0530）：先解一次（壞圖、太大 ⇒ 擋、未寫入）；檔要等角驗過才複製進作品（⛔ 被擋的那一刀不留檔）
         byte[]? aTexBytes = null;

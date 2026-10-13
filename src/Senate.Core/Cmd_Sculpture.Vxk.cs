@@ -12,7 +12,7 @@ namespace Senate.Core;
 
 public sealed partial class Cmd_Sculpture
 {
-    static readonly string[] s_VxkInclude = { "rig", "models", "parts", "meta" };
+    static readonly string[] s_VxkInclude = { "rig", "models", "parts", "meta", "ends" };
 
     static string? ExportVxk(Ctx c)
     {
@@ -23,10 +23,11 @@ public sealed partial class Cmd_Sculpture
         foreach (string s in c.Args.Get("include").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
         {
             string k = s.Trim().ToLowerInvariant();
-            if (Array.IndexOf(s_VxkInclude, k) < 0) return Blocked(c, 2, "include 只認 rig,models,parts,meta（got '" + s.Trim() + "'）");
+            if (Array.IndexOf(s_VxkInclude, k) < 0) return Blocked(c, 2, "include 只認 rig,models,parts,meta,ends（got '" + s.Trim() + "'）");
             aInc.Add(k);
         }
         if (aInc.Contains("models") && !aInc.Contains("rig")) return Blocked(c, 2, "include=models 要配 rig（模型放在 header 的 rig.models／rig.meshes）");
+        if (aInc.Contains("ends") && !aInc.Contains("rig")) return Blocked(c, 2, "include=ends 要配 rig（繩的兩端放在 header 的 rig.ropes）");
         if (c.Args.Get("region").Trim().Length > 0 || c.Args.Get("exclude_color").Trim().Length > 0) return Blocked(c, 2, "vxk 是整件作品的封裝 —— 不吃 region／exclude_color");
         SCP_SculptWork aCard = c.Work;
 
@@ -118,6 +119,35 @@ public sealed partial class Cmd_Sculpture
                     Attach(m, q);
                 }
         }
+        // 帆與繩（TASK-0539）：meta 有才寫（⇒ 沒標 meta 的作品匯出跟以前逐欄相同）；include=ends ⇒ 繩多帶 frame（繩所在那一層的關聯路徑，組裝件自己 ＝ ""）與 ends（兩端原樣的參照，相對於 frame）
+        int aRopeMeta = 0, aSailMeta = 0;
+        if (aRigJ != null && (aInc.Contains("meta") || aInc.Contains("ends")))
+        {
+            var aRopeBy = new Dictionary<string, SCP_SculptRopeReading>(StringComparer.Ordinal);
+            foreach (var r in aRig!.Ropes) aRopeBy[r.Path] = r;
+            foreach (SCP_JsonData o in aRigJ["ropes"])
+            {
+                if (!aRopeBy.TryGetValue(o["name"].AsString(), out SCP_SculptRopeReading? r)) return Blocked(c, 2, "繩的讀數裡沒有 `" + o["name"].AsString() + "`（不該發生）");
+                if (aInc.Contains("meta") && r.Rope.meta.Count > 0) { o.Set("meta", SCP_SculptMeta.ToNode(r.Rope.meta)); aRopeMeta++; }
+                if (aInc.Contains("ends"))
+                {
+                    string aFrame = r.Path.EndsWith("/" + r.Rope.name, StringComparison.Ordinal) ? r.Path.Substring(0, r.Path.Length - r.Rope.name.Length - 1) : "";
+                    var aEnds = SCP_JsonData.NewArray(); aEnds.Add(r.Rope.from); aEnds.Add(r.Rope.to);
+                    o.Set("frame", aFrame);
+                    o.Set("ends", aEnds);
+                }
+            }
+            if (aInc.Contains("meta"))
+            {
+                var aSailBy = new Dictionary<string, SCP_SculptSailReading>(StringComparer.Ordinal);
+                foreach (var s in aRig.Sails) aSailBy[s.Path] = s;
+                foreach (SCP_JsonData o in aRigJ["sails"])
+                {
+                    if (!aSailBy.TryGetValue(o["name"].AsString(), out SCP_SculptSailReading? s)) return Blocked(c, 2, "帆的讀數裡沒有 `" + o["name"].AsString() + "`（不該發生）");
+                    if (s.Sail.meta.Count > 0) { o.Set("meta", SCP_SculptMeta.ToNode(s.Sail.meta)); aSailMeta++; }
+                }
+            }
+        }
 
         // ③ 格子、封裝、回讀對拍：引擎（拿作品鎖）
         var aArgs = new SCP_SculptExportArgs { Format = SCP_SculptVxk.Format, Out = aOut, OutDir = c.Args.Get("out_dir").Trim(), VxkHead = aHead, VxkTail = aTail };
@@ -144,6 +174,7 @@ public sealed partial class Cmd_Sculpture
         if (aParts != null) c.Result.AddValue("vxk_parts", aParts.Count.ToString(CultureInfo.InvariantCulture));
         if (aInc.Contains("meta"))
         {
+            if (aRigJ != null) { c.Result.AddValue("vxk_rope_meta", aRopeMeta.ToString(CultureInfo.InvariantCulture)); c.Result.AddValue("vxk_sail_meta", aSailMeta.ToString(CultureInfo.InvariantCulture)); }
             c.Result.AddValue("vxk_with_meta", aWithMeta.ToString(CultureInfo.InvariantCulture));
             c.Result.AddValue("vxk_points", aPointCount.ToString(CultureInfo.InvariantCulture));
         }

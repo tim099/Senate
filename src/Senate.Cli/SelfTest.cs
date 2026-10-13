@@ -227,6 +227,8 @@ public static partial class SelfTest
         One(nameof(SculptureModelsCleanRoom), "sculpture", SculptureModelsCleanRoom),
         // 雕刻 meta 與部件清單（TASK-0517）：本體在 SelfTest.SculptureMeta0517.cs
         One(nameof(SculptureMetaCleanRoom), "sculpture", SculptureMetaCleanRoom),
+        // 雕刻帆與繩的 meta、work sub=meta（TASK-0539）：本體在 SelfTest.SculptureRigMeta0539.cs
+        One(nameof(SculptureRigMetaCleanRoom), "sculpture", SculptureRigMetaCleanRoom),
         // 雕刻 .vxk 封裝（TASK-0518）：本體在 SelfTest.SculptureVxk0518.cs
         One(nameof(SculptureVxkCleanRoom), "sculpture", SculptureVxkCleanRoom),
         // 雕刻大事件拆檔（TASK-0521）：本體在 SelfTest.SculptureEventSplit0521.cs

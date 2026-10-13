@@ -700,6 +700,27 @@ senate cmd sculpture --arg op=export --arg work=ship --arg format=parts --arg ou
 - **VoxelKit**：`voxel_export.py --meta`（配 `--parts`、`--rig --models`）把 meta／points 接進 `.vxk` header（形狀：平的 `meta`＋`points: {名字: [x,y,z]}`，ame 2026-10-12 酒館 seq 24096 議定）；不帶 `--meta` ⇒ header 跟以前逐欄一樣。
 - 驗收：淨室 `SculptureMetaCleanRoom`（固定點＝手算、加了再清 ⇒ 檔逐位元組回原樣、壞 meta 零寫入、手改 schema 讀不了）。
 
+#### 帆與繩的 meta、`work sub=meta`（TASK-0539）
+
+帆與繩也可以帶 meta（同一套規則：平的、字串或數字、合併、null 刪鍵、none 全清）—— 給遊戲認「這是哪一種帆、是不是旗、這條繩屬於哪面帆」；鍵的定義在 `Sculpture_Shipbuilding.md` §9.1。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> --arg persona=<P> --arg part=sail --arg name=fore-topsail --arg 'meta={"kind":"sail","mast":"fore","sail":"topsail"}'
+senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> --arg persona=<P> --arg file=<絕對路徑.tsv>      # 批次：每行 part<TAB>名<TAB>meta-JSON
+senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> [--arg part=rope]                                  # 讀數：列出 meta、報沒標的幾筆
+```
+
+- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）；形狀、位置、端點照舊只有作者能改（`sub=sail／rope／model／link`）。
+  每一筆變更記在作品資料夾的 **`meta_log.jsonl`**（一行一筆：`at`、`persona`、`owner`、`part`、`name`、`before`、`after`；只往後加）⇒ 查得到誰改的。同樣的值再下一次 ⇒ 0 筆、不記。
+- **批次**（`file=`）：`#` 開頭、空行略過；同一筆寫好幾行 ⇒ 依序疊上去；先全部驗過，**一筆不合（名字找不到、壞 meta、欄數不對）⇒ 整份不寫**（exit 2、零寫入）。上限 20,000 行。
+- 只認**本作品自己的**部件：關聯進來的作品裡的帆、繩要到那件作品下改（`work=<那件>`）。
+- **存法**：sails.json／ropes.json 每一筆的 `meta`；用到 meta 的檔升 **schema 3**（帆：含貼圖的 2；繩：含組與子繩的 2）—— 舊版讀到會大聲讀不了。清光 ⇒ schema 回原本、逐位元組回原樣。
+  作者用 `sub=sail／rope` 改屬性、換端點，meta 照留（⛔ 以前「新建物件再抄欄位」的寫法會默默清掉）。
+- **讀數**：`sub=sails`、`sub=ropes`、view／export 的帆與繩那一行後面印 `meta k=v, …`（沒 meta 的行一個字都不差）。
+- **匯出 .vxk**：`include=meta` ⇒ 帆與繩**有 meta 才**多一個 `meta`（⇒ 沒標的作品跟以前逐欄相同）；`include=ends`（配 rig）⇒ 每條繩多 `frame`（繩所在那一層的關聯路徑，組裝件自己 ＝ ""）與 `ends`（兩端原樣的參照，相對於 frame：`固定點`、`關聯/…/固定點`、`model:…`、`sail:帆/角`、`rope:…`、`x,y,z`）。
+  ⚠ `voxel_export.py`（對拍用的舊生產端）不帶帆與繩的 meta、ends ⇒ 這兩段跟 senate 那支比會不同。
+- 驗收：淨室 `SculptureRigMetaCleanRoom`（非作者寫得進去並記 log、批次合併、一筆不合整份不寫、作者改屬性不清 meta、非作者改形狀照擋、vxk 帶與不帶、清掉逐位元組回原樣、手改 schema 1 帶 meta 讀不了）。
+
 ### 9.4.10 `.vxk` 封裝 —— HTML 遊戲／影片吃的那一份由 senate 直接產（TASK-0518）
 
 VoxelKit（ArtGallery/VoxelKit，瀏覽器端 `voxelkit.js`）吃的 `.vxk` 以前由 `voxel_export.py` 產（叫 senate 匯 list＋obj 再自己封）；現在 senate 直接產，格式一個位元都不改（規格在 `ArtGallery/VoxelKit/README.md`）。

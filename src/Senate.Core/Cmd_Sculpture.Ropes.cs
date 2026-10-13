@@ -46,6 +46,7 @@ public sealed partial class Cmd_Sculpture
             // TASK-0511／0512：子繩、組（一般繩沒分組 ⇒ 這一行跟以前一個字都不差）
             if (r.Child) c.Report.Append("｜子繩（兩端拉直）");
             if (r.Group.Length > 0) c.Report.Append("｜組 ").Append(r.Group);
+            if (r.Rope.meta.Count > 0) c.Report.Append("｜meta ").Append(SCP_SculptMeta.Describe(r.Rope.meta));   // TASK-0539（沒 meta 的繩這一行一個字都不差）
             if (r.Reason.Length > 0) c.Report.Append("｜").Append(r.Reason);
             c.Report.Append('\n');
         }
@@ -197,6 +198,7 @@ public sealed partial class Cmd_Sculpture
             note = c.Args.IsExplicit("note") ? c.Args.Get("note").Trim() : aOld?.note ?? "",
             persona = aOld?.persona ?? c.Persona,
             created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+            meta = aOld?.meta ?? SCP_SculptMeta.New(),   // TASK-0539：改顏色、換端點都不動 meta（⛔ 沒帶過去 ⇒ 作者一改就默默清掉）；meta 走 sub=meta
         };
         foreach (string e in new[] { aRope.from, aRope.to })
             if (!SCP_SculptRopes.TryParseEndpoint(e, out _, out _, out string aBadEnd)) return Blocked(c, 2, aBadEnd + "；未寫入");
