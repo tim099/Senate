@@ -170,20 +170,38 @@ related:
   算點：餘燼號 `design/tools/ladder_points.py <組裝件> <甲板子作品>:<關聯名>:<梯子子作品>…`（梯名與方向從扶手繩固定點 `manrope-<梯名>-<P|S>-<top|bot>` 讀；不帶 `--apply` 只算）。
 - 匯出：`op=export format=parts`（外框＋meta＋固定點的 JSON）、`format=vxk include=rig,models,parts,meta`（給遊戲；out 要絕對路徑）。改完任何部件都重匯一次，**格數與 checksum 會變**，要跟遊戲那側說。
 
-### 9.1 遊戲照名字認的東西（繩、帆沒有 meta 欄位 ⇒ 名字就是介面）
+### 9.1 帆、繩、旗的 meta（遊戲照 meta 判斷；TASK-0539）
 
-Tim 2026-10-13 交 ame 補（夜隼號重匯時發現兩艘船的帆繩命名不同）。左欄是**新船照這樣命名**；遊戲現在認得的寫法在右欄（《憲法號對轟》`js/`，改名前先看這一欄會不會漏）。
+Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」。帆與繩也能帶 meta（`work sub=meta`，見 `Sculpture.md` §9.4.9「帆與繩的 meta」）——
+**meta 不限作者**（給遊戲的標籤；記在作品的 `meta_log.jsonl`），所以遊戲那側（ame）可以替已經在遊戲裡的船標；新船由造船的人照這張表標。
+值一律小寫英文；帆名、繩名照舊自己取（遊戲不再靠名字認，但 `sail=` 要一字不差等於帆名）。
 
-| 東西 | 新船照這樣命名 | 遊戲怎麼用、現在認得什麼 |
+**帆**（`part=sail`）
+
+| 鍵 | 值 | 遊戲拿來做什麼 |
 |---|---|---|
-| 帆 | `<桅>-<帆>`：`fore-course`、`main-topsail`、`mizzen-topgallant`…；縱帆、三角帆照實名（`spanker`、`jib`、`fore-topmast-staysail`…） | 帆桁 meta 的 `sail` **一字不差等於帆名** ⇒ 帆跟著帆桁轉（gaff＋boom 都寫同一面帆）。帆裝（收帆／戰鬥帆）照名字選：收帆 ＝ 名字結尾 `topsail`＋`jib`；戰鬥帆再加結尾 `topgallant`、`spanker`、`fore-topmast-staysail`；滿帆 ＝ 全部。⚠ 縱主帆不叫 `spanker`（夜隼號叫 `mainsail`）⇒ 戰鬥帆時會被收起來 |
-| 帆自己的繩（帆腳的 sheet、tack） | `<帆名>.sheet-P／S`、`<帆名>.tack-P／S`（**點號**；導索、延長段接在後面：`<帆名>.sheet-lead-S`） | 認 `<帆名>.` 開頭的全部，或 `<帆名>-sheet…`／`<帆名>-tack…`（夜隼號的連字號寫法，相容用）。用途：topsail 以上的 sheet 綁在哪根帆桁 ⇒ 帆腳跟那根帆桁轉；帆掉了這幾條一起斷。⛔ `<帆名>-` 開頭的其他繩（lift、brace、footrope、halyard）**不算**帆的 —— 它們是帆桁的繩 |
-| 旗 | 船尾旗 `ensign`、長旗 `pennant`、其他 `flag-…` | 名字開頭 `ensign`／`pennant`／`flag` ⇒ 旗：不收、不算推力；降旗時降的是 `ensign`。旗的圖走帆的貼圖（`work sub=sail texture=`，見 `Sculpture.md`；遊戲照 UV 取色畫在布上），⚠ 帆的 `color` 照樣給一個代表色（旗的碎布、沒讀貼圖的地方用它；夜隼號的 `color` 是帆布白，曾經被畫成一面白旗） |
-| 桅 | 帆桁 meta `mast=fore｜main｜mizzen｜bowsprit` | 有幾根桅、各在哪、多高都從帆桁推（最低那根橫帆桁 course／crossjack 的 `pivot`）。沒有帆桁 meta 的舊匯出才退回照帆名 `<fore｜main｜mizzen>-<course｜topsail｜topgallant｜royal>` 找 |
-| 彈藥庫 | 關聯名 `彈藥庫-前`／`彈藥庫-中`／`彈藥庫-後`（只有一間可以就叫 `彈藥庫`） | 廣播「前／中／後彈藥庫」照名字裡的字；沒有 ⇒ 當「後」 |
-| 砲、舵輪 | 一律帶 meta（§9 表） | 沒有 meta 的舊匯出才照名字（`carronade`、`chase`、`/砲-S01`、`wheel`）—— 新船 ⛔ 不要靠名字 |
+| `kind` | `sail`／`flag` | 旗：不收、不算推力 |
+| `mast` | `fore`／`main`／`mizzen`／`bowsprit` | 掛在哪根桅（跟帆桁 meta 的 `mast` 同一套；三角帆掛艏斜桅 ⇒ `bowsprit`） |
+| `sail`（帆） | `course`／`topsail`／`topgallant`／`royal`／`gaff`（縱主帆：spanker、夜隼號的 mainsail）／`staysail`／`jib` | 帆的種類 ⇒ 帆裝（W／S）的預設：收帆 ＝ topsail、jib；戰鬥帆再加 topgallant、gaff；滿帆 ＝ 全部 |
+| `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`） |
+| `flag`（旗） | `ensign`（船尾旗）／`pennant`（長旗）／`jack` | 降旗時降 `ensign` |
 
-- 兩艘船的寫法已經分岔過一次（basecamp `fore-topsail.sheet-S`、summit `fore-topsail-sheet-S`）：遊戲只認點號那段期間，夜隼號上桅帆以上的帆腳不跟著轉、帆掉了 sheet 也不斷，**讀數上看不出來**（帆照樣鼓、照樣推船）。⇒ 新船照左欄；換寫法之前先跟遊戲那側說。
+**繩**（`part=rope`）—— 必標的只有「帆自己的繩」；其他繩可以不標
+
+| 鍵 | 值 | 遊戲拿來做什麼 |
+|---|---|---|
+| `kind` | `sheet`／`tack`（導索、延長段同一類）；其他繩若要標：`shroud`、`backstay`、`stay`、`ratline`、`brace`、`lift`、`halyard`、`footrope`、`steering`、`gun`、`manrope` | 分類 |
+| `sail` | 帆名 | 這條繩屬於哪面帆 ⇒ topsail 以上的 sheet 綁在哪根帆桁 ＝ 帆腳跟那根帆桁轉；帆掉了這幾條一起斷 |
+
+**關聯**：彈藥庫 `kind=magazine` 加 `pos=fore／mid／aft`（廣播「前／中／後彈藥庫」）。
+**桅**：帆桁 meta 的 `mast`（§5）—— 有幾根桅、各在哪、多高都從帆桁推（最低那根橫帆桁 course／crossjack 的 `pivot`）。
+**砲、舵輪、舵、甲板上的東西**：一律模型 meta（上面的 kind 表）。
+
+- 例（夜隼號）：`sail	mainsail	{"kind":"sail","mast":"main","sail":"gaff"}`、`rope	fore-topsail-sheet-S	{"kind":"sheet","sail":"fore-topsail"}`、`link	彈藥庫	{"pos":"aft"}`。
+- 遊戲裡的三艘（憲法號、餘燼號、夜隼號）已由 ame 標好（2026-10-13，Sculpture e80831c）：帆 17／17／10、帆自己的繩 32／32／22、彈藥庫 2／1／1。
+- ⚠ **沒有 meta 的舊匯出**，遊戲照舊照名字認（退路，⛔ 新船不要靠它）：帆自己的繩 `<帆名>.xxx` 或 `<帆名>-sheet…`／`-tack…`；旗 `ensign`／`pennant`／`flag` 開頭；
+  帆裝照名字結尾（topsail、jib ⇒ 收帆；topgallant、spanker、fore-topmast-staysail ⇒ 戰鬥帆）；桅照帆名 `<fore｜main｜mizzen>-<course｜topsail｜…>`；彈藥庫照關聯名裡的「前／中／後」。
+  🩸 這套名字規則分岔過一次（basecamp `fore-topsail.sheet-S`、summit `fore-topsail-sheet-S`）：遊戲只認點號那段期間，夜隼號上桅帆以上的帆腳不跟著轉、帆掉了 sheet 也不斷，**讀數上看不出來** —— 這是改用 meta 的原因。
 
 ## 10. 換一艘船時的檢查表
 
@@ -192,7 +210,7 @@ Tim 2026-10-13 交 ame 補（夜隼號重匯時發現兩艘船的帆繩命名不
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
 - [ ] 每門砲退到零碰撞、砲口在船殼外；追擊砲照角度搜
 - [ ] 繩與帆的端點綁 `model:` 路徑；`ropes_broken 0`、`sails_broken 0`、`models_broken 0`
-- [ ] 帆、帆自己的繩、旗照 §9.1 命名；每根帆桁 meta 的 `sail` 等於它掛的那面帆的名字、`mast` 有寫
+- [ ] 每面帆、旗、帆自己的繩（sheet、tack）照 §9.1 標 meta（`work sub=meta part=… meta=` 或 `file=` 批次；`work sub=meta part=sail` 讀數的「沒有 meta」要是 0；繩只有帆自己的那幾條必標）；每根帆桁 meta 的 `sail` 等於它掛的那面帆的名字、`mast` 有寫
 - [ ] 組裝件 1 元件、空腔 0、link_overlap 0；一舷＋鏡像的部件兩舷逐格對稱
 - [ ] 產生程式重跑逐位元組相同（讀「藏起本階段關聯」或標記 `:begin` 的現況）
 - [ ] 匯出 vxk、跟遊戲那側對 checksum
