@@ -310,6 +310,15 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         }
         var aCtx = new Ctx(aRoots, iArgs, aResult, aOp, aPersona);
         string? aPayload;
+        // TASK-0534：換檔被別的行程（常駐視窗的雕刻頁、防毒…）擋一下、重試 ⇒ 印一行讀數（只收這條 thread 的，同一行程裡別的指令不算進來）
+        int aThread = Environment.CurrentManagedThreadId;
+        Action<string, int, int, string> aOnContention = (path, attempt, hr, holders) =>
+        {
+            if (Environment.CurrentManagedThreadId == aThread)
+                aResult.Lines.Add($"⚠ 換檔被別的行程開著擋了一下：`{path}`（第 {attempt} 次，0x{hr:X8}）"
+                                  + (holders.Length > 0 ? "；當下開著的：" + holders : "") + " —— 重試");
+        };
+        SCP.Core.Io.SCP_SharedFile.Contention += aOnContention;
         try
         {
             if (aOp != "work" && !ConfigureWork(aCtx, out string aWorkError))
@@ -347,8 +356,11 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         {
             aResult.ExitCode = 70;
             aResult.Lines.Add($"✗ {e.GetType().Name}: {e.Message}");
+            // 換檔失敗的訊息自己帶目標路徑（SCP_SharedFile）；底下那一層的例外也寫出來 —— 錯誤報告只抄 Lines（TASK-0534）
+            if (e.InnerException is Exception aInner) aResult.Lines.Add($"  ⤷ {aInner.GetType().Name}（0x{aInner.HResult:X8}）: {aInner.Message}");
             return aResult;
         }
+        finally { SCP.Core.Io.SCP_SharedFile.Contention -= aOnContention; }
         if (aPayload != null) aResult.AddOutput(aPayload);   // 宿主會印「📄 回傳檔」
         return aResult;
     }

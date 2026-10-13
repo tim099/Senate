@@ -170,7 +170,7 @@ public static partial class SelfTest
             finally { try { Directory.Delete(tmpRepo, true); } catch { } }
         }
         catch (Exception e) { failures.Add(e.GetType().Name + ": " + e.Message); }
-        return new(name, failures.Count == 0 ? "篩選 5 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
+        return new(name, failures.Count == 0 ? "篩選 5 格＋類型 6 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
                    failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 }
