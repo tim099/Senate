@@ -252,7 +252,9 @@ python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py check 
 - 量：每一層甲板子作品單獨匯出 .vxk，`python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/decks.py --vxk 甲板-berth=<…vxk> …  --tsv <out.tsv>`，再 `work sub=meta file=<out.tsv>` 標上去；遊戲那側 `admin.py metasync --id <船>` 同步（只換 meta 與固定點，格子不動）。
 - 房間、梯子、砲照**關聯路徑**屬於那一層（`甲板-berth/艙房`、`甲板-berth/梯子`）；路徑看不出來的照高度落在哪一層。
 
-**通道**：梯子（§9 `kind=ladders`，foot／lo／hi／head）。兩頭各落在哪一層照 `floor` 判斷。遊戲裡 lo、hi 底下的踏板被打掉、或兩頭的甲板被打穿 ⇒ 那條通道斷（遊戲設定「尋路更新」開著時）。
+**通道**：梯子（§9 `kind=ladders`，foot／lo／hi／head）。兩頭各落在哪一層照那一欄的 `floor` 判斷（x 也看：兩層高度重疊、前後不重疊也分得開 —— 風暴角號後甲板與艏樓）。
+- 要直接指定：同一條梯子關聯的 meta 加 `<梯名>.decks`，值是兩層的 `deck` 代號、`name` 或 `level`，逗號分隔（例 `{"bak-P.decks":"upper,forecastle"}`）⇒ 遊戲照它接，不看其他判定；level 低的那層接 foot。寫錯（找不到那層）⇒ 遊戲主控台警告、照 `floor` 自動判。
+- 兩頭各自離那一層的走路格太遠（自動判 1 m、直接指定 2 m 內接不上）⇒ 那座梯子不用。遊戲裡 lo、hi 底下的踏板被打掉、或兩頭的甲板被打穿 ⇒ 那條通道斷（遊戲設定「尋路更新」開著時）。
 - 沒有梯子通到的甲板 ⇒ 預備水手走不到（憲法號、餘燼號的 orlop 現在沒有梯子）。
 
 ## 10. 換一艘船時的檢查表
