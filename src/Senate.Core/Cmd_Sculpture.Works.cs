@@ -51,6 +51,7 @@ public sealed partial class Cmd_Sculpture
                 c.Result.AddValue("count", cards.Count.ToString(CultureInfo.InvariantCulture));
                 return Finish(c, 0, "✓ 作品 " + cards.Count + " 件");
             }
+            if (sub == "components") return WorkComponents(c);   // 全部作品的外部模型照來源彙整（造船查現有元件；唯讀、不拿鎖）
             string id = c.Args.Get("work").Trim();
             if (id.Length == 0) id = c.Args.Get("id").Trim();
             id = SCP_SculptWorks.NormalizeId(id);

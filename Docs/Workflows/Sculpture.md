@@ -667,6 +667,7 @@ senate cmd sculpture --arg op=work --arg sub=model --arg work=ship --arg persona
 senate cmd sculpture --arg op=work --arg sub=model --arg work=ship --arg persona=<P> --arg name=wheel --arg source_work=ship-wheel --arg pivot=40,6,40 --arg at=180,160,131.5 --arg rotate=0,0,90
 senate cmd sculpture --arg op=work --arg sub=model --arg work=ship --arg persona=<P> --arg name=wheel --arg rotate=0,0,95   # 只改變換：不用 overwrite
 senate cmd sculpture --arg op=work --arg sub=models --arg work=ship                                                         # 每個模型的讀數
+senate cmd sculpture --arg op=work --arg sub=components [--arg kind=gun]                                                      # 全部作品：哪些作品被當模型用、誰在用（找現有元件）
 # 繩綁在模型上：model:[關聯/…/]模型名/點（點 ＝ 模型自己的座標，或來源作品的固定點名）
 senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=<P> --arg name=tiller-rope --arg from=model:wheel/drum_p --arg to=tiller-block
 senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg out=<png>   # 這次拿掉；models=0 ＝ 一個都不畫
@@ -681,6 +682,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg
 - **繩與帆角綁模型**：端點寫 `model:[關聯/…/]模型名/點`（相對於繩所在的作品，同固定點路徑）。點 ＝ `x,y,z`：file 來源是**檔案座標**（照 axes 換）、work 來源是那件作品的格座標（整數 ⇒ 格心）；work 來源也可以寫那件作品的**固定點名**。模型搬、轉、縮、跟著關聯走 ⇒ 端點跟著動。帆的角同一種寫法（`corners="model:mast/12,0,40|…"`）。
 - **跟著關聯走**：被關聯進來的作品自己的模型照那條關聯的 mirror→turn→at 換座標（模型路徑 ＝ `關聯/…/模型名`）。所在那一層這次沒畫 ⇒ `hidden`（綁在上面的繩跟著 hidden）；自己 `enabled=0` ⇒ `disabled`；`models=0`／`hide_models=路徑,…` ⇒ 這次**不畫**（綁在上面的繩照畫；打錯路徑 ⇒ exit 2）。檔不見、來源作品不在、成環、快取產生失敗 ⇒ `broken`：⛔ 不靜默消失，觀測照樣出圖、回傳行大聲列 🔴。
 - **讀數**（`sub=models` 與 view／export 每個模型一行）：狀態、來源（檔名＋SHA 前 8 碼／作品＋快取鍵與 produced|reused）、變換、三角形數、在組裝件裡的外框；回傳值 `models_drawn／hidden／disabled／broken`。
+- **找現有元件**（`sub=components [kind=]`，Tim 2026-10-14；不用 `work=`）：掃全部作品的 models.json，把 work 來源的模型照來源作品彙整 —— 每件一行：ID、名字、作者、一格幾公尺、meta（`kind` 與子種類，例 `gun:24l`）、引用幾次與哪幾件作品、用過的 scale；被最多件作品用的在前。`kind=gun` 只列那一類，`kind=gun:24l` 只列那一種。唯讀（不產生快取、不拿鎖）；讀不了的作品列在最後（⛔ 不靜默略過）；obj 檔來源不列（別的作品引用不到）。造船的用法見 `Sculpture_Shipbuilding.md` §2.1。
 - **畫**：view 與觀測頁的 GPU 預覽另一趟畫（靜態 ⇒ 內容沒變不重傳；同一組燈、會投影子也接影子）；不是 voxel ⇒ `visible_voxels` 不變；slice／section／stats 量的是格子，不畫模型。觀測頁「模型」區：總開關＋一個一個勾（只影響這次觀測，⛔ 不寫回 models.json）。
 - **匯出**：`export format=obj` 把模型接在帆後面（每個模型 `o model_n`、一色一個材質 `model_n_k`）；list／vox 只有格子 ⇒ `models_exported=0`。只有繩／帆／模型、沒有 voxel 的作品也匯得出 obj。
 - **meta**：`sub=model name= meta=<JSON 物件>`（只改 meta 不用 overwrite）—— 見下一節。
