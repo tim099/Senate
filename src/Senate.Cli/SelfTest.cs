@@ -118,6 +118,8 @@ public static partial class SelfTest
         One(nameof(WaitTimeoutDescribesLane), "core", WaitTimeoutDescribesLane),
         One(nameof(QueueAppendSurvivesConcurrency), "core", QueueAppendSurvivesConcurrency),
         One(nameof(QueueCommitKeepsEntriesAppendedDuringBatch), "core", QueueCommitKeepsEntriesAppendedDuringBatch),
+        // queue.json 換檔沒有「不存在」那一格（TASK-0565）：本體在 SelfTest.QueueSwap0565.cs
+        One(nameof(QueueSwapNoMissingWindow0565), "core", QueueSwapNoMissingWindow0565),
         One(nameof(VanishedCmdIsUnknownNotSuccess), "core", VanishedCmdIsUnknownNotSuccess),
         One(nameof(QueueForLaterWhenServerUnavailable), "core", QueueForLaterWhenServerUnavailable),
         One(nameof(ServerBuildKnownClassification), "core", ServerBuildKnownClassification),
