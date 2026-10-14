@@ -164,6 +164,8 @@ public static partial class SelfTest
         One(nameof(HostInjectedLetters0410), "cli", HostInjectedLetters0410),
         One(nameof(ComicSourceDirectories0411), "library", ComicSourceDirectories0411),
         One(nameof(TaskLaneIdentity0412), "server", TaskLaneIdentity0412),
+        // Server 心跳換檔被擋不掛（TASK-0533）：本體在 SelfTest.ServerBeat0533.cs
+        One(nameof(ServerBeatCleanRoom0533), "server", ServerBeatCleanRoom0533),
 
         One(nameof(ServerAutoStartFourStates), "server", ServerAutoStartFourStates),
         One(nameof(BuildGuardThreeStates), "server", BuildGuardThreeStates),

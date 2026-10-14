@@ -132,6 +132,9 @@ public static class ServerHost
     /// <summary>心跳超過這個秒數視為停了。</summary>
     public const double HeartbeatStaleSeconds = 4.0;
 
+    /// <summary>心跳連續寫不成時，每幾拍大聲說一次（TASK-0533）＝ 剛好到過期門檻的那一拍（4 秒 ÷ 0.5 秒）。第一拍另外說一次。</summary>
+    public const int BeatFailLoudEvery = (int)(HeartbeatStaleSeconds * 1000 / HeartbeatIntervalMs);
+
     /// <summary>stop 請求送出後等 Server 自己退的時間；等不到才 kill。</summary>
     public const int StopGraceMs = 5000;
 
@@ -182,7 +185,8 @@ public static class ServerHost
 
         string aHb = SenatePaths.ServerHeartbeat(iRepoRoot, aServerId);
         if (!File.Exists(aHb)) { aStatus.HeartbeatError = "心跳檔不存在"; return aStatus; }
-        try { aStatus.Heartbeat = ServerHeartbeat.FromJson(SCP_JsonParser.Parse(File.ReadAllText(aHb))); }
+        // TASK-0533：讀的一側給 Delete 共享 ⇒ 不擋 Server 換心跳檔（File.ReadAllText 只給 Read，撞上換檔那一瞬間會讓 Server 掛掉）
+        try { aStatus.Heartbeat = ServerHeartbeat.FromJson(SCP_JsonParser.Parse(SCP.Core.Io.SCP_SharedFile.ReadAllText(aHb))); }
         catch (Exception e) { aStatus.HeartbeatError = $"心跳檔讀不了：{e.GetType().Name}: {e.Message}"; }
         return aStatus;
     }
@@ -417,7 +421,9 @@ public static class ServerHost
         //   ⇒ 那時候要大聲說，⛔ 不可以靜默：靜默的話症狀會長成「委派一直說沒有 Server」，而 Server 明明開著。
         // ⚠ 心跳要先跳一次再寫名片：名片一落地，別人 Probe 它就要讀得到新鮮的心跳（否則會被判成遺體而補寫蓋掉）。
         aHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-        WriteAtomic(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
+        string? aFirstBeatErr = TryBeat(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
+        if (aFirstBeatErr != null)
+            iErr("⚠ 第一拍心跳沒寫成（" + aFirstBeatErr + "）—— 照常啟動，服務迴圈下一拍再寫（TASK-0533）");
         SCP_ServerEndpointInfo? aCard = null;
         if (aEndpointDataRoot == null)
             iErr("⚠ 解析不出 AgentCommands 資料根 ⇒ **沒有留名片**：讀名片的一方會判成「這棵樹沒有 Server」。");
@@ -477,12 +483,29 @@ public static class ServerHost
 
         string aExitWhy;
         var aSinceOwnerCheck = Stopwatch.StartNew();
+        int aBeatFails = 0;
         try
         {
             while (true)
             {
                 aHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-                WriteAtomic(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
+                // TASK-0533：這一拍寫不進去（換檔被別的行程開著擋住、重試也沒過）⇒ 跳過、記一行，下一拍再寫。
+                // 🩸 原本沒接 ⇒ UnauthorizedAccessException 打穿主迴圈，整顆 Server 掛掉（10-13 七次、10-14 早上三次）。
+                string? aBeatErr = TryBeat(aHbPath, SCP_JsonWriter.Write(aHb.ToJson()) + "\n");
+                if (aBeatErr == null)
+                {
+                    if (aBeatFails > 0) iOut($"✓ 心跳恢復（之前連續 {aBeatFails} 拍沒寫成）");
+                    aBeatFails = 0;
+                }
+                else
+                {
+                    aBeatFails++;
+                    if (aBeatFails == 1)
+                        iErr($"⚠ 心跳這一拍沒寫成，跳過、下一拍再寫：{aBeatErr}");
+                    else if (aBeatFails % BeatFailLoudEvery == 0)
+                        iErr($"🔴 心跳已經連續 {aBeatFails} 拍沒寫成（約 {aBeatFails * HeartbeatIntervalMs / 1000.0:0.#} 秒）"
+                             + $" ⇒ 讀心跳的一方會判成過期（門檻 {HeartbeatStaleSeconds:0.#} 秒）。最後一次：{aBeatErr}");
+                }
                 if (aCancel) { aExitWhy = "Ctrl+C"; break; }
                 if (aCard != null && aSinceOwnerCheck.Elapsed.TotalSeconds >= OwnerCheckSeconds)
                 {
@@ -723,8 +746,8 @@ public static class ServerHost
                               Action<string> iOut)
     {
         iHb.BeatAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-        try { WriteAtomic(iHbPath, SCP_JsonWriter.Write(iHb.ToJson()) + "\n"); }
-        catch (Exception) { /* 排乾期間心跳寫不出去不該打斷排乾；stop 那側會自己判過期 */ }
+        // 排乾期間心跳寫不出去不該打斷排乾；stop 那側會自己判過期
+        TryBeat(iHbPath, SCP_JsonWriter.Write(iHb.ToJson()) + "\n");
 
         // 印得太密會把真正的訊息洗掉；2 秒一次夠人看見「它在動，不是卡住」。
         DateTime aNow = DateTime.UtcNow;
@@ -826,12 +849,34 @@ public static class ServerHost
 
     // ── 內部 ──────────────────────────────────────────────────────────
 
-    /// <summary>先寫暫存再換檔 —— 讀的人不會讀到半個 json。</summary>
-    static void WriteAtomic(string iPath, string iText)
+    /// <summary>
+    /// 先寫暫存再換檔 —— 讀的人不會讀到半個 json。換檔走 <see cref="SCP.Core.Io.SCP_SharedFile.Replace"/>（TASK-0533）：
+    /// 目標這一瞬間被別的行程開著 ⇒ 有上限地重試；試完還是不行、或別種錯 ⇒ 丟 IOException（訊息帶路徑）。暫存檔在失敗時收掉。
+    /// <para>🩸 原本是 <c>File.Move(tmp, path, overwrite: true)</c>：目標被開著又沒給 Delete 共享時丟 UnauthorizedAccessException，不重試。</para>
+    /// </summary>
+    static void WriteAtomic(string iPath, string iText, int iMaxAttempt = SCP.Core.Io.SCP_SharedFile.DefaultReplaceAttempts)
     {
         string aTmp = iPath + ".tmp";
         File.WriteAllText(aTmp, iText);
-        File.Move(aTmp, iPath, overwrite: true);
+        try { SCP.Core.Io.SCP_SharedFile.Replace(aTmp, iPath, iMaxAttempt); }
+        catch { TryDelete(aTmp); throw; }
+    }
+
+    /// <summary>
+    /// 心跳換檔最多試幾次：5 次 ⇒ 間隔 10＋20＋40＋80 ＝ 150 ms 就放棄這一拍（下一拍 0.5 秒後再寫）。
+    /// <para>🩸 用預設的 8 次時，心跳檔一直被開著的那一拍量到 1.7–1.9 秒（機器忙時 5.7 秒）才回來 —— 比過期門檻 4 秒還長，
+    /// 而那一拍等下去也不會比下一拍好（TASK-0533 淨室 ②）。</para>
+    /// </summary>
+    public const int BeatReplaceAttempts = 5;
+
+    /// <summary>
+    /// 心跳寫一拍：成功回 null，寫不成回一句原因（⛔ 不丟 —— 服務迴圈不能因為一拍心跳掛掉；TASK-0533）。
+    /// <para>只吞 IO 與權限這兩類（換檔被擋、暫存檔被擋）；別種例外照丟，那是程式錯，要看得到。</para>
+    /// </summary>
+    public static string? TryBeat(string iPath, string iText)
+    {
+        try { WriteAtomic(iPath, iText, BeatReplaceAttempts); return null; }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return e.GetType().Name + "：" + e.Message; }
     }
 
     static void TryDelete(string iPath, Action<string>? iErr = null)

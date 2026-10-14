@@ -291,7 +291,7 @@ public sealed class ServerExecutor
         string aPath = Path.Combine(aDir, iCmdId + ".json");
         string aTmp = aPath + ".tmp";
         File.WriteAllText(aTmp, aJson.ToJsonString(s_JsonOpt) + "\n", new System.Text.UTF8Encoding(false));
-        File.Move(aTmp, aPath, overwrite: true);
+        ReplaceShared(aTmp, aPath);
         return aPath;
     }
 
@@ -304,7 +304,7 @@ public sealed class ServerExecutor
     static JsonObject LoadQueue(string iPath)
     {
         if (!File.Exists(iPath)) return new JsonObject { ["Commands"] = new JsonArray() };
-        var aNode = JsonNode.Parse(File.ReadAllText(iPath, System.Text.Encoding.UTF8)) as JsonObject;
+        var aNode = JsonNode.Parse(SCP.Core.Io.SCP_SharedFile.ReadAllText(iPath)) as JsonObject;   // TASK-0533：給 Delete 共享，不擋 CLI 端換 queue 檔
         // TASK-0265：結構不對跟解析失敗同一個處置（丟例外）—— 舊版回空骨架，而 CommitLaneQueue 會把它寫回 ⇒ 整條 queue 洗掉。
         if (aNode == null || aNode["Commands"] is not JsonArray)
             throw new SCP.Core.Proc.SCP_QueueUnreadableException(iPath, "沒有 `Commands` 陣列");
@@ -316,7 +316,18 @@ public sealed class ServerExecutor
         Directory.CreateDirectory(Path.GetDirectoryName(iPath)!);
         string aTmp = iPath + $".tmp{Environment.ProcessId}";
         File.WriteAllText(aTmp, iRoot.ToJsonString(s_JsonOpt) + "\n", new System.Text.UTF8Encoding(false));
-        File.Move(aTmp, iPath, overwrite: true);
+        ReplaceShared(aTmp, iPath);
+    }
+
+    /// <summary>
+    /// 換檔走共用那一支（TASK-0533）：目標一瞬間被別的行程開著 ⇒ 有上限地重試；還是不行就丟（訊息帶路徑），暫存檔收掉。
+    /// <para>🩸 原本是 <c>File.Move(tmp, path, overwrite: true)</c>，被擋就丟 UnauthorizedAccessException、不重試 ⇒ 那一條 lane 整批失敗。
+    /// queue 檔 CLI 端也會讀，跟心跳是同一族（ServerHost.WriteAtomic）。</para>
+    /// </summary>
+    static void ReplaceShared(string iTmp, string iPath)
+    {
+        try { SCP.Core.Io.SCP_SharedFile.Replace(iTmp, iPath); }
+        catch { try { if (File.Exists(iTmp)) File.Delete(iTmp); } catch { } throw; }
     }
 
     /// <summary>
