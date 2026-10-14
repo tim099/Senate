@@ -25,6 +25,7 @@ public sealed partial class Cmd_Sculpture
         string aLinks = c.Args.Get("links").Trim(), aHide = c.Args.Get("hide_links").Trim();
         bool aGiven = aLinks.Length > 0 || aHide.Length > 0;
         bool aView = Array.IndexOf(LinkViewOps, c.Op) >= 0 && c.Op != "exhibit";
+        if (c.Op == "work" && c.Args.Get("sub").Trim() == "preset") return true;   // TASK-0571：存 preset ⇒ links／hide_links 是要存的字（WorkPreset 驗路徑）
         if (aGiven && !aView)
         {
             oError = "links／hide_links 只給觀測類 op（view／slice／section／stats／export）—— 匯入展區／assemble 一律照每條關聯的 enabled 攤平；diff 只比本作品自己的事件";

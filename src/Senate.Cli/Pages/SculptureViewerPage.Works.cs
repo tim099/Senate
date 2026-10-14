@@ -147,6 +147,13 @@ public sealed partial class SculptureViewerPage
         if (Array.IndexOf(s_DraftOps, op) >= 0 || (op == "work" && (sub == "undo" || sub == "redo" || sub == "move" || sub == "assemble")))
             // 觀測：這件作品（或它組進來的關聯）真的有開著的草稿才送 1 —— 否則開關開著也只會換來「沒有草稿」的錯
             args["draft"] = draftOn && (!view || HasDraftToShow(id)) ? "1" : "0";
+        // 預覽 preset（TASK-0571）：選了一組 ⇒ 關聯／繩／帆／模型的文字欄與開關這一次都不送，改送 preset 展開的那幾個參數（展開跟 CLI 的 preset= 同一支）
+        var preset = Array.IndexOf(s_LinkViewOps, op) >= 0 ? PresetArgs(g, id, op) : null;
+        if (preset != null)
+        {
+            foreach (var kv in preset) args[kv.Key] = kv.Value;   // 蓋過頁面自己的 region／exclude_color（preset 裡有寫的才蓋）
+            return;
+        }
         if (Array.IndexOf(s_LinkViewOps, op) >= 0)
         {
             string links = viewCfg.Links.Trim(), hide = viewCfg.HideLinks.Trim();
@@ -629,7 +636,62 @@ public sealed partial class SculptureViewerPage
         if (g.FieldValue(WorkSel + "/value", "").Length == 0 && first.Length > 0)
             g.SetField(WorkSel + "/value", first);
         g.Dropdown("作品（" + shown.Count + "／" + m_Works.Count + "）", options, first, WorkSel);
+        DrawPresetSelector(g);
     }
+
+    // ===========================================================
+    // 區塊職責：預覽 preset 下拉（TASK-0571，Tim「可以用下拉選單切換preset(預設是all 就是正常顯示)」）——
+    //          作品自己存的幾組（work sub=preset）；選一組 ⇒ 這一次觀測照那一組藏／只看，關聯／繩／帆／模型開關這一次不生效。
+    // 物理意義：下拉的值帶作品 id ⇒ 換作品就回到 all；清單只讀 view_presets.json（每件記一秒）；⛔ 不寫回作品。
+    //          展開走 SCP_SculptViewPresets.Expand（CLI 的 preset= 同一支）⇒ 頁面送出去的參數跟 agent 打 preset= 一樣。
+    // ===========================================================
+    static string PresetSelId(string iWork) => P + "sel/preset/" + iWork;
+    readonly Dictionary<string, (SCP_SculptViewPresetFile? File, string Error, long Ticks)> m_Presets = new();
+
+    (SCP_SculptViewPresetFile? File, string Error) Presets(string iId)
+    {
+        if (iId.Length == 0 || m_WorksRoot == "\0") return (null, "");
+        long now = Environment.TickCount64;
+        if (m_Presets.TryGetValue(iId, out var hit) && now - hit.Ticks < 1000) return (hit.File, hit.Error);
+        SCP_SculptViewPresetFile? file = null; string error = "";
+        try { file = SCP_SculptViewPresets.Read(new SCP_SculptWorks(new SCP_DataRoot(m_WorksRoot)).SpacePaths(iId)); }
+        catch (Exception e) when (e is InvalidOperationException || e is IOException || e is ArgumentException) { error = e.Message; }
+        m_Presets[iId] = (file, error, now);
+        return (file, error);
+    }
+
+    /// <summary>目前選的 preset 名（沒有作品、沒選、選的那組不見了 ⇒ all）。</summary>
+    string SelectedPreset(SCP_Ui g, string iId)
+    {
+        if (iId.Length == 0) return SCP_SculptViewPresets.All;
+        string v = g.FieldValue(PresetSelId(iId) + "/value", SCP_SculptViewPresets.All);
+        var (file, _) = Presets(iId);
+        return file != null && file.presets.Exists(p => p.name == v) ? v : SCP_SculptViewPresets.All;
+    }
+
+    /// <summary>選了 preset ⇒ 這個 op 要送的參數；all ⇒ null（照頁面原本的開關）。讀不了 ⇒ null（下拉那裡會說）。</summary>
+    Dictionary<string, string>? PresetArgs(SCP_Ui g, string iId, string iOp)
+    {
+        string name = SelectedPreset(g, iId);
+        if (name == SCP_SculptViewPresets.All) return null;
+        var (file, _) = Presets(iId);
+        if (file == null) return null;
+        try { return SCP_SculptViewPresets.Expand(file, name, iOp, new List<string>()); }
+        catch (ArgumentException) { return null; }
+    }
+
+    void DrawPresetSelector(SCP_Ui g)
+    {
+        string id = SelectedWork(g);
+        if (id.Length == 0) return;
+        var (file, error) = Presets(id);
+        if (error.Length > 0) { g.Note("⚠ 預覽 preset 讀不了（照 all 畫）：" + error); return; }
+        var options = new List<SCP_GuiOption> { new(SCP_SculptViewPresets.All, "all（正常顯示）") };
+        if (file != null)
+            foreach (var p in file.presets) options.Add(new SCP_GuiOption(p.name, p.name + (p.note.Length > 0 ? "｜" + p.note : "")));
+        g.Dropdown("預覽 preset（" + (options.Count - 1) + "）", options, SCP_SculptViewPresets.All, PresetSelId(id));
+    }
+
 
     void DrawWorkSelector(SCP_Ui g)
     {
@@ -646,6 +708,9 @@ public sealed partial class SculptureViewerPage
             g.Label("作品觀測設定");
             g.Note("Draft：草稿模式（預設開）—— 刀落在草稿、看「作品＋草稿」；套進作品／丟掉用 work sub=apply／discard｜Links：只組這些關聯 links=（none｜all｜路徑,…；巢狀用 /；空 ＝ 照每條的開關）｜HideLinks：拿掉這些關聯 hide_links=（路徑,…｜self ＝ 不畫本作品自己的格）");
             foreach (string n in DrawCfg(g, ViewCfg(g), ViewCfgKey, SViewCfg, ref m_ViewCfgJson)) g.Note("（自動繪製）" + n);
+            string presetNow = SelectedPreset(g, SelectedWork(g));
+            if (presetNow != SCP_SculptViewPresets.All && Presets(SelectedWork(g)).File?.presets.Find(p => p.name == presetNow) is SCP_SculptViewPreset pv)
+                g.Note("⚠ 預覽 preset `" + presetNow + "` 生效中（" + SCP_SculptViewPresets.Describe(pv) + "）⇒ 上面的 Links／HideLinks 與下面的關聯／繩／帆／模型開關這一次**不生效**；工具列的下拉切回 all 就換回開關。");
             DrawLinkToggles(g);
             DrawRopeToggles(g);
             DrawSailToggles(g);

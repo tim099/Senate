@@ -165,7 +165,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("draft","1 ＝ 草稿（TASK-0493）：落子／刻（box/carve/carvevox/stamp*）與 work sub=move|assemble|undo|redo 只動草稿（沒開就開）；觀測（view/slice/section/stats/export）看「作品＋草稿」；diff ＝ 作品現在 → 草稿。開／看狀態 sub=draft、套進作品 sub=apply、丟掉 sub=discard"),
         new SCP_CmdArgSpec("phase", "work mark：point（預設，單點）｜begin｜end（同名的 begin＋end ＝ 一個區間）", iChoices: new[] { "point", "begin", "end" }),
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
-        new SCP_CmdArgSpec("note", "work mark／link／anchor／rope／ropegroup／sail／model：備註"),
+        new SCP_CmdArgSpec("note", "work mark／link／anchor／rope／ropegroup／sail／model／preset：備註"),
         new SCP_CmdArgSpec("part", "work meta：改哪一種部件的 meta —— sail｜rope｜model｜link（TASK-0539；讀數時只列那一種）"),
         new SCP_CmdArgSpec("meta", "work model／link／meta：給下游認部件的資訊（TASK-0517；帆與繩 TASK-0539 走 sub=meta，不限作者）—— 一個 JSON 物件 {鍵: 字串或數字}，**合併**進現有的（值給 null ⇒ 刪那個鍵）；none ＝ 全清。例 {\"kind\":\"gun\",\"gun\":\"24l\"}、{\"kind\":\"magazine\",\"powder_lb\":9000}"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽／spray：1 才落刀（要帶 expect_plan）；預設只預覽／work split-events：1 才改寫；預設只試算"),
@@ -262,8 +262,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|meta|model|unmodel|models|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
-                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links",
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|meta|model|unmodel|models|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+                           iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links", "preset", "unpreset", "presets",
                                              "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "meta", "model", "unmodel", "models", "split-events" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
@@ -271,7 +271,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("desc", "exhibit register：描述"),
         new SCP_CmdArgSpec("bg_color", "exhibit register：背景色（存進 preset）"),
         new SCP_CmdArgSpec("scope", "render-profile：哪一層（shared|persona；list 另有 all）", iChoices: new[] { "shared", "persona", "all" }),
-        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）／work anchor／unanchor／rope／unrope／sail／unsail／model／unmodel：固定點名／繩名／帆名／模型名（同關聯名的規矩）"),
+        new SCP_CmdArgSpec("name", "render-profile：設定名（小寫英數 _ -；use 給 none ⇒ 不用）／work mark：標記名（不可含 : , |）／work link／unlink：關聯名（不可含 : , | / 、不可是 none／all／self／start／now）／work preset／unpreset：預覽 preset 名（不可含 , | : / \\、不可是 all）／work anchor／unanchor／rope／unrope／sail／unsail／model／unmodel：固定點名／繩名／帆名／模型名（同關聯名的規矩）"),
         new SCP_CmdArgSpec("from_scope", "render-profile copy：來源層", iChoices: new[] { "shared", "persona" }),
         new SCP_CmdArgSpec("from", "render-profile copy：來源設定名／diff：起點（標記 name、name:begin、name:end；start；事件檔 *.json）／spray：射線起點 x,y,z（整數 ＝ 格心，可帶小數）／work rope：一端（固定點名｜關聯/…/固定點名｜x,y,z｜sail:帆名/角｜model:模型名/點｜rope:繩名/比例 ＝ 掛在另一條繩上、比例 0..1 ⇒ 子繩）"),
         new SCP_CmdArgSpec("to_scope", "render-profile copy：目標層", iChoices: new[] { "shared", "persona" }),
@@ -281,6 +281,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("light_add", "view／render-profile set：加燈 x,y,z[;#rrggbb[;強度[;shadow 0|1]]]，多盞用 | 串（疊在下層的燈之後）"),
         new SCP_CmdArgSpec("light_clear", "view／render-profile set：1 ＝ 先清空燈（再接 light_add）"),
         new SCP_CmdArgSpec("unset", "render-profile set：拿掉哪些鍵（逗號分隔 ⇒ 回到沿用下層）"),
+        new SCP_CmdArgSpec("preset", "view／slice／section／stats／export：用作品存的預覽 preset（TASK-0571）—— all（＝ 不給，正常顯示）｜<名字>（展開成它存的 links／hide_links／region／exclude_color／models／hide_models／ropes／hide_ropes／rope_groups／hide_rope_groups／sails／hide_sails；同一個參數又手打 ⇒ 擋）；存一組用 work sub=preset name=<名字> 加那幾個參數"),
         new SCP_CmdArgSpec("share", "落子成功後發酒館帶圖（0 ＝ 不發）", iDefault: "1"),
     };
 
@@ -309,7 +310,14 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             Fail(aResult, 2, "✗ persona 不合法（不可含 `/` `\\` `:` 或是 `.` / `..`）：'" + aPersona + "'");
             return aResult;
         }
-        var aCtx = new Ctx(aRoots, iArgs, aResult, aOp, aPersona);
+        // TASK-0571：preset=<名字> ⇒ 先展開成那幾個參數、重綁一次（後面每一支照原本的規則驗與畫）
+        SCP_CmdArgs? aArgs = ExpandPreset(iArgs, aOp, aRoots.DataRoot, aResult, out string aPresetError);
+        if (aArgs == null)
+        {
+            Fail(aResult, 2, "✗ " + aPresetError);
+            return aResult;
+        }
+        var aCtx = new Ctx(aRoots, aArgs, aResult, aOp, aPersona);
         string? aPayload;
         // TASK-0534：換檔被別的行程（常駐視窗的雕刻頁、防毒…）擋一下、重試 ⇒ 印一行讀數（只收這條 thread 的，同一行程裡別的指令不算進來）
         int aThread = Environment.CurrentManagedThreadId;

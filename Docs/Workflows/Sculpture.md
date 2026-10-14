@@ -523,6 +523,15 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
 - `diff` 只比本作品自己的事件（不含關聯）；`mark` 回到過去時，被關聯的作品照現在。觀測頁：「只組這些關聯／拿掉這些關聯」兩欄；被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組。
 - **觀測頁的關聯開關**（TASK-0499）：選了有關聯的作品，「作品」下拉底下列出整棵關聯樹（巢狀縮排），**一條一個 toggle**，預設照那一條在作品裡的 `enabled`。關掉一條 ⇒ 連同底下都不畫；只關底下那條 ⇒ 上一層照畫；作品裡設為關的也可以這次打開。頁面把開關換成 `links=`（畫的那幾條全部點名）＋`hide_links=`（關掉而上一層有畫的）送出去 —— ⚠ 只送 `links=` 不夠：點名那條底下沒點名的會照自己的 enabled 被畫回來。全部在預設 ⇒ 什麼都不送；全關 ⇒ `links=none`。⛔ 開關**不寫回** links.json（長期開關用 `work sub=link enabled=0|1`）。開關的 id 帶作品 id ⇒ 換作品清單就換。**兩個文字欄有填 ⇒ 以文字欄為準**，開關這一次不生效（頁面上有寫）。GPU 預覽每幀照開關組參數；spawn 出圖（文字模式）要按渲染。
   - **Unity Hierarchy 式**（TASK-0500）：子模組的子模組（幾層都行）一樣列、一樣開關。勾 ＝ 那一條**自己的**開關（像 activeSelf）；上一層關了 ⇒ 底下每一層都不畫，但它們的勾照留、標「◌ 上層關著 ⇒ 不畫」（像 activeInHierarchy），上一層打開就照自己的勾回來。有子關聯的那一條前面有 ▶／▼ 折疊鈕（方形、跟勾選框一樣大；**預設折起來**），折起來標「底下 N 條」；另有「全部展開／全部折疊」。**折疊只管列不列，不管畫不畫**。開關與折疊都住頁面 session，⛔ 不寫回 links.json。
+- **預覽 preset**（TASK-0571）：作品存幾組「這次只看／藏哪些」，觀測時用名字叫出來 —— 看藏在船殼裡面、已完工的部分。存在作品的 `view_presets.json`（入版控，⛔ 不是 voxel、不進 events）。
+  ```bash
+  senate cmd sculpture --arg op=work --arg sub=preset --arg work=ship --arg persona=<P> --arg name=藏船殼 --arg hide_links=船殼 --arg note=看甲板
+  senate cmd sculpture --arg op=work --arg sub=presets --arg work=ship            # 列出；sub=unpreset name= 拿掉
+  senate cmd sculpture --arg op=view --arg work=ship --arg preset=藏船殼 --arg out=<png>
+  ```
+  - 收的參數跟 CLI 同名、存原字串：links、hide_links、region、exclude_color、models、hide_models、ropes、hide_ropes、rope_groups、hide_rope_groups、sails、hide_sails、note。改一組：有給的蓋過去（給空字串 ＝ 清掉那一格），沒給的不動。links／hide_links 的路徑存的時候就驗；其他的照觀測時的規則驗。只有作者能改。
+  - `preset=` 只給觀測類 op；`all`（＝ 不給）正常顯示，是保留字。繩、帆、模型的鍵只有 view／export 吃，slice／section／stats 略過（回報印略過哪幾個）。名字打錯 ⇒ exit 2、列出有哪幾組；preset 跟手打的同一個參數同時給 ⇒ exit 2（⛔ 不默默挑一個）。
+  - 觀測頁：工具列「作品」下拉旁邊的「預覽 preset」下拉，預設 all；選一組 ⇒ Links／HideLinks 文字欄與關聯／繩／帆／模型開關這一次不生效（頁面上有寫），換作品回到 all。頁面與 CLI 用同一支展開（`SCP_SculptViewPresets.Expand`）⇒ 送出去的參數一樣。
 - ⭐ 慣例（甲板這種切出來的區域）：子作品尺寸 ＝ 父作品、`at=0,0,0`、`turn=0` ⇒ 子作品直接用父作品的座標雕，剖面校準也能共用。
 - **meta**（TASK-0517）：關聯可以帶一包給下游認部件的資訊，寫法與規則同外部模型（§9.4.9）；只改 meta 不用 overwrite，overwrite 搬位置 meta 照留。用到 meta 的 links.json 寫 **schema 3**。
 

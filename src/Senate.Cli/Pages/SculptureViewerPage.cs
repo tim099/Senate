@@ -703,6 +703,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         foreach (string aSel in new[] { FProjection, FAo, FShadow, FSkybox, FFitUpscale, FFloor, FFloorTex, FFloorFull })
             sb.Append(aSel).Append('=').Append(g.FieldValue(aSel + "/value", None)).Append(';');
         // 設定檔鏈變了（「使用」別組、存了新設定檔、換層）⇒ 圖也該跟著換
+        sb.Append("preset=").Append(PersonalSpace(g) ? SelectedPreset(g, SelectedWork(g)) : "").Append(';');   // TASK-0571：換 preset ⇒ 重渲
         sb.Append("chain=").Append(string.Join(">", m_ResolvedLayers)).Append('|');
         if (m_Resolved != null) foreach (string s in Describe(m_Resolved)) sb.Append(s).Append('|');
         return sb.ToString();
