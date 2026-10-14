@@ -204,11 +204,31 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
   帆裝照名字結尾（topsail、jib ⇒ 收帆；topgallant、spanker、fore-topmast-staysail ⇒ 戰鬥帆）；桅照帆名 `<fore｜main｜mizzen>-<course｜topsail｜…>`；彈藥庫照關聯名裡的「前／中／後」。
   🩸 這套名字規則分岔過一次（basecamp `fore-topsail.sheet-S`、summit `fore-topsail-sheet-S`）：遊戲只認點號那段期間，夜隼號上桅帆以上的帆腳不跟著轉、帆掉了 sheet 也不斷，**讀數上看不出來** —— 這是改用 meta 的原因。
 
+### 9.2 空艙房（遊戲配置功能艙；TASK-0568）
+
+遊戲（《憲法號對轟》）讓玩家把船上的空艙房配成醫療艙等功能艙、照艙房大小擺家具。**空艙房 ＝ 一個長方體**，標在艙房那件子作品裡：
+
+- 固定點 `<房名>.min`、`<房名>.max`：兩個角的那一格（含兩端）。**只框空氣**；地板 ＝ 甲板面上第一層空氣（跟梯子 foot 同一個量法），頂 ＝ 上一層甲板底下那一格。房名照舊自己取（例 `1`、`2`…）。
+- 可選 `<房名>.door`：門口站人的那一格（沒標 ⇒ 遊戲自己從四面牆找通出去的格）。
+- 那條關聯 meta `kind=rooms`（meta 誰都能標）。**鏡像的關聯固定點會自己翻過去** ⇒ 一舷標一次、另一舷的那條關聯也標 `kind=rooms` 就好。
+- 遊戲裡的名字 ＝ 關聯路徑／房名（例 `甲板-berth/艙房/3`、`甲板-berth/艙房-鏡像/3`）。
+
+候選與檢查（遊戲那側的工具，讀 `VoxelKit/_cache` 的 .vxk）：
+
+```bash
+python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py scan  --id <船的代號>   # 候選：每個「艙房」部件裡被牆隔開的每一間 ⇒ 最大的全空氣長方體；印組裝件座標與子作品自己的座標（sub=anchor 直接用）
+python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py check --id <船的代號>   # 標好的：尺寸、裡面幾格不是空氣、跟別間重疊幾格、門；不合格的打 ✗
+```
+
+- ⚠ 候選照「關聯路徑結尾是 艙房／艙房-鏡像」找；艙房叫別的名字 ⇒ 自己量。scan 的座標是匯出當下的作品，改過船要重匯再掃。
+- 憲法號、餘燼號（2026-10-14 量）：每舷 orlop 7、berth 8、砲甲板 2（餘燼號 orlop 多 1）；夜隼號沒有隔出來的艙房。
+
 ## 10. 換一艘船時的檢查表
 
 - [ ] 組裝件與每件子作品記了 meters_per_voxel；每個模型明寫 scale
 - [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點；羅經櫃、絞盤、小艇這類甲板上的東西也要帶 `kind`
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
+- [ ] 空艙房照 §9.2 標（艙房子作品的固定點 `<房名>.min／.max`、關聯 meta `kind=rooms`）；`rooms.py check` 全部 ✓
 - [ ] 每門砲退到零碰撞、砲口在船殼外；追擊砲照角度搜
 - [ ] 繩與帆的端點綁 `model:` 路徑；`ropes_broken 0`、`sails_broken 0`、`models_broken 0`
 - [ ] 每面帆、旗、帆自己的繩（sheet、tack）照 §9.1 標 meta（`work sub=meta part=… meta=` 或 `file=` 批次；`work sub=meta part=sail` 讀數的「沒有 meta」要是 0；繩只有帆自己的那幾條必標）；每根帆桁 meta 的 `sail` 等於它掛的那面帆的名字、`mast` 有寫
