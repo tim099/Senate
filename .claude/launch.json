@@ -8,6 +8,12 @@
       "port": 8766
     },
     {
+      "name": "blockside",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8768", "--bind", "127.0.0.1", "--directory", "D:/Unity/Valhalla/Blockside"],
+      "port": 8768
+    },
+    {
       "name": "artgallery-summit",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8767", "--bind", "127.0.0.1", "--directory", "D:/Unity/Valhalla/ArtGallery"],

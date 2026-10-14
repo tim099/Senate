@@ -242,11 +242,11 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 - 病床 1.9 × 0.8 m 佔 4 × 2 格 ⇒ 要擺得下一張床，房間最少約 2.0 × 1.5 m（門開在短邊 ⇒ 長邊要 2.5 m）。更小的照樣標，配置頁會寫「放不下」。
 - 那一層甲板沒有梯子通到 ⇒ 配置頁標「走不到」（傷員送不過去）。
 
-候選與檢查（遊戲那側的工具，讀 `VoxelKit/_cache` 的 .vxk）：
+候選與檢查（遊戲那側的工具，讀 `Blockside/VoxelKit/_cache` 的 .vxk）：
 
 ```bash
-python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py scan  --id <船的代號>   # 候選：每個「艙房」部件裡被牆隔開的每一間 ⇒ 最大的全空氣長方體；印組裝件座標與子作品自己的座標（sub=anchor 直接用）
-python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py check --id <船的代號>   # 標好的：尺寸、裡面幾格不是空氣、跟別間重疊幾格、門；不合格的打 ✗
+python -I Blockside/src/rooms.py scan  --id <船的代號>   # 候選：每個「艙房」部件裡被牆隔開的每一間 ⇒ 最大的全空氣長方體；印組裝件座標與子作品自己的座標（sub=anchor 直接用）
+python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺寸、裡面幾格不是空氣、跟別間重疊幾格、門；不合格的打 ✗
 ```
 
 - ⚠ 候選照「關聯路徑結尾是 艙房／艙房-鏡像」找；艙房叫別的名字 ⇒ 自己量。scan 的座標是匯出當下的作品，改過船要重匯再掃。
@@ -268,7 +268,7 @@ python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py check 
 | `floor` | 舷弧 `"x:z,x:z,…"`：z ＝ 地板上第一層空氣；點之間線性內插，範圍外 ＝ 這一層在那裡沒有甲板 | 走路格、切面 |
 | `thick` | 地板＋底下的樑幾格 | 停格拿掉甲板切多深 |
 
-- 量：每一層甲板子作品單獨匯出 .vxk，`python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/decks.py --vxk 甲板-berth=<…vxk> …  --tsv <out.tsv>`，再 `work sub=meta file=<out.tsv>` 標上去；遊戲那側 `admin.py metasync --id <船>` 同步（只換 meta 與固定點，格子不動）。
+- 量：每一層甲板子作品單獨匯出 .vxk，`python -I Blockside/src/decks.py --vxk 甲板-berth=<…vxk> …  --tsv <out.tsv>`，再 `work sub=meta file=<out.tsv>` 標上去；遊戲那側 `admin.py metasync --id <船>` 同步（只換 meta 與固定點，格子不動）。
 - 房間、梯子、砲照**關聯路徑**屬於那一層（`甲板-berth/艙房`、`甲板-berth/梯子`）；路徑看不出來的照高度落在哪一層。
 
 **通道**：梯子（§9 `kind=ladders`，foot／lo／hi／head）。兩頭各落在哪一層照那一欄的 `floor` 判斷（x 也看：兩層高度重疊、前後不重疊也分得開 —— 風暴角號後甲板與艏樓）。
@@ -281,7 +281,9 @@ python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py check 
 - **造船這側什麼都不用改**：作品與 `format=vxk` 匯出的格式不變；遊戲那側 `admin.py import／reimport` 存的 `_cache/<船>.vxk` 也是原檔（指紋防呆照舊）。
 - 遊戲建成品（`admin.py build`，匯入、重新匯入、同步 meta、後台「儲存並重建」都走它）時才壓縮：模型網格收成一個池子 —— **同一份網格不管幾艘船用到只存一次**、頂點去重＋差值；寫出去之前照遊戲的讀法還原、跟原檔逐個比（對不上 ⇒ 不寫）。六艘：成品 9.09 MB → 5.36 MB。
 - 量過大小的組成（壓縮後）：格子整艘約 0.1–0.2 MB，**模型網格才是大頭**（憲法號、三叉戟號各約 1 MB）⇒ 對成品大小最有效的是 §2.1「用已有的元件」，不是少雕幾格。
-- 原格式 `admin.py build --raw`；`admin.py verify` 把成品跟 `_cache` 原檔比。⚠ 壓縮版的成品解不回原本的 .vxk ⇒ 遊戲那側 `_cache` 掉了要 reimport（`ArtGallery/HtmlGames/_build/ame_constitution_broadside/README.md`）。
+- 原格式 `admin.py build --raw`；`admin.py verify` 把成品跟 `_cache` 原檔比。壓縮版的成品解不回原本的 .vxk ⇒ 遊戲那側 `_cache` 掉了（換機器）走 `admin.py cache`：從雕刻作品重新匯出、跟指紋比（`Blockside/src/README.md`）。
+- 📦 遊戲 2026-10-15 起獨立成 **Blockside**（Valhalla 的 `Blockside/` submodule，線上 https://tim099.github.io/Blockside/；TASK-0586）—— `admin.py`、`rooms.py`、`decks.py` 都在 `Blockside/src/`，`.vxk` 快取在 `Blockside/VoxelKit/_cache/`。
+- ⚠ 改了已經在遊戲裡的船（重匯 vxk），遊戲那側 `admin.py cache --all` 會說「作品變過了」—— 要不要換成新的由遊戲那側 reimport（會改戰局），造船這側照舊跟 ame 說一聲。
 
 ## 10. 換一艘船時的檢查表
 
