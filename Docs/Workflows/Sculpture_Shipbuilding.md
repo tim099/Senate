@@ -225,12 +225,34 @@ python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/rooms.py check 
 - ⚠ 候選照「關聯路徑結尾是 艙房／艙房-鏡像」找；艙房叫別的名字 ⇒ 自己量。scan 的座標是匯出當下的作品，改過船要重匯再掃。
 - 憲法號、餘燼號（2026-10-14 量）：每舷 orlop 7、berth 8、砲甲板 2（餘燼號 orlop 多 1）；夜隼號沒有隔出來的艙房。
 
+### 9.3 甲板與通道（遊戲照 meta 判定甲板；TASK-0572）
+
+遊戲照甲板分層（砲甲板、預備水手走得到的層、停格拿掉甲板、艙房屬於哪一層），⛔ 不自己量層高。結構：甲板 → 房間 → 功能物品（床、砲）；甲板本身也是一個大房間。
+
+**甲板**：組裝件裡那條甲板關聯（在 0,0,0）的 meta（meta 誰都能標）
+
+| 鍵 | 值 | 用途 |
+|---|---|---|
+| `kind` | `deck` | — |
+| `deck` | 代號（`orlop`、`berth`、`gun`、`lower`、`upper`、`spar`、`poop`、`main`、`quarter`…） | — |
+| `level` | 由下往上，0 起 | 順序 |
+| `name` | 顯示名（底艙甲板、住艙甲板、砲甲板…） | 停格、廣播、配置頁 |
+| `floor` | 舷弧 `"x:z,x:z,…"`：z ＝ 地板上第一層空氣；點之間線性內插，範圍外 ＝ 這一層在那裡沒有甲板 | 走路格、切面 |
+| `thick` | 地板＋底下的樑幾格 | 停格拿掉甲板切多深 |
+
+- 量：每一層甲板子作品單獨匯出 .vxk，`python -I ArtGallery/HtmlGames/_build/ame_constitution_broadside/decks.py --vxk 甲板-berth=<…vxk> …  --tsv <out.tsv>`，再 `work sub=meta file=<out.tsv>` 標上去；遊戲那側 `admin.py metasync --id <船>` 同步（只換 meta 與固定點，格子不動）。
+- 房間、梯子、砲照**關聯路徑**屬於那一層（`甲板-berth/艙房`、`甲板-berth/梯子`）；路徑看不出來的照高度落在哪一層。
+
+**通道**：梯子（§9 `kind=ladders`，foot／lo／hi／head）。兩頭各落在哪一層照 `floor` 判斷。遊戲裡 lo、hi 底下的踏板被打掉、或兩頭的甲板被打穿 ⇒ 那條通道斷（遊戲設定「尋路更新」開著時）。
+- 沒有梯子通到的甲板 ⇒ 預備水手走不到（憲法號、餘燼號的 orlop 現在沒有梯子）。
+
 ## 10. 換一艘船時的檢查表
 
 - [ ] 組裝件名稱 ＝ 船名（主作品）；船殼「<船名> 船殼」帶 `sub`（§2）
 - [ ] 組裝件與每件子作品記了 meters_per_voxel；每個模型明寫 scale
 - [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點；羅經櫃、絞盤、小艇這類甲板上的東西也要帶 `kind`
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
+- [ ] 每一層甲板的關聯照 §9.3 標 `kind=deck`（level、name、floor、thick）；每一層都有梯子通到（要讓人走得到的）
 - [ ] 空艙房照 §9.2 標（艙房子作品的固定點 `<房名>.min／.max`、關聯 meta `kind=rooms`）；`rooms.py check` 全部 ✓
 - [ ] 每門砲退到零碰撞、砲口在船殼外；追擊砲照角度搜
 - [ ] 繩與帆的端點綁 `model:` 路徑；`ropes_broken 0`、`sails_broken 0`、`models_broken 0`
