@@ -51,6 +51,27 @@ public static partial class SelfTest
             Check(SculptureViewerPage.FilterWorks(works, new SculptWorkFilter(), SculptWorkType.ship, null).Count == 0, "沒有 kind 表 ⇒ 一艘船都沒有（不是全部）");
             Check(SculptureViewerPage.WorkTypeOf(works[2], new[] { "magazine-x" }) == SculptWorkType.other, "反向對照：kind 名不在表上就不是船");
 
+            // ①c 房屋、城鎮（Tim 2026-10-14，TASK-0582）：照標籤 house／town；🔴 子作品也算、也不看 MainOnly（房屋就是城鎮的零件）；
+            //     兩個標籤都有 ⇒ 城鎮；船優先（帶 magazine 的主作品就算標了 town 也是船）；反向對照：標籤拼錯（houses）不算
+            var town = new List<SCP_SculptWork>(works)
+            {
+                new() { id = "port", title = "岩堡港", owner = "summit", status = "ready", tags = new() { "town" } },
+                new() { id = "port-ground", title = "地形", owner = "summit", status = "ready", tags = new() { "sub", "town" } },
+                new() { id = "port-house", title = "樓房", owner = "summit", status = "ready", tags = new() { "sub", "house" } },
+                new() { id = "port-tavern", title = "酒館", owner = "summit", status = "ready", tags = new() { "house", "town" } },
+                new() { id = "port-typo", title = "拼錯", owner = "summit", status = "ready", tags = new() { "sub", "houses" } },
+            };
+            var kinds2 = new Dictionary<string, IReadOnlyCollection<string>>(kinds) { ["port"] = new[] { "lantern" } };
+            string IdsT2(SculptWorkFilter f, SculptWorkType t) => string.Join(",", SculptureViewerPage.FilterWorks(town, f, t, kinds2).Select(w => w.id));
+            Check(IdsT2(new SculptWorkFilter(), SculptWorkType.building) == "port-house", "🔴 房屋：MainOnly 開著也要列出子作品 port-house（標了 town 的酒館算城鎮、拼錯的不算）：" + IdsT2(new SculptWorkFilter(), SculptWorkType.building));
+            Check(IdsT2(new SculptWorkFilter(), SculptWorkType.town) == "port,port-ground,port-tavern", "城鎮：主作品＋子作品都列、兩個標籤都有算城鎮：" + IdsT2(new SculptWorkFilter(), SculptWorkType.town));
+            Check(IdsT2(new SculptWorkFilter(), SculptWorkType.other) == "ship,rain", "其他（MainOnly 開）不該含房屋、城鎮、拼錯的子作品：" + IdsT2(new SculptWorkFilter(), SculptWorkType.other));
+            Check(IdsT2(new SculptWorkFilter { MainOnly = false }, SculptWorkType.other) == "ship,ship-deck,rain,port-typo", "反向對照：標籤拼錯（houses）就是其他：" + IdsT2(new SculptWorkFilter { MainOnly = false }, SculptWorkType.other));
+            Check(IdsT2(new SculptWorkFilter(), SculptWorkType.ship) == "ship-assembly", "加了房屋城鎮之後船的結果不能變：" + IdsT2(new SculptWorkFilter(), SculptWorkType.ship));
+            Check(IdsT2(new SculptWorkFilter { Owner = "basecamp" }, SculptWorkType.building) == "", "作者篩選照樣套在房屋上");
+            var shipTown = new SCP_SculptWork { id = "x", title = "x", owner = "a", status = "ready", tags = new() { "town" } };
+            Check(SculptureViewerPage.WorkTypeOf(shipTown, new[] { "magazine" }) == SculptWorkType.ship, "船優先：帶 magazine 的主作品標了 town 也是船");
+
             // ② Inspector 真的改到物件（點 enum 鈕／取消勾／填欄位）
             var cfg = new SculptExportSettings();
             SCP_GuiInspector.Draw(new SCP_Ui(new SCP_GuiInput { ClickedId = "sculpt/export/Format=vox" }), cfg, "sculpt/export");
@@ -170,7 +191,7 @@ public static partial class SelfTest
             finally { try { Directory.Delete(tmpRepo, true); } catch { } }
         }
         catch (Exception e) { failures.Add(e.GetType().Name + ": " + e.Message); }
-        return new(name, failures.Count == 0 ? "篩選 5 格＋類型 6 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
+        return new(name, failures.Count == 0 ? "篩選 5 格＋類型 6 格＋房屋城鎮 7 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
                    failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 }

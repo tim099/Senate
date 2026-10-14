@@ -29,7 +29,7 @@ public sealed class SculptExportSettings
 
 /// <summary>工具列的作品類型（值名＝下拉選項的 id；Tim 2026-10-13）。</summary>
 /// <remarks>作品卡沒有類型欄位 ⇒ 從作品**自己**的 links.json／models.json 的 meta `kind` 推（Tim 選的做法），見 <see cref="SculptureViewerPage.WorkTypeOf"/>。</remarks>
-public enum SculptWorkType { all, ship, other }
+public enum SculptWorkType { all, ship, building, town, other }
 
 /// <summary>工具列作品下拉的篩選條件（成員名就是畫面上的標籤與 id）。</summary>
 public sealed class SculptWorkFilter
@@ -242,12 +242,28 @@ public sealed partial class SculptureViewerPage
 
     /// <summary>
     /// 作品類型（純函數，淨室直接測）：⛔ 子作品（標 <c>sub</c>）一律不是船 —— 甲板、砲、帆桁那些是船的部件（Tim 2026-10-13）；
-    /// 主作品自己的關聯／模型 meta 帶 <see cref="ShipKinds"/> 任一個 ⇒ <see cref="SculptWorkType.ship"/>；其餘 <see cref="SculptWorkType.other"/>。
+    /// 主作品自己的關聯／模型 meta 帶 <see cref="ShipKinds"/> 任一個 ⇒ <see cref="SculptWorkType.ship"/>；
+    /// 不是船、標籤有 <see cref="TownTag"/> ⇒ 城鎮、有 <see cref="BuildingTag"/> ⇒ 房屋（子作品也算，TASK-0582）；其餘 <see cref="SculptWorkType.other"/>。
     /// 只看自己這一層，⛔ 不往關聯進去的子作品找：砲的 meta 掛在甲板子作品上，而三艘船的組裝件自己的關聯就帶 kind
     /// （2026-10-13 量組裝件自己的 links.json：夜隼號 ship＋magazine、餘燼號 magazine、憲法號 magazine×2）—— 往下找只會多讀檔、不會多認出一艘。
     /// </summary>
     public static SculptWorkType WorkTypeOf(SCP_SculptWork iWork, IReadOnlyCollection<string>? iKinds)
-        => !iWork.IsSub && iKinds != null && iKinds.Any(ShipKinds.Contains) ? SculptWorkType.ship : SculptWorkType.other;
+    {
+        if (!iWork.IsSub && iKinds != null && iKinds.Any(ShipKinds.Contains)) return SculptWorkType.ship;
+        if (iWork.tags.Contains(TownTag)) return SculptWorkType.town;
+        if (iWork.tags.Contains(BuildingTag)) return SculptWorkType.building;
+        return SculptWorkType.other;
+    }
+
+    /// <summary>
+    /// 房屋、城鎮照標籤認（Tim 2026-10-14「可以新增一下房屋 城鎮類型作品（我篩選查看）」，TASK-0582）：<c>house</c> ⇒ 房屋、<c>town</c> ⇒ 城鎮（兩個都有 ⇒ 城鎮）。
+    /// 跟船不同：⛔ 不排除子作品 —— 房屋本來就是城鎮的零件（岩堡港的 -house-* 都標 sub），篩房屋就是要看零件；
+    /// 所以這兩類也不看「只列主作品」（<see cref="IgnoresMainOnly"/>）。標籤要一字不差（大小寫照 tags 規則，不放寬）。
+    /// </summary>
+    public const string BuildingTag = "house", TownTag = "town";
+
+    /// <summary>這個類型要不要略過 MainOnly：房屋、城鎮是 ⇒ 子作品照列（見 <see cref="BuildingTag"/>）。</summary>
+    public static bool IgnoresMainOnly(SculptWorkType iType) => iType is SculptWorkType.building or SculptWorkType.town;
 
     /// <summary>
     /// 篩選作品清單（純函數，淨室直接測）：主作品＝沒標 <c>sub</c>（⛔ 不看 parent_work —— 那是計費的任務歸屬，TASK-0505）；
@@ -260,7 +276,7 @@ public sealed partial class SculptureViewerPage
         var outList = new List<SCP_SculptWork>();
         foreach (var w in iWorks)
         {
-            if (iFilter.MainOnly && w.IsSub) continue;
+            if (iFilter.MainOnly && w.IsSub && !IgnoresMainOnly(iType)) continue;
             if (iType != SculptWorkType.all && WorkTypeOf(w, iKinds != null && iKinds.TryGetValue(w.id, out var aKinds) ? aKinds : null) != iType) continue;
             if (owner.Length > 0 && !w.owner.Equals(owner, StringComparison.OrdinalIgnoreCase)) continue;
             if (key.Length > 0 && w.id.IndexOf(key, StringComparison.OrdinalIgnoreCase) < 0

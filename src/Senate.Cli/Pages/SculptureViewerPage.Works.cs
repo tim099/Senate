@@ -618,13 +618,16 @@ public sealed partial class SculptureViewerPage
         if (!PersonalSpace(g)) { ExhibitTopBar(g); return; }
         string persona = g.FieldValue(PersonaSel + "/value", None);
         // 類型的件數照其他篩選條件算（⛔ 不含類型自己）⇒ 選項上的數字 ＝ 選了它之後作品下拉會有幾件
+        //   每一類各算一次（⛔ 其他 ≠ 全部 − 船：房屋、城鎮不看 MainOnly，件數不能相減，TASK-0582）
         var cfg = FilterCfg(g);
-        int nShip = FilterWorks(m_Works, cfg, SculptWorkType.ship, m_WorkKinds).Count, nAll = FilterWorks(m_Works, cfg).Count;
+        int N(SculptWorkType iT) => FilterWorks(m_Works, cfg, iT, m_WorkKinds).Count;
         string typePick = g.Dropdown("類型", new List<SCP_GuiOption>
         {
-            new(nameof(SculptWorkType.all), "全部（" + nAll + "）"),
-            new(nameof(SculptWorkType.ship), "船（" + nShip + "）"),
-            new(nameof(SculptWorkType.other), "其他（" + (nAll - nShip) + "）"),
+            new(nameof(SculptWorkType.all), "全部（" + N(SculptWorkType.all) + "）"),
+            new(nameof(SculptWorkType.ship), "船（" + N(SculptWorkType.ship) + "）"),
+            new(nameof(SculptWorkType.building), "房屋（" + N(SculptWorkType.building) + "）"),
+            new(nameof(SculptWorkType.town), "城鎮（" + N(SculptWorkType.town) + "）"),
+            new(nameof(SculptWorkType.other), "其他（" + N(SculptWorkType.other) + "）"),
         }, nameof(SculptWorkType.all), TypeSel);
         var type = Enum.TryParse(typePick, out SculptWorkType t) ? t : SculptWorkType.all;
         var shown = FilterWorks(m_Works, cfg, type, m_WorkKinds);
@@ -701,7 +704,7 @@ public sealed partial class SculptureViewerPage
             {
                 if (filter.Open)
                 {
-                    g.Note("MainOnly：只列主作品（沒標 sub 的；標籤在作品區編）｜Owner：只列這位作者的（空 ＝ 不限）｜Keyword：ID、名稱或標籤含這段字（空 ＝ 不限）。篩選只管下拉列不列，目前選的作品被篩掉也不換。");
+                    g.Note("MainOnly：只列主作品（沒標 sub 的；標籤在作品區編；類型選「房屋」「城鎮」時不看這一格 —— 那兩類照標籤 house／town 認、子作品也列）｜Owner：只列這位作者的（空 ＝ 不限）｜Keyword：ID、名稱或標籤含這段字（空 ＝ 不限）。篩選只管下拉列不列，目前選的作品被篩掉也不換。");
                     foreach (string n in DrawCfg(g, FilterCfg(g), FilterCfgKey, SFilterCfg, ref m_FilterCfgJson)) g.Note("（自動繪製）" + n);
                 }
             }
