@@ -96,6 +96,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "region", "exclude_color", "light_dir", "ambient", "shadow", "ao", "zoom", "projection", "yaw", "pitch", "roll",
         "target", "eye", "distance", "fov", "skybox", "skybox_yaw", "skybox_tilt", "width", "height", "lights", "light_add", "light_clear",
         "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
+        "sea", "sea_z", "sea_color", "sea_opacity",
     };
 
     /// <summary>render-profile set 吃的設定鍵（＝ <see cref="SCP_SculptRenderProfiles.TryEdit"/> 認得的那幾個）。</summary>
@@ -104,6 +105,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "projection", "yaw", "pitch", "roll", "target", "eye", "distance", "fov", "zoom", "ambient", "ao", "shadow",
         "skybox", "skybox_yaw", "skybox_tilt", "background", "width", "height", "lights", "light_add", "light_clear", "unset",
         "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
+        "sea", "sea_z", "sea_color", "sea_opacity",
     };
 
     /// <summary>render-profile set 除了設定鍵以外還吃的（路由／身分）。其餘顯式給的參數 ⇒ 擋（⛔ 不靜默忽略）。</summary>
@@ -239,6 +241,10 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("floor_tile", "地板貼圖每重複一次涵蓋幾格（" + SCP_SculptRenderProfiles.FloorTileMin + ".." + SCP_SculptRenderProfiles.FloorTileMax + "；網格忽略）"),
         new SCP_CmdArgSpec("floor_color", "地板色調 #RRGGBB（乘在貼圖／網格上）"),
         new SCP_CmdArgSpec("floor_fade", "地板邊緣淡出寬度（佔邊長比例 0.." + SCP_SculptRenderProfiles.FloorFadeMax + "；0 ＝ 硬邊）"),
+        new SCP_CmdArgSpec("sea", "view／render-profile set／work sea：海面 on|off（TASK-0585；渲染的一片平面、不是 voxel；不給 ⇒ 沿用作品預設與設定檔鏈）"),
+        new SCP_CmdArgSpec("sea_z", "海面高度（世界 z，" + SCP_SculptRenderProfiles.SeaZMin + ".." + SCP_SculptRenderProfiles.SeaZMax + "；格 k 佔 [k, k+1)）"),
+        new SCP_CmdArgSpec("sea_color", "海色 #RRGGBB（預設 #1e5a78）"),
+        new SCP_CmdArgSpec("sea_opacity", "海的不透明度 0..1（1 ＝ 水下全部蓋住；預設 0.85 ⇒ 水下淡淡看得到）"),
         new SCP_CmdArgSpec("width", "出圖寬（16-8192）"),
         new SCP_CmdArgSpec("height", "出圖高（16-8192）"),
         new SCP_CmdArgSpec("smooth", "view／exhibit register：python 時代的旗標（只影響 summary 文字，GPU 渲染不吃）"),
@@ -263,9 +269,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|meta|model|unmodel|models|components|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|sea|meta|model|unmodel|models|components|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
                            iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links", "preset", "unpreset", "presets",
-                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "meta", "model", "unmodel", "models", "components", "split-events" }),
+                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "sea", "meta", "model", "unmodel", "models", "components", "split-events" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
@@ -953,6 +959,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
     {
         oPlan = new SCP_SculptViewPlan(); oLayersText = ""; oError = "";
         if (!TryBase(c, out SCP_SculptRenderParams aBase, out List<string> aLayers, out string aBaseErr)) { oError = aBaseErr; return 2; }
+        if (!TryApplyWorkSea(c, aBase, aLayers, out string aSeaBad)) { oError = aSeaBad; return 2; }   // TASK-0585：作品的海 ⇒ 疊在設定檔鏈之後
         if (!TryViewArgs(c, out SCP_SculptViewArgs aViewArgs, out ViewAutos aAutos, out string aArgBad)) { oError = aArgBad; return 2; }
         if (ConfigureParts(c, aViewArgs) is string aPartsBad) { oError = aPartsBad; return 2; }
         SCP_SculptParts? aParts = c.Parts ? new SCP_SculptParts() : null;
@@ -1155,6 +1162,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         oBad = "";
         if (!TryApplyViewLights(c, p, out oBad)) return false;
         if (!TryApplyViewFloor(c, p, out oBad)) return false;
+        if (!TryApplyViewSea(c, p, out oBad)) return false;
         string aFit = c.Args.Get("fit_upscale").Trim();
         if (aFit.Length > 0)
         {
@@ -1252,6 +1260,45 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         return true;
     }
 
+    /// <summary>
+    /// view 的一次性海面（TASK-0585）：跟地板同一套 —— TryEdit 解析、TryApply 驗證，疊在作品預設與設定檔鏈上
+    /// （只給 sea_z ⇒ 只換高度、開關沿用下層；sea=off ⇒ 這次不畫）。
+    /// </summary>
+    static bool TryApplyViewSea(Ctx c, SCP_SculptRenderParams p, out string oBad)
+    {
+        oBad = "";
+        var aEdit = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string k in SCP_SculptRenderProfiles.SeaFlatKeys)
+        {
+            string v = c.Args.Get(k).Trim();
+            if (v.Length > 0) aEdit[k] = v;
+        }
+        if (aEdit.Count == 0) return true;
+        var aTemp = SCP_JsonData.NewObject();
+        if (!SCP_SculptRenderProfiles.TryEdit(aTemp, aEdit, new List<string>(), out oBad)) return false;
+        if (!SCP_SculptRenderProfiles.TryApply(aTemp, p, SCP_SculptRenderProfiles.SkyboxesDir(c.Data), out oBad))
+        { oBad = "海面：" + oBad; return false; }
+        return true;
+    }
+
+    /// <summary>
+    /// 作品自己的海面預設（TASK-0585，`work sub=sea` 寫的 sea.json）：疊在共用／個人設定之後、展品與 CLI 之前。
+    /// 只看主作品（關聯進來的子作品自己的海不算 —— 一張圖只有一片海）。沒有檔 ⇒ 不疊、不是錯；檔壞了 ⇒ 擋（⛔ 不默默當成沒有海）。
+    /// </summary>
+    static bool TryApplyWorkSea(Ctx c, SCP_SculptRenderParams p, List<string> ioLayers, out string oBad)
+    {
+        oBad = "";
+        if (c.Work == null) return true;
+        SCP_JsonData? aSea;
+        try { aSea = SCP_SculptRenderProfiles.ReadWorkSea(c.Works.SpacePaths(c.Work.id)); }
+        catch (Exception e) when (e is IOException || e is InvalidDataException || e is SCP.Core.Json.SCP_JsonParseException)
+        { oBad = "作品的海面預設讀不了：" + e.Message; return false; }
+        if (aSea == null) return true;
+        if (!SCP_SculptRenderProfiles.TryApplySeaObject(aSea, p, out oBad)) { oBad = "作品的海面預設（sea.json）：" + oBad; return false; }
+        ioLayers.Add("作品海面 `" + c.Work.id + "`");
+        return true;
+    }
+
     /// <summary>渲染參數 → 設定檔同形的 JSON（`show` 的「實際生效值」與 view 回傳檔用）。</summary>
     public static SCP_JsonData DescribeParams(SCP_SculptRenderParams p)
     {
@@ -1298,6 +1345,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         aSky.Set("tilt", p.SkyboxTiltDeg);
         aOut.Set("skybox", aSky);
         aOut.Set("floor", SCP_SculptRenderProfiles.DescribeFloor(p));
+        aOut.Set("sea", SCP_SculptRenderProfiles.DescribeSea(p));
         aOut.Set("background", Hex(p.BgR, p.BgG, p.BgB));
         aOut.Set("width", (long)p.Width);
         aOut.Set("height", (long)p.Height);

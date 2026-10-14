@@ -36,7 +36,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>拿作品鎖之後才分派的 sub（create／list／assemble 自己管鎖）。</summary>
     static readonly string[] s_WorkLockedSubs =
         { "show", "update", "import", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links", "preset", "unpreset", "presets",
-          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "meta", "split-events" };
+          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "sea", "meta", "split-events" };
 
     static string? OpWork(Ctx c)
     {
@@ -61,7 +61,7 @@ public sealed partial class Cmd_Sculpture
             if (sub == "model") return WorkModel(c, id);
             if (sub == "unmodel") return WorkUnmodel(c, id);
             if (sub == "models") return WorkModels(c, id);
-            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|meta|model|unmodel|models|split-events");
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|sea|meta|model|unmodel|models|split-events");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
             List<SCP_SculptLinkNode>? tree = null;
@@ -125,6 +125,7 @@ public sealed partial class Cmd_Sculpture
             if (sub == "unsail") return WorkUnsail(c, cardNow);
             if (sub == "sails") return WorkSails(c, cardNow);
             if (sub == "wind") return WorkWind(c, cardNow);
+            if (sub == "sea") return WorkSea(c, cardNow);       // TASK-0585：作品的海面預設（渲染用，不是 voxel）
             // TASK-0539：帆、繩、模型、關聯的 meta（給遊戲的標籤；不限作者，記在 meta_log.jsonl）
             if (sub == "meta") return WorkMeta(c, cardNow);
             if (sub == "apply" || sub == "discard")

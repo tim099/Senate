@@ -65,6 +65,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     const string FFitUpscale = P + "sel/fit_upscale";
     const string FFloor = P + "sel/floor", FFloorTex = P + "sel/floor_texture", FFloorTile = P + "f/floor_tile", FFloorZ = P + "f/floor_z";
     const string FFloorFull = P + "sel/floor_full_grid", FFloorMargin = P + "f/floor_margin", FFloorMarginRatio = P + "f/floor_margin_ratio", FFloorColor = P + "f/floor_color", FFloorFade = P + "f/floor_fade";
+    const string FSea = P + "sel/sea", FSeaZ = P + "f/sea_z", FSeaColor = P + "f/sea_color", FSeaOpacity = P + "f/sea_opacity";   // TASK-0585
     const string ProfScope = P + "sel/prof_scope", ProfSaveName = P + "f/prof_name";
     const string ProfCopyScope = P + "sel/prof_copy_scope", ProfCopyName = P + "f/prof_copy_name";
     const string Pending = P + "pending";
@@ -112,6 +113,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     {
         FRegion, FExclude, FTarget, FEye, FDistance, FZoom, FLightDir, FWidth, FHeight,
         FFloorTile, FFloorZ, FFloorMargin, FFloorMarginRatio, FFloorColor, FFloorFade, FLinks, FHideLinks,
+        FSeaZ, FSeaColor, FSeaOpacity,
     };
 
     static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
@@ -499,6 +501,13 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         Field(g, "floor_color（#RRGGBB 色調）", FFloorColor);
         Field(g, "floor_fade（邊緣淡出 0..0.5）", FFloorFade);
         if (m_Resolved != null) g.Label("目前疊加結果的地板：" + FloorSpec(m_Resolved));
+
+        // 海水（TASK-0585）：渲染的一片平面、⛔ 不是 voxel；空白／沿用 ＝ 不送 ⇒ 照作品的海面預設（work sub=sea）與設定檔鏈
+        g.Label("海水（渲染的一片平面，不是 voxel；沿用 ＝ 作品的海面預設 work sub=sea）");
+        Tri(g, "海水", FSea, "on", "開", "off", "關");
+        Field(g, "sea_z（海面高度，世界 z；例：船的水線）", FSeaZ);
+        Field(g, "sea_color（#RRGGBB）", FSeaColor);
+        Field(g, "sea_opacity（0..1；1 ＝ 水下全部蓋住）", FSeaOpacity);
     }
 
     /// <summary>
@@ -582,6 +591,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         PutSel("fit_upscale", FFitUpscale);
         PutSel("floor", FFloor); PutSel("floor_texture", FFloorTex); Put("floor_tile", FFloorTile); Put("floor_z", FFloorZ);
         PutSel("floor_full_grid", FFloorFull); Put("floor_margin", FFloorMargin); Put("floor_margin_ratio", FFloorMarginRatio); Put("floor_color", FFloorColor); Put("floor_fade", FFloorFade);
+        PutSel("sea", FSea); Put("sea_z", FSeaZ); Put("sea_color", FSeaColor); Put("sea_opacity", FSeaOpacity);
         return a;
     }
 

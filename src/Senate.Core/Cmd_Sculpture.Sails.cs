@@ -10,6 +10,7 @@ using System.Globalization;
 using System.Text;
 using SCP.Core.Cmd;
 using SCP.Core.Sculpture;
+using SCP.Core.Json;
 
 namespace Senate.Core;
 
@@ -410,6 +411,51 @@ public sealed partial class Cmd_Sculpture
         c.Report.Append("- 預設風 (").Append(aWind).Append(") m/s（世界座標）｜模擬 ").Append(F2(aFile.seconds)).Append(" 秒｜一格 ")
                 .Append(iCard.MetersPerVoxel.ToString("0.#####", CultureInfo.InvariantCulture)).Append(" m（重力與風照它換成格）\n");
         return Finish(c, 0, (aSet ? "✓ 預設風改成 (" : "✓ 預設風 (") + aWind + ") m/s、模擬 " + F2(aFile.seconds) + " 秒（觀測時 wind=／sail_seconds= 可以一次性蓋過）");
+    }
+
+    /// <summary>
+    /// work sub=sea [sea=on|off] [sea_z=] [sea_color=] [sea_opacity=]：這件作品觀測時的海面預設（TASK-0585；寫進 sea.json，渲染用、⛔ 不是 voxel）。
+    /// 只給一部分 ⇒ 其他欄位沿用檔裡的；都沒給 ⇒ 印現在的值。改的只有作者。觀測時 view 的 sea=／sea_z=… 可以一次性蓋過。
+    /// </summary>
+    static string? WorkSea(Ctx c, SCP_SculptWork iCard)
+    {
+        var aPaths = c.Works.SpacePaths(iCard.id);
+        SCP_JsonData? aOld;
+        try { aOld = SCP_SculptRenderProfiles.ReadWorkSea(aPaths); }
+        catch (Exception e) when (e is IOException || e is InvalidDataException || e is SCP.Core.Json.SCP_JsonParseException)
+        { return Blocked(c, 2, "sea.json 讀不了（" + e.Message + "）⇒ 先修好或刪掉它；未寫入"); }
+        var aEdit = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string k in SCP_SculptRenderProfiles.SeaFlatKeys)
+            if (c.Args.IsExplicit(k)) aEdit[k] = c.Args.Get(k).Trim();
+        bool aSet = aEdit.Count > 0;
+        var aProfile = SCP_JsonData.NewObject();
+        if (aOld != null) aProfile.Set("sea", aOld);
+        if (aSet)
+        {
+            if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改海面預設");
+            if (!SCP_SculptRenderProfiles.TryEdit(aProfile, aEdit, new List<string>(), out string aBad)) return Blocked(c, 2, aBad + "；未寫入");
+        }
+        // 驗：照 view 的同一支疊一次（⛔ 不合法的值不落盤）
+        var aCheck = new SCP_SculptRenderParams();
+        string aInvalid = "";
+        if (aProfile["sea"].Exists && !SCP_SculptRenderProfiles.TryApplySeaObject(aProfile["sea"], aCheck, out aInvalid)) return Blocked(c, 2, "海面：" + aInvalid + "；未寫入");
+        if (aSet)
+        {
+            if (!aProfile["sea"]["enabled"].Exists) aProfile["sea"].Set("enabled", true);   // 第一次只給高度 ⇒ 當成要開（設了高度卻關著，沒人會這樣想）
+            if (!SCP_SculptRenderProfiles.TryApplySeaObject(aProfile["sea"], aCheck = new SCP_SculptRenderParams(), out aInvalid)) return Blocked(c, 2, "海面：" + aInvalid + "；未寫入");
+            SCP_SculptRenderProfiles.SaveWorkSea(aPaths, aProfile["sea"]);
+        }
+        SCP_SculptSea s = aCheck.Sea ?? new SCP_SculptSea();
+        string aColor = "#" + s.R.ToString("x2") + s.G.ToString("x2") + s.B.ToString("x2");
+        c.Result.AddValue("sea", aCheck.Sea != null && s.Enabled ? "on" : "off");
+        c.Result.AddValue("sea_z", F2(s.Z));
+        c.Result.AddValue("sea_color", aColor);
+        c.Result.AddValue("sea_opacity", F2(s.Opacity));
+        c.Result.AddValue("sea_file", aPaths.SeaFile.Replace('\\', '/'));
+        if (aCheck.Sea == null) return Finish(c, 0, "✓ 這件作品沒有海面預設（設：--arg sea_z=<世界 z> [--arg sea_color=#RRGGBB] [--arg sea_opacity=0..1]）");
+        string aWhat = (s.Enabled ? "開" : "關") + "｜海面 z " + F2(s.Z) + "（" + (s.Z * iCard.MetersPerVoxel).ToString("0.##", CultureInfo.InvariantCulture) + " m）｜" + aColor + "｜不透明度 " + F2(s.Opacity);
+        c.Report.Append("- 海面預設：").Append(aWhat).Append("（渲染的一片平面，⛔ 不是 voxel；觀測時 sea=／sea_z=… 可以一次性蓋過）\n");
+        return Finish(c, 0, (aSet ? "✓ 海面預設改成 " : "✓ 海面預設 ") + aWhat);
     }
 
     /// <summary>

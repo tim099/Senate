@@ -150,6 +150,7 @@ senate cmd sculpture --arg op=carvevox --arg work=<作品> --arg persona=<P> --a
 | 光 | `light_dir=x,y,z`（換成一盞白光）`ambient`（0-1）`shadow=1|0` `ao=1|0` |
 | 天空 | `skybox=<路徑>|builtin|none`（相對路徑以 `Sculpture/skyboxes/` 為基準；none ＝ 純色背景）`skybox_yaw` `skybox_tilt`（正交時背景視窗往上抬，−89..89；透視忽略） |
 | 地板 | `floor=on|off` `floor_z` `floor_full_grid=1|0` `floor_margin` `floor_texture=builtin|<檔名>|<絕對路徑>`（相對 ⇒ `Sculpture/floors/`）`floor_tile` `floor_color=#rrggbb` `floor_fade`（見 §5.1） |
+| 海面 | `sea=on|off` `sea_z` `sea_color=#rrggbb` `sea_opacity`（0..1）（見 §5.2；作品預設 `work sub=sea`） |
 | 框景 | `fit_upscale=1|0`（見上） |
 | 尺寸 | `width` `height`（16-8192，預設 1024） |
 
@@ -186,6 +187,35 @@ senate cmd sculpture --arg op=view --arg persona=<P> --arg exhibit=summit-mounta
 senate cmd sculpture --arg op=view --arg persona=<P> --arg floor=on --arg floor_texture=stone_tiles_02_diff_2k.jpg --arg floor_tile=8
 senate cmd sculpture --arg op=render-profile --arg sub=set --arg scope=persona --arg persona=<P> --arg name=mine --arg floor=on --arg floor_texture=dark_wooden_planks_diff_2k.jpg
 ```
+
+### 5.2 海面（TASK-0585）
+
+Tim 2026-10-14：「預覽模式是否可以開海水（可以設定高度）因為不希望實際建模海水 但是想要港口建築能在水中（同時可以引用船當子模型）」。
+一片 z＝`sea_z` 的水平面，**是渲染出來的、⛔ 不是 voxel**（不進格子清單、不影響讀數、匯出 list／obj／vxk 都沒有它）。
+
+- 畫在所有不透明的東西之後：深度測試、不寫深度、alpha 混色 ⇒ 海面以上照常；以下被蓋住（`sea_opacity` 1）或帶海色淡淡看得到（< 1）。
+- 鋪到遠方（不跟作品外框；正交、透視都到地平線）；⛔ 不算進框景（鏡頭不會為了海退到天邊）、不進陰影圖；接 voxel 的影子；雙面（鏡頭在水下也看得到海面）。
+- 跟地板並存：例：地板當海床、海面在上面。
+
+| 欄位 | 預設 | 範圍 | 意思 |
+|---|---|---|---|
+| `sea` | off | on／off | 開關；⚠ 不給 ⇒ 沿用下層（只換高度的層不改開關） |
+| `sea_z` | 0 | −64..4096 | 海面高度（世界 z；格 k 佔 [k, k+1)，`sea_z=60` ＝ 第 60 格的底面） |
+| `sea_color` | #1e5a78 | #rrggbb | 海色 |
+| `sea_opacity` | 0.85 | 0..1 | 不透明度；1 ＝ 水下全部蓋住 |
+
+**疊層**：內建預設 → 共用 → persona →（`profile=`）→ **作品海面**（主作品的 `sea.json`；關聯進來的子作品自己的海不算 —— 一張圖只有一片海）→ 展品 → CLI。`layers` 會印「作品海面 `<id>`」。
+**作品預設**：`work sub=sea`（只有作者能改；只給一部分 ⇒ 其他欄位沿用檔裡的；第一次只給高度 ⇒ 當成要開；都不給 ⇒ 印現在的值）。寫在作品資料夾的 `sea.json`；壞掉的檔 ⇒ view 擋下（⛔ 不默默當成沒有海）。
+觀測頁「相機與光影（手動）」最後一段：海水（沿用／開／關）＋高度、顏色、不透明度；空白 ＝ 照作品預設。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=sea --arg work=<港口> --arg persona=<P> --arg sea_z=60 --arg sea_opacity=0.8   # 作品預設
+senate cmd sculpture --arg op=view --arg work=<港口> --arg persona=<P>                    # 照作品預設開海
+senate cmd sculpture --arg op=view --arg work=<港口> --arg persona=<P> --arg sea=off      # 這次不畫
+senate cmd sculpture --arg op=view --arg work=<船> --arg persona=<P> --arg sea=on --arg sea_z=50 --arg sea_opacity=1   # 一次性：海面放到船的水線
+```
+
+- 引用船當子作品（關聯）：⚠ 關聯不能放到負座標（越界的格會被切掉）⇒ 港口的海面要高過船的吃水（船底 z 0、水線 z 50 ⇒ 港口海面 ≥ 50）。帆的風是作品自己的設定 ⇒ 港口作品要自己 `work sub=wind`，不然帆是垂的。
 
 ### 5.2 section —— 剖面圖與參考圖疊圖（TASK-0480）
 

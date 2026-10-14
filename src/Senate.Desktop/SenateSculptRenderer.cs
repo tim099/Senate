@@ -391,6 +391,12 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             if (aF.Texture != null && !Path.IsPathRooted(aF.Texture))
             { oError = "Floor.Texture 需是絕對路徑（或 null＝內建量尺網格）：" + aF.Texture; return false; }
         }
+        var aS = iP.Sea;
+        if (aS != null && aS.Enabled)   // TASK-0585
+        {
+            if (!Finite(aS.Z) || !Finite(aS.Opacity)) { oError = "Sea 參數含 NaN／無限大"; return false; }
+            if (aS.Opacity < 0 || aS.Opacity > 1) { oError = "Sea.Opacity 需在 0..1：" + aS.Opacity; return false; }
+        }
         return true;
     }
 
@@ -684,6 +690,55 @@ void main() {
     oColor = vec4(c * a, a);
 }";
 
+    // 海面（TASK-0585）：一片 z＝Sea.Z 的大平面，所有不透明的東西畫完才畫（深度測試、不寫深度、一般 alpha 混色）。
+    // 光跟地板同式（法線 +z、接兩張陰影圖）；從水下往上看照樣畫（雙面）—— 海面不會因為鏡頭在下面就消失。
+    // 輸出**不是**預乘：混色式 SRC_ALPHA, ONE_MINUS_SRC_ALPHA（目標 alpha 不動，保持 1）。
+    const string SeaFs = @"#version 330 core
+in vec2 vWorld;
+in vec4 vLightPos0;
+in vec4 vLightPos1;
+uniform int uLightCount;
+uniform vec3 uLightDir[8];
+uniform vec3 uLightCol[8];
+uniform int uLightShadow[8];
+uniform float uAmbient;
+uniform float uToneScale;
+uniform sampler2DShadow uShadowMap0;
+uniform sampler2DShadow uShadowMap1;
+uniform float uTexel;
+uniform float uBias;
+uniform float uSun;
+uniform vec3 uHemiSky;
+uniform vec3 uSeaColor;
+uniform float uOpacity;
+out vec4 oColor;
+float shoulder(float x) { if (x > 0.85) x = 0.85 + 0.15 * (1.0 - exp(-(x - 0.85) / 0.15)); return x; }
+float shadowFactor(sampler2DShadow iMap, vec4 iLightPos) {
+    vec3 p = iLightPos.xyz / iLightPos.w * 0.5 + 0.5;
+    if (p.z >= 1.0 || p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) return 1.0;
+    float s = 0.0;
+    for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++)
+            s += texture(iMap, vec3(p.xy + vec2(x, y) * uTexel, p.z - uBias));
+    return s / 9.0;
+}
+void main() {
+    vec3 direct = vec3(0.0);
+    for (int i = 0; i < uLightCount; i++) {
+        float ndl = max(uLightDir[i].z, 0.0);
+        if (ndl <= 0.0) continue;
+        float sh = 1.0;
+        if (uLightShadow[i] == 0) sh = shadowFactor(uShadowMap0, vLightPos0);
+        else if (uLightShadow[i] == 1) sh = shadowFactor(uShadowMap1, vLightPos1);
+        direct += uLightCol[i] * (ndl * sh);
+    }
+    vec3 light = uAmbient * uHemiSky + (1.0 - uAmbient) * uSun * direct;
+    light = vec3(shoulder(light.r), shoulder(light.g), shoulder(light.b)) * uToneScale;
+    oColor = vec4(clamp(uSeaColor * light, 0.0, 1.0), uOpacity);
+}";
+
+    uint m_SeaProg;
+
     unsafe void CreateStaticResources()
     {
         var gl = m_Gl!;
@@ -692,6 +747,7 @@ void main() {
         m_BgProg = Link(BgVs, BgFs);
         m_SkyProg = Link(SkyVs, SkyFs);
         m_FloorProg = Link(FloorVs, FloorFs);
+        m_SeaProg = Link(FloorVs, SeaFs);   // TASK-0585：頂點著色器跟地板共用（同一片水平面的算式）
         m_EmptyVao = gl.GenVertexArray();
 
         float* aBorder = stackalloc float[4] { 1, 1, 1, 1 };
@@ -1677,7 +1733,7 @@ void main() {
         int aW = iP.Width, aH = iP.Height;
         EnsureTargets(aW, aH);
 
-        uint aFloorVao = 0, aFloorVbo = 0;
+        uint aFloorVao = 0, aFloorVbo = 0, aSeaVao = 0, aSeaVbo = 0;
         bool aHasMesh = iMesh.IndexCount > 0 && m_MeshVao != 0 && iP.OwnVisible;   // hide_links=self（TASK-0509 分開畫時只切顯示）
         bool aHasDyn = m_DynIndexCount > 0 && m_DynVao != 0;   // 帆（TASK-0503）：另一趟
         bool aHasModels = m_ModelIndexCount > 0 && m_ModelVao != 0;   // 外部模型（TASK-0507）：第三趟
@@ -1830,6 +1886,42 @@ void main() {
                 if (aHasParts) DrawParts(iParts!, m_MainProg, true);
             }
 
+            // ②c 海面（TASK-0585）：不透明的全畫完才畫 —— 深度測試（海面以上的東西擋住它）、⛔ 不寫深度、alpha 混色蓋在水下的東西上。
+            //     平面鋪到遠方：以作品外框中心為中心、半邊長取 max(8192, 外框最長邊 × 64)；depth clamp ⇒ 超出遠近裁切面的部分夾在邊界、
+            //     ⛔ 不被切掉，也不用為它把裁切面拉遠（拉遠會毀掉 voxel 的深度精度）。框景與陰影圖都不算它。
+            if (iP.Sea != null && iP.Sea.Enabled)
+            {
+                var s = iP.Sea;
+                float cx = (iMesh.Min.X + iMesh.Max.X) * 0.5f, cy = (iMesh.Min.Y + iMesh.Max.Y) * 0.5f;
+                float ext = Math.Max(iMesh.Max.X - iMesh.Min.X, iMesh.Max.Y - iMesh.Min.Y);
+                if (!float.IsFinite(cx) || !float.IsFinite(cy) || !float.IsFinite(ext)) { cx = cy = 0; ext = 256; }   // 空場景：外框是 ±∞
+                float half = Math.Max(8192f, ext * 64f), z = (float)s.Z;
+                float x0 = cx - half, x1 = cx + half, y0 = -(cy - half), y1 = -(cy + half);
+                float[] aQuad = { x0, y0, z, x0, y1, z, x1, y1, z, x0, y0, z, x1, y1, z, x1, y0, z };
+                aSeaVao = gl.GenVertexArray();
+                gl.BindVertexArray(aSeaVao);
+                aSeaVbo = gl.GenBuffer();
+                gl.BindBuffer(BufferTargetARB.ArrayBuffer, aSeaVbo);
+                gl.BufferData<float>(BufferTargetARB.ArrayBuffer, aQuad.AsSpan(), BufferUsageARB.StaticDraw);
+                gl.EnableVertexAttribArray(0);
+                gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 3 * sizeof(float), (void*)0);
+                gl.Enable(EnableCap.DepthTest);
+                gl.DepthFunc(DepthFunction.Less);
+                gl.DepthMask(false);
+                gl.Disable(EnableCap.CullFace);
+                gl.Enable(EnableCap.DepthClamp);
+                gl.Enable(EnableCap.Blend);
+                gl.BlendFuncSeparate(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha, BlendingFactor.Zero, BlendingFactor.One);
+                gl.UseProgram(m_SeaProg);
+                SetLitUniforms(m_SeaProg, iViewProj, iLights, iP, aHs);
+                gl.Uniform3(gl.GetUniformLocation(m_SeaProg, "uSeaColor"), s.R / 255f, s.G / 255f, s.B / 255f);
+                gl.Uniform1(gl.GetUniformLocation(m_SeaProg, "uOpacity"), (float)s.Opacity);
+                gl.DrawArrays(PrimitiveType.Triangles, 0, 6);
+                gl.Disable(EnableCap.Blend);
+                gl.Disable(EnableCap.DepthClamp);
+                gl.DepthMask(true);
+            }
+
             // ③' 視窗即時預覽：MSAA 直接解析進呼叫端的 FBO（貼圖），⛔ 不讀回 CPU（TASK-0472）。
             if (iTargetFbo != 0)
             {
@@ -1868,6 +1960,8 @@ void main() {
             // 網格 buffer 是快取的（換網格／Dispose 才刪）；地板四邊形每次都很小 ⇒ 照舊用完就丟
             if (aFloorVbo != 0) gl.DeleteBuffer(aFloorVbo);
             if (aFloorVao != 0) gl.DeleteVertexArray(aFloorVao);
+            if (aSeaVbo != 0) gl.DeleteBuffer(aSeaVbo);
+            if (aSeaVao != 0) gl.DeleteVertexArray(aSeaVao);
         }
     }
 
@@ -2162,6 +2256,7 @@ void main() {
                 m_Gl.DeleteProgram(m_BgProg);
                 m_Gl.DeleteProgram(m_SkyProg);
                 m_Gl.DeleteProgram(m_FloorProg);
+                if (m_SeaProg != 0) m_Gl.DeleteProgram(m_SeaProg);
                 foreach (var aSky in m_SkyCache.Values) m_Gl.DeleteTexture(aSky.Tex);
                 m_SkyCache.Clear();
                 foreach (var aTex in m_FloorCache.Values) m_Gl.DeleteTexture(aTex.Tex);
