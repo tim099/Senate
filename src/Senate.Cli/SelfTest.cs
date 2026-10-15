@@ -3329,9 +3329,10 @@ public static partial class SelfTest
                           && aDupErr.Contains("op=revise_view", StringComparison.Ordinal)
                           && File.ReadAllText(aV1, new UTF8Encoding(false)) == aV1Before;
 
-            // ③ 改觀 ⇒ fork v2（含「改觀觸發」段），v1 保留不動，facts 同步
+            // ③ 改觀 ⇒ fork v2（含「改觀觸發」段），v1 保留不動；facts **接在後面**、相同的不重收
+            //   🔴 TASK-0634：舊版把 facts 整份換成這次給的 ⇒ 讀者只給本章新 facts，前面的就安靜消失（BookNotes 2e2a39d −8 條）
             string? aRev = SCP_LibraryCharacter.ReviseView(aLetters, aRoot, "book-w1", "tester",
-                "Mujina", "第二版看法", "讀到第 5 話", "只剩一條", out string? aRevErr);
+                "Mujina", "第二版看法", "讀到第 5 話", "第三條\n第一條", false, out string? aRevErr);
             string aV2 = Path.Combine(aCharDir, $"v2_{aToday}.md");
             string aV2Text = File.Exists(aV2) ? File.ReadAllText(aV2, new UTF8Encoding(false)) : "";
             SCP_JsonData aProfile2 = SCP_JsonData.Parse(
@@ -3340,11 +3341,33 @@ public static partial class SelfTest
                           && aV2Text.Contains("> **改觀觸發**：讀到第 5 話", StringComparison.Ordinal)
                           && aV2Text.Contains("version: 2", StringComparison.Ordinal)
                           && File.ReadAllText(aV1, new UTF8Encoding(false)) == aV1Before   // v1 未動
-                          && aProfile2[SCP_LibraryIO.Key_Facts].Count == 1;
+                          && FactsJoin(aProfile2) == "第一條|第二條|第三條"
+                          && aRev.Contains("facts 接上 1 條", StringComparison.Ordinal);
+
+            // ③b facts_mode=replace ⇒ 整份換掉，而且被拿掉的**逐條寫進回傳**（不准安靜消失）
+            string aProfilePath = Path.Combine(aCharDir, SCP_LibraryStore.ProfileJsonName);
+            string? aRep = SCP_LibraryCharacter.ReviseView(aLetters, aRoot, "book-w1", "tester",
+                "Mujina", "第三版看法", "第一條寫錯了", "只剩一條", true, out string? aRepErr);
+            SCP_JsonData aProfile3 = SCP_JsonData.Parse(File.ReadAllText(aProfilePath, new UTF8Encoding(false)));
+            bool aRepOk = aRep != null && aRepErr == null
+                          && FactsJoin(aProfile3) == "只剩一條"
+                          && aRep.Contains("拿掉 3 條", StringComparison.Ordinal)
+                          && aRep.Contains("⚠ 第一條", StringComparison.Ordinal)
+                          && aRep.Contains("⚠ 第三條", StringComparison.Ordinal);
+
+            // ③c 🔴 既有 facts 有非字串元素 ⇒ 拒絕（合併會刪掉它），view 也不 fork、profile 一位元組不動
+            File.WriteAllText(aProfilePath, File.ReadAllText(aProfilePath, new UTF8Encoding(false))
+                .Replace("\"只剩一條\"", "\"只剩一條\",{\"x\":1}"), new UTF8Encoding(false));
+            string aBadBefore = File.ReadAllText(aProfilePath, new UTF8Encoding(false));
+            string? aBad = SCP_LibraryCharacter.ReviseView(aLetters, aRoot, "book-w1", "tester",
+                "Mujina", "第四版看法", null, "新的一條", false, out string? aBadErr);
+            bool aBadOk = aBad == null && aBadErr != null && aBadErr.Contains("不是字串", StringComparison.Ordinal)
+                          && !File.Exists(Path.Combine(aCharDir, $"v4_{aToday}.md"))
+                          && File.ReadAllText(aProfilePath, new UTF8Encoding(false)) == aBadBefore;
 
             // ④ 🔴 對不存在的人物改觀 ⇒ 拒絕、不代建
             string? aGhost = SCP_LibraryCharacter.ReviseView(aLetters, aRoot, "book-w1", "tester",
-                "NoSuchOne", "x", null, null, out string? aGhostErr);
+                "NoSuchOne", "x", null, null, false, out string? aGhostErr);
             bool aGhostOk = aGhost == null && aGhostErr != null
                             && aGhostErr.Contains("op=add_character", StringComparison.Ordinal)
                             && !Directory.Exists(SCP_LibraryStore.CharacterDir(aRoot, "book-w1", "tester", "NoSuchOne"));
@@ -3362,11 +3385,13 @@ public static partial class SelfTest
                          && aReader.GetString(SCP_LibraryIO.Key_Status, "") == "completed"
                          && File.Exists(aRecall);   // 刪掉之後又被生回來 ⇒ 確實有重生成
 
-            bool aOk = aAddOk && aDupOk && aRevOk && aGhostOk && aBmOk;
+            bool aOk = aAddOk && aDupOk && aRevOk && aRepOk && aBadOk && aGhostOk && aBmOk;
             return new CheckRow("人物／書籤 clean room（暫存樹實跑）",
                 $"建人物＋v1 逐位元組＋facts 是陣列={aAddOk}"
                 + $"／🔴 重建 ⇒ 拒絕且 v1 零變動={aDupOk}"
-                + $"／改觀 fork v2＋改觀觸發段＋v1 未動＋facts 同步={aRevOk}"
+                + $"／改觀 fork v2＋改觀觸發段＋v1 未動＋facts 接在後面不重收={aRevOk}"
+                + $"／facts_mode=replace 整份換＋逐條列出拿掉的={aRepOk}"
+                + $"／🔴 既有 facts 有非字串 ⇒ 拒絕、不 fork、profile 零變動={aBadOk}"
                 + $"／🔴 對不存在的人物改觀 ⇒ 拒絕不代建={aGhostOk}"
                 + $"／書籤三欄＋追回檔重生成={aBmOk}"
                 + "　⚠ v1 期望值取自 Editor 真產物 `characters/Mujina/v1_2026-08-25.md` 的形狀",
@@ -3517,6 +3542,12 @@ public static partial class SelfTest
     }
 
     static string Eol(string iS) { return iS.Replace("\r\n", "\n"); }
+
+    /// <summary>profile.json 的 facts 用「|」串起來（順序照存檔）—— 人物 clean room 比對用。</summary>
+    static string FactsJoin(SCP_JsonData iProfile)
+    {
+        return string.Join("|", SCP_LibraryRecall.ReadFactsList(iProfile));
+    }
 
     /// <summary>
     /// 拿**磁碟上真的檔**過一遍：讀 → 寫 → 再讀，
