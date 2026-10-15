@@ -35,7 +35,7 @@ public sealed partial class Cmd_Sculpture
         try { aTree = c.LinkTree ?? SCP_SculptLinks.Tree(c.Works, aCard.id); }
         catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return Blocked(c, 2, "關聯樹讀不了：" + e.Message); }
         SCP_SculptLinkSelection aSel = c.Links?.Selection ?? SCP_SculptLinkSelection.Parse(c.Args.Get("links"), c.Args.Get("hide_links"));
-        if (c.Links != null) c.Links.TrackMaterial = aInc.Contains("meta");   // TASK-0616：關聯的 meta material ⇒ 檔頭 materials（沒有關聯寫 ⇒ 不寫）
+        if (c.Links != null) c.Links.TrackMaterial = aInc.Contains("meta");   // TASK-0616：關聯的 meta material／render ⇒ 檔頭 materials／render（沒有關聯寫 ⇒ 不寫）
 
         // ① 前段：書卡（同 Python：meters_per_voxel 沒記 ⇒ 0.1）
         var aHead = SCP_JsonData.NewObject();
@@ -178,6 +178,9 @@ public sealed partial class Cmd_Sculpture
             if (aRigJ != null) { c.Result.AddValue("vxk_rope_meta", aRopeMeta.ToString(CultureInfo.InvariantCulture)); c.Result.AddValue("vxk_sail_meta", aSailMeta.ToString(CultureInfo.InvariantCulture)); }
             c.Result.AddValue("vxk_with_meta", aWithMeta.ToString(CultureInfo.InvariantCulture));
             c.Result.AddValue("vxk_points", aPointCount.ToString(CultureInfo.InvariantCulture));
+            int aRenVox = c.Links?.LastRender?.Count ?? 0;
+            c.Result.AddValue("vxk_render_voxels", aRenVox.ToString(CultureInfo.InvariantCulture));
+            if (aRenVox > 0) c.Report.Append("渲染（關聯的 meta render）：").Append(string.Join("、", c.Links!.LastRender!.Values.GroupBy(v => v).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key + " " + g.Count()))).Append(" 格；其他 ＝ voxel\n");
             int aMatVox = c.Links?.LastMaterial?.Count ?? 0;
             c.Result.AddValue("vxk_material_voxels", aMatVox.ToString(CultureInfo.InvariantCulture));
             if (aMatVox > 0) c.Report.Append("材質（關聯的 meta material）：").Append(string.Join("、", c.Links!.LastMaterial!.Values.GroupBy(v => v).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key + " " + g.Count()))).Append(" 格；其他 ＝ 船的預設材質\n");

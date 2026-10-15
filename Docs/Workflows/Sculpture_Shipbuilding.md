@@ -188,6 +188,7 @@ senate cmd sculpture --arg op=work --arg sub=components --arg kind=gun  # 只看
 | `rudder` | 舵模型（舵是格子的船不用標） | `hinge_x／hinge_y／hinge_z`（鉸鏈下端，組裝件座標）、`axis_x／axis_y／axis_z`（鉸鏈軸方向）、`max_deg`、`turn_axis=hinge` | **`stock-top`**（舵頭，舵子作品裡登記）：遊戲在它旁邊 8 格內找掛住的船尾格。⚠ 沒有 ⇒ 遊戲沿鉸鏈軸走到舵頂那一高度找（2026-10-15 補的退路）；鉸鏈也沒有 ⇒ 往正下方找到 z 0、開局就掉（炎羽號 2026-10-15 撞過） |
 | `ship` | 船殼的關聯（或組裝件本身） | `waterline_z`（設計水線，格的 z） | —（⚠ 沒有 ⇒ 遊戲用憲法號的 63，排水量跟著錯） |
 | `anchor` | 錨模型（共用元件 `basecamp-frigate-constitution-01m-anchor`，0.1 m bower、47×33×58，可縮放；TASK-0601） | `anchor=bower｜stream｜kedge`、可選 `mass_t`（⚠ 沒查到就不寫） | 來源作品裡已登記：`ring`（錨環頂：鐵鍊綁的地方）、`crown`（錨冠最低那一格：落地那一點）、`fluke-a／fluke-b`（兩邊錨爪尖）；船殼那側的 `hawse-S／P`（錨鏈孔）由造船的人自己登記 |
+| `funnel` | 煙囪的關聯（或外部模型；維吉尼亞號 `-funnel`） | 可選 `material=iron`、`render=smooth`（§9.5） | **`smoke`**（排煙點：煙囪口的中心，煙囪子作品裡登記）：遊戲從這裡冒煙（額外動力在出力 ⇒ 濃、停車 ⇒ 淡；煙囪口被打斷 ⇒ 不冒）。⚠ 沒有 ⇒ 從外框頂面的中心冒、匯入檢查報 ⚠ |
 
 - `wheel`／`binnacle`／`capstan`／`boat`／`grating` 只說「這是什麼」：站位、血量、能不能放下水、踩不踩得過去這些由遊戲決定，⛔ 不寫進 meta（餘燼號階段十七～二十、憲法號階段四十，2026-10-13 補）。
 
@@ -307,6 +308,9 @@ python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺�
   - 重疊的格照「已有的格贏」：材質跟著先放進去的那一格（主作品自己的格 ＞ 前面的關聯 ＞ 後面的關聯，同 `link_overlap`）。⇒ 裝甲最好是獨立一件子作品、不跟船殼重疊。
   - 只看**關聯**；外部模型（砲、帆桁…）不吃 material（它們整塊打飛，沒有逐格的防禦）。
 - **材質 ID 一律英文小寫**（`oak`、`pine`、`teak`、`iron`、`copper`…；木頭可以分），參數（防禦、比重、易燃）在遊戲那側的材質表（`config/game.json` 的 `materials`，後台可以加、可以改），跨船共用 ⇒ 造船這側只寫 ID。寫了材質表沒有的 ID ⇒ 遊戲照全船預設、匯入檢查報 ⚠。
+- **平滑渲染**（鐵甲艦光滑的裝甲、煙囪、駕駛塔）：關聯的 meta 加 `render=smooth`（巢狀、重疊的規則跟 material 一樣；子關聯寫 `render=voxel` 蓋回方塊）。遊戲把這幾格畫成平滑的表面（surface nets），跟旁邊的方塊格接在一起不露縫，被打掉照樣重算；打中、進水、重量照舊看格子。
+  - 平滑面的厚度至少 2 格（1 格厚的薄板兩面會被平均到一起）；跟一般格相鄰的那一圈會釘在格角上（看起來比較硬）⇒ 想要整片平滑，就把那一整片都標進去。
+  - 匯出時檔頭多一個 `render`（同 materials 的格式）；沒有關聯寫 ⇒ 沒有這個鍵。範例：維吉尼亞號（`ame-virginia-01m`）的砲廓鐵甲、駕駛塔、煙囪、撞角。
 - 匯出：`format=vxk include=…,meta` 時檔頭多一個 `materials`（每一格的材質：照線性索引 x＋sx·(y＋sy·z) 相連、同材質的格一段，只寫非預設的段）；沒有任何關聯寫 material ⇒ **檔案跟以前一樣**（沒有這個鍵）。匯出讀數多一行「材質：iron 12,345 格…」。
 
 ## 10. 換一艘船時的檢查表
