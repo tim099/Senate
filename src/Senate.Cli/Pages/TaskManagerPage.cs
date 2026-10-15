@@ -120,8 +120,14 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         iUi.Dropdown("參與者", aPersonas, "全部", PersonaId);
         if (aStatus == "all" || aStatus == "open")
             iUi.Toggle("含已關（done／cancelled）", false, ClosedId);
-        if (iUi.Button("較新", "tasks/btn/prev") && m_Page > 0) m_Page--;
-        if (iUi.Button("較舊", "tasks/btn/next")) m_Page++;
+        // 翻頁（TASK-0600）：列表照單號由舊到新 ⇒ 往前頁 ＝ 較舊、往後頁 ＝ 較新。
+        // 🩸 以前兩顆字是「較新＝往前頁」⇒ 按較新其實往舊的那頭走（Tim 2026-10-15 抓到）。
+        // 最新先設到底、DrawContent 量完頁數再夾回最後一頁（TopBar 比內容先畫，這時還不知道有幾頁）。
+        // 圖示都在 SenateFonts 的範圍裡（U+23EE／23ED 雜項技術符號、U+25C0／25B6 幾何圖形）；缺字守衛會點名。
+        if (iUi.Button("⏮", "tasks/btn/oldest")) m_Page = 0;
+        if (iUi.Button("◀", "tasks/btn/older") && m_Page > 0) m_Page--;
+        if (iUi.Button("▶", "tasks/btn/newer")) m_Page++;
+        if (iUi.Button("⏭", "tasks/btn/newest")) m_Page = int.MaxValue;
     }
 
     protected override void DrawContent(SCP_Ui g)
@@ -139,16 +145,78 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
             + (m_Broken > 0 ? $"｜時戳壞掉 {m_Broken}（不算進 stale）" : ""));
 
         List<SCP_TaskEntry> aList = Filtered(g);
-        int aPages = Math.Max(1, (aList.Count + PageSize - 1) / PageSize);
+        var aKids = new Dictionary<int, List<SCP_TaskEntry>>();
+        List<SCP_TaskEntry> aRoots = Group(aList, aKids);
+        int aPages = Math.Max(1, (aRoots.Count + PageSize - 1) / PageSize);
         if (m_Page >= aPages) m_Page = aPages - 1;
-        g.Label($"篩選結果 {aList.Count} 張｜第 {m_Page + 1} / {aPages} 頁（每頁 {PageSize} 張；stale 排最前，其餘依單號）");
+        if (m_Page < 0) m_Page = 0;
+        g.Label($"篩選結果 {aList.Count} 張（{aRoots.Count} 組：子任務收在主單底下）｜第 {m_Page + 1} / {aPages} 頁"
+            + $"（每頁 {PageSize} 組；stale 排最前，其餘依單號由舊到新）");
         if (aList.Count == 0)
         {
             g.Note($"（沒有符合的單。這是「篩不到」不是「系統沒東西」—— 全部有 {m_All.Count} 張）");
             return;
         }
         g.Separator();
-        foreach (SCP_TaskEntry e in aList.Skip(m_Page * PageSize).Take(PageSize)) DrawTask(g, e, aAuthor);
+        foreach (SCP_TaskEntry e in aRoots.Skip(m_Page * PageSize).Take(PageSize)) DrawGroup(g, e, aKids, aAuthor, 0);
+    }
+
+    /// <summary>
+    /// 子任務收進主單（Tim 2026-10-15，TASK-0600）：主單**也在篩選結果裡**時，子任務不另佔一列、掛在主單底下；
+    /// 主單不在結果裡（已結而沒勾含已關、類型篩掉…）⇒ 子任務照舊單獨一列 —— ⛔ 不為了湊組把篩掉的主單撈回來（那等於篩選沒生效）。
+    /// 主單認兩邊：子單的 `epic_id`（`553` 或 `TASK-0553`）、主單的 `subtask_indices`；同一張有兩個主單時取 epic_id 那個。
+    /// 回傳「組頭」（照篩選結果原本的順序）；oKids ＝ 主單號 → 它在結果裡的子任務（同樣照原本順序）。
+    /// </summary>
+    static List<SCP_TaskEntry> Group(List<SCP_TaskEntry> iList, Dictionary<int, List<SCP_TaskEntry>> oKids)
+    {
+        var aIn = new HashSet<int>(iList.Select(e => e.index));
+        var aParent = new Dictionary<int, int>();
+        foreach (SCP_TaskEntry e in iList)
+            foreach (int k in e.subtask_indices)
+                if (k != e.index && aIn.Contains(k) && !aParent.ContainsKey(k)) aParent[k] = e.index;
+        foreach (SCP_TaskEntry e in iList)
+        {
+            string aDigits = new string(e.epic_id.Where(char.IsDigit).ToArray());
+            if (aDigits.Length > 0 && int.TryParse(aDigits, NumberStyles.None, CultureInfo.InvariantCulture, out int p) && p != e.index && aIn.Contains(p))
+                aParent[e.index] = p;
+        }
+        // 環（A 是 B 的主單、B 又是 A 的）：沿著主單往上走，回到自己 ⇒ 這一張當組頭（⛔ 不然整個環都沒有組頭、從畫面上消失）
+        foreach (int i in aParent.Keys.ToList())
+        {
+            var aSeen = new HashSet<int> { i };
+            int c = i;
+            while (aParent.TryGetValue(c, out int up))
+            {
+                if (!aSeen.Add(up)) { aParent.Remove(i); break; }
+                c = up;
+            }
+        }
+        var aRoots = new List<SCP_TaskEntry>();
+        foreach (SCP_TaskEntry e in iList)
+        {
+            if (aParent.TryGetValue(e.index, out int p))
+            {
+                if (!oKids.TryGetValue(p, out List<SCP_TaskEntry>? l)) oKids[p] = l = new List<SCP_TaskEntry>();
+                l.Add(e);
+            }
+            else aRoots.Add(e);
+        }
+        return aRoots;
+    }
+
+    /// <summary>一組：主單那一列＋底下一個「子任務 N 張」摺疊（預設收起；子任務自己的子任務照樣往下收）。</summary>
+    void DrawGroup(SCP_Ui g, SCP_TaskEntry e, Dictionary<int, List<SCP_TaskEntry>> iKids, string iAuthor, int iDepth)
+    {
+        DrawTask(g, e, iAuthor);
+        if (!iKids.TryGetValue(e.index, out List<SCP_TaskEntry>? aKids) || aKids.Count == 0 || iDepth > 8) return;
+        int aOpenN = aKids.Count(k => !k.IsClosed());
+        int aStaleN = aKids.Count(k => IsStale(k, DateTime.UtcNow));
+        string aHead = $"└ {e.Id} 的子任務 {aKids.Count} 張（未關 {aOpenN}" + (aStaleN > 0 ? $"、stale {aStaleN}" : "") + "）";
+        using (var aFold = g.Fold(aHead, "tasks/sub/" + e.index.ToString(CultureInfo.InvariantCulture), iDefaultOpen: false))
+        {
+            if (!aFold.Open) return;
+            foreach (SCP_TaskEntry k in aKids) DrawGroup(g, k, iKids, iAuthor, iDepth + 1);
+        }
     }
 
     List<SCP_TaskEntry> Filtered(SCP_Ui g)
