@@ -129,6 +129,24 @@ senate cmd sculpture --arg op=work --arg sub=components --arg kind=gun  # 只看
 - 繩：breeching（cascabel → 兩側船牆的環，slack 1.12、粗 0.6、#b59a6a）、side tackle（eye → 同側的環，1.03、0.35）、train tackle（train → 甲板的環，1.05、0.35）。端點寫 `model:<甲板關聯>/<砲>/<固定點>`。
 - rammer／sponge 掛在砲正上方那根橫樑底下（貼著甲板板會被 3 格深的橫樑擋住、從艙裡看不到）。
 
+### 4.5 迴旋砲與砲塔（模型 meta `mount`；TASK-0626）
+
+Tim 2026-10-15：「有辦法讓炮能迴旋嗎(之後可以支援砲塔)」「一般炮預設固定就好(效能&避免穿模考量)」。**沒標 ＝ 固定**（跟以前一樣，遊戲一行都不多算）。
+
+| meta | 值 | 意思 |
+|---|---|---|
+| `mount` | `pivot`／`turret` | pivot ＝ 在幾個砲門之間換；turret ＝ 連續轉 |
+| `ports` | `0,45,-45` | pivot 的砲門方向（度，相對模型原本的砲軸；+ ＝ 往 +y 轉）。⛔ 只停在這些角度 ⇒ 每個角度都要量過不穿模 |
+| `arc` | `-150,150` | turret 能轉的範圍（度） |
+| `rate` | 數字 | 轉速（度／秒；pivot 預設 12、turret 20） |
+| `cone` | 數字 | turret 砲管的射界（度，預設 4；pivot 照砲門 ±26°） |
+| `pivot` | 數字 | 轉的中心 ＝ 從 `breech` 沿砲軸量幾格（負 ＝ 往後）；模型有固定點 `pivot` 就用固定點（砲塔用這個）；都沒有 ⇒ 外框中心 |
+| `runin` | 數字 | 換砲門前先沿砲軸往後拉幾格、轉完再推出去（史料：先把砲拉進來才換）；轉的途中不能開 |
+
+- 跟著轉的：模型、砲軸、砲口、砲班的站位與站著的人、放藥箱的位置；⛔ 模型的外框（被打中、碰撞）不轉。
+- 維吉尼亞號（ame）：船頭、船尾的 7 吋 Brooke `mount=pivot, ports=0,45,-45, pivot=-9.5／-10.5, runin=6` —— 三個砲門都從砲廓圓頭的圓心（x 670／302）放射 ⇒ 繞那一點轉。量過：停在三個砲門上網格落進實心 0 格；轉到 22° 不拉會穿進砲廓牆（48／124 個頂點），拉 4／5 格 ⇒ 0。
+- 砲門要照轉的中心放射開（像維吉尼亞號那樣），每個角度砲口才會正對砲門。Blockside 匯入檢查會列出「迴旋砲／砲塔」那一行。
+
 ## 5. 桅與帆桁
 
 - 桅：每根一件子作品（fore／main／mizzen／bowsprit），軸照甲板已開的桅孔；top 的 trestletrees 要緊貼 masthead（`round(160 ± 4.56)` 會空一格 ⇒ 主桅 top 浮空，階段十三 v1.1）。
@@ -191,6 +209,11 @@ senate cmd sculpture --arg op=work --arg sub=components --arg kind=gun  # 只看
 | `ship` | 船殼的關聯（或組裝件本身） | `waterline_z`（設計水線，格的 z） | —（⚠ 沒有 ⇒ 遊戲用憲法號的 63，排水量跟著錯） |
 | `anchor` | 錨模型（共用元件 `basecamp-frigate-constitution-01m-anchor`，0.1 m bower、47×33×58，可縮放；TASK-0601） | `anchor=bower｜stream｜kedge`、可選 `mass_t`（⚠ 沒查到就不寫） | 來源作品裡已登記：`ring`（錨環頂：鐵鍊綁的地方）、`crown`（錨冠最低那一格：落地那一點）、`fluke-a／fluke-b`（兩邊錨爪尖）；船殼那側的 `hawse-S／P`（錨鏈孔）由造船的人自己登記 |
 | `funnel` | 煙囪的關聯（或外部模型；維吉尼亞號 `-funnel`） | 可選 `material=iron`、`render=smooth`（§9.5） | **`smoke`**（排煙點：煙囪口的中心，煙囪子作品裡登記）：遊戲從這裡冒煙（額外動力在出力 ⇒ 濃、停車 ⇒ 淡；煙囪口被打斷 ⇒ 不冒）。⚠ 沒有 ⇒ 從外框頂面的中心冒、匯入檢查報 ⚠ |
+| `engine` | 蒸汽主機的關聯（拿破崙號 `-engine`，2026-10-15） | `engine`（`geared`／`direct`…）、`cylinders`、`nhp`、`ihp`、`kn`（連續航速）、`kn_max`、`maker`（⚠ 沒查到就不寫）；可選 `material=iron` | **`core`**（主機中心：判斷壞了沒有的那一點）；可選 `cyl-1／cyl-2`、`gear` |
+| `boiler` | 一組鍋爐（含煙道）的關聯 | `boilers`（座數）、**`funnel`**（這組通哪一條煙囪關聯的路徑，例 `煙囪-後`）；⚠ 實心的鍋爐格是「鐵殼＋滿水」⇒ 不標 iron（重量會多好幾倍） | `boiler-1…n`（每座中心）、`uptake`（煙道底那一片的中心） |
+| `shaft` | 螺旋槳軸的關聯 | 可選 `material=iron` | `aft`（軸露出 deadwood 的那一端）、`fwd`（接主機那一端） |
+
+- `engine`／`boiler`／`shaft`（kotoko，Tim 2026-10-15：「遊戲中如果引擎被破壞 引擎提供的額外動力要消失（且煙會停掉）因此需要標記」）：⚠ **遊戲還沒讀**（2026-10-15），造船這側先標。建議的判法同 `funnel`：固定點旁 8 格內的格子剩不到一半 ⇒ 那一件壞了；主機壞了 ⇒ 額外動力（`ships[].cfg.base`）歸零、每條煙囪停煙；某一組鍋爐壞了 ⇒ 動力照剩下的鍋爐座數打折、它 `funnel` 那條煙囪停煙。實際規則由遊戲那側定。
 
 - `wheel`／`binnacle`／`capstan`／`boat`／`grating` 只說「這是什麼」：站位、血量、能不能放下水、踩不踩得過去這些由遊戲決定，⛔ 不寫進 meta（餘燼號階段十七～二十、憲法號階段四十，2026-10-13 補）。
 
