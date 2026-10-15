@@ -185,6 +185,8 @@ senate cmd sculpture --arg op=work --arg sub=components --arg kind=gun  # 只看
 | `boat` | 小艇模型 | `boat=cutter`、`length_m`（⚠ 照一般比例，未查證）| 沒有（用模型外框）|
 | `grating` | 艙口格柵模型（掛在所在甲板的子作品；0.05 m 子作品、scale 0.5） | — | 沒有（用模型外框；格柵頂 ＝ 外框頂）|
 | `light` | 會發光的燈模型（夜燈號船首像手上的提燈 `-lantern`，0.01 m） | — | `wick`（火焰中心：遊戲在這裡放點光源）、`bail`（提環頂：手握的地方）、`base` |
+| `rudder` | 舵模型（舵是格子的船不用標） | `hinge_x／hinge_y／hinge_z`（鉸鏈下端，組裝件座標）、`axis_x／axis_y／axis_z`（鉸鏈軸方向）、`max_deg`、`turn_axis=hinge` | **`stock-top`**（舵頭，舵子作品裡登記）：遊戲在它旁邊 8 格內找掛住的船尾格。⚠ 沒有 ⇒ 遊戲沿鉸鏈軸走到舵頂那一高度找（2026-10-15 補的退路）；鉸鏈也沒有 ⇒ 往正下方找到 z 0、開局就掉（炎羽號 2026-10-15 撞過） |
+| `ship` | 船殼的關聯（或組裝件本身） | `waterline_z`（設計水線，格的 z） | —（⚠ 沒有 ⇒ 遊戲用憲法號的 63，排水量跟著錯） |
 
 - `wheel`／`binnacle`／`capstan`／`boat`／`grating` 只說「這是什麼」：站位、血量、能不能放下水、踩不踩得過去這些由遊戲決定，⛔ 不寫進 meta（餘燼號階段十七～二十、憲法號階段四十，2026-10-13 補）。
 
@@ -284,6 +286,9 @@ python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺�
 - 原格式 `admin.py build --raw`；`admin.py verify` 把成品跟 `_cache` 原檔比。壓縮版的成品解不回原本的 .vxk ⇒ 遊戲那側 `_cache` 掉了（換機器）走 `admin.py cache`：從雕刻作品重新匯出、跟指紋比（`Blockside/src/README.md`）。
 - 📦 遊戲 2026-10-15 起獨立成 **Blockside**（Valhalla 的 `Blockside/` submodule，線上 https://tim099.github.io/Blockside/；TASK-0586）—— `admin.py`、`rooms.py`、`decks.py` 都在 `Blockside/src/`，`.vxk` 快取在 `Blockside/VoxelKit/_cache/`。
 - ⚠ 改了已經在遊戲裡的船（重匯 vxk），遊戲那側 `admin.py cache --all` 會說「作品變過了」—— 要不要換成新的由遊戲那側 reimport（會改戰局），造船這側照舊跟 ame 說一聲。
+- **遊戲那側另外要填的**（`Blockside/src/config/game.json` 的 `ships[]`，ame 填、造船這側不用）：`geo`（陸戰隊站的範圍、鏡頭中心、各種瞄準高度 —— 沒填 ⇒ 吃憲法號的數字，小船的陸戰隊站不下；炎羽號 2026-10-15 從 4 人補到 8 人）、`cfg`（航速、靈活、逆風、硬度）、`crew`、`names`、`rooms`（艙房預設）、`lamps`。
+  造船這側幫得上忙的是在 notes 寫下量過的高度：水線、每層甲板的地板、砲口、桅頂平台、帆頂、船殼前後端（geo 照這些換算）。
+- 作品裡**只有作者能改的**（例：固定點）缺了 ⇒ 遊戲那側會跟作者說，由作者補；**meta 不限作者**，遊戲那側可以直接補（Tim 2026-10-15）。
 
 ## 10. 換一艘船時的檢查表
 
@@ -291,6 +296,8 @@ python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺�
 - [ ] 組裝件與每件子作品記了 meters_per_voxel；每個模型明寫 scale
 - [ ] 開工前跑過 `work sub=components`（§2.1），能用的現有元件都直接引用；新做的元件列在 notes（為什麼不能用現有的）
 - [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點；羅經櫃、絞盤、小艇這類甲板上的東西也要帶 `kind`
+- [ ] 舵是模型 ⇒ meta `kind=rudder`（hinge／axis／max_deg／turn_axis），舵子作品登記 `stock-top`（舵頭）；遊戲裡開局 `__game.lostModels(0)` 不能有舵
+- [ ] 船殼的關聯（或組裝件）meta `kind=ship, waterline_z=<設計水線>`；notes 寫下量過的高度（水線、甲板地板、砲口、桅頂平台、帆頂、船殼前後端）給遊戲那側填 geo
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
 - [ ] 每一層甲板的關聯照 §9.3 標 `kind=deck`（level、name、floor、thick）；每一層都有梯子通到（要讓人走得到的）
 - [ ] 空艙房照 §9.2 標（艙房子作品的固定點 `<房名>.min／.max`、關聯 meta `kind=rooms`）；`rooms.py check` 全部 ✓
