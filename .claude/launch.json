@@ -18,6 +18,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8767", "--bind", "127.0.0.1", "--directory", "D:/Unity/Valhalla/ArtGallery"],
       "port": 8767
+    },
+    {
+      "name": "blockside-admin",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-I", "D:/Unity/Valhalla/Blockside/src/admin.py", "serve", "--port", "8642"],
+      "port": 8642
     }
   ]
 }
