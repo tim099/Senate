@@ -187,6 +187,7 @@ senate cmd sculpture --arg op=work --arg sub=components --arg kind=gun  # 只看
 | `light` | 會發光的燈模型（夜燈號船首像手上的提燈 `-lantern`，0.01 m） | — | `wick`（火焰中心：遊戲在這裡放點光源）、`bail`（提環頂：手握的地方）、`base` |
 | `rudder` | 舵模型（舵是格子的船不用標） | `hinge_x／hinge_y／hinge_z`（鉸鏈下端，組裝件座標）、`axis_x／axis_y／axis_z`（鉸鏈軸方向）、`max_deg`、`turn_axis=hinge` | **`stock-top`**（舵頭，舵子作品裡登記）：遊戲在它旁邊 8 格內找掛住的船尾格。⚠ 沒有 ⇒ 遊戲沿鉸鏈軸走到舵頂那一高度找（2026-10-15 補的退路）；鉸鏈也沒有 ⇒ 往正下方找到 z 0、開局就掉（炎羽號 2026-10-15 撞過） |
 | `ship` | 船殼的關聯（或組裝件本身） | `waterline_z`（設計水線，格的 z） | —（⚠ 沒有 ⇒ 遊戲用憲法號的 63，排水量跟著錯） |
+| `anchor` | 錨模型（共用元件 `basecamp-frigate-constitution-01m-anchor`，0.1 m bower、47×33×58，可縮放；TASK-0601） | `anchor=bower｜stream｜kedge`、可選 `mass_t`（⚠ 沒查到就不寫） | 來源作品裡已登記：`ring`（錨環頂：鐵鍊綁的地方）、`crown`（錨冠最低那一格：落地那一點）、`fluke-a／fluke-b`（兩邊錨爪尖）；船殼那側的 `hawse-S／P`（錨鏈孔）由造船的人自己登記 |
 
 - `wheel`／`binnacle`／`capstan`／`boat`／`grating` 只說「這是什麼」：站位、血量、能不能放下水、踩不踩得過去這些由遊戲決定，⛔ 不寫進 meta（餘燼號階段十七～二十、憲法號階段四十，2026-10-13 補）。
 
