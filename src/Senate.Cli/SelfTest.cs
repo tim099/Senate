@@ -337,6 +337,7 @@ public static partial class SelfTest
         Many(nameof(RealTaskRenderRoundTrip), "tasks", () => RealTaskRenderRoundTrip(iTargets)),
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
         One(nameof(TaskOpsGatesCleanRoom), "tasks", TaskOpsGatesCleanRoom),
+        One(nameof(TaskProjectCleanRoom), "tasks", TaskProjectCleanRoom),   // 專案（TASK-0618）：本體在 SelfTest.TaskProject0618.cs
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iTargets)),
 

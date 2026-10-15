@@ -31,6 +31,11 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     public const string StatusId = "tasks/sel/status";
     public const string TypeId = "tasks/sel/type";
     public const string PersonaId = "tasks/sel/persona";
+    public const string ProjectId = "tasks/sel/project";
+    /// <summary>批次設專案：要設成哪個專案（草稿）。</summary>
+    public const string BatchProjectId = "tasks/batch/project";
+    const string AllProjects = "全部";
+    const string NoProject = "未分類";
     public const string ClosedId = "tasks/toggle/closed";
     public const string AuthorId = "tasks/author";
     public const string PendingId = "tasks/pending";
@@ -41,6 +46,9 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     bool m_Loaded;
     List<SCP_TaskEntry> m_All = new();
     Dictionary<int, List<string>> m_Blockers = new();
+    /// <summary>有效專案（TASK-0618：子單沒標 ⇒ 跟著母單；判準在 SCP_TaskProjects）與每個專案的未關／總數。</summary>
+    Dictionary<int, (string project, int from)> m_Eff = new();
+    SortedDictionary<string, (int open, int total)> m_ProjectCounts = new(StringComparer.OrdinalIgnoreCase);
     int m_Open, m_Stale, m_Broken, m_Blocked;
     int m_Page;
     (int counter, int disk) m_Stamp;
@@ -70,12 +78,14 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot))
         {
             m_Error = $"找不到 AgentCommands 資料根（{m_DataRoot}）—— 到「路徑管理」頁設定";
-            m_All = new(); m_Blockers = new();
+            m_All = new(); m_Blockers = new(); m_Eff = new(); m_ProjectCounts = new(StringComparer.OrdinalIgnoreCase);
             return;
         }
         var aRoot = new SCP_DataRoot(m_DataRoot);
         var aWarn = new List<string>();
         m_All = SCP_TaskIO.LoadAll(aRoot, aWarn.Add);
+        m_Eff = SCP_TaskProjects.Effective(m_All);
+        m_ProjectCounts = SCP_TaskProjects.Counts(m_All, m_Eff);
         m_Blockers = new();
         foreach (SCP_TaskEntry e in m_All)
             if (!e.IsClosed() && e.blocked_by.Count > 0) m_Blockers[e.index] = SCP_TaskStore.OpenBlockers(aRoot, e);
@@ -99,12 +109,40 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         if (ReadStamp() != m_Stamp) m_Loaded = false;
     }
 
+    // ===========================================================
+    // 區塊職責：工具列（兩排，TASK-0618；同 SculptureViewerPage TASK-0504 的做法）——
+    //          第一排：重新讀取／開資料夾／翻頁；第二排：篩選（專案、狀態、類型、參與者、含已關）。
+    //          兩排都在 base 的 TopBar 範圍裡 ⇒ 不跟內容一起捲。
+    // 🩸 以前一排塞全部，Tim 2026-10-15：「TopBar 會需要分兩排 目前太滿了」。
+    // ===========================================================
+    protected override void DrawTopBar(SCP_Ui iUi)
+    {
+        base.DrawTopBar(iUi);   // 第一排：導覽鈕 ＋ TopBarButtons
+        using (iUi.Row()) FilterBar(iUi);
+    }
+
     protected override void TopBarButtons(SCP_Ui iUi)
     {
         if (iUi.Button("重新讀取", "tasks/btn/reload")) m_Loaded = false;
         // Open Folder。⚠ 路徑直接取 model —— TopBar 先於 DrawContent 畫，第一次 Reload 前 m_DataRoot 還是空的
         string aRoot = m_Model.AgentCommandsRoot.Value;
         OpenFolderButton(iUi, aRoot.Length > 0 ? SCP_TaskIO.TasksDir(new SCP_DataRoot(aRoot)) : null, "tasks/btn/open-dir");
+        // 翻頁（TASK-0600）：列表照單號由舊到新 ⇒ 往前頁 ＝ 較舊、往後頁 ＝ 較新。
+        // 🩸 以前兩顆字是「較新＝往前頁」⇒ 按較新其實往舊的那頭走（Tim 2026-10-15 抓到）。
+        // 最新先設到底、DrawContent 量完頁數再夾回最後一頁（TopBar 比內容先畫，這時還不知道有幾頁）。
+        // 圖示都在 SenateFonts 的範圍裡（U+23EE／23ED 雜項技術符號、U+25C0／25B6 幾何圖形）；缺字守衛會點名。
+        if (iUi.Button("⏮", "tasks/btn/oldest")) m_Page = 0;
+        if (iUi.Button("◀", "tasks/btn/older") && m_Page > 0) m_Page--;
+        if (iUi.Button("▶", "tasks/btn/newer")) m_Page++;
+        if (iUi.Button("⏭", "tasks/btn/newest")) m_Page = int.MaxValue;
+    }
+
+    /// <summary>第二排：篩選。專案下拉的值是專案名、畫面帶「未關／總數」（照有效專案算：子單沒標算母單的）。</summary>
+    void FilterBar(SCP_Ui iUi)
+    {
+        var aProjects = new List<SCP_GuiOption> { new SCP_GuiOption(AllProjects), new SCP_GuiOption(NoProject, NoProject + Count("")) };
+        foreach (string p in m_ProjectCounts.Keys) if (p.Length > 0) aProjects.Add(new SCP_GuiOption(p, p + Count(p)));
+        iUi.Dropdown("專案", aProjects, AllProjects, ProjectId);
         var aStatuses = new List<string> { "open", "all" };
         foreach (string s in Enum.GetNames(typeof(SCP_TaskStatus))) if (s != "all" && s != "open") aStatuses.Add(s);
         string aStatus = iUi.Dropdown("狀態", aStatuses, "open", StatusId);
@@ -120,15 +158,10 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         iUi.Dropdown("參與者", aPersonas, "全部", PersonaId);
         if (aStatus == "all" || aStatus == "open")
             iUi.Toggle("含已關（done／cancelled）", false, ClosedId);
-        // 翻頁（TASK-0600）：列表照單號由舊到新 ⇒ 往前頁 ＝ 較舊、往後頁 ＝ 較新。
-        // 🩸 以前兩顆字是「較新＝往前頁」⇒ 按較新其實往舊的那頭走（Tim 2026-10-15 抓到）。
-        // 最新先設到底、DrawContent 量完頁數再夾回最後一頁（TopBar 比內容先畫，這時還不知道有幾頁）。
-        // 圖示都在 SenateFonts 的範圍裡（U+23EE／23ED 雜項技術符號、U+25C0／25B6 幾何圖形）；缺字守衛會點名。
-        if (iUi.Button("⏮", "tasks/btn/oldest")) m_Page = 0;
-        if (iUi.Button("◀", "tasks/btn/older") && m_Page > 0) m_Page--;
-        if (iUi.Button("▶", "tasks/btn/newer")) m_Page++;
-        if (iUi.Button("⏭", "tasks/btn/newest")) m_Page = int.MaxValue;
     }
+
+    string Count(string iProject)
+        => m_ProjectCounts.TryGetValue(iProject, out (int open, int total) c) ? $"（{c.open}／{c.total}）" : "（0／0）";
 
     protected override void DrawContent(SCP_Ui g)
     {
@@ -157,6 +190,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
             g.Note($"（沒有符合的單。這是「篩不到」不是「系統沒東西」—— 全部有 {m_All.Count} 張）");
             return;
         }
+        DrawBatch(g, aList, aAuthor);
         g.Separator();
         foreach (SCP_TaskEntry e in aRoots.Skip(m_Page * PageSize).Take(PageSize)) DrawGroup(g, e, aKids, aAuthor, 0);
     }
@@ -224,6 +258,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         string aStatus = g.FieldValue(StatusId + "/value", "open");
         string aType = g.FieldValue(TypeId + "/value", "all");
         string aPersona = g.FieldValue(PersonaId + "/value", "全部");
+        string aProject = g.FieldValue(ProjectId + "/value", AllProjects);
         bool aClosed = g.ToggleValue(ClosedId, false);
         DateTime aNow = DateTime.UtcNow;
         IEnumerable<SCP_TaskEntry> q = m_All;
@@ -231,9 +266,20 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         else if (aStatus == "all") q = q.Where(e => aClosed || !e.IsClosed());
         else if (SCP_TaskWire.TryParse(aStatus, out SCP_TaskStatus s)) q = q.Where(e => e.status == s);
         if (aType != "all" && SCP_TaskWire.TryParse(aType, out SCP_TaskType t)) q = q.Where(e => e.type == t);
+        if (aProject == NoProject) q = q.Where(e => Project(e).Length == 0);
+        else if (aProject != AllProjects) q = q.Where(e => string.Equals(Project(e), aProject, StringComparison.OrdinalIgnoreCase));
         if (aPersona != "全部")
             q = q.Where(e => e.RolesOfAnyCase(aPersona).Count > 0 || string.Equals(e.reporter, aPersona, StringComparison.OrdinalIgnoreCase));
         return q.OrderByDescending(e => IsStale(e, aNow)).ThenBy(e => e.index).ToList();
+    }
+
+    string Project(SCP_TaskEntry e) => m_Eff.TryGetValue(e.index, out var x) ? x.project : e.project;
+
+    /// <summary>標題上的專案標記：自己標的 `［Blockside］`、跟著母單的 `［Blockside←TASK-0553］`、沒有 ⇒ 空。</summary>
+    string ProjectTag(SCP_TaskEntry e)
+    {
+        if (!m_Eff.TryGetValue(e.index, out var x) || x.project.Length == 0) return "";
+        return "　［" + x.project + (x.from > 0 ? "←TASK-" + x.from.ToString("0000", CultureInfo.InvariantCulture) : "") + "］";
     }
 
     static bool IsStale(SCP_TaskEntry e, DateTime iNow)
@@ -246,7 +292,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         bool aStale = IsStale(e, DateTime.UtcNow);
         string aWho = e.participants.Count == 0 ? "（無參與者）" : string.Join("、", e.participants.Select(p => $"{p.persona}({p.role})"));
         string aTitle = $"{e.Id}　[{e.type}/{e.priority}" + (e.severity == SCP_TaskSeverity.none ? "" : "/" + e.severity) + $"]　{e.status}"
-            + (aBlkN > 0 ? $"　[被阻塞 {aBlkN}]" : "") + (aStale ? "　[stale]" : "") + $"　{aWho}　{e.title}";
+            + (aBlkN > 0 ? $"　[被阻塞 {aBlkN}]" : "") + (aStale ? "　[stale]" : "") + ProjectTag(e) + $"　{aWho}　{e.title}";
         using (var aFold = g.Fold(aTitle, "tasks/item/" + e.index.ToString(CultureInfo.InvariantCulture), iDefaultOpen: false))
         {
             if (!aFold.Open) return;
@@ -260,6 +306,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                 if (aBlk != null) foreach (string b in aBlk) g.Note("未解 blocker：" + b);
                 if (e.commit_shas.Count > 0) g.Label("commit：" + string.Join(" ", e.commit_shas));
                 if (e.memory_topic.Length > 0) g.Label("工作記憶：" + e.memory_topic);
+                DrawProject(g, e, iAuthor);
                 string aPath = SCP_TaskIO.TaskPath(new SCP_DataRoot(m_DataRoot), e.index);
                 using (g.Row())
                 {
@@ -298,6 +345,71 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                     Run($"{e.Id} 留言", new Dictionary<string, string> { ["op"] = "comment", ["index"] = e.index.ToString(CultureInfo.InvariantCulture), ["body"] = aBody }, iAuthor);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// 這張單的專案（TASK-0618）：看得到自己標的／跟著哪一張母單／未分類；改 ＝ `op=update project=`、清 ＝ `unset=project`。
+    /// ⚠ 清掉之後若母單有專案，它會變成「跟著母單」—— 不是「未分類」（照實寫在按鈕旁）。
+    /// </summary>
+    void DrawProject(SCP_Ui g, SCP_TaskEntry e, string iAuthor)
+    {
+        m_Eff.TryGetValue(e.index, out (string project, int from) x);
+        string aNow = e.project.Length > 0 ? e.project
+            : x.project.Length > 0 ? $"{x.project}（自己沒標，跟著母單 TASK-{x.from.ToString("0000", CultureInfo.InvariantCulture)}）"
+            : "未分類";
+        string aIdx = e.index.ToString(CultureInfo.InvariantCulture);
+        using (g.Row())
+        {
+            g.Label("專案：" + aNow);
+            string aDraftId = "tasks/project/" + aIdx;
+            string aDraft = g.TextField("改成", e.project, aDraftId).Trim();
+            if (aDraft.Length > 0 && !string.Equals(aDraft, e.project, StringComparison.Ordinal)
+                && g.Button("設定專案", "tasks/btn/project/" + aIdx) && Sign(iAuthor))
+                Run($"{e.Id} 專案 → {aDraft}", new Dictionary<string, string> { ["op"] = "update", ["index"] = aIdx, ["project"] = aDraft }, iAuthor);
+            if (e.project.Length > 0 && g.Button("清掉專案", "tasks/btn/unproject/" + aIdx) && Sign(iAuthor))
+                Run($"{e.Id} 清掉專案", new Dictionary<string, string> { ["op"] = "update", ["index"] = aIdx, ["unset"] = "project" }, iAuthor);
+        }
+    }
+
+    /// <summary>
+    /// 整理（TASK-0618）：把**目前篩選結果**一次設成某個專案 —— 二段確認；一張一張打 `op=update`，每張各進時間線。
+    /// 已經是那個專案（自己標的）的單跳過；跟著母單的子單也會被標上自己的（標了就不再跟著母單換）。
+    /// </summary>
+    void DrawBatch(SCP_Ui g, List<SCP_TaskEntry> iList, string iAuthor)
+    {
+        using (var aFold = g.Fold($"整理：把篩選結果 {iList.Count} 張設成同一個專案", "tasks/batch/fold", iDefaultOpen: false))
+        {
+            if (!aFold.Open) return;
+            string aName = g.TextField("專案", "", BatchProjectId).Trim();
+            List<SCP_TaskEntry> aTodo = iList.Where(e => !string.Equals(e.project, aName, StringComparison.Ordinal)).ToList();
+            g.Note(aName.Length == 0 ? "先填專案名（既有的：" + string.Join("、", m_ProjectCounts.Keys.Where(k => k.Length > 0)) + "）"
+                : $"會改 {aTodo.Count} 張（{iList.Count - aTodo.Count} 張本來就是 `{aName}`）；寫入照舊走 cmd task，名字跟既有專案只差大小寫會被擋");
+            if (aName.Length == 0 || aTodo.Count == 0) return;
+            string aKey = "batch/" + aName + "/" + aTodo.Count;
+            bool aArmed = g.FieldValue(PendingId, "") == aKey;
+            if (!g.Button(aArmed ? $"確定把 {aTodo.Count} 張設成 {aName}？再按一次" : $"設成 {aName}", "tasks/btn/batch")) return;
+            if (!aArmed) { g.SetField(PendingId, aKey); return; }
+            g.SetField(PendingId, "");
+            if (!Sign(iAuthor)) return;
+            var aIdx = aTodo.Select(e => e.index).ToList();
+            Start($"{aIdx.Count} 張設成專案 {aName}", () =>
+            {
+                int aOk = 0; var aFail = new List<string>();
+                foreach (int i in aIdx)
+                {
+                    SCP_CmdResult r = SCP_CmdRegistry.Dispatch("task", new Dictionary<string, string>
+                    {
+                        ["op"] = "update", ["index"] = i.ToString(CultureInfo.InvariantCulture), ["project"] = aName,
+                        ["persona"] = iAuthor, ["data_root"] = m_DataRoot,
+                    });
+                    if (r.ExitCode == 0) aOk++;
+                    else aFail.Add($"TASK-{i:0000}（exit {r.ExitCode}）");
+                    // 第一張就被擋（撞名、名字不合法）⇒ 後面每張都會一樣被擋 ⇒ 停
+                    if (r.ExitCode == 1 && aOk == 0) { aFail.Add("⇒ 第一張就被擋下，後面沒有再打（原因見回傳檔）"); break; }
+                }
+                return $"專案 {aName}：成功 {aOk} 張" + (aFail.Count > 0 ? "；沒成功：" + string.Join("、", aFail) : "");
+            });
         }
     }
 

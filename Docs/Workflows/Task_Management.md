@@ -156,6 +156,10 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 - 逾期認領（`in_progress` 且 14 天沒動）：`op=sweep` 先看候選，`--arg confirm=1` 才釋放回 `todo`。
 - **大項目才開傘**（跨好幾天、多人分頭做）：`type=epic`，子單 `op=link --arg op_link=subtask_of --arg target=<傘>`；傘開單當天綁 `memory_topic`；子單動工當天把傘推 `in_progress`；進度寫傘的 wrapup。排順序看 `blocked_by`，不看優先度。
   收傘：最後一張子單結掉 → `work-memory op=archive` → 傘 `op=update --arg memory_archived_commit=<sha>` → 傘 `resolve`。
+- **專案比傘更上一層**（TASK-0618，例：`Blockside`）：開單帶 `--arg project=<名>`，事後 `op=update --arg project=<名>`，清掉 `--arg unset=project`。
+  - **傘標了，子單就不用標** —— 子單沒標時，讀的人（`tasks`、後台頁）算它跟著母單（`epic_id` 或母單的 `subtask_indices`），母單換專案子單自然跟著走。⛔ 不必為了湊齊把每張子單都標一次（標了就不再跟著母單換）。
+  - 專案名**不分大小寫**：已經有 `Blockside` 時寫 `blockside` 會被擋下並指出既有拼法（同一個專案分兩類，兩類各自看起來都是完整的）。`none`／`all`／`全部`／`未分類` 是篩選用的保留字。
+  - 開單時想不出屬於哪個專案 ⇒ 不標（顯示成「未分類」），⛔ 不硬套。
 
 ## 10. 讀單
 
@@ -163,12 +167,16 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 senate cmd tasks --arg status=open                 # 計數＋清單（status／type 可疊）
 senate cmd tasks --arg persona=<我>                 # 多印兩把尺：「參與」與「涉及（我開的＋參與）」各幾張、開著幾張（只是計數，不篩清單）
 senate cmd tasks --arg persona=<我> --arg mine=1 --arg status=open   # 清單只列我涉及的未結單 —— 早安 brief §2.5／§6 數的就是這個
-senate cmd tasks --arg index=<N>                   # 單張摘要（狀態、參與者、blocker、記憶主題、留言數）
+senate cmd tasks --arg index=<N>                   # 單張摘要（狀態、參與者、blocker、記憶主題、專案、留言數）
+senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專案（子單沒標算母單的；不分大小寫）；project=none ＝ 未分類
 ```
+
+- 不帶 `project` 時摘要多一行「專案（未關／總數）」—— 每個專案各幾張、未分類幾張。
 
 - 驗收標準、描述、留言全文在單檔 `<data_root>/Tasks/tasks/<NNNN>.md`（`tasks` 第一行印 data_root），或看後台頁。
 - 依參與者篩：後台頁。依 milestone／tag／epic 篩：沒有參數 ⇒ `--arg out_json=<檔>` 落完整資料自己篩。
-- 後台頁 `senate ui --page tasks`：篩選（狀態／類型／參與者）、看驗收標準與描述、留言、推狀態；寫入同樣走 `task`。
+- 後台頁 `senate ui --page tasks`：工具列兩排 —— 第一排重新讀取、開資料夾、翻頁；第二排篩選（專案／狀態／類型／參與者／含已關）。
+  看驗收標準與描述、留言、推狀態、改專案；「整理」把**目前篩選結果**一次設成某個專案（按兩次確認，一張一張走 `op=update`、各進時間線）。寫入同樣走 `task`。
 
 ## 11. 結果怎麼讀（`task`）
 
