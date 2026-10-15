@@ -209,7 +209,12 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 | `mast` | `fore`／`main`／`mizzen`／`bowsprit` | 掛在哪根桅（跟帆桁 meta 的 `mast` 同一套；三角帆掛艏斜桅 ⇒ `bowsprit`） |
 | `sail`（帆） | `course`／`topsail`／`topgallant`／`royal`／`gaff`（縱主帆：spanker、夜隼號的 mainsail）／`staysail`／`jib` | 帆的種類 ⇒ 帆裝（W／S）的預設：收帆 ＝ topsail、jib；戰鬥帆再加 topgallant、gaff；滿帆 ＝ 全部 |
 | `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`） |
-| `flag`（旗） | `ensign`（船尾旗）／`pennant`（長旗）／`jack` | 降旗時降 `ensign` |
+| `flag`（旗；`kind=flag` 才寫） | `ensign`（國旗：船尾旗桿或後桅斜桁頂）／`pennant`（長旗：桅頂）／`jack`（艏旗：艏斜桅旗桿）／`signal`（信號旗） | 降旗時降 `ensign`；遊戲的陣營旗要換掉作品的哪一面，照這個種類找（下面「旗」） |
+
+**旗**：作品裡每一面旗都標 `kind=flag` ＋ `flag=<種類>`（Tim 2026-10-15：作品原本的旗標上 meta、遊戲照 meta 認是不是旗、是哪一種）。
+- 遊戲（Blockside `77_colours.js`）另外加**陣營旗**（藍方藍旗、紅方紅旗，仿英國艦隊旗）：每根桅頂往上加一根旗桿掛在上面 ⇒ ⛔ 不碰作品的旗、造船的人不用留位置。
+- 要把作品的某一面換成陣營旗（例：憲法號的國旗）⇒ 遊戲設定 `ships[].flags` 寫 `{"kind": "ensign", "replace": "ensign"}`：照 meta `flag` 的種類找那一面（沒有 meta 才照名字），布料照原本那面、只換貼圖 ⇒ **作品的旗要有貼圖（uv）** 才換得了。
+- 旗是布（跟帆同一套）：被打扣血、破洞、掛的地方斷了就掉；`flag=ensign` 降旗時降下來。
 
 **繩**（`part=rope`）—— 必標的只有「帆自己的繩」；其他繩可以不標
 
