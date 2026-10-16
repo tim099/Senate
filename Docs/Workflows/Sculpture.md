@@ -282,6 +282,25 @@ senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --ar
 - 不適用（照舊合併）：共用展區、手動填了 `region`／`exclude_color`。CLI 也可以 `op=view parts=1`；`export` 的 obj／vox／list／vxk 照舊合併；分開匯出走 `format=glb`（§9.4.11，同一份場景）。
 - 讀數：渲染結果下方「子模型分開畫：N 份網格、M 個實例（顯示 k）」，GPU 讀數「這一幀新建 b」。
 
+### 5.4 平滑渲染與材質反光（TASK-0645）
+
+Tim 2026-10-16：「地形可以設定為柔和平面」「是否可讓 SculptureViewerPage 也支援（平滑渲染）」「然後還有材質（可以參考兩艘鐵甲艦）」。
+觀測頁（GPU 即時預覽）與 CLI `op=view` 照**關聯的 meta** 畫，跟遊戲（Blockside 15_smooth.js）同一套規則、同一個算法 —— 標法見造船規格 §9.5，這裡只寫預覽這側。
+
+- `render=smooth` 的格畫成平滑面（surface nets：格角往表面拉、周圍同一面平均、夾回格角 ±0.5；跟一般格相鄰的格角釘住 ⇒ 交界不露縫）。巢狀照最近一層，子關聯寫 `render=voxel` 蓋回方塊。
+  - 平滑格自己的方塊面不畫，但照樣擋住旁邊格子的面、照樣進框景與陰影。
+  - 只改畫面：格子清單、讀數、匯出 list／obj 照舊是方塊（vxk 檔頭照舊多 `render`）。
+- `material=<ID>` 的**平滑面**照雕刻的材質表上金屬反光（天空／地面的反射、菲涅耳、每盞燈的鏡面高光，照陰影）；方塊面不反光（跟遊戲一樣）。
+  - 材質表：`Sculpture/materials.json`（雕刻自己一份，Tim 2026-10-16 拍板；⛔ 不讀遊戲的 `game.json` —— 兩邊各管各的，數值要對齊時手動抄）。
+    格式 `{"schema":1,"list":{"iron":{"name":"鐵甲","metal":1,"rough":0.35}}}`：`metal`、`rough` 都是 0..1，沒寫 `rough` ⇒ 0.5；ID 小寫英數、底線、連字號。
+  - 沒有檔 ⇒ 空表（平滑面一律不反光）；壞檔（不是 JSON、schema 不是 1、值越界、不認得的鍵）⇒ view 擋下 exit 2（⛔ 不默默當成沒有表）。
+  - 表裡沒有的 ID ⇒ 照不反光畫，輸出那一行列出來。
+- 環境反射取半球光的顏色（有 skybox ⇒ 全景上下半球的平均色），⛔ 不是照著 skybox 逐像素反射。
+- CLI `op=view` 有平滑格才多印一行「· 平滑渲染：平滑 N 格｜材質 iron N｜…」與 value `smooth_voxels`；沒有平滑格的作品輸出、圖都跟以前逐位元相同（新舊 exe 的 sha256 對過：風暴角號、酒館房屋）。
+- 子模型分開畫（觀測頁、`parts=1`）：render／material 沿關聯樹往下繼承，平滑的節點整份畫成平滑面（同一件作品、平滑與否不同 ⇒ 各一份網格）。⚠ 分開畫本來就不跨件剔除 ⇒ 平滑子作品跟旁邊的方塊件之間不釘格角（合併畫的 CLI view 會釘）。
+- ⚠ 很緩的坡（每好幾格才高一格）：格角最多挪半格 ⇒ 階梯變成圓角的小坡，遠看還有淡淡的等高線條紋；近看才是連續的面。
+- 範例：維吉尼亞號（`ame-virginia-01m-assembly`，平滑 99,571 格）、拿破崙號（`kotoko-napoleon-01m-assembly`，煙囪 28,900 格）、岩堡港（`summit-rocher-01m`，地形 2,062,102 格，CLI view 約 13 秒）。
+
 ## 6. 渲染設定檔（render-profile）
 
 兩層，各自可以有很多組、各自記住「現在用哪一組」：
