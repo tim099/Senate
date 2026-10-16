@@ -4193,17 +4193,25 @@ public static partial class SelfTest
             //   **每次都跳過**。「跳過」不是通過，所以那等於這條路上沒有任何守衛在跑。
             //   ⇒ 改成由新到舊逐個試，挑**第一個在本區、表頭又解得開**的；全部不合才跳過，
             //     而跳過時要說**試了幾個**（⛔ 不讓「沒有樣本」跟「我只看了一個」同形）。
-            var aCands = new List<(string File, DateTime T)>();
+            // 🩸 2026-10-16：「新」原本看檔案修改時間 —— 而 git checkout 會把一整批章的 mtime 刷成同一刻
+            //   （Books 47 章全是 10-07 20:02）⇒ 排序等於亂挑，挑到 08-19 舊排版器寫的 091 章還把它當「最新」當閘 ⇒ 長紅。
+            //   ⇒ 改看**內容**：章收錄的最大 seq（匯出時寫進表頭、checkout 改不動）；mtime 只分平手。
+            //     表頭解不開的排最後（照樣逐個試、照樣數進 aBadHead）。
+            var aCands = new List<(string File, long Seq, DateTime T)>();
             foreach (string d in Directory.GetDirectories(aBooksSrc, "watch-*"))
                 foreach (string f in Directory.GetFiles(d, "???.txt"))
                 {
                     string aStem = Path.GetFileNameWithoutExtension(f);
                     if (aStem.Length != 3 || !int.TryParse(aStem, out _)) continue;
-                    aCands.Add((f, File.GetLastWriteTimeUtc(f)));
+                    long aMaxSeq = -1;
+                    if (TryParseChapterHeader(ReadChapterNormalized(f), out _, out List<SCP_SeqRange> aRs, out _, out _, out _, out _, out _))
+                        foreach (SCP_SeqRange r in aRs) aMaxSeq = Math.Max(aMaxSeq, r.Hi);
+                    aCands.Add((f, aMaxSeq, File.GetLastWriteTimeUtc(f)));
                 }
             if (aCands.Count == 0) continue;
-            aCands.Sort((x, y) => y.T.CompareTo(x.T));
+            aCands.Sort((x, y) => x.Seq != y.Seq ? y.Seq.CompareTo(x.Seq) : y.T.CompareTo(x.T));
             aAny = true;
+            string? aFirstInRegion = null;   // 「最新那章」＝ 本區表頭解得開的第一章（別區的 seq 跟本區不能比大小）
 
             string? aPick = null;
             string aMedia = "", aTitle = "", aSub = "", aWork = "", aSessions = "", aNote = "";
@@ -4211,7 +4219,7 @@ public static partial class SelfTest
             string aLastWhy = "（沒有候選）";
             int aTried = 0, aBadHead = 0, aOutRegion = 0, aIdMiss = 0, aSeqGone = 0;
 
-            foreach ((string aF, DateTime _) in aCands)
+            foreach ((string aF, long _, DateTime _) in aCands)
             {
                 ++aTried;
                 string aTxt = ReadChapterNormalized(aF);
@@ -4220,6 +4228,7 @@ public static partial class SelfTest
                 { aLastWhy = "表頭解析不出來"; ++aBadHead; continue; }
                 string? aWhy = WhyOutOfThisRegion(aSrc, aRanges);
                 if (aWhy != null) { aLastWhy = aWhy; ++aOutRegion; continue; }
+                aFirstInRegion ??= aF;
                 // 🔴 TASK-0217：上面那把尺只比**上界**（號碼在不在本區的範圍內），
                 //   它答不了「這些號碼**還指著同一批訊息**嗎」。2026-09-15 逐章量：39 章裡 0 章對得上。
                 //   ⇒ 不加這一格的話，一個跨區的樣本會被挑來當「重出逐位元組相同」的受測體，
@@ -4238,7 +4247,7 @@ public static partial class SelfTest
             //     退而求其次挑到舊章時它降級成**讀數**（照印差在哪，⛔ 但不判失敗）。
             //   🩸 不這樣分的話，只有兩條路：讓它長紅（別人的 build 閘替我扛）
             //     或把檢查拔掉（為綠燈改共用狀態）。兩個都不行。
-            bool aIsNewest = aPick != null && string.Equals(aPick, aCands[0].File, StringComparison.Ordinal);
+            bool aIsNewest = aPick != null && string.Equals(aPick, aFirstInRegion, StringComparison.Ordinal);
             if (aPick == null)
             {
                 yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
@@ -4383,7 +4392,7 @@ public static partial class SelfTest
                 yield return new CheckRow($"章落檔 clean-room（{p.Name}）",
                     $"受測體 `{Path.GetFileName(Path.GetDirectoryName(aPick))}/{Path.GetFileName(aPick)}`"
                     + $"（複製 {aCopied} 則訊息進暫存根）"
-                    + $"／**重出逐位元組相同={aSame}**（{(aIsNewest ? "受測體＝最新那章 ⇒ **這一格是閘**" : "⚠ 最新那章不在本區 ⇒ 退而挑舊章，**這一格降級成讀數不判失敗**")}）{(aDiffWhere.Length > 0 ? "　⚠ " + aDiffWhere : "")}／回讀段數＝收錄數={aBackOk}"
+                    + $"／**重出逐位元組相同={aSame}**（{(aIsNewest ? "受測體＝最新那章 ⇒ **這一格是閘**" : "⚠ 本區最新那章（" + Path.GetFileName(Path.GetDirectoryName(aFirstInRegion ?? "") ?? "") + "/" + Path.GetFileName(aFirstInRegion ?? "") + "）當不了受測體 ⇒ 退而挑舊章，**這一格降級成讀數不判失敗**")}）{(aDiffWhere.Length > 0 ? "　⚠ " + aDiffWhere : "")}／回讀段數＝收錄數={aBackOk}"
                     + $"／**沒給 force 擋下={aRefused}** 且檔案 md5 不變={aUnchanged}"
                     + $"／**區間重疊擋下且沒生出 777.txt={aOverlapBlocked}**"
                     + $"／**force ⇒ 出 v2 不覆蓋={aV2Wrote}**（正本 md5 不變={aBaseIntact}、"
