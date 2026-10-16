@@ -58,10 +58,12 @@ public sealed partial class Cmd_Sculpture
             if (sub == "create") return CreateWork(c, id);
             if (sub == "assemble") return AssembleWork(c, id);
             // TASK-0507：外部模型 —— 作品當模型要產生快取（拿來源作品的鎖）⇒ 自己管鎖（先驗、產生快取，最後才拿本作品鎖寫）
-            if (sub == "model") return WorkModel(c, id);
-            if (sub == "unmodel") return WorkUnmodel(c, id);
+            // TASK-0646：模型、關聯、固定點不限作者 —— 包一層：成功而且不是作者 ⇒ 記進 meta_log.jsonl
+            if (sub == "model") return GameLayer(c, c.Works.Load(id), "model", sub, () => WorkModel(c, id));
+            if (sub == "unmodel") return GameLayer(c, c.Works.Load(id), "model", sub, () => WorkUnmodel(c, id));
             if (sub == "models") return WorkModels(c, id);
-            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|sea|meta|model|unmodel|models|split-events");
+            if (sub == "split") return WorkSplit(c, id);   // TASK-0646：拆件（自己管鎖：registry → A＋引用它的作品＋關聯樹）
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|sea|meta|model|unmodel|models|split|split-events");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
             List<SCP_SculptLinkNode>? tree = null;
@@ -105,16 +107,16 @@ public sealed partial class Cmd_Sculpture
             if (sub == "marks") return WorkMarks(c, id);
             if (sub == "mark") return WorkMark(c, cardNow);
             if (sub == "draft") return WorkDraft(c, cardNow);
-            if (sub == "link") return WorkLink(c, cardNow);
-            if (sub == "unlink") return WorkUnlink(c, cardNow);
+            if (sub == "link") return GameLayer(c, cardNow, "link", sub, () => WorkLink(c, cardNow));
+            if (sub == "unlink") return GameLayer(c, cardNow, "link", sub, () => WorkUnlink(c, cardNow));
             if (sub == "links") return WorkLinks(c, cardNow);
             // TASK-0571：預覽 preset（作品資料，不是 voxel；改的只有作者）
             if (sub == "preset") return WorkPreset(c, cardNow);
             if (sub == "unpreset") return WorkUnpreset(c, cardNow);
             if (sub == "presets") return WorkPresets(c, cardNow);
-            // TASK-0502：固定點與繩索（作品資料，不是 voxel；改的只有作者）
-            if (sub == "anchor") return WorkAnchor(c, cardNow);
-            if (sub == "unanchor") return WorkUnanchor(c, cardNow);
+            // TASK-0502：固定點與繩索（作品資料，不是 voxel）—— 固定點不限作者（TASK-0646）；繩照舊只有作者
+            if (sub == "anchor") return GameLayer(c, cardNow, "anchor", sub, () => WorkAnchor(c, cardNow));
+            if (sub == "unanchor") return GameLayer(c, cardNow, "anchor", sub, () => WorkUnanchor(c, cardNow));
             if (sub == "anchors") return WorkAnchors(c, cardNow);
             if (sub == "rope") return WorkRope(c, cardNow);
             if (sub == "unrope") return WorkUnrope(c, cardNow);

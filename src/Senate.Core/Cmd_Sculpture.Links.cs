@@ -197,7 +197,7 @@ public sealed partial class Cmd_Sculpture
     /// </summary>
     static string? WorkLink(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改關聯（被關聯的作品作者不限）");
+        if (GameLayerPersona(c, "關聯") is string aNoPersona) return aNoPersona;   // TASK-0646：不限作者（Tim 定：不影響模型外觀的修改 ok）
         string aName = c.Args.Get("name");
         string? aBadName = SCP_SculptLinks.ValidName(aName);
         if (aBadName != null) return Blocked(c, 2, aBadName);
@@ -292,7 +292,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>work sub=unlink name=：拿掉一條關聯（那件作品本身不動）。</summary>
     static string? WorkUnlink(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改關聯");
+        if (GameLayerPersona(c, "關聯") is string aNoPersona) return aNoPersona;   // TASK-0646
         string aName = c.Args.Get("name").Trim();
         var aPaths = c.Works.SpacePaths(iCard.id);
         SCP_SculptLinkFile aFile = SCP_SculptLinks.Read(aPaths);
