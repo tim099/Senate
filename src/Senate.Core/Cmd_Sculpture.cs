@@ -97,7 +97,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "target", "eye", "distance", "fov", "skybox", "skybox_yaw", "skybox_tilt", "width", "height", "lights", "light_add", "light_clear",
         "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
         "sea", "sea_z", "sea_color", "sea_opacity",
-        "lamps", "lamp_intensity", "lamp_radius", "lamp_color",
+        "lamps", "lamp_intensity", "lamp_radius", "lamp_color", "sun", "night",
     };
 
     /// <summary>render-profile set 吃的設定鍵（＝ <see cref="SCP_SculptRenderProfiles.TryEdit"/> 認得的那幾個）。</summary>
@@ -107,7 +107,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "skybox", "skybox_yaw", "skybox_tilt", "background", "width", "height", "lights", "light_add", "light_clear", "unset",
         "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
         "sea", "sea_z", "sea_color", "sea_opacity",
-        "lamps", "lamp_intensity", "lamp_radius", "lamp_color",
+        "lamps", "lamp_intensity", "lamp_radius", "lamp_color", "sun",
     };
 
     /// <summary>render-profile set 除了設定鍵以外還吃的（路由／身分）。其餘顯式給的參數 ⇒ 擋（⛔ 不靜默忽略）。</summary>
@@ -256,7 +256,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("lamps", "view／render-profile set／work lamps：點光源 on|off（TASK-0650；外部模型與關聯的 meta kind=light ⇒ 在來源作品的固定點 wick 點一盞，沒有 wick ⇒ 外框中心；不給 ⇒ 沿用作品預設與設定檔鏈）"),
         new SCP_CmdArgSpec("lamp_intensity", "點光源強度 0.." + SCP_SculptRenderProfiles.LampIntensityMax + "（燈心旁正對它的面加上 底色×光色×本值；預設 0.6）"),
         new SCP_CmdArgSpec("lamp_radius", "點光源照多遠（公尺，" + SCP_SculptRenderProfiles.LampRadiusMin + ".." + SCP_SculptRenderProfiles.LampRadiusMax + "；照作品的一格幾公尺換成格；預設 6）"),
-        new SCP_CmdArgSpec("lamp_color", "點光源的光色 #RRGGBB（預設 #ff9e40 暖橘）"),
+        new SCP_CmdArgSpec("lamp_color", "點光源的光色 #RRGGBB（預設 #ff9e40 暖橘；單盞的 meta light_color 優先）"),
+        new SCP_CmdArgSpec("sun", "view／render-profile set：太陽 0..1（TASK-0650 夜景；平行光乘它，天空、背景、環境光跟著暗；1 ＝ 白天、0 ＝ 沒有太陽）"),
+        new SCP_CmdArgSpec("night", "view：夜景 on|off（on ＝ sun " + NightSun.ToString(CultureInfo.InvariantCulture) + "＋點光源開；同時給 sun／lamps 以那兩格為準；off ＝ sun 1）", iChoices: new[] { "on", "off" }),
         new SCP_CmdArgSpec("width", "出圖寬（16-8192）"),
         new SCP_CmdArgSpec("height", "出圖高（16-8192）"),
         new SCP_CmdArgSpec("smooth", "view／exhibit register：python 時代的旗標（只影響 summary 文字，GPU 渲染不吃）"),
@@ -1197,6 +1199,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         if (!TryApplyViewLights(c, p, out oBad)) return false;
         if (!TryApplyViewFloor(c, p, out oBad)) return false;
         if (!TryApplyViewSea(c, p, out oBad)) return false;
+        if (!TryApplyViewNight(c, p, out oBad)) return false;   // TASK-0650：夜景先疊，sun／lamps 顯式給的再蓋上去
         if (!TryApplyViewLamps(c, p, out oBad)) return false;
         string aFit = c.Args.Get("fit_upscale").Trim();
         if (aFit.Length > 0)
@@ -1334,6 +1337,32 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         return true;
     }
 
+    /// <summary>夜景的太陽（night=on）：只剩一點夜空，點光源成主角。</summary>
+    public const double NightSun = 0.1;
+
+    /// <summary>
+    /// view 的夜景（TASK-0650，Tim 2026-10-16「可以壓暗或關掉太陽光」）：night=on ⇒ sun <see cref="NightSun"/>＋點光源開（沿用下層的強度、半徑、顏色）；
+    /// night=off ⇒ sun 1（點光源不動）。之後顯式給的 sun=、lamps= 再蓋上去。
+    /// </summary>
+    static bool TryApplyViewNight(Ctx c, SCP_SculptRenderParams p, out string oBad)
+    {
+        oBad = "";
+        string aNight = c.Args.Get("night").Trim();
+        if (aNight == "on")
+        {
+            p.Sun = NightSun;
+            p.Lamps = p.Lamps?.Clone() ?? new SCP_SculptLamps();
+            p.Lamps.Enabled = true;
+        }
+        else if (aNight == "off") p.Sun = 1;
+        string aSun = c.Args.Get("sun").Trim();
+        if (aSun.Length == 0) return true;
+        if (!double.TryParse(aSun, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) || double.IsNaN(v) || v < 0 || v > 1)
+        { oBad = "sun 要 0..1：'" + aSun + "'"; return false; }
+        p.Sun = v;
+        return true;
+    }
+
     /// <summary>
     /// view 的一次性點光源（TASK-0650）：同海面 —— TryEdit 解析、TryApply 驗證，疊在作品預設與設定檔鏈上（只給 lamp_intensity ⇒ 只換強度、開關沿用下層）。
     /// </summary>
@@ -1445,6 +1474,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         }
         aOut.Set("lights", aLights);
         aOut.Set("ambient", p.Ambient);
+        aOut.Set("sun", p.Sun);
         aOut.Set("ao", p.AmbientOcclusion);
         aOut.Set("shadow", p.Shadow);
         var aSky = SCP_JsonData.NewObject();

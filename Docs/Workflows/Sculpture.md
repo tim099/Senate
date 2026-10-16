@@ -147,7 +147,7 @@ senate cmd sculpture --arg op=carvevox --arg work=<作品> --arg persona=<P> --a
 |---|---|
 | 範圍 | `region`（x1..x2,y1..y2,z1..z2）`exclude_color`（c,c,…）`exhibit` |
 | 鏡頭 | `projection=orthographic|perspective` `yaw`（45 ＝ 舊等角視角）`pitch` `roll` `target=x,y,z|auto` `eye=x,y,z|auto` `distance`（透視）`fov`（透視）`zoom`（正交；auto ＝ 自動框住） |
-| 光 | `light_dir=x,y,z`（換成一盞白光）`ambient`（0-1）`shadow=1|0` `ao=1|0` |
+| 光 | `light_dir=x,y,z`（換成一盞白光）`ambient`（0-1）`sun`（0-1，太陽；見 §5.7）`night=on|off`（夜景）`shadow=1|0` `ao=1|0` |
 | 天空 | `skybox=<路徑>|builtin|none`（相對路徑以 `Sculpture/skyboxes/` 為基準；none ＝ 純色背景）`skybox_yaw` `skybox_tilt`（正交時背景視窗往上抬，−89..89；透視忽略） |
 | 地板 | `floor=on|off` `floor_z` `floor_full_grid=1|0` `floor_margin` `floor_texture=builtin|<檔名>|<絕對路徑>`（相對 ⇒ `Sculpture/floors/`）`floor_tile` `floor_color=#rrggbb` `floor_fade`（見 §5.1） |
 | 海面 | `sea=on|off` `sea_z` `sea_color=#rrggbb` `sea_opacity`（0..1）（見 §5.2；作品預設 `work sub=sea`） |
@@ -309,8 +309,11 @@ Tim 2026-10-16：岩堡港的燈籠「可以有光源」。燈籠、營火在遊
 - **誰是燈**：外部模型或關聯的 meta `kind=light`（或 `lantern`）。不另外登記 —— 標了 meta 就是燈。
 - **燈心**：來源作品的固定點 `wick`（格心），照模型的 at／pivot／rotate／scale／mirror 與關聯路徑一層層換到組裝件座標；
   沒有 `wick`（obj 模型、或來源作品沒登記）⇒ 外框中心（模型 ＝ obj 外框中心；關聯 ＝ 那件作品的空間中心）。
+- **光色**：設定的 `lamp_color`；單盞的 meta `light_color=#rrggbb` 優先（例：風暴角號船尾的綠燈）。寫壞 ⇒ 照設定的光色、回傳檔記一行。⚠ 只有觀測讀它：遊戲的模型燈一律暖橘，船殼上的燈照 game.json 的 `rgb`。
 - **照法**（跟遊戲 01_gl.js `lampK` 同式）：照到的面加上 底色 × 光色 × 強度 × a² × (0.35 ＋ 0.65 × N·L)，a ＝ 1 − 距離／半徑。⛔ 不投影子（光會穿過牆，跟遊戲一樣）；
   照 voxel、平滑面、外部模型、繩、帆；地板與海面不接。一張圖最多點 64 盞，多了取離鏡頭近的（正交取離注視點近的）。
+- **光暈**（跟遊戲 `lanternHalo` 同一個意思）：每盞一片面向鏡頭的光暈，半徑 ＝ 照明半徑 × 0.25，往鏡頭挪半個光暈（燈心在燈罩裡）；加色、被前面的東西擋住、不擋別人。
+- **天越暗燈越亮**（遊戲 `lampsUpdate` 的 1.6 − 天光）：`sun` < 1 時強度 × (1.6 − sun)／0.6 —— 白天 1 倍、`night=on`（sun 0.1）2.5 倍；光暈一起。
 - **只改畫面**：不動格子、讀數、匯出。
 
 | 欄位 | 預設 | 範圍 | 意思 |
@@ -331,9 +334,34 @@ senate cmd sculpture --arg op=view --arg work=<港口> --arg persona=<P> --arg l
 
 - 開燈時回傳多一行「· 點光源：N 盞（固定點 wick a、外框中心 b）」與 value `lamps`；回傳檔逐盞列出燈心座標（拿來核 wick 擺得對不對）。⚠ 固定點檔讀不了 ⇒ 那盞放外框中心、回傳檔記一行。
 - **沒開燈 ⇒ 圖、輸出跟以前逐位元相同**（岩堡港新舊 exe 的 sha256 對過）。
-- ⚠ 白天預設光下燈很淡（6 m 只照到旁邊一圈）；要看效果就壓暗 `ambient`、調強 `lamp_intensity`，或拉近鏡頭。
+- ⚠ 白天預設光下燈很淡（6 m 只照到旁邊一圈）；要看效果開夜景（§5.7 `night=on`），或拉近鏡頭。
 - 落子後的分享圖（§7）只在共用展區出，那裡沒有外部模型與關聯 ⇒ 沒有燈可點（設定檔的 `lamps` 照樣疊，只是場景裡沒有燈）。
-- 範例：岩堡港（`summit-rocher-01m`）燈籠 22 盞＋營火 2 個，全部有 `wick`。
+- 範例：
+  - 岩堡港（`summit-rocher-01m`）：燈籠 22 盞＋營火 2 個，全部有 `wick`。
+  - 風暴角號（`summit-stormkaap-01m-assembly`）：船尾三盞綠燈從 `-stern-deco` 拆成 `-stern-lamp-top／-port／-stbd`。
+    - 用 `work sub=split` 拆，外觀逐格相同；三條雙生關聯 `船尾裝飾-燈-上／左舷／右舷`，meta 都是 `kind=light`、`light_color=#59ff8c`。
+    - 遊戲端的綠燈照舊：關聯在 vxk 裡照樣攤成船殼的格，game.json 的 `lamps` 也照舊。
+
+### 5.7 夜景 —— 壓暗或關掉太陽（TASK-0650）
+
+Tim 2026-10-16：「請加夜景：可以壓暗或關掉太陽光（觀測頁跟 CLI 都要），開燈時燈籠周圍要明顯亮」。
+
+- `sun`（0..1，預設 1）：平行光全部乘上它；天空、背景、環境光（含金屬反射的環境色）乘上 0.25 ＋ 0.75 × sun ⇒ 0 ＝ 沒有太陽、只剩一點夜空。設定檔頂層 `sun` 同義（`render-profile set sun=`、`unset=sun`）。
+  - 色調刻度照白天算（⛔ 不跟著放大）⇒ 太陽暗了畫面就是暗。
+- `night=on`（view／觀測頁）＝ `sun=0.1`＋`lamps=on`（強度、半徑、光色沿用下層）；同時給的 `sun=`、`lamps=` 以那兩格為準。`night=off` ＝ `sun=1`。
+- 燈在夜裡會自己變亮（§5.6「天越暗燈越亮」），所以夜景不必另外調強度。
+- 觀測頁「相機與光影（手動）」最後一段：夜景（沿用／開／關）＋ `sun` 欄。
+- **白天（`sun` 1、沒給 `night`）⇒ 圖跟以前逐位元相同**（岩堡港 sha256 對過）。
+
+```bash
+senate cmd sculpture --arg op=view --arg work=summit-rocher-01m --arg persona=<P> --arg night=on                  # 夜景＋點燈
+senate cmd sculpture --arg op=view --arg work=<船> --arg persona=<P> --arg sun=0.4 --arg lamps=on                 # 黃昏：太陽壓暗一半多
+```
+
+- 讀數（岩堡港 B3 房燈籠旁，透視 800×600，`night=on` 燈開／關）：
+  - 平均亮度 14.2 → 20.8，亮了 > 30 的像素 6.1%、最多 +177。
+  - 對照白天：只開燈、沒有夜景，近看平均差 +2.1。
+- 讀數（風暴角號船尾近看）：平均亮度 11.3 → 26.7，亮了 > 30 的像素 17%。
 
 ## 6. 渲染設定檔（render-profile）
 

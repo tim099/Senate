@@ -247,7 +247,7 @@ Tim 2026-10-16：「是否可以讓砲可以帶動額外裝甲(子模組) 然後
 | `capstan` | 絞盤模型 | — | 沒有（用模型外框）|
 | `boat` | 小艇模型 | `boat=cutter`、`length_m`（⚠ 照一般比例，未查證）| 沒有（用模型外框）|
 | `grating` | 艙口格柵模型（掛在所在甲板的子作品；0.05 m 子作品、scale 0.5） | — | 沒有（用模型外框；格柵頂 ＝ 外框頂）|
-| `light` | 會發光的燈模型（夜燈號船首像手上的提燈 `-lantern`，0.01 m） | — | `wick`（火焰中心：遊戲在這裡放點光源；**觀測頁與 CLI view 也畫**，`lamps=on`，見 `Sculpture.md` §5.6）、`bail`（提環頂：手握的地方）、`base` |
+| `light` | 會發光的燈模型（夜燈號船首像手上的提燈 `-lantern`，0.01 m） | — | `wick`（火焰中心：遊戲在這裡放點光源；**觀測頁與 CLI view 也畫**，`lamps=on`／夜景 `night=on`，見 `Sculpture.md` §5.6、§5.7；觀測用的光色寫 meta `light_color=#rrggbb`）、`bail`（提環頂：手握的地方）、`base` |
 | `rudder` | 舵模型（舵是格子的船不用標） | `hinge_x／hinge_y／hinge_z`（鉸鏈下端，組裝件座標）、`axis_x／axis_y／axis_z`（鉸鏈軸方向）、`max_deg`、`turn_axis=hinge` | **`stock-top`**（舵頭，舵子作品裡登記）：遊戲在它旁邊 8 格內找掛住的船尾格。⚠ 沒有 ⇒ 遊戲沿鉸鏈軸走到舵頂那一高度找（2026-10-15 補的退路）；鉸鏈也沒有 ⇒ 往正下方找到 z 0、開局就掉（炎羽號 2026-10-15 撞過） |
 | `propeller` | 螺旋槳模型（光榮號 `kaguya-gloire-01m-screw`；子作品用整船的框、at ＝ pivot ＝ 轉軸中心，同舵的做法；TASK-0622 後續） | `axis_x／axis_y／axis_z`（轉軸方向，組裝件座標；船往前走時照右手定則繞 +axis 轉）、`blades`、`diameter_m`；可選 `rpm_max`（全速時的轉速；沒寫 ⇒ 遊戲預設 80，⚠ 不是史料） | **`hub`**（轉軸中心：推力作用點、轉軸）、`shaft-fwd`（軸往前接到船殼那一格：遊戲把螺旋槳掛在它旁邊 8 格內的船殼上 ⇒ 那一段打斷就掉）。遊戲照額外動力的輸出繞 hub、沿 axis 轉（Blockside 8c1ef46，2026-10-16；見 §9.6） |
 | `gear` | 會轉的機件模型（拿破崙號 `-engine-gear`／`-engine-pinion`，2026-10-16） | `gear`（`crank`／`pinion`…，只是說明）＋ §9.8 `spin` 那幾個鍵 | `spin-a`→`spin-b`（轉軸）、**`bail`**（掛點）；見 §9.6 |
