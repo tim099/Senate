@@ -77,7 +77,7 @@ senate cmd task --arg op=create --arg persona=<我> --arg type=bug --arg title="
 | `qa` | 填了 ⇒ 只有他能 `check`；`commit` 只推到 `in_review`；別人 `resolve` 要帶 `qa_note` |
 | `pm`／`reviewer` | 只是標籤，不改狀態。⚠ `pm` 不是 QA —— 有人管不等於有人驗 |
 
-動工（會改 C#）就認領**並帶範圍**：
+動工（會改既有的程式碼，任何語言；只新增檔案不算 —— 判準與 worktree 規則見 skill `scp-coding`／文件 `Coding`）就認領**並帶範圍**：
 
 ```bash
 senate cmd task --arg op=claim --arg persona=<我> --arg index=<N> --arg scope="<這一場的最大範圍，絕對路徑>"
