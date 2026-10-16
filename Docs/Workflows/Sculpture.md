@@ -362,7 +362,7 @@ senate cmd sculpture --arg op=render-profile --arg sub=reset --arg name=default 
 
 ## 9. 個人作品 —— 可調尺寸與長期續作
 
-每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。
+每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。⭐ 例外（規則由 Tim 定，2026-10-16）：**不影響模型外觀的修改不限作者** —— meta、外部模型、關聯、固定點，以及拆件（§9.4.12）；不是作者改的會記進那件作品的 `meta_log.jsonl`（TASK-0646）。
 
 ```bash
 senate cmd sculpture --arg op=work --arg sub=create --arg persona=meadow --arg id=meadow-chair --arg title=窗邊椅 --arg size=128,96,64
@@ -579,7 +579,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
   - 樣本（量的，2026-10-16）：summit 岩堡港 `summit-rocher-01m-house-a2` ＝ `house-a1` 加 `recolor=218:213,168:109,132:73,49:42`（101,542 格，形狀相同、每個舊色只對到一個新色）⇒ 換成關聯可省一件約 1.47 MB 的雕刻庫檔。`house-a3` 形狀也相同，但色 218 有 12,324 格留著、22,626 格換成 246 ⇒ 單靠替換色做不到。
   - ⚠ vxk 裡關聯是展開成格子的 ⇒ 省的是雕刻庫，不是遊戲檔；遊戲檔要省得靠外部模型的替換色（TASK-0584 另一半，等跟 ame 對好 vxk）。
 - **寫入只動本作品**：父作品的刀碰不到被關聯的作品（要改去改那件作品）；落子後回報 `linked_hits`（這一刀的範圍裡有幾格是關聯進來的，沒被動到）。
-- **擋下**：成環（含隔好幾層、含停用的關聯；跟「作品當模型」一起繞成的也算，見 §9.4.8）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`、非作者改關聯。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
+- **擋下**：成環（含隔好幾層、含停用的關聯；跟「作品當模型」一起繞成的也算，見 §9.4.8）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
 - **攤平**：`work sub=import`（匯入展區）與 `work sub=assemble`（來源有關聯）照 enabled 攤平成實際 voxel，Credit 逐件記；import 的 revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上。`work show` 另給 `composed_revision`／`composed_voxels`；Credit 多一段「關聯（現組）」。export 檔頭記每條用了哪個版本。
 - **效能與鎖**：被關聯的作品讀它自己的快取（只讀、不寫回）；同一件只讀一次（28 門砲關聯同一件 cannon 也只讀一次）。鎖：作品＋關聯樹上所有作品依 ID 排序一次拿齊（全系統只有這一種鎖序）。
 - `diff` 只比本作品自己的事件（不含關聯）；`mark` 回到過去時，被關聯的作品照現在。觀測頁：「只組這些關聯／拿掉這些關聯」兩欄；被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組。
@@ -626,7 +626,7 @@ senate cmd sculpture --arg op=spray --arg work=<作品> --arg persona=<P> --arg 
 
 ### 9.4.6 固定點與繩索 —— 索具不用 voxel 雕（TASK-0502）
 
-帆與索具不用 voxel 雕（Tim）⇒ 作品可以記**固定點**（名字 → 格座標）與**繩**（兩端、顏色、粗細、鬆緊）；兩份都是作品資料（`anchors.json`／`ropes.json`，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**，改的只有作者（同 link）。觀測時才算形狀、才畫。
+帆與索具不用 voxel 雕（Tim）⇒ 作品可以記**固定點**（名字 → 格座標）與**繩**（兩端、顏色、粗細、鬆緊）；兩份都是作品資料（`anchors.json`／`ropes.json`，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**。固定點不限作者（TASK-0646：不影響外觀，給遊戲認關鍵點）；繩改的只有作者。觀測時才算形狀、才畫。
 
 ```bash
 # 固定點：點取那一格的格心（x+0.5, y+0.5, z+0.5）
@@ -720,7 +720,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_
 
 ### 9.4.8 外部模型 —— 匯入 obj、或拿另一件作品當模型（TASK-0507）
 
-作品可以擺**三角網格模型**：一個 obj 檔，或另一件雕刻作品（**不匯入 voxel**，而是匯出成 obj 快取在本地再畫）。存在 `models.json`（作品資料，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**，改的只有作者。模型可以任意角度旋轉、縮放 —— voxel 關聯只能轉 90°、不能縮。
+作品可以擺**三角網格模型**：一個 obj 檔，或另一件雕刻作品（**不匯入 voxel**，而是匯出成 obj 快取在本地再畫）。存在 `models.json`（作品資料，入版控，⛔ 不進 events），**一格 voxel 都不動、不收費**，不限作者（TASK-0646；不是作者改的記進 `meta_log.jsonl`）。模型可以任意角度旋轉、縮放 —— voxel 關聯只能轉 90°、不能縮。
 
 ```bash
 # obj 檔：複製進作品（models/<名字>/），之後作品自己帶著它
@@ -783,7 +783,7 @@ senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> --arg pers
 senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> [--arg part=rope]                                  # 讀數：列出 meta、報沒標的幾筆
 ```
 
-- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）；形狀、位置、端點照舊只有作者能改（`sub=sail／rope／model／link`）。
+- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）。2026-10-16 Tim 把規則放寬成「**不影響模型外觀的修改 ok**」（TASK-0646）⇒ 外部模型、關聯、固定點的增刪改也不限作者、拆件也是（§9.4.12）；帆、繩照舊只有作者能改（`sub=sail／rope`）。
   每一筆變更記在作品資料夾的 **`meta_log.jsonl`**（一行一筆：`at`、`persona`、`owner`、`part`、`name`、`before`、`after`；只往後加）⇒ 查得到誰改的。同樣的值再下一次 ⇒ 0 筆、不記。
 - **批次**（`file=`）：`#` 開頭、空行略過；同一筆寫好幾行 ⇒ 依序疊上去；先全部驗過，**一筆不合（名字找不到、壞 meta、欄數不對）⇒ 整份不寫**（exit 2、零寫入）。上限 20,000 行。
 - 只認**本作品自己的**部件：關聯進來的作品裡的帆、繩要到那件作品下改（`work=<那件>`）。
@@ -825,6 +825,25 @@ senate cmd sculpture --arg op=export --arg format=glb --arg work=<作品> [--arg
 - 讀數：回傳 `path`、`sha256`、`glb_nodes／glb_meshes／glb_instances／glb_shared_meshes／glb_triangles／glb_ropes／glb_sails`；回報列出被兩個以上 node 共用的 mesh。同輸入同 bytes。
 - 實測（2026-10-16，拿破崙號組裝件）：node 776、mesh 454（共用 10 份）、子模型實例 373、三角形 534,752、32 MB、約 23 秒；獨立的 Python 讀檔（照規格解 accessor、索引不越界）全過，28 條關聯的 mesh 外框套矩陣後全部落在 `format=parts` 的框裡。上砲甲板用 three.js 的 GLTFLoader 讀：node 33、mesh 3（砲 30 門共用一份），74 × 4 × 18.3 m、畫得出來。
 - 驗收：淨室 `SculptGlbCleanRoom`（voxel 面經 node 矩陣換回逐格＝合併版 list，含鏡像、轉向、巢狀；模型外框＝obj；共用次數；根矩陣；藏一條少一個 node、`models=0`、`hide_links=self`、打錯路徑、`region`；重匯逐位元組）。反向對照：故意把矩陣寫成沒轉置 ⇒ 缺 5、多 5、模型外框對不上。
+
+### 9.4.12 拆件 —— 不改外觀，把一部分格子拆成子作品（TASK-0646）
+
+規則由 Tim 定（2026-10-16）：「不影響模型外觀的修改 ok」「可以在不調整模型外觀下 修改（meta 或拆件符合遊戲規格）」⇒ **不限作者**。
+起因：遊戲只轉外部模型 —— 雙舵輪的支柱跟輪雕在同一件、舵在船殼格子裡 ⇒ 要拆出來才轉得對（TASK-0640）。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=split --arg persona=<我> --arg work=<A> --arg into=<新子作品> --arg colors=136,104 --arg twin="{name}座" [--arg twin_meta='{"kind":"wheel_stand"}'] [--arg voxels=<清單檔>] [--arg title=…] [--arg confirm=1]
+```
+
+- **選格**：A 自己的格（不含關聯），照 `colors`（色號）或 `voxels`（清單檔 `x,y,z[,c]`；每一格都要在 A 裡、給了色就要對）。選到全部格、一格都沒選到 ⇒ 擋。一次最多 1,000,000 格。
+- **新子作品**：作者照 A 的作者（⛔ 不改歸屬）、`parent_work` 照 A 的（A 沒有就是 A）、標 `sub`、尺寸與 `meters_per_voxel` 照 A；格子搬過去、座標不變。A、B 各落一刀 `workedit`（action `split`）。
+- **雙生引用**：全庫掃，每個關聯到 A 的關聯、每個拿 A 當外部模型的模型，都在同一件作品補一個指向 B 的雙生 —— 名字照 `twin`（`{name}` ＝ 原名；沒有 `{name}` ⇒ 接在原名後面），擺放（at／turn／mirror／pivot／rotate／scale／axes／color／enabled／recolor）照抄，關聯插在原本的**下一個**（「先到的格贏」的順序不變）；meta ＝ `twin_meta`（⛔ 不抄原本的：原本的 kind 在講 A，例如舵輪的 spin 不能讓支柱也轉）。
+- **外觀不變由引擎證明**：寫檔之前在記憶體裡組 A（含它底下的關聯）拆前、拆後＋B，逐格逐色比；A 的格原本蓋住它自己關聯的格（拆掉會露出來）、或任何一格對不上 ⇒ 擋下、一個檔都沒寫。回傳 `split_voxels`、`split_keep`、`split_composed`、`split_mismatch`、`split_twin_links`、`split_twin_models`。
+- **預覽**：不給 `confirm=1` ⇒ 驗完、列出要搬幾格與每個雙生，一個檔都不寫。
+- **留痕**：A、B 的事件最上層帶 `source{kind:split, from, to, by}`；A 與每件補了雙生的作品，`meta_log.jsonl` 各記一筆。
+- ⚠ **undo**：A 那一刀單獨 undo，格子會在 A、B 各一份（外觀變了）⇒ 要復原請兩件都 undo、並拿掉雙生引用。
+- 遊戲那側：雙生關聯是新的部件 ⇒ 要 reimport；雙生模型只換 meta 與固定點的話 metasync 帶不進來（新模型）⇒ 也要 reimport。
+- 驗收：淨室 `SculptSplitCleanRoom`（不是作者改模型、固定點、關聯並留痕；不是作者落格子擋下；拆件預覽零寫入、雙生插對位置、組起來逐格相同；露出關聯格、全選、沒選到都擋 —— 拿掉擋關那一行，這一格會紅）。
 
 ### 9.5 建築與家具的相對比例尺
 

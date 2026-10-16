@@ -145,7 +145,10 @@ public static partial class SelfTest
                   && Link("h", "self", "gun", "0,0,0").ExitCode == 2 && Link("h", "a/b", "gun", "0,0,0").ExitCode == 2 && Link("h", "all", "gun", "0,0,0").ExitCode == 2,
                   "🔴 關聯自己、不存在、放不下、保留字 self／all、名字含 / ⇒ 擋下");
             Check(Link("h", "deck", "gun", "0,0,0").ExitCode == 2, "🔴 同名改作品沒給 overwrite ⇒ 擋下");
-            Check(room.Run(("op", "work"), ("sub", "link"), ("work", "h"), ("persona", "q"), ("name", "x"), ("source_work", "gun"), ("at", "0,0,0")).ExitCode == 2, "🔴 非作者改關聯 ⇒ 擋下");
+            // TASK-0646：規則由 Tim 改成「不影響模型外觀的修改 ok」⇒ 非作者也能加關聯（記進 meta_log.jsonl）；加完當場拿掉，後面的格照舊
+            Check(room.Run(("op", "work"), ("sub", "link"), ("work", "h"), ("persona", "q"), ("name", "x"), ("source_work", "gun"), ("at", "0,0,0")).ExitCode == 0
+                  && File.ReadAllText(store.SpacePaths("h").MetaLogFile).Contains("\"persona\":\"q\"")
+                  && room.Run(("op", "work"), ("sub", "unlink"), ("work", "h"), ("persona", "q"), ("name", "x")).ExitCode == 0, "非作者改關聯 ⇒ 放行並記進 meta_log（TASK-0646），再拿掉");
             Check(Sub("h", "update", ("size", "10")).ExitCode == 2, "🔴 縮小父作品會切掉關聯 ⇒ 擋下");
 
             // ⑧ 攤平：import 預覽（would_place ＝ 組好的格數、revision 跟著子作品變、Credit）、assemble（目標在來源樹上 ⇒ 擋）
@@ -211,7 +214,7 @@ public static partial class SelfTest
             Check(Own("gun").Voxels.Count == 2 && Sub("h", "unlink", ("name", "gunR")).ExitCode == 2, "砲還在；再 unlink 一次 ⇒ 擋下（沒有這條）");
 
             return new CheckRow(name, failures.Count == 0
-                ? "只記關聯（父 events 不變）18 格＝4＋8＋2＋2×2、位置與 180° 轉向對；🔴 巢狀第二層改一格船殼也改；none／hide／路徑／self／enabled／all 全對；🔴 只關 deck/cabin 只少船艙；重疊本作品贏、越界丟掉並計數、尺寸變過標出；刪子快取相同且不寫回；父刀 linked_hits=8 不動子；🔴 成環（隔層、停用）／自己／不存在／放不下／保留字／非作者／縮小擋下；import 預覽＝攤平、🔴 子改 revision 變；assemble 攤平＋Credit、🔴 自己裝進自己擋；export 記版本；甲板草稿在船殼 draft=1 看得到；觀測頁預覽吃關聯／hide_links／mark；unlink"
+                ? "只記關聯（父 events 不變）18 格＝4＋8＋2＋2×2、位置與 180° 轉向對；🔴 巢狀第二層改一格船殼也改；none／hide／路徑／self／enabled／all 全對；🔴 只關 deck/cabin 只少船艙；重疊本作品贏、越界丟掉並計數、尺寸變過標出；刪子快取相同且不寫回；父刀 linked_hits=8 不動子；🔴 成環（隔層、停用）／自己／不存在／放不下／保留字／縮小擋下、非作者改關聯放行並留痕（TASK-0646）；import 預覽＝攤平、🔴 子改 revision 變；assemble 攤平＋Credit、🔴 自己裝進自己擋；export 記版本；甲板草稿在船殼 draft=1 看得到；觀測頁預覽吃關聯／hide_links／mark；unlink"
                 : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(name, e.ToString(), CheckResult.Fail); }

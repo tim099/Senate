@@ -134,7 +134,7 @@ public sealed partial class Cmd_Sculpture
     {
         SCP_SculptWork aCard = c.Works.Load(iId);
         c.Result.AddValue("work", iId);
-        if (c.Persona.Length == 0 || c.Persona != aCard.owner) return Blocked(c, 2, "只有作品作者 " + aCard.owner + " 可以改外部模型");
+        if (GameLayerPersona(c, "外部模型") is string aNoPersona) return aNoPersona;   // TASK-0646：不限作者（Tim 定：不影響模型外觀的修改 ok）
         string aName = c.Args.Get("name");
         if (SCP_SculptRopes.ValidName(aName, "模型") is string aBadName) return Blocked(c, 2, aBadName);
         var aPaths = c.Works.SpacePaths(iId);
@@ -311,7 +311,7 @@ public sealed partial class Cmd_Sculpture
     {
         SCP_SculptWork aCard = c.Works.Load(iId);
         c.Result.AddValue("work", iId);
-        if (c.Persona.Length == 0 || c.Persona != aCard.owner) return Blocked(c, 2, "只有作品作者 " + aCard.owner + " 可以改外部模型");
+        if (GameLayerPersona(c, "外部模型") is string aNoPersona) return aNoPersona;   // TASK-0646
         string aName = c.Args.Get("name").Trim();
         var aPaths = c.Works.SpacePaths(iId);
         int aCount;

@@ -67,7 +67,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>work sub=anchor name= at=x,y,z [note=]：加一個固定點；同名已在 ⇒ 只給 note 只改 note；要搬位置 overwrite=1。</summary>
     static string? WorkAnchor(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改固定點");
+        if (GameLayerPersona(c, "固定點") is string aNoPersona) return aNoPersona;   // TASK-0646：不限作者（Tim 定：不影響模型外觀的修改 ok）
         string aName = c.Args.Get("name");
         if (SCP_SculptRopes.ValidName(aName, "固定點") is string aBadName) return Blocked(c, 2, aBadName);
         var aPaths = c.Works.SpacePaths(iCard.id);
@@ -108,7 +108,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>work sub=unanchor name=：拿掉固定點；綁著它的繩（全庫掃，含上層作品用關聯路徑綁的）⇒ 列出來（它們之後每次觀測都會是 broken）。</summary>
     static string? WorkUnanchor(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改固定點");
+        if (GameLayerPersona(c, "固定點") is string aNoPersona) return aNoPersona;   // TASK-0646：不限作者（Tim 定：不影響模型外觀的修改 ok）
         string aName = c.Args.Get("name").Trim();
         var aPaths = c.Works.SpacePaths(iCard.id);
         SCP_SculptAnchorFile aFile = SCP_SculptRopes.ReadAnchors(aPaths);

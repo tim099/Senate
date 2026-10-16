@@ -1,6 +1,6 @@
 // 區塊職責：`sculpture op=work sub=meta`（TASK-0539）—— 給本作品的帆、繩、外部模型、關聯貼 meta（給下游認「這是什麼」，例 帆 `kind=sail, mast=fore, sail=topsail`、繩 `kind=sheet, sail=fore-topsail`）。
 // 物理意義：meta 是給遊戲、匯出用的標籤，引擎自己不讀它的意思（組裝、觀測、繩、帆一格都不變）。
-//          Tim 2026-10-13 拍板：**只改 meta 的這一刀不限作者**（形狀、位置、端點照舊只有作者能改：sub=sail／rope／model／link）；
+//          Tim 2026-10-13 拍板：**只改 meta 的這一刀不限作者**（2026-10-16 Tim 放寬成「不影響模型外觀的修改 ok」：sub=model／link／anchor 與拆件也不限作者，TASK-0646；帆、繩照舊只有作者）；
 //          每一筆變更寫進作品資料夾的 `meta_log.jsonl`（一行一筆：時間、誰、作者、哪一種、名字、改之前、改之後）⇒ 事後查得到誰改的。
 // 用法：
 //   單筆：part=sail|rope|model|link name=<名> meta=<JSON 物件>（合併：給的鍵覆寫、值 null ⇒ 刪那個鍵；meta=none ⇒ 全清）
