@@ -80,6 +80,50 @@
         "8643"
       ],
       "port": 8643
+    },
+    {
+      "name": "blockside-summit-flood",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8789",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "C:/Users/Tim/AppData/Local/Temp/claude/D--Unity-Senate/9f99b54c-8c34-429c-8d7f-d7b49468bf01/scratchpad/bs_flood"
+      ],
+      "port": 8789
+    },
+    {
+      "name": "blockside-meadow-var",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8790",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "C:/Users/Tim/AppData/Local/Temp/claude/D--Unity-Senate/39b6af4e-e4a2-4cec-a492-35bfc0a8cf59/scratchpad/bs_var"
+      ],
+      "port": 8790,
+      "autoPort": false
+    },
+    {
+      "name": "blockside-meadow-head",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8780",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "C:/Users/Tim/AppData/Local/Temp/claude/D--Unity-Senate/39b6af4e-e4a2-4cec-a492-35bfc0a8cf59/scratchpad/bs_head"
+      ],
+      "port": 8780,
+      "autoPort": false
     }
   ]
 }
