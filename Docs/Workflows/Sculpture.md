@@ -282,7 +282,7 @@ senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --ar
 - 不適用（照舊合併）：共用展區、手動填了 `region`／`exclude_color`。CLI 也可以 `op=view parts=1`；`export` 的 obj／vox／list／vxk 照舊合併；分開匯出走 `format=glb`（§9.4.11，同一份場景）。
 - 讀數：渲染結果下方「子模型分開畫：N 份網格、M 個實例（顯示 k）」，GPU 讀數「這一幀新建 b」。
 
-### 5.4 平滑渲染與材質反光（TASK-0645）
+### 5.5 平滑渲染與材質反光（TASK-0645）
 
 Tim 2026-10-16：「地形可以設定為柔和平面」「是否可讓 SculptureViewerPage 也支援（平滑渲染）」「然後還有材質（可以參考兩艘鐵甲艦）」。
 觀測頁（GPU 即時預覽）與 CLI `op=view` 照**關聯的 meta** 畫，跟遊戲（Blockside 15_smooth.js）同一套規則、同一個算法 —— 標法見造船規格 §9.5，這裡只寫預覽這側。
