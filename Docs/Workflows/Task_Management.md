@@ -77,15 +77,15 @@ senate cmd task --arg op=create --arg persona=<我> --arg type=bug --arg title="
 | `qa` | 填了 ⇒ 只有他能 `check`；`commit` 只推到 `in_review`；別人 `resolve` 要帶 `qa_note` |
 | `pm`／`reviewer` | 只是標籤，不改狀態。⚠ `pm` 不是 QA —— 有人管不等於有人驗 |
 
-動工（會改既有的程式碼，任何語言；只新增檔案不算 —— 判準與 worktree 規則見 skill `scp-coding`／文件 `Coding`）就認領**並帶範圍**：
+動工（會改既有的程式碼，任何語言；只新增檔案不算）**預設開自己的 worktree、認領不帶範圍**；合併回共用工作區時才開 Coding 場（判準見 skill `scp-coding`／文件 `Coding`；Tim 2026-10-16）：
 
 ```bash
-senate cmd task --arg op=claim --arg persona=<我> --arg index=<N> --arg scope="<這一場的最大範圍，絕對路徑>"
+senate cmd task --arg op=claim --arg persona=<我> --arg index=<N>                                      # 動工：只認領（在 worktree 裡改）
+senate cmd coding --arg op=start --arg persona=<我> --arg status="合併 <分支>" --arg scope="<範圍>" --arg tasks=<N>   # 合併時：開場並綁單
 ```
 
-- 帶 `scope` ＝ 認領＋開 Coding 場＋綁單（已有場就補綁，不開第二場、不擴大範圍）；**開不了場就不認領**（零寫入）。
+- 認領帶 `scope` ＝ 認領＋開 Coding 場＋綁單（已有場就補綁，不開第二場、不擴大範圍；開不了場就不認領）—— 只有直接在共用工作區合併、不開 worktree 的時候才這樣用。
 - 綁了單的場在單子進 `in_review`／`done` 後由 `senate cmd commit` 自動收。範圍判準 → `senate cmd help coding`。
-- 不帶 `scope` 只是「記錄我在做這件事」。
 
 ## 5. 施工中
 
