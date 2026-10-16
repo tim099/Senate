@@ -232,9 +232,10 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         // 金屬反光的視線（TASK-0645）：世界 → GL（y 取負）；鏡頭位置 ＝ 注視點 − 前方 × 距離
         m_Persp = aCam.Projection == SCP_SculptProjection.Perspective;
         m_ViewDirGl = Vector3.Normalize(new Vector3((float)aCam.ForwardX, (float)-aCam.ForwardY, (float)aCam.ForwardZ));
+        m_RightGl = new Vector3((float)aCam.RightX, (float)-aCam.RightY, (float)aCam.RightZ);   // 光暈面向鏡頭（TASK-0650）
+        m_UpGl = new Vector3((float)aCam.UpX, (float)-aCam.UpY, (float)aCam.UpZ);
         m_EyeGl = new Vector3((float)(aCam.TargetX - aCam.ForwardX * aCam.Distance), (float)-(aCam.TargetY - aCam.ForwardY * aCam.Distance), (float)(aCam.TargetZ - aCam.ForwardZ * aCam.Distance));
         var aLights = SolveLights(aScene, aFloor, iParams);
-        m_LampsLit = 0;
         byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo, aPartDraws);
         aReading.Lamps = m_LampsLit;
         var aErr = m_Gl!.GetError();
@@ -405,6 +406,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             {
                 if (aPt == null || !Finite(aPt.X) || !Finite(aPt.Y) || !Finite(aPt.Z) || !Finite(aPt.Radius) || aPt.Radius <= 0)
                 { oError = "燈 `" + aPt?.Path + "` 的位置或半徑含 NaN／無限大／≤ 0"; return false; }
+                if (aPt.Color != null && aPt.Color.Length != 3) { oError = "燈 `" + aPt.Path + "` 的光色要 3 個位元組"; return false; }
                 if (aPt.Part >= 0 && (iP.Parts == null || aPt.Part >= iP.Parts.Instances.Count))
                 { oError = "燈 `" + aPt.Path + "` 指到不存在的子模型實例 " + aPt.Part; return false; }
             }
@@ -425,6 +427,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         if (aCasters > SCP_SculptRenderParams.MaxShadowLights)
         { oError = $"投陰影的光 {aCasters} 盞，超過上限 {SCP_SculptRenderParams.MaxShadowLights}（⛔ 不默默只取前幾盞）"; return false; }
         if (iP.Ambient < 0 || iP.Ambient > 1) { oError = "Ambient 需在 0..1：" + iP.Ambient; return false; }
+        if (!Finite(iP.Sun) || iP.Sun < 0 || iP.Sun > 1) { oError = "Sun 需在 0..1：" + iP.Sun; return false; }   // TASK-0650 夜景
         if (iP.Projection == SCP_SculptProjection.Perspective)
         {
             if (iP.FovDeg <= 1 || iP.FovDeg >= 170) { oError = "FovDeg 需在 (1,170)：" + iP.FovDeg; return false; }
@@ -685,6 +688,7 @@ uniform float uTanY;
 uniform float uSkyYaw;
 uniform float uLod;
 uniform sampler2D uSky;
+uniform float uSkyK;
 out vec4 oColor;
 const float PI = 3.14159265358979;
 void main() {
@@ -692,7 +696,7 @@ void main() {
     vec3 w = vec3(d.x, -d.y, d.z);
     float phi = atan(w.y, w.x) - uSkyYaw;
     vec2 uv = vec2(0.5 + phi / (2.0 * PI), 0.5 - asin(clamp(w.z, -1.0, 1.0)) / PI);
-    oColor = vec4(textureLod(uSky, uv, uLod).rgb, 1.0);
+    oColor = vec4(textureLod(uSky, uv, uLod).rgb * uSkyK, 1.0);
 }";
 
     // 地板：一片 z＝Floor.Z 的四邊形（GL 座標；vWorld 把 y 取負還原成世界 xy ⇒ 網格線與 voxel 邊界同一套整數座標）。
@@ -843,7 +847,8 @@ void main() {
         m_BgProg = Link(BgVs, BgFs);
         m_SkyProg = Link(SkyVs, SkyFs);
         m_FloorProg = Link(FloorVs, FloorFs);
-        m_SeaProg = Link(FloorVs, SeaFs);   // TASK-0585：頂點著色器跟地板共用（同一片水平面的算式）
+        m_SeaProg = Link(FloorVs, SeaFs);
+        m_HaloProg = Link(HaloVs, HaloFs);   // TASK-0650：燈的光暈   // TASK-0585：頂點著色器跟地板共用（同一片水平面的算式）
         m_EmptyVao = gl.GenVertexArray();
 
         float* aBorder = stackalloc float[4] { 1, 1, 1, 1 };
@@ -1781,6 +1786,7 @@ void main() {
             Vector3 aTravel = Vector3.Normalize(ToGl(aL.DirX, aL.DirY, aL.DirZ));
             aSet.ToLight[i] = -aTravel;
             float aK = (float)aL.Intensity / 255f;
+            if (iP.Sun < 1) aK *= (float)iP.Sun;   // 夜景（TASK-0650）：平行光照太陽的倍率暗下來；1 ⇒ 不乘（逐位元不變）
             aSet.Color[i] = new Vector3(aL.R * aK, aL.G * aK, aL.B * aK);
             aSet.ShadowMap[i] = -1;
             if (aShadows && aL.CastShadow && aSet.ShadowMaps < MaxShadowMaps)   // 上限已在 Validate 擋過
@@ -1829,7 +1835,9 @@ void main() {
         int aW = iP.Width, aH = iP.Height;
         EnsureTargets(aW, aH);
 
-        uint aFloorVao = 0, aFloorVbo = 0, aSeaVao = 0, aSeaVbo = 0;
+        uint aFloorVao = 0, aFloorVbo = 0, aSeaVao = 0, aSeaVbo = 0, aHaloVao = 0, aHaloVbo = 0;
+        var aLamps = CollectLamps(iP);   // 點光源（TASK-0650）：主畫照明＋光暈同一份
+        m_LampsLit = aLamps.Count;
         bool aHasMesh = iMesh.IndexCount > 0 && m_MeshVao != 0 && iP.OwnVisible;   // hide_links=self（TASK-0509 分開畫時只切顯示）
         bool aHasDyn = m_DynIndexCount > 0 && m_DynVao != 0;   // 帆（TASK-0503）：另一趟
         bool aHasModels = m_ModelIndexCount > 0 && m_ModelVao != 0;   // 外部模型（TASK-0507）：第三趟
@@ -1841,6 +1849,9 @@ void main() {
         // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
         // 有 ⇒ 由全景上下半球的平均色調出色偏（亮度仍由 Ambient 決定）。
         Vector3 aHs = iSky?.HemiSky ?? Vector3.One, aHg = iSky?.HemiGround ?? new Vector3(0.62f);
+        // 夜景（TASK-0650）：天空、背景、環境光（半球色也是金屬反射的環境色）一起乘 SkyLight；白天 1 ⇒ 不乘
+        float aSkyK = (float)iP.SkyLight;
+        if (aSkyK < 1) { aHs *= aSkyK; aHg *= aSkyK; }
         try
         {
 
@@ -1891,7 +1902,7 @@ void main() {
             if (iSky == null)
             {
                 gl.UseProgram(m_BgProg);
-                gl.Uniform3(gl.GetUniformLocation(m_BgProg, "uBg"), iP.BgR / 255f, iP.BgG / 255f, iP.BgB / 255f);
+                gl.Uniform3(gl.GetUniformLocation(m_BgProg, "uBg"), iP.BgR / 255f * aSkyK, iP.BgG / 255f * aSkyK, iP.BgB / 255f * aSkyK);
             }
             else
             {
@@ -1902,6 +1913,7 @@ void main() {
                 gl.Uniform1(gl.GetUniformLocation(m_SkyProg, "uTanX"), iSkyView.TanX);
                 gl.Uniform1(gl.GetUniformLocation(m_SkyProg, "uTanY"), iSkyView.TanY);
                 gl.Uniform1(gl.GetUniformLocation(m_SkyProg, "uSkyYaw"), (float)(iP.SkyboxYawDeg * Math.PI / 180));
+                gl.Uniform1(gl.GetUniformLocation(m_SkyProg, "uSkyK"), aSkyK);
                 // mip 等級：畫面中心一個像素涵蓋幾個 texel（全景寬 ＝ 2π 弧度）。
                 double aTexelsPerPx = iSky.Width / (2 * Math.PI) * (2 * iSkyView.TanY / aH);
                 gl.Uniform1(gl.GetUniformLocation(m_SkyProg, "uLod"), (float)Math.Max(0, Math.Log2(Math.Max(1e-6, aTexelsPerPx))));
@@ -1967,7 +1979,7 @@ void main() {
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uEye"), m_EyeGl.X, m_EyeGl.Y, m_EyeGl.Z);            // 金屬反光（TASK-0645）
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uViewDir"), m_ViewDirGl.X, m_ViewDirGl.Y, m_ViewDirGl.Z);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uPersp"), m_Persp ? 1 : 0);
-                SetLampUniforms(m_MainProg, iP);   // 點光源（TASK-0650）：關著 ⇒ 0 盞
+                SetLampUniforms(m_MainProg, aLamps);   // 點光源（TASK-0650）：關著 ⇒ 0 盞
                 SetModel(m_MainProg, true, Matrix4x4.Identity, s_Identity3);   // 合併的那幾趟已在世界座標
                 if (aHasMesh)
                 {
@@ -2025,6 +2037,9 @@ void main() {
                 gl.DepthMask(true);
             }
 
+            // ②d 燈的光暈（TASK-0650）：海面之後（水面上的燈也有光暈）；沒有燈 ⇒ 不走
+            DrawHalos(aLamps, iViewProj, out aHaloVao, out aHaloVbo);
+
             // ③' 視窗即時預覽：MSAA 直接解析進呼叫端的 FBO（貼圖），⛔ 不讀回 CPU（TASK-0472）。
             if (iTargetFbo != 0)
             {
@@ -2065,6 +2080,8 @@ void main() {
             if (aFloorVao != 0) gl.DeleteVertexArray(aFloorVao);
             if (aSeaVbo != 0) gl.DeleteBuffer(aSeaVbo);
             if (aSeaVao != 0) gl.DeleteVertexArray(aSeaVao);
+            if (aHaloVbo != 0) gl.DeleteBuffer(aHaloVbo);
+            if (aHaloVao != 0) gl.DeleteVertexArray(aHaloVao);
         }
     }
 
@@ -2104,37 +2121,118 @@ void main() {
 
     /// <summary>
     /// 點光源（TASK-0650）：開著 ⇒ 收這一幀亮著的燈（分開畫時實例關著的那幾盞熄掉），多於 <see cref="SCP_SculptRenderParams.MaxLamps"/> 取離鏡頭近的
-    /// （正交的「鏡頭」＝ 注視點）；位置換到 GL（y 取負）、光色 × 強度。關著或沒有燈 ⇒ uLampCount 0。
+    /// （正交的「鏡頭」＝ 注視點）；位置換到 GL（y 取負）、光色（單盞的 meta light_color 優先）× 強度。關著、沒有燈或強度 0 ⇒ 空清單。
     /// </summary>
-    int m_LampsLit;
-
-    void SetLampUniforms(uint iProg, SCP_SculptRenderParams iP)
+    List<(Vector3 Pos, float R, Vector3 Col)> CollectLamps(SCP_SculptRenderParams iP)
     {
-        var gl = m_Gl!;
-        var aOn = new List<(Vector3 Pos, float R)>();
-        if (iP.Lamps != null && iP.Lamps.Enabled)
-            foreach (SCP_SculptLampPoint l in iP.LampPoints)
-            {
-                if (l.Part >= 0 && iP.PartVisible != null && !iP.PartVisible[l.Part]) continue;
-                aOn.Add((ToGl(l.X, l.Y, l.Z), (float)l.Radius));
-            }
+        var aOn = new List<(Vector3 Pos, float R, Vector3 Col)>();
+        if (iP.Lamps == null || !iP.Lamps.Enabled || iP.Lamps.Intensity <= 0) return aOn;
+        var aL = iP.Lamps;
+        // 天越暗燈越亮（Blockside lampsUpdate：強度 × (1.6 − 天光)）⇒ 照白天 1 歸一：× (1.6 − Sun)／0.6；白天 ⇒ 不乘（逐位元不變）
+        float k = (float)aL.Intensity;
+        if (iP.Sun < 1) k *= (1.6f - (float)iP.Sun) / 0.6f;
+        foreach (SCP_SculptLampPoint l in iP.LampPoints)
+        {
+            if (l.Part >= 0 && iP.PartVisible != null && !iP.PartVisible[l.Part]) continue;
+            byte[] c = l.Color ?? new[] { aL.R, aL.G, aL.B };
+            aOn.Add((ToGl(l.X, l.Y, l.Z), (float)l.Radius, new Vector3(c[0] / 255f * k, c[1] / 255f * k, c[2] / 255f * k)));
+        }
         if (aOn.Count > SCP_SculptRenderParams.MaxLamps)
         {
             Vector3 e = m_EyeGl;
             aOn.Sort((a, b) => Vector3.DistanceSquared(a.Pos, e).CompareTo(Vector3.DistanceSquared(b.Pos, e)));
             aOn.RemoveRange(SCP_SculptRenderParams.MaxLamps, aOn.Count - SCP_SculptRenderParams.MaxLamps);
         }
-        gl.Uniform1(gl.GetUniformLocation(iProg, "uLampCount"), aOn.Count);
-        m_LampsLit = aOn.Count;
-        if (aOn.Count == 0) return;
-        var aL = iP.Lamps!;
-        float k = (float)aL.Intensity;
-        for (int i = 0; i < aOn.Count; i++)
+        return aOn;
+    }
+
+    int m_LampsLit;
+
+    void SetLampUniforms(uint iProg, List<(Vector3 Pos, float R, Vector3 Col)> iLamps)
+    {
+        var gl = m_Gl!;
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uLampCount"), iLamps.Count);
+        for (int i = 0; i < iLamps.Count; i++)
         {
-            gl.Uniform4(gl.GetUniformLocation(iProg, $"uLampPos[{i}]"), aOn[i].Pos.X, aOn[i].Pos.Y, aOn[i].Pos.Z, aOn[i].R);
-            gl.Uniform3(gl.GetUniformLocation(iProg, $"uLampCol[{i}]"), aL.R / 255f * k, aL.G / 255f * k, aL.B / 255f * k);
+            gl.Uniform4(gl.GetUniformLocation(iProg, $"uLampPos[{i}]"), iLamps[i].Pos.X, iLamps[i].Pos.Y, iLamps[i].Pos.Z, iLamps[i].R);
+            gl.Uniform3(gl.GetUniformLocation(iProg, $"uLampCol[{i}]"), iLamps[i].Col.X, iLamps[i].Col.Y, iLamps[i].Col.Z);
         }
     }
+
+    /// <summary>
+    /// 燈的光暈（TASK-0650 夜景，Tim「開燈時燈籠周圍要明顯亮」；跟 Blockside 60_render.js lanternHalo 同一個意思）：
+    /// 每盞一片面向鏡頭的方形、半徑 ＝ 照明半徑 × <see cref="HaloRatio"/>，往鏡頭挪半個光暈（燈心在燈罩裡，不挪的話中間被燈罩擋掉）；
+    /// 加色混合、深度測試、不寫深度 ⇒ 被前面的東西擋住、不擋別人。亮度 ＝ 光色×強度（已含天越暗越亮）× 0.3 × (1 − r)²。
+    /// </summary>
+    const float HaloRatio = 0.25f;
+
+    unsafe void DrawHalos(List<(Vector3 Pos, float R, Vector3 Col)> iLamps, Matrix4x4 iViewProj, out uint oVao, out uint oVbo)
+    {
+        var gl = m_Gl!;
+        oVao = oVbo = 0;
+        if (iLamps.Count == 0) return;
+        const float aK = 0.3f;
+        Vector3 aR = m_RightGl, aU = m_UpGl, aToEye = -m_ViewDirGl;
+        var v = new float[iLamps.Count * 6 * 8];
+        int n = 0;
+        void Put(Vector3 p, float u, float w, Vector3 c) { v[n++] = p.X; v[n++] = p.Y; v[n++] = p.Z; v[n++] = u; v[n++] = w; v[n++] = c.X; v[n++] = c.Y; v[n++] = c.Z; }
+        foreach (var l in iLamps)
+        {
+            float h = l.R * HaloRatio;
+            Vector3 o = l.Pos + aToEye * (h * 0.5f), c = l.Col * aK;
+            Vector3 a = o - aR * h - aU * h, b = o + aR * h - aU * h, d = o + aR * h + aU * h, e = o - aR * h + aU * h;
+            Put(a, -1, -1, c); Put(b, 1, -1, c); Put(d, 1, 1, c);
+            Put(a, -1, -1, c); Put(d, 1, 1, c); Put(e, -1, 1, c);
+        }
+        oVao = gl.GenVertexArray();
+        gl.BindVertexArray(oVao);
+        oVbo = gl.GenBuffer();
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, oVbo);
+        gl.BufferData<float>(BufferTargetARB.ArrayBuffer, v.AsSpan(), BufferUsageARB.StaticDraw);
+        uint aStride = 8 * sizeof(float);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, aStride, (void*)0);
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, aStride, (void*)(3 * sizeof(float)));
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, aStride, (void*)(5 * sizeof(float)));
+        gl.Enable(EnableCap.DepthTest);
+        gl.DepthFunc(DepthFunction.Less);
+        gl.DepthMask(false);
+        gl.Disable(EnableCap.CullFace);
+        gl.Enable(EnableCap.Blend);
+        gl.BlendFuncSeparate(BlendingFactor.One, BlendingFactor.One, BlendingFactor.Zero, BlendingFactor.One);
+        gl.UseProgram(m_HaloProg);
+        SetMat(m_HaloProg, "uViewProj", iViewProj);
+        gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)(iLamps.Count * 6));
+        gl.Disable(EnableCap.Blend);
+        gl.DepthMask(true);
+    }
+
+    const string HaloVs = @"#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec2 aUv;
+layout(location=2) in vec3 aCol;
+uniform mat4 uViewProj;
+out vec2 vUv;
+out vec3 vCol;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vUv = aUv;
+    vCol = aCol;
+}";
+
+    const string HaloFs = @"#version 330 core
+in vec2 vUv;
+in vec3 vCol;
+out vec4 oColor;
+void main() {
+    float f = 1.0 - min(length(vUv), 1.0);
+    oColor = vec4(vCol * (f * f), 0.0);
+}";
+
+    uint m_HaloProg;
+    Vector3 m_RightGl, m_UpGl;
 
     /// <summary>直射光增益（見主 shader 說明）。</summary>
     const float SunGain = 1.3f;
@@ -2410,6 +2508,7 @@ void main() {
                 m_Gl.DeleteProgram(m_SkyProg);
                 m_Gl.DeleteProgram(m_FloorProg);
                 if (m_SeaProg != 0) m_Gl.DeleteProgram(m_SeaProg);
+                if (m_HaloProg != 0) m_Gl.DeleteProgram(m_HaloProg);
                 foreach (var aSky in m_SkyCache.Values) m_Gl.DeleteTexture(aSky.Tex);
                 m_SkyCache.Clear();
                 foreach (var aTex in m_FloorCache.Values) m_Gl.DeleteTexture(aTex.Tex);

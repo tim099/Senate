@@ -47,6 +47,14 @@ public static partial class SelfTest
             Check(SCP_SculptRenderProfiles.TryEdit(un, new Dictionary<string, string> { ["unset"] = "lamp_radius" }, new List<string>(), out string e4)
                   && !un["lamps"]["radius"].Exists && un["lamps"]["intensity"].Exists, "unset lamp_radius 應只拿掉 radius：" + un.ToJson(false) + " " + e4);
 
+            // 太陽（夜景）：頂層 sun 0..1；越界擋；unset 拿掉
+            var sun = SCP_JsonData.NewObject();
+            Check(SCP_SculptRenderProfiles.TryEdit(sun, new Dictionary<string, string> { ["sun"] = "0.2" }, new List<string>(), out string e5)
+                  && SCP_SculptRenderProfiles.TryApply(sun, p, tmp, out e5) && p.Sun == 0.2 && Math.Abs(p.SkyLight - 0.4) < 1e-12, "sun 0.2 ⇒ Sun 0.2、SkyLight 0.25＋0.75×0.2 ＝ 0.4：" + p.Sun + "／" + p.SkyLight + " " + e5);
+            Check(!SCP_SculptRenderProfiles.TryApply(SCP_JsonData.Parse("{\"sun\":1.5}"), p, tmp, out string e6) && p.Sun == 0.2, "sun 1.5 應擋、不寫回：" + e6);
+            Check(SCP_SculptRenderProfiles.TryEdit(sun, new Dictionary<string, string> { ["unset"] = "sun" }, new List<string>(), out _) && !sun["sun"].Exists, "unset sun 應拿掉");
+            Check(new SCP_SculptRenderParams().SkyLight == 1, "白天（Sun 1）SkyLight 要正好 1（不乘 ⇒ 逐位元不變）");
+
             var paths = new SCP_SculptPaths(tmp);
             Check(SCP_SculptRenderProfiles.ReadWorkLamps(paths) == null, "沒有 lamps.json 應回 null");
             SCP_SculptRenderProfiles.SaveWorkLamps(paths, SCP_JsonData.Parse("{\"enabled\":true,\"intensity\":0.9,\"radius\":3}"));
@@ -60,14 +68,14 @@ public static partial class SelfTest
         }
         catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
         finally { try { Directory.Delete(tmp, true); } catch { } }
-        return new(name, failures.Count == 0 ? "疊層 7 格＋lamps.json 3 格 全過" : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        return new(name, failures.Count == 0 ? "疊層 7 格＋太陽 4 格＋lamps.json 3 格 全過" : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
 
         static string Describe(SCP_SculptLamps? l) => l == null ? "null" : $"{(l.Enabled ? "開" : "關")} 強度 {l.Intensity} 半徑 {l.Radius} #{l.R:x2}{l.G:x2}{l.B:x2}";
     }
 
     static CheckRow SculptLampSceneCleanRoom()
     {
-        const string name = "雕刻點光源：場景裡的燈 —— kind=light 的作品模型在 wick、obj 模型在外框中心、關聯在 wick，kind=gun 不算；wick 搬走燈跟著走；parts=1 指到對的實例、藏掉少一盞；沒開一盞都不收；work sub=lamps 只有作者能改（淨室，TASK-0650）";
+        const string name = "雕刻點光源：場景裡的燈 —— kind=light 的作品模型在 wick、obj 模型在外框中心、關聯在 wick，kind=gun 不算；wick 搬走燈跟著走；parts=1 指到對的實例、藏掉少一盞；沒開一盞都不收；單盞光色；night=on／sun=；work sub=lamps 只有作者能改（淨室，TASK-0650）";
         var failures = new List<string>();
         var readings = new List<string>();
         void Check(bool c, string why) { if (!c) failures.Add(why); }
@@ -97,9 +105,9 @@ public static partial class SelfTest
                 return room.Run(a.ToArray());
             }
             var aM1 = Model("L1", ("source_work", "lan"), ("at", "10,4,1"), ("meta", "{\"kind\":\"light\"}"));
-            var aM2 = Model("F", ("file", aTet), ("axes", "zup"), ("at", "4,16,1"), ("meta", "{\"kind\":\"light\"}"));
+            var aM2 = Model("F", ("file", aTet), ("axes", "zup"), ("at", "4,16,1"), ("meta", "{\"kind\":\"light\",\"light_color\":\"green\"}"));
             var aM3 = Model("G", ("file", aTet), ("axes", "zup"), ("at", "20,2,1"), ("meta", "{\"kind\":\"gun\"}"));
-            var aLk = room.Run(("op", "work"), ("sub", "link"), ("work", "h"), ("persona", "p"), ("name", "LL"), ("source_work", "lan"), ("at", "16,16,1"), ("meta", "{\"kind\":\"lantern\"}"));
+            var aLk = room.Run(("op", "work"), ("sub", "link"), ("work", "h"), ("persona", "p"), ("name", "LL"), ("source_work", "lan"), ("at", "16,16,1"), ("meta", "{\"kind\":\"lantern\",\"light_color\":\"#59ff8c\"}"));
             Check(aM1.ExitCode == 0 && aM2.ExitCode == 0 && aM3.ExitCode == 0 && aLk.ExitCode == 0, "三個模型、一條關聯：" + SculptRoom.All(aM1) + SculptRoom.All(aM2) + SculptRoom.All(aM3) + SculptRoom.All(aLk));
 
             var aRaw = new Dictionary<string, string> { ["data_root"] = room.Data, ["letters_root"] = room.Letters, ["work"] = "h", ["ao"] = "0" };
@@ -130,6 +138,22 @@ public static partial class SelfTest
             Check(Pt(aOn, "F") == "5,16.5,2.5 center", "F（obj、沒有 wick）應在外框中心 5,16.5,2.5：" + Pt(aOn, "F"));
             Check(Pt(aOn, "LL") == "17.5,17.5,4.5 wick", "關聯 LL（kind=lantern）應在 wick 17.5,17.5,4.5：" + Pt(aOn, "LL"));
             Check(aOn.Params.LampPoints.All(l => Math.Abs(l.Radius - 6 * 32) < 1e-9), "半徑 6 m ÷ 預設一格 1/32 m ＝ 192 格：" + string.Join(",", aOn.Params.LampPoints.Select(l => l.Radius)));
+            // 單盞的光色（meta light_color）：LL 綠；F 寫壞 ⇒ 照預設（null）＋回傳檔記一行；L1 沒寫 ⇒ null
+            string Col(string iPath) { var c = aOn.Params.LampPoints.Find(x => x.Path == iPath)?.Color; return c == null ? "null" : $"{c[0]},{c[1]},{c[2]}"; }
+            Check(Col("LL") == "89,255,140" && Col("F") == "null" && Col("L1") == "null", "光色：LL #59ff8c、F 壞值照預設、L1 沒寫照預設：" + Col("LL") + "／" + Col("F") + "／" + Col("L1"));
+
+            // 夜景：night=on ⇒ 太陽 0.1＋燈開；night=on lamps=off ⇒ 燈關、還是夜；sun= 顯式蓋過；sun 越界擋
+            var aNight = Plan(("night", "on"));
+            Check(aNight.Params.Sun == Cmd_Sculpture.NightSun && aNight.Params.Lamps is { Enabled: true } && aNight.Params.LampPoints.Count == 3, "night=on ⇒ 太陽 0.1、燈開 3 盞：" + aNight.Params.Sun + "／" + aNight.Params.LampPoints.Count);
+            var aNightDark = Plan(("night", "on"), ("lamps", "off"));
+            Check(aNightDark.Params.Sun == Cmd_Sculpture.NightSun && aNightDark.Params.LampPoints.Count == 0, "night=on lamps=off ⇒ 夜、不點燈：" + aNightDark.Params.LampPoints.Count);
+            var aSun = Plan(("night", "on"), ("sun", "0.3"));
+            Check(aSun.Params.Sun == 0.3, "sun=0.3 要蓋過夜景的 0.1：" + aSun.Params.Sun);
+            Check(aOff.Params.Sun == 1, "沒給 ⇒ 白天（Sun 1）：" + aOff.Params.Sun);
+            var aBadSun = new Dictionary<string, string>(aRaw) { ["sun"] = "2" };
+            Check(!Cmd_Sculpture.TryPrepareView(aBadSun, out _, out _, out string aSunErr) && aSunErr.Contains("sun"), "sun=2 要擋：" + aSunErr);
+            readings.Add("夜景：太陽 " + aNight.Params.Sun + "、" + aNight.Params.LampPoints.Count + " 盞；LL 光色 " + Col("LL"));
+
             // hide_models 拿掉 L1 ⇒ 合併的場景少一盞
             var aHide = Plan(("lamps", "on"), ("hide_models", "L1"));
             Check(aHide.Params.LampPoints.Count == 2 && Pt(aHide, "L1") == "（沒有）", "hide_models=L1 ⇒ 那盞不點：" + aHide.Params.LampPoints.Count);
@@ -188,7 +212,7 @@ public static partial class SelfTest
 
     static CheckRow SculptLampGpuCleanRoom()
     {
-        const string name = "雕刻點光源（GPU）：沒開 ＝ 關著 ＝ 強度 0 ⇒ 圖逐位元相同；燈在左 ⇒ 亮處在左、搬到右 ⇒ 亮處跟著走（淨室，TASK-0650）";
+        const string name = "雕刻點光源（GPU）：沒開 ＝ 關著 ＝ 強度 0 ＝ Sun 1 ⇒ 圖逐位元相同；燈在左 ⇒ 亮處在左、搬到右 ⇒ 亮處跟著走；Sun 0 整張暗、夜裡燈照得更廣；單盞綠燈（淨室，TASK-0650）";
         var failures = new List<string>();
         var readings = new List<string>();
         void Check(bool v, string why) { if (!v) failures.Add(why); }
@@ -235,6 +259,36 @@ public static partial class SelfTest
             Check(aShift > 60, "燈搬 40 格 ⇒ 亮處的重心要跟著移（> 60 px）：" + aShift.ToString("0"));
             // 反向對照：兩張只差燈的位置 ⇒ 不該一樣（不然上面量的是別的東西）
             Check(!aLeft.AsSpan().SequenceEqual(aRight), "燈換位置畫面要變");
+
+            // 夜景：Sun 1 顯式 ＝ 預設；Sun 0 沒燈 ⇒ 整張暗下來；夜裡同一盞燈照亮的像素比白天多（天越暗燈越亮）
+            double Mean(byte[] a) { double t = 0; for (int k = 0; k < a.Length; k += 4) t += a[k] + a[k + 1] + a[k + 2]; return t / (a.Length / 4) / 3; }
+            var pDay = p.Clone(); pDay.Sun = 1;
+            Check(r.TryRender(vox, pDay, out byte[] aDay1, out err) && aNone.AsSpan().SequenceEqual(aDay1), "🔴 Sun 1 要跟預設逐位元相同：" + err);
+            var pDark = p.Clone(); pDark.Sun = 0;
+            Check(r.TryRender(vox, pDark, out byte[] aDark, out err), "Sun 0 畫不出來：" + err);
+            SCP_SculptRenderParams Night(SCP_SculptRenderParams q) { q.Sun = 0.1; return q; }
+            var pNightNone = Night(p.Clone());
+            Check(r.TryRender(vox, pNightNone, out byte[] aNightNone, out err), "夜、沒燈畫不出來：" + err);
+            Check(r.TryRender(vox, Night(With(true, 1, 12)), out byte[] aNightLamp, out err), "夜、燈在 x 12 畫不出來：" + err);
+            // 燈加上去的總亮度（Σ 變亮量）：夜裡 × (1.6 − 0.1)／0.6 ＝ 2.5 倍，扣掉飽和與底色變暗，要 > 1.8 倍
+            long Added(byte[] a, byte[] iBase) { long t = 0; for (int k = 0; k < a.Length; k += 4) t += Math.Max(0, a[k] + a[k + 1] + a[k + 2] - iBase[k] - iBase[k + 1] - iBase[k + 2]); return t; }
+            long aDayAdded = Added(aLeft, aNone), aNightAdded = Added(aNightLamp, aNightNone);
+            int aNightLit = 0; double aNightMax = 0;
+            for (int k = 0; k < aNightLamp.Length; k += 4)
+            {
+                int d = aNightLamp[k] + aNightLamp[k + 1] + aNightLamp[k + 2] - aNightNone[k] - aNightNone[k + 1] - aNightNone[k + 2];
+                if (d > 15) aNightLit++;
+                aNightMax = Math.Max(aNightMax, d);
+            }
+            // 單盞光色：綠燈 ⇒ 變亮的地方綠比紅多
+            var pGreen = With(true, 1, 12); pGreen.LampPoints[0].Color = new byte[] { 0, 255, 0 };
+            Check(r.TryRender(vox, pGreen, out byte[] aGreen, out err), "綠燈畫不出來：" + err);
+            long dR = 0, dG = 0;
+            for (int k = 0; k < aGreen.Length; k += 4) { dR += aGreen[k] - aNone[k]; dG += aGreen[k + 1] - aNone[k + 1]; }
+            readings.Add(FormattableString.Invariant($"平均亮度：白天 {Mean(aNone):0.0}、Sun 0 {Mean(aDark):0.0}；同一盞燈變亮的像素：白天 {bl.N}、夜（Sun 0.1）{aNightLit}（最多 +{aNightMax}）；Σ 變亮量 白天 {aDayAdded}／夜 {aNightAdded}（{(double)aNightAdded / Math.Max(1, aDayAdded):0.00} 倍）；綠燈 ΣΔG {dG}／ΣΔR {dR}"));
+            Check(Mean(aDark) < Mean(aNone) * 0.4, "Sun 0 ⇒ 整張要暗到白天的 40% 以下");
+            Check(aNightLit > bl.N && aNightAdded > aDayAdded * 1.8, "夜裡同一盞燈要照得更廣（像素多）、更亮（Σ 變亮量 > 1.8 倍）：" + aNightLit + " vs " + bl.N + "、" + aNightAdded + " vs " + aDayAdded);
+            Check(dG > dR * 3, "綠燈 ⇒ 綠的增量要遠大於紅的：" + dG + " vs " + dR);
         }
         catch (Exception e) { failures.Add(e.GetType().Name + "：" + e.Message); }
         string aRead = string.Join("；", readings);
