@@ -279,7 +279,7 @@ senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --ar
 - **各自完整顯示**：子模型畫自己的全部格子；跟主作品貼合處不互相剔除、重疊處兩份都在（合併版「自己的格優先、先到的贏、越界丟掉」不適用）。
 - **開關只切顯示**：關聯開關、`hide_links=self`、模型開關每幀換成「畫哪幾個實例」，⛔ 不重建任何網格。框景、地板、陰影範圍照**全部**實例算（切開關畫面不跳）。
 - 繩在分開畫時是自己一趟（不併進 voxel 網格）。繩與帆仍照關聯選取算 ⇒ 作品有繩或帆時，切關聯會在背景重新準備場景（子模型當下切換，繩稍後跟上）；沒有繩也沒有帆 ⇒ 不重新準備。
-- 不適用（照舊合併）：共用展區、手動填了 `region`／`exclude_color`。CLI 也可以 `op=view parts=1`；`export` 照舊合併（分開匯出另見 TASK-0510）。
+- 不適用（照舊合併）：共用展區、手動填了 `region`／`exclude_color`。CLI 也可以 `op=view parts=1`；`export` 的 obj／vox／list／vxk 照舊合併；分開匯出走 `format=glb`（§9.4.11，同一份場景）。
 - 讀數：渲染結果下方「子模型分開畫：N 份網格、M 個實例（顯示 k）」，GPU 讀數「這一幀新建 b」。
 
 ## 6. 渲染設定檔（render-profile）
@@ -789,6 +789,23 @@ senate cmd sculpture --arg op=export --arg format=vxk --arg work=<作品> --arg 
 - **寫檔前回讀對拍**：封裝解回來跟這次的格子逐格逐色比、checksum 也比，對不上 ⇒ 不寫（同 Python）。回傳值 `path`、`sha256`、`voxels`、`vxk_ropes／vxk_sails／vxk_models／vxk_meshes／vxk_parts`、`vxk_with_meta／vxk_points`。
 - **對拍工具**：`python -I ArtGallery/VoxelKit/vxk_compare.py <a.vxk> <b.vxk> [--tamper]` —— 解開之後比（格子逐格逐色、header 逐欄；⛔ 不比壓縮後的位元組，deflate 實作不同就不同；不比 exported_at）；容差只給浮點那幾格（中線與頂點 0.01、顏色 0.0001），模型網格比內容與去重分組。`--tamper` ＝ 反向對照（改一格再比，一定要報不同）。
 - 驗收：淨室 `SculptureVxkCleanRoom`（格子＝list 匯出、checksum 另一種寫法手算、區塊數與字典序、raw 版面、header 欄位順序、模型去重、關聯外框＝手算、壞參數零寫入、改一格就判不同）；憲法號整份：C# 與 Python 兩份 vxk_compare 相同、voxelkit.js 的 `verify`（ame 遊戲載入時那一支）逐格 checksum 通過、改一格的那份判失敗。
+
+### 9.4.11 `.glb` —— 子模型各自成物件、同件共用 mesh（TASK-0510）
+
+Tim 2026-10-12：「匯出時子模型（關聯、外部模型）各自是獨立的物件、不合併進主模型；多個同樣的子模型共用一份 mesh」；格式 2026-10-16 定 glTF 2.0 二進位（obj 沒有「同一份 mesh 套不同變換」的寫法）。Blender 內建匯入；Unity 用 glTFast（或 UnityGLTF）。
+
+```bash
+senate cmd sculpture --arg op=export --arg format=glb --arg work=<作品> [--arg out=<路徑.glb>] [--arg links=… --arg hide_links=…|self] [--arg models=0|1 --arg hide_models=…]
+```
+
+- **場景 ＝ 觀測頁 GPU 的分開畫**（§5.4，`view parts=1`）：主作品只帶自己的格；每個關聯節點、每個外部模型一個 node，指向它來源的 mesh＋自己的矩陣（關聯：鏡像→轉→平移，巢狀逐層合成；模型：at／pivot／rotate／scale／mirror）。同一件作品同一個版本（＋同一張有效替換色表，§9.4.4）、同一個 obj＋軸向＋改色 ⇒ **同一個 mesh index**。node 的 `extras.sculpt` 記 `kind`（own／link／model／rope／sail）、`source`、`path`。
+- 這次出哪幾個照 `links=`／`hide_links=`（`self` ＝ 不出主作品）／`models=`／`hide_models=`（跟頁面同一支判準）；點名不存在的路徑 ⇒ exit 2、不寫檔。繩、帆照 view 的算法（模擬到 `sail_seconds`），各自一個 node（世界座標）。
+- **座標**：最上面一個根 node ＝ 雕刻 (x, y, z) → glTF (x, z, y) × 一格幾公尺（`meters_per_voxel`，沒記 ⇒ 1/32）⇒ y-up、公尺。這一換是鏡像（行列式 < 0），glTF 自己照行列式翻繞序；網格照「世界裡從外面看逆時針」寫。
+- **材質**：voxel 一色一個 `c<index>`（同 obj 的 mtl 名）；外部模型用頂點色 `COLOR_0`；顏色換成線性值（glTF 規定）。
+- ⚠ 跟 obj／vxk（合併版）刻意不同：子模型畫**自己的全部格子**，貼合處不互相剔除、重疊處兩份都在；封閉空腔的面不省略（分開的來源各自判不出整艘船的空腔）。不吃 `region`／`exclude_color`。
+- 讀數：回傳 `path`、`sha256`、`glb_nodes／glb_meshes／glb_instances／glb_shared_meshes／glb_triangles／glb_ropes／glb_sails`；回報列出被兩個以上 node 共用的 mesh。同輸入同 bytes。
+- 實測（2026-10-16，拿破崙號組裝件）：node 776、mesh 454（共用 10 份）、子模型實例 373、三角形 534,752、32 MB、約 23 秒；獨立的 Python 讀檔（照規格解 accessor、索引不越界）全過，28 條關聯的 mesh 外框套矩陣後全部落在 `format=parts` 的框裡。上砲甲板用 three.js 的 GLTFLoader 讀：node 33、mesh 3（砲 30 門共用一份），74 × 4 × 18.3 m、畫得出來。
+- 驗收：淨室 `SculptGlbCleanRoom`（voxel 面經 node 矩陣換回逐格＝合併版 list，含鏡像、轉向、巢狀；模型外框＝obj；共用次數；根矩陣；藏一條少一個 node、`models=0`、`hide_links=self`、打錯路徑、`region`；重匯逐位元組）。反向對照：故意把矩陣寫成沒轉置 ⇒ 缺 5、多 5、模型外框對不上。
 
 ### 9.5 建築與家具的相對比例尺
 
