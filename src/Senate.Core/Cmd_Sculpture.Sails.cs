@@ -459,6 +459,52 @@ public sealed partial class Cmd_Sculpture
     }
 
     /// <summary>
+    /// work sub=lamps [lamps=on|off] [lamp_intensity=] [lamp_radius=] [lamp_color=]：這件作品觀測時的點光源預設（TASK-0650；寫進 lamps.json，渲染用）。
+    /// 跟 sub=sea 同一套：只給一部分 ⇒ 其他欄位沿用檔裡的；都沒給 ⇒ 印現在的值；改的只有作者；第一次只給強度之類 ⇒ 當成要開。
+    /// 燈在哪不在這裡設：外部模型與關聯的 meta kind=light（＋來源作品的固定點 wick）。觀測時 view 的 lamps=／lamp_*= 可以一次性蓋過。
+    /// </summary>
+    static string? WorkLamps(Ctx c, SCP_SculptWork iCard)
+    {
+        var aPaths = c.Works.SpacePaths(iCard.id);
+        SCP_JsonData? aOld;
+        try { aOld = SCP_SculptRenderProfiles.ReadWorkLamps(aPaths); }
+        catch (Exception e) when (e is IOException || e is InvalidDataException || e is SCP.Core.Json.SCP_JsonParseException)
+        { return Blocked(c, 2, "lamps.json 讀不了（" + e.Message + "）⇒ 先修好或刪掉它；未寫入"); }
+        var aEdit = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string k in SCP_SculptRenderProfiles.LampFlatKeys)
+            if (c.Args.IsExplicit(k)) aEdit[k] = c.Args.Get(k).Trim();
+        bool aSet = aEdit.Count > 0;
+        var aProfile = SCP_JsonData.NewObject();
+        if (aOld != null) aProfile.Set("lamps", aOld);
+        if (aSet)
+        {
+            if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改點光源預設");
+            if (!SCP_SculptRenderProfiles.TryEdit(aProfile, aEdit, new List<string>(), out string aBad)) return Blocked(c, 2, aBad + "；未寫入");
+        }
+        var aCheck = new SCP_SculptRenderParams();
+        string aInvalid = "";
+        if (aProfile["lamps"].Exists && !SCP_SculptRenderProfiles.TryApplyLampsObject(aProfile["lamps"], aCheck, out aInvalid)) return Blocked(c, 2, "點光源：" + aInvalid + "；未寫入");
+        if (aSet)
+        {
+            if (!aProfile["lamps"]["enabled"].Exists) aProfile["lamps"].Set("enabled", true);   // 第一次只給強度、半徑或顏色 ⇒ 當成要開（同 sub=sea）
+            if (!SCP_SculptRenderProfiles.TryApplyLampsObject(aProfile["lamps"], aCheck = new SCP_SculptRenderParams(), out aInvalid)) return Blocked(c, 2, "點光源：" + aInvalid + "；未寫入");
+            SCP_SculptRenderProfiles.SaveWorkLamps(aPaths, aProfile["lamps"]);
+        }
+        SCP_SculptLamps l = aCheck.Lamps ?? new SCP_SculptLamps();
+        string aColor = "#" + l.R.ToString("x2") + l.G.ToString("x2") + l.B.ToString("x2");
+        c.Result.AddValue("lamps", aCheck.Lamps != null && l.Enabled ? "on" : "off");
+        c.Result.AddValue("lamp_intensity", F2(l.Intensity));
+        c.Result.AddValue("lamp_radius", F2(l.Radius));
+        c.Result.AddValue("lamp_color", aColor);
+        c.Result.AddValue("lamps_file", aPaths.LampsFile.Replace('\\', '/'));
+        if (aCheck.Lamps == null) return Finish(c, 0, "✓ 這件作品沒有點光源預設（設：--arg lamps=on [--arg lamp_intensity=0..8] [--arg lamp_radius=<公尺>] [--arg lamp_color=#RRGGBB]）");
+        string aWhat = (l.Enabled ? "開" : "關") + "｜強度 " + F2(l.Intensity) + "｜半徑 " + F2(l.Radius) + " m（"
+                       + (l.Radius / iCard.MetersPerVoxel).ToString("0.#", CultureInfo.InvariantCulture) + " 格）｜" + aColor;
+        c.Report.Append("- 點光源預設：").Append(aWhat).Append("（燈 ＝ meta kind=light 的模型與關聯；觀測時 lamps=／lamp_*= 可以一次性蓋過）\n");
+        return Finish(c, 0, (aSet ? "✓ 點光源預設改成 " : "✓ 點光源預設 ") + aWhat);
+    }
+
+    /// <summary>
     /// 全庫掃：有 ropes.json 或 sails.json 的作品逐件解一次（關聯全開 links=all），收集 broken 而且跟 <paramref name="iWorkId"/> 有關的
     /// （就在這件作品上、或它的關聯樹裡有這件作品）。讀不了的作品記一行原因（⛔ 不當成沒有）。
     /// </summary>

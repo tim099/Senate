@@ -66,6 +66,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     const string FFloor = P + "sel/floor", FFloorTex = P + "sel/floor_texture", FFloorTile = P + "f/floor_tile", FFloorZ = P + "f/floor_z";
     const string FFloorFull = P + "sel/floor_full_grid", FFloorMargin = P + "f/floor_margin", FFloorMarginRatio = P + "f/floor_margin_ratio", FFloorColor = P + "f/floor_color", FFloorFade = P + "f/floor_fade";
     const string FSea = P + "sel/sea", FSeaZ = P + "f/sea_z", FSeaColor = P + "f/sea_color", FSeaOpacity = P + "f/sea_opacity";   // TASK-0585
+    const string FLamps = P + "sel/lamps", FLampIntensity = P + "f/lamp_intensity", FLampRadius = P + "f/lamp_radius", FLampColor = P + "f/lamp_color";   // TASK-0650
     const string ProfScope = P + "sel/prof_scope", ProfSaveName = P + "f/prof_name";
     const string ProfCopyScope = P + "sel/prof_copy_scope", ProfCopyName = P + "f/prof_copy_name";
     const string Pending = P + "pending";
@@ -113,7 +114,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
     {
         FRegion, FExclude, FTarget, FEye, FDistance, FZoom, FLightDir, FWidth, FHeight,
         FFloorTile, FFloorZ, FFloorMargin, FFloorMarginRatio, FFloorColor, FFloorFade, FLinks, FHideLinks,
-        FSeaZ, FSeaColor, FSeaOpacity,
+        FSeaZ, FSeaColor, FSeaOpacity, FLampIntensity, FLampRadius, FLampColor,
     };
 
     static readonly Dictionary<string, string> s_Defaults = new(StringComparer.Ordinal)
@@ -508,6 +509,13 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         Field(g, "sea_z（海面高度，世界 z；例：船的水線）", FSeaZ);
         Field(g, "sea_color（#RRGGBB）", FSeaColor);
         Field(g, "sea_opacity（0..1；1 ＝ 水下全部蓋住）", FSeaOpacity);
+
+        // 點光源（TASK-0650）：燈 ＝ meta kind=light 的外部模型與關聯（燈心 ＝ 來源作品的固定點 wick，沒有 ⇒ 外框中心）；空白／沿用 ＝ 照作品預設（work sub=lamps）與設定檔鏈
+        g.Label("點光源（meta kind=light 的模型與關聯在固定點 wick 點一盞；沿用 ＝ 作品預設 work sub=lamps）");
+        Tri(g, "點光源", FLamps, "on", "開", "off", "關");
+        Field(g, "lamp_intensity（強度 0..8；預設 0.6）", FLampIntensity);
+        Field(g, "lamp_radius（照多遠，公尺；預設 6）", FLampRadius);
+        Field(g, "lamp_color（#RRGGBB；預設 #ff9e40）", FLampColor);
     }
 
     /// <summary>
@@ -592,6 +600,7 @@ public sealed partial class SculptureViewerPage : SCP_GuiToolPage
         PutSel("floor", FFloor); PutSel("floor_texture", FFloorTex); Put("floor_tile", FFloorTile); Put("floor_z", FFloorZ);
         PutSel("floor_full_grid", FFloorFull); Put("floor_margin", FFloorMargin); Put("floor_margin_ratio", FFloorMarginRatio); Put("floor_color", FFloorColor); Put("floor_fade", FFloorFade);
         PutSel("sea", FSea); Put("sea_z", FSeaZ); Put("sea_color", FSeaColor); Put("sea_opacity", FSeaOpacity);
+        PutSel("lamps", FLamps); Put("lamp_intensity", FLampIntensity); Put("lamp_radius", FLampRadius); Put("lamp_color", FLampColor);
         return a;
     }
 

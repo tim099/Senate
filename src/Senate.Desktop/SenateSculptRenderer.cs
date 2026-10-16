@@ -110,8 +110,10 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         /// <summary>平滑面（TASK-0645）：合併路徑的平滑格數、三角形數、這一幀有沒有重建（子模型路徑的平滑面算在 PartTriangles 裡）。</summary>
         public int SmoothVoxels, SmoothTriangles;
         public bool SmoothRebuilt;
+        /// <summary>點光源（TASK-0650）：這一幀點了幾盞（開關關著 ⇒ 0）。</summary>
+        public int Lamps;
         public override string ToString() =>
-            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}{(Models > 0 ? $"｜模型 {Models} 個 {ModelTriangles:N0} 三角形（{(ModelsUploaded ? "重傳" : "沿用")}）" : "")}{(PartInstances > 0 ? $"｜子模型 {PartSources} 份網格、{PartInstances} 個實例（畫 {PartShown}，{PartTriangles:N0} 三角形；這一幀新建 {PartBuilds}" + (PartBuilds > 0 ? $"，{PartBuildMs:0} ms" : "") + "）" : "")}{(SmoothTriangles > 0 ? $"｜平滑面 {SmoothVoxels:N0} 格 {SmoothTriangles:N0} 三角形（{(SmoothRebuilt ? "重建" : "沿用")}）" : "")}｜這一幀 {DrawMs:0.0} ms";
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}{(Models > 0 ? $"｜模型 {Models} 個 {ModelTriangles:N0} 三角形（{(ModelsUploaded ? "重傳" : "沿用")}）" : "")}{(PartInstances > 0 ? $"｜子模型 {PartSources} 份網格、{PartInstances} 個實例（畫 {PartShown}，{PartTriangles:N0} 三角形；這一幀新建 {PartBuilds}" + (PartBuilds > 0 ? $"，{PartBuildMs:0} ms" : "") + "）" : "")}{(SmoothTriangles > 0 ? $"｜平滑面 {SmoothVoxels:N0} 格 {SmoothTriangles:N0} 三角形（{(SmoothRebuilt ? "重建" : "沿用")}）" : "")}{(Lamps > 0 ? $"｜點光源 {Lamps} 盞" : "")}｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
     /// <summary>上一次成功出圖實際用的鏡頭（TASK-0501；GPU 預覽交回頁面釘住用）。</summary>
@@ -232,7 +234,9 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         m_ViewDirGl = Vector3.Normalize(new Vector3((float)aCam.ForwardX, (float)-aCam.ForwardY, (float)aCam.ForwardZ));
         m_EyeGl = new Vector3((float)(aCam.TargetX - aCam.ForwardX * aCam.Distance), (float)-(aCam.TargetY - aCam.ForwardY * aCam.Distance), (float)(aCam.TargetZ - aCam.ForwardZ * aCam.Distance));
         var aLights = SolveLights(aScene, aFloor, iParams);
+        m_LampsLit = 0;
         byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo, aPartDraws);
+        aReading.Lamps = m_LampsLit;
         var aErr = m_Gl!.GetError();
         if (aErr != GLEnum.NoError) { oError = "OpenGL 錯誤：" + aErr; return null; }
         aReading.DrawMs = sw.Elapsed.TotalMilliseconds;
@@ -391,6 +395,19 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
             }
             if (iP.PartVisible != null && iP.PartVisible.Length != iP.Parts.Instances.Count)
             { oError = $"PartVisible 長度 {iP.PartVisible.Length} ≠ 實例數 {iP.Parts.Instances.Count}"; return false; }
+        }
+        if (iP.Lamps != null && iP.Lamps.Enabled)   // TASK-0650
+        {
+            var aLa = iP.Lamps;
+            if (!Finite(aLa.Intensity) || aLa.Intensity < 0) { oError = "Lamps.Intensity 需是 ≥ 0 的有限數：" + aLa.Intensity; return false; }
+            if (iP.LampPoints == null) { oError = "LampPoints 是 null（沒有燈 ⇒ 空清單）"; return false; }
+            foreach (SCP_SculptLampPoint aPt in iP.LampPoints)
+            {
+                if (aPt == null || !Finite(aPt.X) || !Finite(aPt.Y) || !Finite(aPt.Z) || !Finite(aPt.Radius) || aPt.Radius <= 0)
+                { oError = "燈 `" + aPt?.Path + "` 的位置或半徑含 NaN／無限大／≤ 0"; return false; }
+                if (aPt.Part >= 0 && (iP.Parts == null || aPt.Part >= iP.Parts.Instances.Count))
+                { oError = "燈 `" + aPt.Path + "` 指到不存在的子模型實例 " + aPt.Part; return false; }
+            }
         }
         int aCasters = 0;
         for (int i = 0; i < iP.Lights.Count; i++)
@@ -561,6 +578,9 @@ uniform vec3 uHemiGround;
 uniform vec3 uEye;
 uniform vec3 uViewDir;
 uniform int uPersp;
+uniform int uLampCount;
+uniform vec4 uLampPos[64];
+uniform vec3 uLampCol[64];
 out vec4 oColor;
 float shoulder(float x) { if (x > 0.85) x = 0.85 + 0.15 * (1.0 - exp(-(x - 0.85) / 0.15)); return x; }
 float shadowFactor(sampler2DShadow iMap, vec4 iLightPos) {
@@ -601,6 +621,18 @@ void main() {
         float fr = 0.04 + 0.96 * pow(1.0 - abs(dot(n, v)), 5.0);
         vec3 env = mix(uHemiGround * 0.45, uHemiSky * 0.9, smoothstep(-0.2, 0.35, r.z));
         c = mix(c, c * 0.35 + env * mix(vec3(0.85), vColor, 0.4) * (0.5 + 0.5 * fr), vMat.x * (0.85 - 0.5 * ro)) + spec * vMat.x * 0.5;
+    }
+    // 點光源（TASK-0650；跟 Blockside 01_gl.js lampK 同式）：a ＝ 1 − 距離／半徑，加上 底色 × 光色×強度 × a² × (0.35 ＋ 0.65 × N·L)；⛔ 不投影子。
+    // uLampCount 0 ⇒ 整段跳過、算式跟以前一樣
+    if (uLampCount > 0) {
+        vec3 lamp = vec3(0.0);
+        for (int i = 0; i < uLampCount; i++) {
+            vec3 L = uLampPos[i].xyz - vWorld;
+            float d = length(L);
+            float a = clamp(1.0 - d / uLampPos[i].w, 0.0, 1.0);
+            lamp += uLampCol[i] * (a * a * (0.35 + 0.65 * max(dot(n, L / max(d, 0.001)), 0.0)));
+        }
+        c += vColor * lamp;
     }
     oColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }";
@@ -1935,6 +1967,7 @@ void main() {
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uEye"), m_EyeGl.X, m_EyeGl.Y, m_EyeGl.Z);            // 金屬反光（TASK-0645）
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uViewDir"), m_ViewDirGl.X, m_ViewDirGl.Y, m_ViewDirGl.Z);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uPersp"), m_Persp ? 1 : 0);
+                SetLampUniforms(m_MainProg, iP);   // 點光源（TASK-0650）：關著 ⇒ 0 盞
                 SetModel(m_MainProg, true, Matrix4x4.Identity, s_Identity3);   // 合併的那幾趟已在世界座標
                 if (aHasMesh)
                 {
@@ -2067,6 +2100,40 @@ void main() {
             gl.Uniform1(gl.GetUniformLocation(iProg, "uShadowMap" + m), m);
         }
         gl.ActiveTexture(TextureUnit.Texture0);
+    }
+
+    /// <summary>
+    /// 點光源（TASK-0650）：開著 ⇒ 收這一幀亮著的燈（分開畫時實例關著的那幾盞熄掉），多於 <see cref="SCP_SculptRenderParams.MaxLamps"/> 取離鏡頭近的
+    /// （正交的「鏡頭」＝ 注視點）；位置換到 GL（y 取負）、光色 × 強度。關著或沒有燈 ⇒ uLampCount 0。
+    /// </summary>
+    int m_LampsLit;
+
+    void SetLampUniforms(uint iProg, SCP_SculptRenderParams iP)
+    {
+        var gl = m_Gl!;
+        var aOn = new List<(Vector3 Pos, float R)>();
+        if (iP.Lamps != null && iP.Lamps.Enabled)
+            foreach (SCP_SculptLampPoint l in iP.LampPoints)
+            {
+                if (l.Part >= 0 && iP.PartVisible != null && !iP.PartVisible[l.Part]) continue;
+                aOn.Add((ToGl(l.X, l.Y, l.Z), (float)l.Radius));
+            }
+        if (aOn.Count > SCP_SculptRenderParams.MaxLamps)
+        {
+            Vector3 e = m_EyeGl;
+            aOn.Sort((a, b) => Vector3.DistanceSquared(a.Pos, e).CompareTo(Vector3.DistanceSquared(b.Pos, e)));
+            aOn.RemoveRange(SCP_SculptRenderParams.MaxLamps, aOn.Count - SCP_SculptRenderParams.MaxLamps);
+        }
+        gl.Uniform1(gl.GetUniformLocation(iProg, "uLampCount"), aOn.Count);
+        m_LampsLit = aOn.Count;
+        if (aOn.Count == 0) return;
+        var aL = iP.Lamps!;
+        float k = (float)aL.Intensity;
+        for (int i = 0; i < aOn.Count; i++)
+        {
+            gl.Uniform4(gl.GetUniformLocation(iProg, $"uLampPos[{i}]"), aOn[i].Pos.X, aOn[i].Pos.Y, aOn[i].Pos.Z, aOn[i].R);
+            gl.Uniform3(gl.GetUniformLocation(iProg, $"uLampCol[{i}]"), aL.R / 255f * k, aL.G / 255f * k, aL.B / 255f * k);
+        }
     }
 
     /// <summary>直射光增益（見主 shader 說明）。</summary>

@@ -151,6 +151,7 @@ senate cmd sculpture --arg op=carvevox --arg work=<作品> --arg persona=<P> --a
 | 天空 | `skybox=<路徑>|builtin|none`（相對路徑以 `Sculpture/skyboxes/` 為基準；none ＝ 純色背景）`skybox_yaw` `skybox_tilt`（正交時背景視窗往上抬，−89..89；透視忽略） |
 | 地板 | `floor=on|off` `floor_z` `floor_full_grid=1|0` `floor_margin` `floor_texture=builtin|<檔名>|<絕對路徑>`（相對 ⇒ `Sculpture/floors/`）`floor_tile` `floor_color=#rrggbb` `floor_fade`（見 §5.1） |
 | 海面 | `sea=on|off` `sea_z` `sea_color=#rrggbb` `sea_opacity`（0..1）（見 §5.2；作品預設 `work sub=sea`） |
+| 點光源 | `lamps=on|off` `lamp_intensity`（0..8）`lamp_radius`（公尺）`lamp_color=#rrggbb`（見 §5.6；作品預設 `work sub=lamps`） |
 | 框景 | `fit_upscale=1|0`（見上） |
 | 尺寸 | `width` `height`（16-8192，預設 1024） |
 
@@ -301,6 +302,39 @@ Tim 2026-10-16：「地形可以設定為柔和平面」「是否可讓 Sculptur
 - ⚠ 很緩的坡（每好幾格才高一格）：格角最多挪半格 ⇒ 階梯變成圓角的小坡，遠看還有淡淡的等高線條紋；近看才是連續的面。
 - 範例：維吉尼亞號（`ame-virginia-01m-assembly`，平滑 99,571 格）、拿破崙號（`kotoko-napoleon-01m-assembly`，煙囪 28,900 格）、岩堡港（`summit-rocher-01m`，地形 2,062,102 格，CLI view 約 13 秒）。
 
+### 5.6 點光源（TASK-0650）
+
+Tim 2026-10-16：岩堡港的燈籠「可以有光源」。燈籠、營火在遊戲裡會放點光源（造船規格 §9 `light`），觀測頁與 CLI `op=view` 照同一套慣例畫（Blockside 60_render.js `isLamp`／`lampAt`）：
+
+- **誰是燈**：外部模型或關聯的 meta `kind=light`（或 `lantern`）。不另外登記 —— 標了 meta 就是燈。
+- **燈心**：來源作品的固定點 `wick`（格心），照模型的 at／pivot／rotate／scale／mirror 與關聯路徑一層層換到組裝件座標；
+  沒有 `wick`（obj 模型、或來源作品沒登記）⇒ 外框中心（模型 ＝ obj 外框中心；關聯 ＝ 那件作品的空間中心）。
+- **照法**（跟遊戲 01_gl.js `lampK` 同式）：照到的面加上 底色 × 光色 × 強度 × a² × (0.35 ＋ 0.65 × N·L)，a ＝ 1 − 距離／半徑。⛔ 不投影子（光會穿過牆，跟遊戲一樣）；
+  照 voxel、平滑面、外部模型、繩、帆；地板與海面不接。一張圖最多點 64 盞，多了取離鏡頭近的（正交取離注視點近的）。
+- **只改畫面**：不動格子、讀數、匯出。
+
+| 欄位 | 預設 | 範圍 | 意思 |
+|---|---|---|---|
+| `lamps` | off | on／off | 開關；⚠ 不給 ⇒ 沿用下層（只換強度的層不改開關） |
+| `lamp_intensity` | 0.6 | 0..8 | 強度（燈心旁正對它的面加上 底色 × 光色 × 本值） |
+| `lamp_radius` | 6 | 0.01..1000 | 照多遠（**公尺**，Blockside `LAMP_R`；照主作品的一格幾公尺換成格：0.1 m／格 ⇒ 60 格） |
+| `lamp_color` | #ff9e40 | #rrggbb | 光色（遊戲模型燈的暖橘） |
+
+**疊層**：同海面 —— 內建預設 → 共用 → persona →（`profile=`）→ 作品海面 → **作品點光源**（主作品的 `lamps.json`）→ 展品 → CLI。`layers` 會印「作品點光源 `<id>`」。設定檔的 `lamps` 物件同形（`{"enabled":true,"intensity":0.6,"radius":6,"color":"#ff9e40"}`）。
+**作品預設**：`work sub=lamps`（只有作者能改；只給一部分 ⇒ 其他欄位沿用檔裡的；第一次只給強度之類 ⇒ 當成要開；都不給 ⇒ 印現在的值）。寫在作品資料夾的 `lamps.json`；壞掉的檔 ⇒ view 擋下。
+觀測頁「相機與光影（手動）」最後一段：點光源（沿用／開／關）＋強度、半徑、顏色；空白 ＝ 照作品預設。分開畫（`parts=1`）時燈跟著它的實例：關掉那個模型或關聯 ⇒ 那盞燈也熄。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=lamps --arg work=<港口> --arg persona=<P> --arg lamps=on            # 作品預設：點燈
+senate cmd sculpture --arg op=view --arg work=<港口> --arg persona=<P> --arg lamps=on --arg lamp_intensity=1.2 --arg ambient=0.25   # 一次性：暗一點、燈亮一點
+```
+
+- 開燈時回傳多一行「· 點光源：N 盞（固定點 wick a、外框中心 b）」與 value `lamps`；回傳檔逐盞列出燈心座標（拿來核 wick 擺得對不對）。⚠ 固定點檔讀不了 ⇒ 那盞放外框中心、回傳檔記一行。
+- **沒開燈 ⇒ 圖、輸出跟以前逐位元相同**（岩堡港新舊 exe 的 sha256 對過）。
+- ⚠ 白天預設光下燈很淡（6 m 只照到旁邊一圈）；要看效果就壓暗 `ambient`、調強 `lamp_intensity`，或拉近鏡頭。
+- 落子後的分享圖（§7）只在共用展區出，那裡沒有外部模型與關聯 ⇒ 沒有燈可點（設定檔的 `lamps` 照樣疊，只是場景裡沒有燈）。
+- 範例：岩堡港（`summit-rocher-01m`）燈籠 22 盞＋營火 2 個，全部有 `wick`。
+
 ## 6. 渲染設定檔（render-profile）
 
 兩層，各自可以有很多組、各自記住「現在用哪一組」：
@@ -323,7 +357,7 @@ senate cmd sculpture --arg op=render-profile --arg sub=reset --arg name=default 
 ```
 
 - `set` 的鍵：`projection yaw pitch roll target eye distance fov zoom fit_upscale ambient ao shadow skybox skybox_yaw skybox_tilt background width height`、
-  地板 `floor floor_z floor_full_grid floor_margin floor_texture floor_tile floor_color floor_fade`，
+  地板 `floor floor_z floor_full_grid floor_margin floor_texture floor_tile floor_color floor_fade`，海面 `sea sea_z sea_color sea_opacity`，點光源 `lamps lamp_intensity lamp_radius lamp_color`（§5.6），
   燈用 `light_add=x,y,z[;#rrggbb[;強度[;shadow 0|1]]]`（多盞用 `|` 串）／`lights=<JSON 陣列>`／`light_clear=1`，
   `unset=鍵,鍵` 拿掉 ⇒ 回到沿用下層（`unset=floor` ＝ 整個地板物件，`unset=floor_z` ＝ 其中一格）；`target／eye／distance／zoom` 給 `auto` ⇒ 明確改回自動。
 - ⛔ set 不吃的參數（例：`light_dir` 是 view 的旗標）⇒ exit 2、什麼都沒寫。設定檔裡**不認得的鍵＝錯誤**（`"yaww": 90` 不會被略過）。

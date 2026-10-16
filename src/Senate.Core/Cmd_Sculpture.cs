@@ -97,6 +97,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "target", "eye", "distance", "fov", "skybox", "skybox_yaw", "skybox_tilt", "width", "height", "lights", "light_add", "light_clear",
         "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
         "sea", "sea_z", "sea_color", "sea_opacity",
+        "lamps", "lamp_intensity", "lamp_radius", "lamp_color",
     };
 
     /// <summary>render-profile set 吃的設定鍵（＝ <see cref="SCP_SculptRenderProfiles.TryEdit"/> 認得的那幾個）。</summary>
@@ -106,6 +107,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         "skybox", "skybox_yaw", "skybox_tilt", "background", "width", "height", "lights", "light_add", "light_clear", "unset",
         "fit_upscale", "floor", "floor_z", "floor_full_grid", "floor_margin", "floor_margin_ratio", "floor_texture", "floor_tile", "floor_color", "floor_fade",
         "sea", "sea_z", "sea_color", "sea_opacity",
+        "lamps", "lamp_intensity", "lamp_radius", "lamp_color",
     };
 
     /// <summary>render-profile set 除了設定鍵以外還吃的（路由／身分）。其餘顯式給的參數 ⇒ 擋（⛔ 不靜默忽略）。</summary>
@@ -251,6 +253,10 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("sea_z", "海面高度（世界 z，" + SCP_SculptRenderProfiles.SeaZMin + ".." + SCP_SculptRenderProfiles.SeaZMax + "；格 k 佔 [k, k+1)）"),
         new SCP_CmdArgSpec("sea_color", "海色 #RRGGBB（預設 #1e5a78）"),
         new SCP_CmdArgSpec("sea_opacity", "海的不透明度 0..1（1 ＝ 水下全部蓋住；預設 0.85 ⇒ 水下淡淡看得到）"),
+        new SCP_CmdArgSpec("lamps", "view／render-profile set／work lamps：點光源 on|off（TASK-0650；外部模型與關聯的 meta kind=light ⇒ 在來源作品的固定點 wick 點一盞，沒有 wick ⇒ 外框中心；不給 ⇒ 沿用作品預設與設定檔鏈）"),
+        new SCP_CmdArgSpec("lamp_intensity", "點光源強度 0.." + SCP_SculptRenderProfiles.LampIntensityMax + "（燈心旁正對它的面加上 底色×光色×本值；預設 0.6）"),
+        new SCP_CmdArgSpec("lamp_radius", "點光源照多遠（公尺，" + SCP_SculptRenderProfiles.LampRadiusMin + ".." + SCP_SculptRenderProfiles.LampRadiusMax + "；照作品的一格幾公尺換成格；預設 6）"),
+        new SCP_CmdArgSpec("lamp_color", "點光源的光色 #RRGGBB（預設 #ff9e40 暖橘）"),
         new SCP_CmdArgSpec("width", "出圖寬（16-8192）"),
         new SCP_CmdArgSpec("height", "出圖高（16-8192）"),
         new SCP_CmdArgSpec("smooth", "view／exhibit register：python 時代的旗標（只影響 summary 文字，GPU 渲染不吃）"),
@@ -275,9 +281,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|sea|meta|model|unmodel|models|split|components|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|sea|lamps|meta|model|unmodel|models|split|components|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
                            iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links", "preset", "unpreset", "presets",
-                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "sea", "meta", "model", "unmodel", "models", "split", "components", "split-events" }),
+                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "sea", "lamps", "meta", "model", "unmodel", "models", "split", "components", "split-events" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),
@@ -953,6 +959,13 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             c.Result.AddValue("smooth_voxels", aPlan.Params.Surface.Smooth.Count.ToString(CultureInfo.InvariantCulture));
             c.Result.Lines.Add("· 平滑渲染：" + aPlan.Params.Surface.Describe());
         }
+        // 點光源（TASK-0650）：開了才印（沒開的輸出跟以前一樣）
+        if (aPlan.Params.Lamps != null && aPlan.Params.Lamps.Enabled)
+        {
+            c.Result.AddValue("lamps", aPlan.Params.LampPoints.Count.ToString(CultureInfo.InvariantCulture));
+            c.Result.Lines.Add("· 點光源：" + SCP_SculptLampFinder.Describe(aPlan.Params.LampPoints)
+                               + (aPlan.Params.LampPoints.Count > SCP_SculptRenderParams.MaxLamps ? "（一張圖最多點 " + SCP_SculptRenderParams.MaxLamps + " 盞，取離鏡頭近的）" : ""));
+        }
         c.Result.AddValue("width", aPlan.Params.Width.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("height", aPlan.Params.Height.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("sha256", aSha);
@@ -972,6 +985,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         oPlan = new SCP_SculptViewPlan(); oLayersText = ""; oError = "";
         if (!TryBase(c, out SCP_SculptRenderParams aBase, out List<string> aLayers, out string aBaseErr)) { oError = aBaseErr; return 2; }
         if (!TryApplyWorkSea(c, aBase, aLayers, out string aSeaBad)) { oError = aSeaBad; return 2; }   // TASK-0585：作品的海 ⇒ 疊在設定檔鏈之後
+        if (!TryApplyWorkLamps(c, aBase, aLayers, out string aLampBad)) { oError = aLampBad; return 2; }   // TASK-0650：作品的點光源預設，同上
         if (!TryViewArgs(c, out SCP_SculptViewArgs aViewArgs, out ViewAutos aAutos, out string aArgBad)) { oError = aArgBad; return 2; }
         if (ConfigureParts(c, aViewArgs) is string aPartsBad) { oError = aPartsBad; return 2; }
         SCP_SculptParts? aParts = c.Parts ? new SCP_SculptParts() : null;
@@ -1007,6 +1021,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             oPlan.Params.SailRig = aRig.Animated ? aRig : null;
             if (aRig.Models != null) { c.Models = aRig.Models; oPlan.Params.Models = aRig.Models.Geoms(); }   // TASK-0507：外部模型（靜態，另一趟）
         }
+        SCP_SculptModelSet? aPartModels = null;
         if (aParts != null)
         {
             // TASK-0509：外部模型也是實例 —— 每一層（含設為關的關聯裡的）都讀網格、⛔ 不烘；畫不畫由呼叫端每幀決定
@@ -1015,11 +1030,13 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
                 SCP_SculptModelSet aSet = SCP_SculptModels.Resolve(c.Works, c.Work!.id, c.LinkTree, new SCP_SculptLinkSelection { All = true },
                                                                    new SCP_SculptModelSelection(), true, ModelCacheProducer(c), null, false);
                 aParts.AddModels(aSet);
+                aPartModels = aSet;
             }
             catch (InvalidOperationException e) { oError = "模型：" + e.Message; return 2; }
             oPlan.Params.Models = new List<SCP_SculptModelGeom>();
             oPlan.Params.Parts = aParts;
         }
+        ResolveViewLamps(c, oPlan.Params, aParts, aPartModels);   // TASK-0650：開了點光源才找燈
         if (!c.Args.IsExplicit("fit_upscale") && (c.Work != null || aViewArgs.Exhibit.Length > 0 || aViewArgs.Region.Length > 0))
             oPlan.Params.FitUpscale = true;
 
@@ -1180,6 +1197,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         if (!TryApplyViewLights(c, p, out oBad)) return false;
         if (!TryApplyViewFloor(c, p, out oBad)) return false;
         if (!TryApplyViewSea(c, p, out oBad)) return false;
+        if (!TryApplyViewLamps(c, p, out oBad)) return false;
         string aFit = c.Args.Get("fit_upscale").Trim();
         if (aFit.Length > 0)
         {
@@ -1316,6 +1334,79 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         return true;
     }
 
+    /// <summary>
+    /// view 的一次性點光源（TASK-0650）：同海面 —— TryEdit 解析、TryApply 驗證，疊在作品預設與設定檔鏈上（只給 lamp_intensity ⇒ 只換強度、開關沿用下層）。
+    /// </summary>
+    static bool TryApplyViewLamps(Ctx c, SCP_SculptRenderParams p, out string oBad)
+    {
+        oBad = "";
+        var aEdit = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string k in SCP_SculptRenderProfiles.LampFlatKeys)
+        {
+            string v = c.Args.Get(k).Trim();
+            if (v.Length > 0) aEdit[k] = v;
+        }
+        if (aEdit.Count == 0) return true;
+        var aTemp = SCP_JsonData.NewObject();
+        if (!SCP_SculptRenderProfiles.TryEdit(aTemp, aEdit, new List<string>(), out oBad)) return false;
+        if (!SCP_SculptRenderProfiles.TryApply(aTemp, p, SCP_SculptRenderProfiles.SkyboxesDir(c.Data), out oBad))
+        { oBad = "點光源：" + oBad; return false; }
+        return true;
+    }
+
+    /// <summary>
+    /// 作品自己的點光源預設（TASK-0650，`work sub=lamps` 寫的 lamps.json）：同海面，疊在共用／個人設定之後、展品與 CLI 之前；只看主作品。
+    /// 沒有檔 ⇒ 不疊、不是錯；檔壞了 ⇒ 擋（⛔ 不默默當成不點燈）。
+    /// </summary>
+    static bool TryApplyWorkLamps(Ctx c, SCP_SculptRenderParams p, List<string> ioLayers, out string oBad)
+    {
+        oBad = "";
+        if (c.Work == null) return true;
+        SCP_JsonData? aLamps;
+        try { aLamps = SCP_SculptRenderProfiles.ReadWorkLamps(c.Works.SpacePaths(c.Work.id)); }
+        catch (Exception e) when (e is IOException || e is InvalidDataException || e is SCP.Core.Json.SCP_JsonParseException)
+        { oBad = "作品的點光源預設讀不了：" + e.Message; return false; }
+        if (aLamps == null) return true;
+        if (!SCP_SculptRenderProfiles.TryApplyLampsObject(aLamps, p, out oBad)) { oBad = "作品的點光源預設（lamps.json）：" + oBad; return false; }
+        ioLayers.Add("作品點光源 `" + c.Work.id + "`");
+        return true;
+    }
+
+    /// <summary>
+    /// 場景裡的燈（TASK-0650）：點光源開著才找 —— 外部模型與關聯的 meta kind=light，燈心 ＝ 來源作品的固定點 wick，沒有 ⇒ 外框中心
+    /// （<see cref="SCP_SculptLampFinder"/>，跟 Blockside isLamp／lampAt 同一套）。半徑照主作品的一格幾公尺換成格。
+    /// 合併的場景只收這次畫出來的模型與關聯；分開畫（parts=1）收每個實例、記它是第幾個 ⇒ 頁面切掉那個實例，燈跟著熄。
+    /// 關著 ⇒ 一盞都不收（場景、讀數都跟以前一樣）。
+    /// </summary>
+    static void ResolveViewLamps(Ctx c, SCP_SculptRenderParams p, SCP_SculptParts? iParts, SCP_SculptModelSet? iPartModels)
+    {
+        p.LampPoints = new List<SCP_SculptLampPoint>();
+        if (p.Lamps == null || !p.Lamps.Enabled || c.Work == null) return;
+        double aRadius = p.Lamps.Radius / c.Work.MetersPerVoxel;
+        var aNotes = new List<string>();
+        if (iParts != null)
+        {
+            var aIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < iParts.Instances.Count; i++) aIndex[iParts.Instances[i].Kind + ":" + iParts.Instances[i].Path] = i;
+            p.LampPoints = SCP_SculptLampFinder.Find(c.Works, iPartModels, r => aIndex.ContainsKey(SCP_SculptPartInstance.KindModel + ":" + r.Path),
+                                                     c.LinkTree, n => aIndex.ContainsKey(SCP_SculptPartInstance.KindLink + ":" + n.Path), aRadius, aNotes);
+            foreach (var l in p.LampPoints)
+                l.Part = aIndex.TryGetValue(SCP_SculptPartInstance.KindModel + ":" + l.Path, out int k) || aIndex.TryGetValue(SCP_SculptPartInstance.KindLink + ":" + l.Path, out k) ? k : -1;
+        }
+        else
+        {
+            SCP_SculptLinkSelection aSel = c.Links?.Selection ?? SCP_SculptLinkSelection.Parse(c.Args.Get("links"), c.Args.Get("hide_links"));
+            Dictionary<string, SCP_SculptLinkNode> aTreeIndex = SCP_SculptRopes.IndexTree(c.LinkTree);
+            p.LampPoints = SCP_SculptLampFinder.Find(c.Works, c.Models, r => r.Geom != null,
+                                                     c.Links != null ? c.LinkTree : null, n => SCP_SculptRopes.PathDrawn(n.Path, aTreeIndex, aSel), aRadius, aNotes);
+        }
+        c.Report.Append("- 點光源：").Append(SCP_SculptLampFinder.Describe(p.LampPoints))
+                .Append("、半徑 ").Append(F2(p.Lamps.Radius)).Append(" m（").Append(aRadius.ToString("0.#", CultureInfo.InvariantCulture)).Append(" 格）\n");
+        foreach (var l in p.LampPoints)
+            c.Report.Append("  - `").Append(l.Path).Append("` @ ").Append(SCP_SculptRopes.Fmt(new[] { l.X, l.Y, l.Z })).Append("（").Append(l.From).Append("）\n");
+        foreach (string n in aNotes) c.Report.Append("  - ⚠ ").Append(n).Append('\n');
+    }
+
     /// <summary>渲染參數 → 設定檔同形的 JSON（`show` 的「實際生效值」與 view 回傳檔用）。</summary>
     public static SCP_JsonData DescribeParams(SCP_SculptRenderParams p)
     {
@@ -1363,6 +1454,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         aOut.Set("skybox", aSky);
         aOut.Set("floor", SCP_SculptRenderProfiles.DescribeFloor(p));
         aOut.Set("sea", SCP_SculptRenderProfiles.DescribeSea(p));
+        aOut.Set("lamps", SCP_SculptRenderProfiles.DescribeLamps(p));
         aOut.Set("background", Hex(p.BgR, p.BgG, p.BgB));
         aOut.Set("width", (long)p.Width);
         aOut.Set("height", (long)p.Height);

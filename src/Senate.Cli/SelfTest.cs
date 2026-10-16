@@ -255,6 +255,10 @@ public static partial class SelfTest
         // 雕刻平滑渲染＋材質反光（TASK-0645）：本體在 SelfTest.SculptSmooth0645.cs
         One(nameof(SculptSmoothMeshCleanRoom), "sculpture", SculptSmoothMeshCleanRoom),
         One(nameof(SculptSmoothGpuCleanRoom), "sculpture", SculptSmoothGpuCleanRoom),
+        // 雕刻觀測的點光源（TASK-0650）：本體在 SelfTest.SculptLamps0650.cs
+        One(nameof(SculptLampProfileCleanRoom), "sculpture", SculptLampProfileCleanRoom),
+        One(nameof(SculptLampSceneCleanRoom), "sculpture", SculptLampSceneCleanRoom),
+        One(nameof(SculptLampGpuCleanRoom), "sculpture", SculptLampGpuCleanRoom),
         One(nameof(SculptPartsCleanRoom), "sculpture", SculptPartsCleanRoom, iImportant: true),
         One(nameof(SculptGlbCleanRoom), "sculpture", SculptGlbCleanRoom),
         One(nameof(SculptMeshCacheCleanRoom), "sculpture", SculptMeshCacheCleanRoom),
