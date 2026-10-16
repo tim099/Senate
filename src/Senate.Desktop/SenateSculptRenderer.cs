@@ -76,6 +76,13 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     ulong m_MeshHash, m_MeshRopeHash;
     bool m_MeshAo, m_MeshMerge;
     uint m_MeshVao, m_MeshVbo, m_MeshIbo;
+    // 平滑面（TASK-0645）：合併路徑的另一顆 VAO（8 槽頂點，SCP_SculptSmoothMesh）；鍵 ＝ voxel 內容雜湊 ⊕ Surface 雜湊。Surface ＝ null ⇒ 整條不走。
+    GpuMesh m_SmoothGpu;
+    ulong m_SmoothKey, m_MeshSurfHash;
+    Mesh m_SmoothMesh = new();
+    // 金屬反光要的視線（GL 座標）：透視 ⇒ 每個像素看鏡頭位置；正交 ⇒ 一個方向
+    Vector3 m_EyeGl, m_ViewDirGl;
+    bool m_Persp;
 
     /// <summary>最近一次畫的讀數（觀測頁印出來；selftest 讀它判斷網格有沒有重建）。</summary>
     public sealed class Reading
@@ -100,8 +107,11 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         public bool RopesUploaded;
         /// <summary>頂點＋索引陣列的 FNV-1a 雜湊 —— 「網格逐位元相同」的讀數（改網格建法時拿來比前後）。</summary>
         public ulong MeshDigest;
+        /// <summary>平滑面（TASK-0645）：合併路徑的平滑格數、三角形數、這一幀有沒有重建（子模型路徑的平滑面算在 PartTriangles 裡）。</summary>
+        public int SmoothVoxels, SmoothTriangles;
+        public bool SmoothRebuilt;
         public override string ToString() =>
-            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}{(Models > 0 ? $"｜模型 {Models} 個 {ModelTriangles:N0} 三角形（{(ModelsUploaded ? "重傳" : "沿用")}）" : "")}{(PartInstances > 0 ? $"｜子模型 {PartSources} 份網格、{PartInstances} 個實例（畫 {PartShown}，{PartTriangles:N0} 三角形；這一幀新建 {PartBuilds}" + (PartBuilds > 0 ? $"，{PartBuildMs:0} ms" : "") + "）" : "")}｜這一幀 {DrawMs:0.0} ms";
+            $"網格 {(MeshRebuilt ? $"重建 {MeshMs:0} ms" : "沿用快取")}（{Voxels:N0} voxel、外露面 {Faces:N0} → {Quads:N0} 塊、三角形 {Triangles:N0}{(Ropes > 0 ? $"（含繩 {Ropes} 條 {RopeTriangles:N0}）" : "")}、digest {MeshDigest:x16}）{(Sails > 0 || SailRopes > 0 ? $"｜帆 {Sails} 面 {SailTriangles:N0} 三角形" + (SailRopes > 0 ? $"、帆上的繩 {SailRopes} 條" : "") : "")}{(Models > 0 ? $"｜模型 {Models} 個 {ModelTriangles:N0} 三角形（{(ModelsUploaded ? "重傳" : "沿用")}）" : "")}{(PartInstances > 0 ? $"｜子模型 {PartSources} 份網格、{PartInstances} 個實例（畫 {PartShown}，{PartTriangles:N0} 三角形；這一幀新建 {PartBuilds}" + (PartBuilds > 0 ? $"，{PartBuildMs:0} ms" : "") + "）" : "")}{(SmoothTriangles > 0 ? $"｜平滑面 {SmoothVoxels:N0} 格 {SmoothTriangles:N0} 三角形（{(SmoothRebuilt ? "重建" : "沿用")}）" : "")}｜這一幀 {DrawMs:0.0} ms";
     }
     public Reading LastReading { get; private set; } = new();
     /// <summary>上一次成功出圖實際用的鏡頭（TASK-0501；GPU 預覽交回頁面釘住用）。</summary>
@@ -198,7 +208,8 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         var aReading = new Reading();
         bool aParts = iParams.Parts != null;
         // 子模型分開畫（TASK-0509）：繩另外一趟（⛔ 不併進 voxel 網格 —— 切關聯時繩會換，併在一起整塊 voxel 網格要重建）
-        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, aParts ? null : iParams.Ropes, aReading);
+        var aMesh = GetMesh(iVoxels, iParams.AmbientOcclusion, iParams.MergeFaces, aParts ? null : iParams.Ropes, aReading, aParts ? null : iParams.Surface);
+        GetSmooth(iVoxels, aParts ? null : iParams.Surface, aReading);   // TASK-0645：平滑面另一顆 VAO（子模型路徑每份來源自己帶）
         // 帆（TASK-0503）：另一趟；框景／地板／燈用「voxel 網格＋帆的外框」的淺複本，畫 voxel 仍用快取的那顆 VAO
         Mesh aDyn = SCP_SculptMeshBuilder.Dynamic(iParams.Sails, iParams.SailRopes);
         UploadDynamic(aDyn);
@@ -210,10 +221,16 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
         int aPartIdx = 0;
         List<PartDraw>? aPartDraws = aParts ? GetParts(iParams, aReading, aCorners, out aPartIdx) : null;
         Mesh aScene = aMesh.WithExtra(aDyn, aModels, aRopes);
+        // 平滑面（TASK-0645）：那幾格的中心本來就在 voxel 網格的框景點裡 ⇒ 只補「有東西會投影子」的索引數、框景不變（⛔ 不加外框八角：會改構圖）
+        if (m_SmoothMesh.IndexCount > 0) aScene = aScene.WithPoints(m_SmoothMesh.Centers, m_SmoothMesh.IndexCount);
         if (aParts) aScene = aScene.WithPoints(aCorners, aPartIdx);
         FloorSetup? aFloor = SolveFloor(aScene, iParams, aFloorTex);
         if (!SolveCamera(aScene, aFloor, iParams, out Matrix4x4 aViewProj, out SkyView aSkyView, out oError, out SCP_SculptResolvedCamera aCam)) return null;
         LastCamera = aCam;
+        // 金屬反光的視線（TASK-0645）：世界 → GL（y 取負）；鏡頭位置 ＝ 注視點 − 前方 × 距離
+        m_Persp = aCam.Projection == SCP_SculptProjection.Perspective;
+        m_ViewDirGl = Vector3.Normalize(new Vector3((float)aCam.ForwardX, (float)-aCam.ForwardY, (float)aCam.ForwardZ));
+        m_EyeGl = new Vector3((float)(aCam.TargetX - aCam.ForwardX * aCam.Distance), (float)-(aCam.TargetY - aCam.ForwardY * aCam.Distance), (float)(aCam.TargetZ - aCam.ForwardZ * aCam.Distance));
         var aLights = SolveLights(aScene, aFloor, iParams);
         byte[] aOut = RenderGpu(aMesh, aFloor, iParams, aViewProj, aLights, aSky, aSkyView, iTargetFbo, aPartDraws);
         var aErr = m_Gl!.GetError();
@@ -227,22 +244,46 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
     /// 網格：同一份 voxel ＋ 同旗標 ⇒ 沿用（含 GPU buffer）；否則重建並重傳。
     /// <para>鍵 ＝ 清單物件 ＋ 顆數 ＋ 內容雜湊 —— 只比物件的話，呼叫端改了同一個清單再畫會拿到舊網格而不報錯。</para>
     /// </summary>
-    Mesh GetMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge, IReadOnlyList<SCP_SculptRopeGeom>? iRopes, Reading ioReading)
+    Mesh GetMesh(IReadOnlyList<SCP_SculptVoxel> iVoxels, bool iAo, bool iMerge, IReadOnlyList<SCP_SculptRopeGeom>? iRopes, Reading ioReading, SCP_SculptSurface? iSurf = null)
     {
-        ulong aHash = ContentHash(iVoxels), aRopeHash = RopeHash(iRopes);
+        ulong aHash = ContentHash(iVoxels), aRopeHash = RopeHash(iRopes), aSurfHash = iSurf?.Hash() ?? 0;
         if (m_Mesh != null && ReferenceEquals(m_MeshList, iVoxels) && m_MeshCount == iVoxels.Count && m_MeshHash == aHash
-            && m_MeshAo == iAo && m_MeshMerge == iMerge && m_MeshRopeHash == aRopeHash)
+            && m_MeshAo == iAo && m_MeshMerge == iMerge && m_MeshRopeHash == aRopeHash && m_MeshSurfHash == aSurfHash)
         {
             FillReading(ioReading, m_Mesh, false, 0);
             return m_Mesh;
         }
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        Mesh aMesh = SCP_SculptMeshBuilder.Voxels(iVoxels, iAo, iMerge);
+        Mesh aMesh = SCP_SculptMeshBuilder.Voxels(iVoxels, iAo, iMerge, iSurf);   // 平滑格不出方塊面（TASK-0645；null ⇒ 逐位元同以前）
         if (iRopes != null) SCP_SculptMeshBuilder.AppendRopes(aMesh, iRopes);   // ⚠ 要在上傳之前（上傳完 CPU 那份就清掉了）
         UploadMesh(aMesh);
-        m_Mesh = aMesh; m_MeshList = iVoxels; m_MeshCount = iVoxels.Count; m_MeshHash = aHash; m_MeshAo = iAo; m_MeshMerge = iMerge; m_MeshRopeHash = aRopeHash;
+        m_Mesh = aMesh; m_MeshList = iVoxels; m_MeshCount = iVoxels.Count; m_MeshHash = aHash; m_MeshAo = iAo; m_MeshMerge = iMerge; m_MeshRopeHash = aRopeHash; m_MeshSurfHash = aSurfHash;
         FillReading(ioReading, aMesh, true, sw.Elapsed.TotalMilliseconds);
         return aMesh;
+    }
+
+    /// <summary>
+    /// 平滑面（TASK-0645，合併路徑）：同一份 voxel（GetMesh 剛算的內容雜湊）＋同一份 Surface ⇒ 沿用；否則重建並重傳。
+    /// Surface ＝ null ⇒ 刪掉舊的、什麼都不畫（沒有平滑格的作品不經過這裡任何一行）。
+    /// </summary>
+    void GetSmooth(IReadOnlyList<SCP_SculptVoxel> iVoxels, SCP_SculptSurface? iSurf, Reading ioReading)
+    {
+        if (iSurf == null)
+        {
+            DeleteGpu(ref m_SmoothGpu); m_SmoothKey = 0; m_SmoothMesh = new Mesh();
+            return;
+        }
+        ulong aKey = (m_MeshHash ^ iSurf.Hash()) * 1099511628211UL;
+        if (aKey != m_SmoothKey || m_SmoothGpu.Vao == 0 && m_SmoothMesh.IndexCount > 0)
+        {
+            Mesh m = SCP_SculptSmoothMesh.Build(iVoxels, iSurf);
+            DeleteGpu(ref m_SmoothGpu);
+            m_SmoothGpu = UploadGpu(m, SCP_SculptSmoothMesh.FloatsPerVertex);
+            m_SmoothMesh = m; m_SmoothKey = aKey;
+            ioReading.SmoothRebuilt = true;
+        }
+        ioReading.SmoothVoxels = m_SmoothMesh.VoxelCount;
+        ioReading.SmoothTriangles = m_SmoothMesh.IndexCount / 3;
     }
 
     static void FillReading(Reading r, Mesh m, bool iRebuilt, double iMs)
@@ -464,6 +505,7 @@ public sealed class SenateSculptRenderer : ISCP_SculptRenderer, IDisposable
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
 layout(location=2) in vec4 aColorAo;
+layout(location=3) in vec2 aMat;
 uniform mat4 uViewProj;
 uniform mat4 uLightVP0;
 uniform mat4 uLightVP1;
@@ -475,11 +517,15 @@ out vec3 vColor;
 out float vAo;
 out vec4 vLightPos0;
 out vec4 vLightPos1;
+out vec2 vMat;
+out vec3 vWorld;
 void main() {
     vec4 wp = uModel * vec4(aPos, 1.0);
     vec3 wn = uNormalMat * aNormal;
     gl_Position = uViewProj * wp;
     vNormal = wn;
+    vMat = aMat;      // 平滑面（TASK-0645）：金屬度、粗糙度；其他 VAO 沒開位置 3 ⇒ 預設 (0,0) ⇒ 不反光
+    vWorld = wp.xyz;
     vColor = aColorAo.rgb;
     vAo = aColorAo.a;
     vec4 aOff = vec4(wp.xyz + wn * uNormalOffset, 1.0);
@@ -496,6 +542,8 @@ in vec3 vColor;
 in float vAo;
 in vec4 vLightPos0;
 in vec4 vLightPos1;
+in vec2 vMat;
+in vec3 vWorld;
 uniform int uLightCount;
 uniform vec3 uLightDir[8];
 uniform vec3 uLightCol[8];
@@ -510,6 +558,9 @@ uniform float uAoMin;
 uniform float uSun;
 uniform vec3 uHemiSky;
 uniform vec3 uHemiGround;
+uniform vec3 uEye;
+uniform vec3 uViewDir;
+uniform int uPersp;
 out vec4 oColor;
 float shoulder(float x) { if (x > 0.85) x = 0.85 + 0.15 * (1.0 - exp(-(x - 0.85) / 0.15)); return x; }
 float shadowFactor(sampler2DShadow iMap, vec4 iLightPos) {
@@ -524,6 +575,11 @@ float shadowFactor(sampler2DShadow iMap, vec4 iLightPos) {
 void main() {
     vec3 n = normalize(vNormal);
     vec3 direct = vec3(0.0);
+    // 金屬（TASK-0645；跟 Blockside 01_gl.js P.tri 同式）：vMat.x ＝ 金屬度、vMat.y ＝ 粗糙度；0 ⇒ 這幾行全跳過、算式跟以前一樣
+    bool metal = vMat.x > 0.001;
+    vec3 v = metal ? (uPersp == 1 ? normalize(uEye - vWorld) : -uViewDir) : vec3(0.0);
+    float ro = clamp(vMat.y, 0.05, 1.0);
+    vec3 spec = vec3(0.0);
     for (int i = 0; i < uLightCount; i++) {
         float ndl = max(dot(n, uLightDir[i]), 0.0);
         if (ndl <= 0.0) continue;
@@ -531,6 +587,7 @@ void main() {
         if (uLightShadow[i] == 0) sh = shadowFactor(uShadowMap0, vLightPos0);
         else if (uLightShadow[i] == 1) sh = shadowFactor(uShadowMap1, vLightPos1);
         direct += uLightCol[i] * (ndl * sh);
+        if (metal) spec += uLightCol[i] * (pow(max(dot(n, normalize(uLightDir[i] + v)), 0.0), mix(120.0, 6.0, ro)) * sh * (2.0 - 1.5 * ro));
     }
     float ao = mix(uAoMin, 1.0, vAo);
     vec3 hemi = mix(uHemiGround, uHemiSky, n.z * 0.5 + 0.5);
@@ -538,6 +595,13 @@ void main() {
     // 肩部：0.85 以上平滑收（逐通道：有色光／色偏時三通道各自收），再乘 uToneScale（見上方說明）。
     light = vec3(shoulder(light.r), shoulder(light.g), shoulder(light.b)) * uToneScale;
     vec3 c = vColor * light;
+    if (metal) {
+        // 天空／地面的反射（菲涅耳：斜看更亮）＋太陽的鏡面高光（照陰影）—— 環境色取半球光（有 skybox ⇒ 全景上下半球的平均色）
+        vec3 r = reflect(-v, n);
+        float fr = 0.04 + 0.96 * pow(1.0 - abs(dot(n, v)), 5.0);
+        vec3 env = mix(uHemiGround * 0.45, uHemiSky * 0.9, smoothstep(-0.2, 0.35, r.z));
+        c = mix(c, c * 0.35 + env * mix(vec3(0.85), vColor, 0.4) * (0.5 + 0.5 * fr), vMat.x * (0.85 - 0.5 * ro)) + spec * vMat.x * 0.5;
+    }
     oColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }";
 
@@ -1739,6 +1803,7 @@ void main() {
         bool aHasModels = m_ModelIndexCount > 0 && m_ModelVao != 0;   // 外部模型（TASK-0507）：第三趟
         bool aHasRopes = iP.Parts != null && m_RopeGpu.IndexCount > 0 && m_RopeGpu.Vao != 0;   // TASK-0509：分開畫時繩自己一趟
         bool aHasParts = iParts != null && iParts.Count > 0;
+        bool aHasSmooth = m_SmoothGpu.Vao != 0 && m_SmoothGpu.IndexCount > 0 && iP.OwnVisible;   // TASK-0645：合併路徑的平滑面
         // 網格的 VAO 是快取的那一顆（GetMesh 上傳；換網格才重建）
         uint aVao = m_MeshVao;
         // 半球環境光：沒有 skybox ⇒ 天 1.0／地 0.62（灰階，與無 skybox 的舊版逐位元相同）；
@@ -1778,6 +1843,7 @@ void main() {
                     gl.DrawElements(PrimitiveType.Triangles, (uint)m_ModelIndexCount, DrawElementsType.UnsignedInt, (void*)0);
                 }
                 if (aHasRopes) DrawGpu(m_RopeGpu);
+                if (aHasSmooth) DrawGpu(m_SmoothGpu);   // 平滑面（TASK-0645）：位置在槽 0，陰影那支 shader 只讀它
                 if (aHasParts) DrawParts(iParts!, m_ShadowProg, false);
             }
 
@@ -1855,7 +1921,7 @@ void main() {
                 gl.Disable(EnableCap.Blend);
             }
 
-            if (aHasMesh || aHasDyn || aHasModels || aHasRopes || aHasParts)
+            if (aHasMesh || aHasDyn || aHasModels || aHasRopes || aHasParts || aHasSmooth)
             {
                 gl.Enable(EnableCap.DepthTest);
                 gl.DepthFunc(DepthFunction.Less);
@@ -1866,6 +1932,9 @@ void main() {
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uNormalOffset"), 0.08f);
                 gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uAoMin"), 0.5f);
                 gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uHemiGround"), aHg.X, aHg.Y, aHg.Z);
+                gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uEye"), m_EyeGl.X, m_EyeGl.Y, m_EyeGl.Z);            // 金屬反光（TASK-0645）
+                gl.Uniform3(gl.GetUniformLocation(m_MainProg, "uViewDir"), m_ViewDirGl.X, m_ViewDirGl.Y, m_ViewDirGl.Z);
+                gl.Uniform1(gl.GetUniformLocation(m_MainProg, "uPersp"), m_Persp ? 1 : 0);
                 SetModel(m_MainProg, true, Matrix4x4.Identity, s_Identity3);   // 合併的那幾趟已在世界座標
                 if (aHasMesh)
                 {
@@ -1883,6 +1952,7 @@ void main() {
                     gl.DrawElements(PrimitiveType.Triangles, (uint)m_ModelIndexCount, DrawElementsType.UnsignedInt, (void*)0);
                 }
                 if (aHasRopes) DrawGpu(m_RopeGpu);
+                if (aHasSmooth) DrawGpu(m_SmoothGpu);
                 if (aHasParts) DrawParts(iParts!, m_MainProg, true);
             }
 
@@ -2020,8 +2090,11 @@ void main() {
         public int IndexCount;
     }
 
-    /// <summary>上傳一份網格（同 voxel 網格的頂點格式）；上傳完 CPU 那份就清掉（外框與框景點留著）。空的 ⇒ 回空的那顆。</summary>
-    unsafe GpuMesh UploadGpu(Mesh iMesh)
+    /// <summary>
+    /// 上傳一份網格（同 voxel 網格的頂點格式）；上傳完 CPU 那份就清掉（外框與框景點留著）。空的 ⇒ 回空的那顆。
+    /// <paramref name="iFloats"/> ＝ 8 ⇒ 平滑面（TASK-0645）：第 8 槽是 4ub 的金屬度、粗糙度 ⇒ 位置 3。
+    /// </summary>
+    unsafe GpuMesh UploadGpu(Mesh iMesh, int iFloats = 7)
     {
         var g = new GpuMesh();
         if (iMesh.IndexCount == 0) return g;
@@ -2034,13 +2107,18 @@ void main() {
         g.Ibo = gl.GenBuffer();
         gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, g.Ibo);
         gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, iMesh.Indices.AsSpan(), BufferUsageARB.StaticDraw);
-        const uint aStride = 7 * sizeof(float);
+        uint aStride = (uint)(iFloats * sizeof(float));
         gl.EnableVertexAttribArray(0);
         gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, aStride, (void*)0);
         gl.EnableVertexAttribArray(1);
         gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, aStride, (void*)(3 * sizeof(float)));
         gl.EnableVertexAttribArray(2);
         gl.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, aStride, (void*)(6 * sizeof(float)));
+        if (iFloats >= 8)
+        {
+            gl.EnableVertexAttribArray(3);
+            gl.VertexAttribPointer(3, 4, VertexAttribPointerType.UnsignedByte, true, aStride, (void*)(7 * sizeof(float)));
+        }
         gl.BindVertexArray(0);
         g.IndexCount = iMesh.IndexCount;
         iMesh.Vertices = Array.Empty<float>();
@@ -2094,6 +2172,8 @@ void main() {
     sealed class PartGpu
     {
         public GpuMesh Gpu;
+        /// <summary>平滑面（TASK-0645；來源帶 Surface 才有）。</summary>
+        public GpuMesh Smooth;
         public Vector3 Min, Max;
         public int Triangles;
     }
@@ -2106,8 +2186,9 @@ void main() {
     /// <summary>一個要畫的實例：GL 座標的 model 矩陣（System.Numerics 列向量慣例，同 uViewProj 的上傳法）、法線矩陣（直行優先 9 個）、鏡像。</summary>
     readonly struct PartDraw
     {
-        public PartDraw(GpuMesh iGpu, Matrix4x4 iModel, float[] iNormal, bool iFlip) { Gpu = iGpu; Model = iModel; Normal = iNormal; Flip = iFlip; }
+        public PartDraw(GpuMesh iGpu, GpuMesh iSmooth, Matrix4x4 iModel, float[] iNormal, bool iFlip) { Gpu = iGpu; Smooth = iSmooth; Model = iModel; Normal = iNormal; Flip = iFlip; }
         public GpuMesh Gpu { get; }
+        public GpuMesh Smooth { get; }
         public Matrix4x4 Model { get; }
         public float[] Normal { get; }
         public bool Flip { get; }
@@ -2135,25 +2216,28 @@ void main() {
             aLive.Add(aKey);
             if (m_Parts.ContainsKey(aKey)) continue;
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            Mesh m = src.Voxels != null ? SCP_SculptMeshBuilder.Voxels(src.Voxels, iP.AmbientOcclusion, iP.MergeFaces)
+            Mesh m = src.Voxels != null ? SCP_SculptMeshBuilder.Voxels(src.Voxels, iP.AmbientOcclusion, iP.MergeFaces, src.Surface)
                    : src.Model != null ? SCP_SculptMeshBuilder.Models(new[] { src.Model })
                    : new Mesh();
-            var pg = new PartGpu { Min = m.Min, Max = m.Max, Triangles = m.IndexCount / 3 };
+            // 平滑面（TASK-0645）：整份來源平滑 ⇒ 方塊網格是空的（外框照算）、面全在這一份
+            Mesh? sm = src.Voxels != null && src.Surface != null ? SCP_SculptSmoothMesh.Build(src.Voxels, src.Surface) : null;
+            var pg = new PartGpu { Min = m.Min, Max = m.Max, Triangles = (m.IndexCount + (sm?.IndexCount ?? 0)) / 3 };
             pg.Gpu = UploadGpu(m);
+            if (sm != null) pg.Smooth = UploadGpu(sm, SCP_SculptSmoothMesh.FloatsPerVertex);
             m_Parts[aKey] = pg;
             ioReading.PartBuilds++;
             ioReading.PartBuildMs += sw.Elapsed.TotalMilliseconds;
             PartBuildsTotal++;
         }
         foreach (string k in new List<string>(m_Parts.Keys))
-            if (!aLive.Contains(k)) { PartGpu dead = m_Parts[k]; DeleteGpu(ref dead.Gpu); m_Parts.Remove(k); }
+            if (!aLive.Contains(k)) { PartGpu dead = m_Parts[k]; DeleteGpu(ref dead.Gpu); DeleteGpu(ref dead.Smooth); m_Parts.Remove(k); }
 
         var aDraws = new List<PartDraw>();
         for (int i = 0; i < aParts.Instances.Count; i++)
         {
             SCP_SculptPartInstance inst = aParts.Instances[i];
             PartGpu pg = m_Parts[aKeys[inst.Source]];
-            if (pg.Gpu.IndexCount == 0) continue;
+            if (pg.Gpu.IndexCount == 0 && pg.Smooth.IndexCount == 0) continue;
             double[] A = inst.ToWorld;
             for (int c = 0; c < 8; c++)
             {
@@ -2163,8 +2247,8 @@ void main() {
                                           (float)(A[8] * x + A[9] * y + A[10] * z + A[11])));
             }
             if (iP.PartVisible != null && !iP.PartVisible[i]) continue;
-            aDraws.Add(InstanceDraw(pg.Gpu, A));
-            oIndexCount += pg.Gpu.IndexCount;
+            aDraws.Add(InstanceDraw(pg.Gpu, pg.Smooth, A));
+            oIndexCount += pg.Gpu.IndexCount + pg.Smooth.IndexCount;
             ioReading.PartTriangles += pg.Triangles;
         }
         ioReading.PartSources = aParts.Sources.Count;
@@ -2174,7 +2258,7 @@ void main() {
     }
 
     /// <summary>世界的 3×4 → GL 的 model 矩陣與法線矩陣（見區塊說明）。</summary>
-    static PartDraw InstanceDraw(GpuMesh iGpu, double[] A)
+    static PartDraw InstanceDraw(GpuMesh iGpu, GpuMesh iSmooth, double[] A)
     {
         double[] f = { 1, -1, 1 };
         var L = new double[3, 3];
@@ -2198,7 +2282,7 @@ void main() {
         };
         var aN = new float[9];   // 直行優先（GLSL mat3 的上傳順序）：aN[c*3+r] ＝ N[r,c]
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) aN[c * 3 + r] = (float)(C[r, c] * k * f[r] * f[c]);
-        return new PartDraw(iGpu, M, aN, det < 0);
+        return new PartDraw(iGpu, iSmooth, M, aN, det < 0);
     }
 
     /// <summary>設 model 矩陣（＋主畫那支 shader 的法線矩陣）。</summary>
@@ -2218,7 +2302,8 @@ void main() {
         {
             SetModel(iProg, iWithNormal, d.Model, d.Normal);
             if (d.Flip) gl.FrontFace(FrontFaceDirection.CW);
-            DrawGpu(d.Gpu);
+            if (d.Gpu.IndexCount > 0) DrawGpu(d.Gpu);
+            if (d.Smooth.IndexCount > 0) DrawGpu(d.Smooth);   // TASK-0645
             if (d.Flip) gl.FrontFace(FrontFaceDirection.Ccw);
         }
         SetModel(iProg, iWithNormal, Matrix4x4.Identity, s_Identity3);
@@ -2245,7 +2330,8 @@ void main() {
                 DeleteDynamicBuffers();
                 DeleteModelBuffers();
                 DeleteGpu(ref m_RopeGpu);
-                foreach (var aPart in m_Parts.Values) DeleteGpu(ref aPart.Gpu);
+                foreach (var aPart in m_Parts.Values) { DeleteGpu(ref aPart.Gpu); DeleteGpu(ref aPart.Smooth); }
+                DeleteGpu(ref m_SmoothGpu);
                 m_Parts.Clear();
                 m_Mesh = null;
                 DeleteTargets();
