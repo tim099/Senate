@@ -30,7 +30,7 @@ related:
 - 續造一艘船時，先依第 1 份的續作規則，用 CLI 讀那件作品的書卡、心得和 TODO，再開工。
 - 範例船：憲法號 `basecamp-frigate-constitution-01m`（從龍骨照圖紙造），餘燼號 `basecamp-ember-01m`（從憲法號魔改）。產生程式在各自作品的 `design/` 底下。
 - ⭐ **儘量用已有的元件**（Tim 2026-10-14）：砲、火藥桶、救生艇、舵輪、羅經櫃、絞盤、燈、格柵這類功能元件，別的船已經做過的就直接當外部模型引用（大小不合可以縮放），⛔ 不要重做一份 —— 比例、固定點、meta 都對過了；匯進遊戲時同一份網格也只存一次（§9.4）。船首像、船尾雕飾這種船的個性裝飾不在此限。現有元件看第 2 份 §2.1。
-- 給遊戲標的東西（帆、繩、旗的 meta，空艙房，甲板與梯子）在第 2 份 §9；標完照 §10 檢查表逐條勾。
+- 給遊戲標的東西（帆、繩、旗的 meta，空艙房，甲板與梯子，**舵與舵輪跟著轉向轉** §9.8.1）在第 2 份 §9；標完照 §10 檢查表逐條勾。
 - 現有的 op 不夠用時，照第 1 份最後一條，擴充引擎。
 
 ---
@@ -378,6 +378,7 @@ python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺�
   - 平滑面的厚度至少 2 格（1 格厚的薄板兩面會被平均到一起）；跟一般格相鄰的那一圈會釘在格角上（看起來比較硬）⇒ 想要整片平滑，就把那一整片都標進去。
   - 匯出時檔頭多一個 `render`（同 materials 的格式）；沒有關聯寫 ⇒ 沒有這個鍵。範例：維吉尼亞號（`ame-virginia-01m`）的砲廓鐵甲、駕駛塔、煙囪、撞角。
   - **金屬會反光**（TASK-0627）：材質表裡有 `metal`／`rough` 的材質（現在 iron、copper_sheath）在**平滑渲染**的面上有天空反射與太陽高光；方塊格的面還不反光 ⇒ 要看起來是金屬的鐵甲、煙囪，關聯同時標 `material=iron` 與 `render=smooth`。
+  - **雕刻觀測頁與 CLI view 也照畫**（TASK-0645）：同一組 meta、同一套平滑算法；反光的金屬度、粗糙度照**雕刻自己的材質表** `Sculpture/materials.json`（跟遊戲那份各管各的；新的材質 ID 兩邊都要加）⇒ 交船前在觀測頁就看得到平滑與反光。細節見 `Sculpture.md` §5.5。
 - 匯出：`format=vxk include=…,meta` 時檔頭多一個 `materials`（每一格的材質：照線性索引 x＋sx·(y＋sy·z) 相連、同材質的格一段，只寫非預設的段）；沒有任何關聯寫 material ⇒ **檔案跟以前一樣**（沒有這個鍵）。匯出讀數多一行「材質：iron 12,345 格…」。
 
 ### 9.6 蒸汽動力怎麼設：主機、鍋爐、煙囪、軸、螺旋槳（鐵甲艦、蒸汽艦）
@@ -427,12 +428,35 @@ Tim 2026-10-16：「跟隨船隻轉彎方向去轉舵輪&舵(參考螺旋槳跟�
 - **轉軸**（照順序找第一個有的）：模型的固定點 `spin-a` → `spin-b`（中心 ＝ spin-a）｜meta `spin_pivot_x／y／z` ＋ `spin_axis_x／y／z`（組裝件座標，跟舵的 hinge_* 同一種寫法）｜舵的 meta `hinge_*` ＋ `axis_*`（§9 rudder 那一列，舵不用另外寫軸）｜固定點 `hub-aft` → `hub-fore`｜固定點 `hub` ＋ meta `axis_*`（螺旋槳）。
 - **方向**：繞轉軸照右手定則（格座標 x 往船頭、y 往右舷、z 往上）。舵的軸朝上 ⇒ 正轉 ＝ 後緣擺向左舷 ＝ 左舵 ⇒ `spin_k` 寫正的；舵輪的軸朝船頭 ⇒ 正轉 ＝ 輪頂往左舷（「往要去的方向轉輪」）。
 - **只是畫面**：轉了不影響碰撞、不改戰局；被打飛時擺回 0°。⛔ 掛著擺的小艇、門不收（它們自己在轉）。螺旋槳寫了 `spin` ⇒ 照這一套；沒寫 ⇒ 照 §9.6（遊戲照推力算轉速）。
-- 範例（夜隼號、風暴角號，2026-10-16）：
-  - 舵：`{"spin":"rudder","spin_k":35,"spin_min":-35,"spin_max":35}`（軸用舵本來的 hinge／axis）
-  - 舵輪：`{"spin":"rudder","spin_k":540,"spin_lag":0.6,"spin_pivot_x":89.1,"spin_pivot_y":80.5,"spin_pivot_z":51.5,"spin_axis_x":1,"spin_axis_y":0,"spin_axis_z":0}`（軸心 ＝ 舵輪的 axle 固定點；⚠ 540° ＝ 滿舵一舷一圈半，是挑的，不是史料）
-  - 寫法：`senate cmd sculpture --arg op=work --arg sub=meta --arg part=model --arg work=<模型所在的作品> --arg name=<模型名> --arg 'meta={…}'`（meta 不限作者）。
 - 匯入檢查：來源不認得、找不到轉軸、上下限顛倒、寫在小艇或門上 ⇒ ⚠；讀數那一行列出每個會轉的模型。
 - ⚠ 還沒做：舵柄上的繩不跟著舵轉（滿舵時繩頭會離開舵柄）。
+
+#### 9.8.1 每艘船都要配：舵與舵輪（Tim 2026-10-16：「要配置舵與舵輪」）
+
+遊戲只轉**模型**（外部模型，`work sub=model`），⛔ 不轉關聯、更不轉船殼裡的格子。
+
+| 部件 | 必要條件 | spin meta（照抄） |
+|---|---|---|
+| 舵 | 模型 `kind=rudder`＋`hinge_x／y／z`、`axis_x／y／z`（舵繞的那條線，組裝件座標）、`max_deg`、`turn_axis=hinge`；舵子作品登記固定點 `stock-top`（舵頭） | `{"spin":"rudder","spin_k":<max_deg>,"spin_min":-<max_deg>,"spin_max":<max_deg>,"spin_lag":0.3}` —— 軸用舵本來的 hinge／axis，不用另外寫 |
+| 舵輪 | 模型 `kind=wheel`＋固定點 `hub-aft`、`hub-fore`（輪軸的兩端；共用的舵輪元件已經有） | `{"spin":"rudder","spin_k":540,"spin_lag":0.6}` —— 軸自動取 hub-aft → hub-fore；⚠ 540° ＝ 滿舵一舷一圈半，是挑的，不是史料 |
+
+- 寫法（meta 不限作者 —— 遊戲用的資訊，誰都能補；Tim 2026-10-16「直接修改吧 不影響作品本身」）：
+  `senate cmd sculpture --arg op=work --arg sub=meta --arg part=model --arg work=<模型所在的作品> --arg name=<模型名> --arg 'meta={…}'`。
+  模型在甲板子作品裡（部件清單路徑「甲板-spar/舵輪」）⇒ `work` 填那條關聯的作品、`name` 填斜線後面那一段。
+- 舵輪的軸也可以自己給（夜隼號、風暴角號的寫法）：`spin_pivot_x／y／z`（axle 固定點）＋`spin_axis_x／y／z`（朝船頭 1,0,0）。
+- 讀回：`senate cmd sculpture --arg op=export --arg format=parts --arg work=<組裝件>`，每個 `kind=rudder`／`kind=wheel` 的模型 meta 裡都要有 `spin`。
+
+**舵還是關聯（獨立子作品）或船殼裡的格子 ⇒ 改成模型**（⚠ 改模型、關聯、格子**只有作者能做**；改完舵會跟其他船一樣能被打飛 —— 打飛後只剩調帆轉向）：
+
+1. 舵在船殼格子裡 ⇒ 先把舵的格（舵葉、舵柱、舵柄）切成獨立子作品：子作品跟組裝件同框、at 0,0,0 最省事（`carvevox` 從船殼拿掉、`stampvox` 落進新子作品，兩份清單同一份格）。
+2. 量鉸鏈：每一層 z 取舵葉朝船頭最遠那一格（前緣）⇒ 擬合直線 x ＝ a ＋ b·z（丟掉離線超過 1.5 格的層：頂上往船頭伸出去的舵柄）⇒ `axis ＝ normalize(b, 0, 1)`，`hinge ＝`（前緣格角的外包絡在最低那層的 x、舵的中線 y、最低那層 z）。
+   這把尺拿四艘作者自己標的舵對過：潮墓號、收穫號、拿破崙號的鉸鏈都在作者值 ±0.4 格內、軸向差 ≤ 0.0007（夜隼號差 3 格 —— 它的 hinge 是舵柱中心線，不是前緣；兩種都轉得起來）。
+3. 舵子作品登記 `stock-top`（最高那層、舵頭那一格）：`work sub=anchor --arg work=<舵子作品> --arg name=stock-top --arg at=x,y,z`。
+4. 組裝件拿掉舵的關聯、改掛成模型（同一件子作品、原位）：
+   `work sub=unlink --arg name=舵`；
+   `work sub=model --arg name=舵 --arg source_work=<舵子作品> --arg pivot=<P> --arg at=<P＋關聯的 at> --arg scale=1 --arg 'meta={"kind":"rudder","hinge_x":…,"hinge_y":…,"hinge_z":…,"axis_x":…,"axis_y":0,"axis_z":…,"max_deg":35,"turn_axis":"hinge","spin":"rudder","spin_k":35,"spin_min":-35,"spin_max":35,"spin_lag":0.3}'`
+   （P 取鉸鏈在舵子作品座標裡的點；關聯原本 at 0,0,0 ⇒ at ＝ pivot ＝ P）。
+5. 遊戲那側重匯之後：`__game.lostModels(0)` 不能有舵（開局就掉 ＝ stock-top 找不到船尾）；匯入檢查「轉動」那一行列出舵與舵輪。
 
 ## 10. 換一艘船時的檢查表
 
@@ -441,6 +465,7 @@ Tim 2026-10-16：「跟隨船隻轉彎方向去轉舵輪&舵(參考螺旋槳跟�
 - [ ] 開工前跑過 `work sub=components`（§2.1），能用的現有元件都直接引用；新做的元件列在 notes（為什麼不能用現有的）
 - [ ] 砲、帆桁、舵輪、火藥桶是外部模型，各帶 meta 與固定點；羅經櫃、絞盤、小艇這類甲板上的東西也要帶 `kind`
 - [ ] 舵是模型 ⇒ meta `kind=rudder`（hinge／axis／max_deg／turn_axis），舵子作品登記 `stock-top`（舵頭）；遊戲裡開局 `__game.lostModels(0)` 不能有舵
+- [ ] 舵與舵輪跟著轉向轉（§9.8.1）：舵模型 meta `spin`（±max_deg）、舵輪模型 `kind=wheel`＋`hub-aft`／`hub-fore`＋meta `spin`（540、無上限）；舵還是關聯或船殼格子 ⇒ 照 §9.8.1 改成模型
 - [ ] 船殼的關聯（或組裝件）meta `kind=ship, waterline_z=<設計水線>`；notes 寫下量過的高度（水線、甲板地板、砲口、桅頂平台、帆頂、船殼前後端）給遊戲那側填 geo
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
 - [ ] 每間彈藥庫裡都有火藥桶模型（`kind=powder`，掛在彈藥庫子作品裡；§8）—— 沒有桶 ⇒ 遊戲沒有取用點、砲打完藥箱就停；匯入檢查的「火藥」那一行要每門都走得到
