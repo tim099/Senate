@@ -106,6 +106,7 @@ public sealed partial class Cmd_Sculpture
             aUsed.Add(r.Path + "=" + r.Work + "@" + r.Revision.Substring(0, Math.Min(12, r.Revision.Length)) + (r.Draft ? "(草稿)" : ""));
             c.Report.Append("- `").Append(r.Path).Append("` ← ").Append(r.Work).Append(r.Draft ? "（**草稿**）" : "")
                     .Append("：放 ").Append(r.Placed).Append(r.Overlap > 0 ? "、被蓋掉 " + r.Overlap : "").Append(r.Clipped > 0 ? "、越界丟掉 " + r.Clipped : "")
+                    .Append(r.CarveWork.Length > 0 ? "、照遮罩 " + r.CarveWork + " 挖掉 " + r.Carved : "")
                     .Append(r.PivotDrift ? "｜⚠ 那件作品的尺寸跟加關聯時不一樣（照加關聯時的軸心轉）" : "").Append('\n');
         }
         if (iReport.Rows.Count == 0) c.Report.Append("（這次沒有選到任何關聯）\n");
@@ -114,6 +115,7 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("link_placed", iReport.Placed.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_overlap", iReport.Overlap.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_clipped", iReport.Clipped.ToString(CultureInfo.InvariantCulture));
+        if (iReport.Rows.Exists(r => r.CarveWork.Length > 0)) c.Result.AddValue("link_carved", iReport.Carved.ToString(CultureInfo.InvariantCulture));   // 改裝船（TASK-0656）：沒用 carve ⇒ 不多這一格
         if (iReport.Overlap > 0 || iReport.Clipped > 0)
             c.Result.Lines.Add("⚠ 關聯：被蓋掉 " + iReport.Overlap + " 格、越界丟掉 " + iReport.Clipped + " 格（本作品的格優先；關聯照清單順序先到的贏）—— 位置見回傳檔");
     }
@@ -205,8 +207,31 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptLinkFile aFile = SCP_SculptLinks.Read(aPaths);
         int aIdx = aFile.links.FindIndex(l => l.name == aName);
         bool aPos = c.Args.IsExplicit("source_work") || c.Args.IsExplicit("at") || c.Args.IsExplicit("turn") || c.Args.IsExplicit("mirror");
-        bool aFlags = c.Args.IsExplicit("enabled") || c.Args.IsExplicit("note") || c.Args.IsExplicit("meta") || c.Args.IsExplicit("recolor");
+        bool aFlags = c.Args.IsExplicit("enabled") || c.Args.IsExplicit("note") || c.Args.IsExplicit("meta") || c.Args.IsExplicit("recolor")
+                      || c.Args.IsExplicit("link_hide") || c.Args.IsExplicit("link_carve");
         string aEnabled = c.Args.Get("enabled").Trim();
+        // 覆寫（TASK-0656 改裝船）：會改外觀 ⇒ 只有作者能設（⛔ 不走 TASK-0646 的「不影響外觀不限作者」）；路徑存不存在、遮罩合不合，下面整棵樹一起驗
+        List<string>? aHide = null;
+        string? aCarve = null;
+        if (c.Args.IsExplicit("link_hide") || c.Args.IsExplicit("link_carve"))
+        {
+            if (c.Persona != iCard.owner) return Blocked(c, 2, "link_hide／link_carve 會改外觀 ⇒ 只有作者（" + iCard.owner + "）能設；未寫入");
+            if (c.Args.IsExplicit("link_hide"))
+            {
+                if (SCP_SculptLinks.NormalizeHide(c.Args.Get("link_hide"), out List<string> aNormHide) is string aBadHide) return Blocked(c, 2, aBadHide + "；未寫入");
+                aHide = aNormHide;
+            }
+            if (c.Args.IsExplicit("link_carve"))
+            {
+                string v = c.Args.Get("link_carve").Trim();
+                if (v.Length == 0 || v == "none") aCarve = "";
+                else
+                {
+                    try { aCarve = SCP_SculptWorks.NormalizeId(v); }
+                    catch (ArgumentException e) { return Blocked(c, 2, "link_carve：" + e.Message + "；未寫入"); }
+                }
+            }
+        }
         if (c.Args.IsExplicit("enabled") && aEnabled != "0" && aEnabled != "1") return Blocked(c, 2, "enabled 要是 1 或 0（got '" + aEnabled + "'）");
         // 替換色（TASK-0584）：不動幾何 ⇒ 跟 enabled／note／meta 一樣直接改；先驗，壞了一格都不寫
         string? aRecolor = null;
@@ -223,11 +248,13 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptLink aLink;
         if (aIdx >= 0 && !aPos)
         {
-            if (!aFlags) return Blocked(c, 2, "關聯 `" + aName + "` 已經在了 —— 沒有要改什麼（改開關 enabled=0|1、note、meta、recolor 直接改；改作品／位置／轉向／鏡像要 overwrite=1）");
+            if (!aFlags) return Blocked(c, 2, "關聯 `" + aName + "` 已經在了 —— 沒有要改什麼（改開關 enabled=0|1、note、meta、recolor、link_hide、link_carve 直接改；改作品／位置／轉向／鏡像要 overwrite=1）");
             aLink = aFile.links[aIdx];
             if (c.Args.IsExplicit("enabled")) aLink.enabled = aEnabled == "1";
             if (c.Args.IsExplicit("note")) aLink.note = c.Args.Get("note").Trim();
             if (aRecolor != null) aLink.recolor = aRecolor;
+            if (aHide != null) aLink.hide = aHide;
+            if (aCarve != null) aLink.carve = aCarve;
             aLink.meta = aMeta;
         }
         else
@@ -260,6 +287,9 @@ public sealed partial class Cmd_Sculpture
                 persona = aOld?.persona ?? c.Persona,
                 note = c.Args.IsExplicit("note") ? c.Args.Get("note").Trim() : aOld?.note ?? "",
                 recolor = aRecolor ?? aOld?.recolor ?? "",
+                // 覆寫（TASK-0656）：換了作品 ⇒ 舊的路徑與遮罩不再對得上 ⇒ 沒給就清掉（⛔ 不默默帶過去）；同一件只搬位置 ⇒ 沿用
+                hide = aHide ?? (aOld != null && aOld.work == aChild.id ? aOld.hide : new List<string>()),
+                carve = aCarve ?? (aOld != null && aOld.work == aChild.id ? aOld.carve : ""),
                 meta = aMeta,
             };
             if (aIdx >= 0) aFile.links[aIdx] = aLink; else aFile.links.Add(aLink);
@@ -281,6 +311,11 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("link_turn", aLink.turn.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_mirror", aLink.mirror.Length == 0 ? "none" : aLink.mirror);
         c.Result.AddValue("link_recolor", aLink.recolor.Length == 0 ? "none" : aLink.recolor);
+        c.Result.AddValue("link_hide", aLink.hide.Count == 0 ? "none" : string.Join(",", aLink.hide));
+        c.Result.AddValue("link_carve", aLink.carve.Length == 0 ? "none" : aLink.carve);
+        // 覆寫實際拿掉了什麼（TASK-0656；樹已經照它剪過）
+        SCP_SculptLinkNode? aMine = aTree.Find(n => n.Path == aLink.name);
+        if (aLink.hide.Count > 0 && aMine != null) c.Result.AddValue("link_hide_applied", string.Join(";", aMine.HideApplied));
         c.Result.AddValue("links_schema", aFile.schema.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_enabled", aLink.enabled ? "1" : "0");
         c.Result.AddValue("link_count", aFile.links.Count.ToString(CultureInfo.InvariantCulture));
@@ -330,6 +365,9 @@ public sealed partial class Cmd_Sculpture
                 c.Report.Append(new string(' ', iDepth * 2)).Append("- `").Append(n.Path).Append("` → ").Append(n.Card.id).Append("《").Append(n.Card.title).Append("》by ").Append(n.Card.owner)
                         .Append(" @").Append(string.Join(",", n.Link.at)).Append(" turn ").Append(n.Link.turn).Append(n.Link.mirror.Length > 0 ? " mirror " + n.Link.mirror : "")
                         .Append(n.Link.recolor.Length > 0 ? " recolor " + n.Link.recolor : "").Append(n.Link.enabled ? "（開）" : "（關）")
+                        .Append(n.HideApplied.Count > 0 ? "｜拿掉 " + string.Join("、", n.HideApplied) : "")
+                        .Append(n.Carve != null ? "｜挖格子照遮罩 " + n.Carve.id : "")
+                        .Append(n.HiddenModels.Count > 0 ? "｜這一層的模型被上層拿掉：" + string.Join("、", n.HiddenModels) : "")
                         .Append(n.PivotDrift ? "｜⚠ 尺寸變過（加關聯時 " + string.Join(",", n.Link.pivot) + "、現在 " + n.Card.Dimensions + "）" : "")
                         .Append(SCP_SculptDraft.IsOpen(c.Works.SpacePaths(n.Card.id)) ? "｜📝 開著草稿" : "")
                         .Append(n.Link.note.Length > 0 ? "｜" + n.Link.note : "")

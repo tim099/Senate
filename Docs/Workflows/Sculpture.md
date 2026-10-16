@@ -640,6 +640,23 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
   - 只能換「一個舊色 → 一個新色」：同一個色在兩處要換成不同的色 ⇒ 先在零件裡把那兩群分成兩個色。
   - 樣本（量的，2026-10-16）：summit 岩堡港 `summit-rocher-01m-house-a2` ＝ `house-a1` 加 `recolor=218:213,168:109,132:73,49:42`（101,542 格，形狀相同、每個舊色只對到一個新色）⇒ 換成關聯可省一件約 1.47 MB 的雕刻庫檔。`house-a3` 形狀也相同，但色 218 有 12,324 格留著、22,626 格換成 246 ⇒ 單靠替換色做不到。
   - ⚠ vxk 裡關聯是展開成格子的 ⇒ 省的是雕刻庫，不是遊戲檔；遊戲檔要省得靠外部模型的替換色（TASK-0584 另一半，等跟 ame 對好 vxk）。
+- **覆寫：改裝船**（TASK-0656；Tim 2026-10-16：「可以把一艘船當成子作品概念去做改裝船」「修改可以包含挖掉原本船體上的格子 移除原有的子模組 概念類似 Unity 的 nested prefab」「只要記錄 diff 的部分」）：
+  一條關聯除了替換色，還能存兩種覆寫 —— 改的是**這條關聯看到的樣子**，被關聯的作品本身一格都不動（另一條關聯、另一艘船照舊看到原樣）。
+  ```bash
+  # 原船整艘關聯進來，拿掉它裡面的駕駛塔（關聯）、前艙蓋（甲板-main 這一層的外部模型），並照遮罩挖格子
+  senate cmd sculpture --arg op=work --arg sub=link --arg work=<改裝船> --arg persona=<作者> --arg name=原船 --arg source_work=<原船組裝件> --arg at=0,0,0 \
+      --arg link_hide=駕駛塔,甲板-main/艙蓋-前 --arg link_carve=<遮罩子作品>
+  senate cmd sculpture --arg op=work --arg sub=link --arg work=<改裝船> --arg persona=<作者> --arg name=原船 --arg link_hide=none   # 清掉（不用 overwrite）
+  ```
+  - `link_hide=路徑,…`：被關聯的作品**裡面**的關聯或外部模型，路徑相對這條關聯（`/` 分層）。整條都是關聯 ⇒ 連同底下剪掉；最後一段是那一層作品的外部模型 ⇒ 那個模型不在。
+    讀關聯樹的時候就剪（`SCP_SculptLinks.Tree`）⇒ 觀測、`export`（list／obj／vxk：部件外框、固定點、模型都少它）、攤平、繩、帆、觀測頁 GPU 預覽都當它不在；`hide_links=` 點不到被剪掉的路徑。
+  - `link_carve=<遮罩作品>`：遮罩是一件普通的子作品，**尺寸跟被關聯的作品一樣、用它自己的座標**；遮罩上有格（顏色不管）的地方，這條關聯底下**整棵組好的格**（含巢狀進來的）就少那一格。
+    在遮罩上 `stampvox`／`box` ＝ 挖、`carvevox` ＝ 補回來 —— 就是一般的雕刻，版本、undo、草稿照舊。只挖格子；外部模型要拿掉用 `link_hide`。挖在轉向之前 ⇒ 關聯轉了、翻了，遮罩照樣對得上。
+  - 讀數：`link_hide_applied`（每條拿掉的是關聯還是模型）；觀測與匯出的關聯列「照遮罩 <作品> 挖掉 N」、`link_carved`；export 檔頭 `link …` 那一行多 `carve <遮罩>@<版本> carved N`（沒用 carve ⇒ 跟以前一樣）。`sub=links` 每條印「拿掉 …」「挖格子照遮罩 …」。
+  - 🔴 擋下（links.json 不動）：路徑找不到（⛔ 打錯字不會變成「什麼都沒拿掉」）、遮罩尺寸跟被關聯的作品不一樣、遮罩是被關聯的作品自己或它的上層、**不是作者**（覆寫會改外觀 ⇒ 不走 TASK-0646 的「不影響外觀不限作者」）。換了被關聯的作品（overwrite 改 source_work）⇒ 舊的覆寫對不上，沒重給就清掉。
+  - ⚠ links.json 只要有一條用了覆寫就寫 **schema 5**（清掉回到原本的號）：沒更新的 senate.exe 讀到會 exit 2「schema=5」，⛔ 而不是默默畫成原船。schema 4 以下的檔卻帶 `hide`／`carve` ⇒ 大聲讀不了。
+  - 鎖：遮罩作品也在關聯樹的鎖裡（`Closure`）。
+  - 實例：哨兵號 `meadow-sentinel-01m`（2026-10-16）：`原船` → `meadow-monitor-01m-assembly`，`link_hide=駕駛塔`、`link_carve=meadow-sentinel-01m-carve`。造船那一側的做法見 Sculpture_Shipbuilding §11。
 - **寫入只動本作品**：父作品的刀碰不到被關聯的作品（要改去改那件作品）；落子後回報 `linked_hits`（這一刀的範圍裡有幾格是關聯進來的，沒被動到）。
 - **擋下**：成環（含隔好幾層、含停用的關聯；跟「作品當模型」一起繞成的也算，見 §9.4.8）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
 - **攤平**：`work sub=import`（匯入展區）與 `work sub=assemble`（來源有關聯）照 enabled 攤平成實際 voxel，Credit 逐件記；import 的 revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上。`work show` 另給 `composed_revision`／`composed_voxels`；Credit 多一段「關聯（現組）」。export 檔頭記每條用了哪個版本。

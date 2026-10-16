@@ -17,7 +17,7 @@ public sealed partial class Cmd_Sculpture
     static string? GameLayerPersona(Ctx c, string iWhat)
         => c.Persona.Length == 0 ? Blocked(c, 2, "改" + iWhat + "要給 persona（不是作者改的會記在那件作品的 meta_log.jsonl，查得到是誰改的）") : null;
 
-    static readonly string[] s_GameLayerLogArgs = { "name", "source_work", "file", "at", "pivot", "rotate", "scale", "mirror", "turn", "axes", "color", "enabled", "note", "meta", "recolor", "overwrite" };
+    static readonly string[] s_GameLayerLogArgs = { "name", "source_work", "file", "at", "pivot", "rotate", "scale", "mirror", "turn", "axes", "color", "enabled", "note", "meta", "recolor", "link_hide", "link_carve", "overwrite" };
 
     /// <summary>跑一支組裝層的 sub；成功、而且動手的不是作者 ⇒ 記一筆、回傳多一行說明。</summary>
     static string? GameLayer(Ctx c, SCP_SculptWork iCard, string iPart, string iSub, System.Func<string?> iRun)

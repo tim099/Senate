@@ -222,6 +222,10 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             + "／work model：在模型座標裡繞 pivot 翻面（none ＝ 不翻）"),
         new SCP_CmdArgSpec("recolor", "work link：替換色（TASK-0584）舊色:新色,…（例 218:213,213:218 ＝ 互換）—— 換這條關聯底下整棵子樹組好的格（巢狀：外層看到內層換完的色）；"
             + "同時換、不連鎖；表外的色不動；色 1..255（0 ＝ 空，不收）；不用 overwrite；none ＝ 清掉。用到就寫 links.json schema 4（沒更新的 senate.exe 讀到會擋）"),
+        new SCP_CmdArgSpec("link_hide", "work link：覆寫・拿掉（TASK-0656 改裝船）—— 被關聯的作品**裡面**要拿掉的關聯或外部模型，路徑相對這條關聯、逗號隔開（例 駕駛塔,甲板-main/砲塔）；"
+            + "觀測、匯出、繩、部件預覽都當它們不在；找不到的路徑 ⇒ 擋下；none ＝ 清掉。只有作者能設（會改外觀）；用到就寫 links.json schema 5"),
+        new SCP_CmdArgSpec("link_carve", "work link：覆寫・挖格子（TASK-0656 改裝船）—— 遮罩子作品的 ID：它的格（不管顏色）在被關聯作品自己的座標裡挖掉這條關聯底下整棵組好的格；"
+            + "遮罩要跟被關聯的作品一樣大；在遮罩上 stampvox／box ＝ 挖；只挖格子（模型用 link_hide）；none ＝ 清掉。只有作者能設；用到就寫 links.json schema 5"),
         new SCP_CmdArgSpec("exhibit", "view：展品 preset id"),
         new SCP_CmdArgSpec("light_dir", "view／exhibit register：一盞白光的行進方向 x,y,z（取代設定檔的燈）"),
         new SCP_CmdArgSpec("ambient", "view／exhibit register／render-profile set：環境光 0-1"),
