@@ -251,6 +251,7 @@ public static partial class SelfTest
         One(nameof(SculptSeaProfileCleanRoom), "sculpture", SculptSeaProfileCleanRoom),     // TASK-0585
         One(nameof(SculptSeaGpuCleanRoom), "sculpture", SculptSeaGpuCleanRoom),             // TASK-0585
         One(nameof(SculptPartsCleanRoom), "sculpture", SculptPartsCleanRoom, iImportant: true),
+        One(nameof(SculptGlbCleanRoom), "sculpture", SculptGlbCleanRoom),
         One(nameof(SculptMeshCacheCleanRoom), "sculpture", SculptMeshCacheCleanRoom),
         One(nameof(SculptGpuRealWorkReading), "sculpture", SculptGpuRealWorkReading),
         One(nameof(SculptCameraPinCleanRoom), "sculpture", SculptCameraPinCleanRoom),
