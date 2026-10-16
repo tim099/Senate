@@ -275,7 +275,7 @@ senate cmd sculpture --arg op=section --arg work=<作品> --arg persona=<P> --ar
 觀測頁的 GPU 預覽看個人作品時，請求一律帶 `parts=1`：
 
 - 主作品只帶**自己的格**；每個關聯節點（含作品裡設為關的）、每個外部模型各是一個**實例**，指向一份共用網格＋自己的矩陣（關聯：鏡像→轉→平移，巢狀逐層；模型：at／pivot／rotate／scale／mirror）。
-- **同件共用**：關聯 ＝ 同一件作品同一個版本（＋草稿）一份；外部模型 ＝ 同一個 obj（file 來源比 sha256＋大小，所以同一個檔用兩個名字也共用）＋同軸向＋同改色一份。渲染器以這個鍵快取網格，鍵沒變就不重建、不重傳。
+- **同件共用**：關聯 ＝ 同一件作品同一個版本（＋草稿）（＋同一張有效替換表，§9.4.4 替換色）一份；外部模型 ＝ 同一個 obj（file 來源比 sha256＋大小，所以同一個檔用兩個名字也共用）＋同軸向＋同改色一份。渲染器以這個鍵快取網格，鍵沒變就不重建、不重傳。
 - **各自完整顯示**：子模型畫自己的全部格子；跟主作品貼合處不互相剔除、重疊處兩份都在（合併版「自己的格優先、先到的贏、越界丟掉」不適用）。
 - **開關只切顯示**：關聯開關、`hide_links=self`、模型開關每幀換成「畫哪幾個實例」，⛔ 不重建任何網格。框景、地板、陰影範圍照**全部**實例算（切開關畫面不跳）。
 - 繩在分開畫時是自己一趟（不併進 voxel 網格）。繩與帆仍照關聯選取算 ⇒ 作品有繩或帆時，切關聯會在背景重新準備場景（子模型當下切換，繩稍後跟上）；沒有繩也沒有帆 ⇒ 不重新準備。
@@ -546,6 +546,19 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
   - 只改開關（`enabled`／`note`）不動鏡像；改鏡像跟改位置一樣要 `overwrite=1`。只有繞 Z 的 0／90／180／270 是旋轉；繞 X／Y 的效果用鏡像組合（例 `mirror=yz` ＝ 繞 X 轉 180°）。
   - ⚠ links.json 只要有一條用了鏡像就寫 **schema 2**（沒用的維持 1）：沒更新的 senate.exe 讀到會 exit 2「schema=2」，⛔ 而不是默默畫成沒翻面的零件。
   - 實例：`apex-one-constitution-mirror-hall`《憲法號的鏡廳》—— basecamp 兩版憲法號，一對 `mirror=z` 龍骨相接、一對 `mirror=x` 船頭相對（常駐展覽）。
+- **替換色**（TASK-0584）：`recolor=舊色:新色,…`（例 `218:213,213:218` ＝ 互換）—— 同一件零件換個配色再用一次，⛔ 不用複製一件只改色的子作品。
+  ```bash
+  senate cmd sculpture --arg op=work --arg sub=link --arg work=town --arg persona=<P> --arg name=房A2 --arg source_work=house-a1 --arg at=120,40,0 --arg recolor=218:213,168:109,132:73,49:42
+  senate cmd sculpture --arg op=work --arg sub=link --arg work=town --arg persona=<P> --arg name=房A2 --arg recolor=none   # 清掉（不用 overwrite）
+  ```
+  - 換的是那條關聯底下**整棵子樹組好的格**；巢狀時內層先換、外層看到的是**換完的色**（內層 40→50、外層寫 50:60 ⇒ 60；外層寫 40:70 用不到）。
+  - **同時換、不連鎖**（一次查表）；表外的色不動；色 1..255（換成 0 等於挖掉 ⇒ 擋）；同一個舊色寫兩次、舊色＝新色、格式錯 ⇒ exit 2、links.json 不動。
+  - 不動幾何 ⇒ 跟 `enabled`／`note`／`meta` 一樣直接改，不用 `overwrite`；`overwrite=1` 搬位置時替換表照留。`sub=links` 每條印 `recolor …`。
+  - 觀測、`export`（list／obj／vxk）、攤平（import／assemble）、觀測頁 GPU 的分開畫（§5.4：同一件作品、有效替換表不同 ⇒ 各一份網格）看到的都是換過的色。
+  - ⚠ links.json 只要有一條用了替換色就寫 **schema 4**（清掉就回到原本的號）：沒更新的 senate.exe 讀到會 exit 2「schema=4」，⛔ 而不是默默畫成原色。schema 3 以下的檔卻帶 `recolor` ⇒ 大聲讀不了（手改的，或舊版寫回去的）。
+  - 只能換「一個舊色 → 一個新色」：同一個色在兩處要換成不同的色 ⇒ 先在零件裡把那兩群分成兩個色。
+  - 樣本（量的，2026-10-16）：summit 岩堡港 `summit-rocher-01m-house-a2` ＝ `house-a1` 加 `recolor=218:213,168:109,132:73,49:42`（101,542 格，形狀相同、每個舊色只對到一個新色）⇒ 換成關聯可省一件約 1.47 MB 的雕刻庫檔。`house-a3` 形狀也相同，但色 218 有 12,324 格留著、22,626 格換成 246 ⇒ 單靠替換色做不到。
+  - ⚠ vxk 裡關聯是展開成格子的 ⇒ 省的是雕刻庫，不是遊戲檔；遊戲檔要省得靠外部模型的替換色（TASK-0584 另一半，等跟 ame 對好 vxk）。
 - **寫入只動本作品**：父作品的刀碰不到被關聯的作品（要改去改那件作品）；落子後回報 `linked_hits`（這一刀的範圍裡有幾格是關聯進來的，沒被動到）。
 - **擋下**：成環（含隔好幾層、含停用的關聯；跟「作品當模型」一起繞成的也算，見 §9.4.8）、關聯自己、作品不存在、放不下、保留字名（none／all／self／start／now）、名字含 `/`、非作者改關聯。關聯的增刪先拿 registry 鎖（兩個人同時互相關聯也擋得下）。
 - **攤平**：`work sub=import`（匯入展區）與 `work sub=assemble`（來源有關聯）照 enabled 攤平成實際 voxel，Credit 逐件記；import 的 revision 照攤平後的算 ⇒ 子作品一改，expect_revision 就對不上。`work show` 另給 `composed_revision`／`composed_voxels`；Credit 多一段「關聯（現組）」。export 檔頭記每條用了哪個版本。

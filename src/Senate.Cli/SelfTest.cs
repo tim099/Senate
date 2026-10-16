@@ -211,6 +211,7 @@ public static partial class SelfTest
         One(nameof(SculptureLinksCleanRoom), "sculpture", SculptureLinksCleanRoom),
         One(nameof(SculptureMirrorCleanRoom), "sculpture", SculptureMirrorCleanRoom),
         One(nameof(SculptureLinkTogglesCleanRoom), "sculpture", SculptureLinkTogglesCleanRoom),
+        One(nameof(SculptureLinkRecolorCleanRoom), "sculpture", SculptureLinkRecolorCleanRoom),
         One(nameof(SculptViewPresetsCleanRoom), "sculpture", SculptViewPresetsCleanRoom),
         // 觀測頁匯出設定與作品篩選（TASK-0504）：本體在 SelfTest.SculptureViewerSettings0504.cs
         One(nameof(SculptureViewerSettingsCleanRoom), "sculpture", SculptureViewerSettingsCleanRoom),

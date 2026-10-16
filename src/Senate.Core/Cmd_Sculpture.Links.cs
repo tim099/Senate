@@ -205,9 +205,16 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptLinkFile aFile = SCP_SculptLinks.Read(aPaths);
         int aIdx = aFile.links.FindIndex(l => l.name == aName);
         bool aPos = c.Args.IsExplicit("source_work") || c.Args.IsExplicit("at") || c.Args.IsExplicit("turn") || c.Args.IsExplicit("mirror");
-        bool aFlags = c.Args.IsExplicit("enabled") || c.Args.IsExplicit("note") || c.Args.IsExplicit("meta");
+        bool aFlags = c.Args.IsExplicit("enabled") || c.Args.IsExplicit("note") || c.Args.IsExplicit("meta") || c.Args.IsExplicit("recolor");
         string aEnabled = c.Args.Get("enabled").Trim();
         if (c.Args.IsExplicit("enabled") && aEnabled != "0" && aEnabled != "1") return Blocked(c, 2, "enabled 要是 1 或 0（got '" + aEnabled + "'）");
+        // 替換色（TASK-0584）：不動幾何 ⇒ 跟 enabled／note／meta 一樣直接改；先驗，壞了一格都不寫
+        string? aRecolor = null;
+        if (c.Args.IsExplicit("recolor"))
+        {
+            if (SCP_SculptLinks.NormalizeRecolor(c.Args.Get("recolor"), out string aNormRe, out _) is string aBadRe) return Blocked(c, 2, aBadRe + "；未寫入");
+            aRecolor = aNormRe;
+        }
         // meta（TASK-0517）：從既有那一筆出發合併；先在副本上驗，壞了一格都不寫
         SortedDictionary<string, SCP.Core.Json.SCP_JsonData> aMeta = SCP_SculptMeta.New();
         if (aIdx >= 0) foreach (var kv in aFile.links[aIdx].meta) aMeta[kv.Key] = kv.Value;
@@ -216,10 +223,11 @@ public sealed partial class Cmd_Sculpture
         SCP_SculptLink aLink;
         if (aIdx >= 0 && !aPos)
         {
-            if (!aFlags) return Blocked(c, 2, "關聯 `" + aName + "` 已經在了 —— 沒有要改什麼（改開關 enabled=0|1、note、meta 直接改；改作品／位置／轉向／鏡像要 overwrite=1）");
+            if (!aFlags) return Blocked(c, 2, "關聯 `" + aName + "` 已經在了 —— 沒有要改什麼（改開關 enabled=0|1、note、meta、recolor 直接改；改作品／位置／轉向／鏡像要 overwrite=1）");
             aLink = aFile.links[aIdx];
             if (c.Args.IsExplicit("enabled")) aLink.enabled = aEnabled == "1";
             if (c.Args.IsExplicit("note")) aLink.note = c.Args.Get("note").Trim();
+            if (aRecolor != null) aLink.recolor = aRecolor;
             aLink.meta = aMeta;
         }
         else
@@ -251,6 +259,7 @@ public sealed partial class Cmd_Sculpture
                 created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
                 persona = aOld?.persona ?? c.Persona,
                 note = c.Args.IsExplicit("note") ? c.Args.Get("note").Trim() : aOld?.note ?? "",
+                recolor = aRecolor ?? aOld?.recolor ?? "",
                 meta = aMeta,
             };
             if (aIdx >= 0) aFile.links[aIdx] = aLink; else aFile.links.Add(aLink);
@@ -271,12 +280,13 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("link_at", string.Join(",", aLink.at));
         c.Result.AddValue("link_turn", aLink.turn.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_mirror", aLink.mirror.Length == 0 ? "none" : aLink.mirror);
+        c.Result.AddValue("link_recolor", aLink.recolor.Length == 0 ? "none" : aLink.recolor);
         c.Result.AddValue("links_schema", aFile.schema.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("link_enabled", aLink.enabled ? "1" : "0");
         c.Result.AddValue("link_count", aFile.links.Count.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("links_file", aPaths.LinksFile.Replace('\\', '/'));
         AppendLinkTree(c, aTree);
-        return Finish(c, 0, "✓ 關聯 `" + aLink.name + "` → " + aLink.work + " @" + string.Join(",", aLink.at) + " turn " + aLink.turn + (aLink.mirror.Length > 0 ? " mirror " + aLink.mirror : "") + (aLink.enabled ? "（開）" : "（關）") + "｜只記關聯，一格 voxel 都沒複製");
+        return Finish(c, 0, "✓ 關聯 `" + aLink.name + "` → " + aLink.work + " @" + string.Join(",", aLink.at) + " turn " + aLink.turn + (aLink.mirror.Length > 0 ? " mirror " + aLink.mirror : "") + (aLink.recolor.Length > 0 ? " recolor " + aLink.recolor : "") + (aLink.enabled ? "（開）" : "（關）") + "｜只記關聯，一格 voxel 都沒複製");
     }
 
     /// <summary>work sub=unlink name=：拿掉一條關聯（那件作品本身不動）。</summary>
@@ -318,7 +328,8 @@ public sealed partial class Cmd_Sculpture
             foreach (var n in iNodes)
             {
                 c.Report.Append(new string(' ', iDepth * 2)).Append("- `").Append(n.Path).Append("` → ").Append(n.Card.id).Append("《").Append(n.Card.title).Append("》by ").Append(n.Card.owner)
-                        .Append(" @").Append(string.Join(",", n.Link.at)).Append(" turn ").Append(n.Link.turn).Append(n.Link.mirror.Length > 0 ? " mirror " + n.Link.mirror : "").Append(n.Link.enabled ? "（開）" : "（關）")
+                        .Append(" @").Append(string.Join(",", n.Link.at)).Append(" turn ").Append(n.Link.turn).Append(n.Link.mirror.Length > 0 ? " mirror " + n.Link.mirror : "")
+                        .Append(n.Link.recolor.Length > 0 ? " recolor " + n.Link.recolor : "").Append(n.Link.enabled ? "（開）" : "（關）")
                         .Append(n.PivotDrift ? "｜⚠ 尺寸變過（加關聯時 " + string.Join(",", n.Link.pivot) + "、現在 " + n.Card.Dimensions + "）" : "")
                         .Append(SCP_SculptDraft.IsOpen(c.Works.SpacePaths(n.Card.id)) ? "｜📝 開著草稿" : "")
                         .Append(n.Link.note.Length > 0 ? "｜" + n.Link.note : "")

@@ -214,6 +214,8 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("mirror", "兩種 op 兩種意思（同一個鍵）—— stats：**量**鏡像差 軸:中心（y:160 ＝ 以第 160 格中心為鏡面；y:159.5 ＝ 159 與 160 之間）"
             + "／work assemble／link：**翻面**（TASK-0497）x／y／z 或組合（例 x、xz），空＝不翻；先在零件自己的框裡翻、再 turn、再放到 at（外框不變）—— 左右對稱的零件只做一份、另一邊 mirror=x（或 y）關聯進來"
             + "／work model：在模型座標裡繞 pivot 翻面（none ＝ 不翻）"),
+        new SCP_CmdArgSpec("recolor", "work link：替換色（TASK-0584）舊色:新色,…（例 218:213,213:218 ＝ 互換）—— 換這條關聯底下整棵子樹組好的格（巢狀：外層看到內層換完的色）；"
+            + "同時換、不連鎖；表外的色不動；色 1..255（0 ＝ 空，不收）；不用 overwrite；none ＝ 清掉。用到就寫 links.json schema 4（沒更新的 senate.exe 讀到會擋）"),
         new SCP_CmdArgSpec("exhibit", "view：展品 preset id"),
         new SCP_CmdArgSpec("light_dir", "view／exhibit register：一盞白光的行進方向 x,y,z（取代設定檔的燈）"),
         new SCP_CmdArgSpec("ambient", "view／exhibit register／render-profile set：環境光 0-1"),
