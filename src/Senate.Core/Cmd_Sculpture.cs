@@ -943,6 +943,12 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         c.Result.AddValue("total_voxels", aPlan.TotalVoxels.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("visible_voxels", aPlan.Voxels.Count.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("out_of_range_colors", aPlan.OutOfRangeColors.ToString(CultureInfo.InvariantCulture));
+        // 平滑渲染＋材質（TASK-0645）：有平滑格才印（沒有的作品輸出跟以前一樣）
+        if (aPlan.Params.Surface != null)
+        {
+            c.Result.AddValue("smooth_voxels", aPlan.Params.Surface.Smooth.Count.ToString(CultureInfo.InvariantCulture));
+            c.Result.Lines.Add("· 平滑渲染：" + aPlan.Params.Surface.Describe());
+        }
         c.Result.AddValue("width", aPlan.Params.Width.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("height", aPlan.Params.Height.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("sha256", aSha);
@@ -965,15 +971,20 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         if (!TryViewArgs(c, out SCP_SculptViewArgs aViewArgs, out ViewAutos aAutos, out string aArgBad)) { oError = aArgBad; return 2; }
         if (ConfigureParts(c, aViewArgs) is string aPartsBad) { oError = aPartsBad; return 2; }
         SCP_SculptParts? aParts = c.Parts ? new SCP_SculptParts() : null;
+        // 雕刻的材質表（TASK-0645；Sculpture/materials.json）：平滑面的金屬度、粗糙度。沒有檔 ⇒ 空表；壞檔 ⇒ 擋（⛔ 不默默當成沒有表）
+        SCP_SculptMaterials aMats;
+        try { aMats = SCP_SculptMaterials.Load(Path.GetDirectoryName(c.Works.Root) ?? c.Works.Root); }
+        catch (InvalidDataException e) { oError = e.Message; return 2; }
 
         try
         {
             using (LockWorks(c))   // 作品＋關聯樹上所有作品，依 ID 排序（TASK-0494）
             {
                 SCP_SculptEngine aEngine = NewEngine(c);
+                aEngine.Materials = aMats;
                 if (aParts != null) aEngine.Links = null;   // TASK-0509：主作品只帶自己的格；關聯改成實例（下面那一行）
                 oPlan = aEngine.PrepareView(aViewArgs, aBase);
-                if (aParts != null && oPlan.ExitCode == 0 && c.LinkTree != null) aParts.AddLinks(c.Works, c.LinkTree, c.Links?.UseDrafts ?? c.Draft);
+                if (aParts != null && oPlan.ExitCode == 0 && c.LinkTree != null) aParts.AddLinks(c.Works, c.LinkTree, c.Links?.UseDrafts ?? c.Draft, aMats);
             }
         }
         catch (SCP_FileLockTimeoutException e) { oError = "拿不到雕刻鎖：" + e.Message; return 4; }

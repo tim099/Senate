@@ -250,6 +250,9 @@ public static partial class SelfTest
         One(nameof(SculptMergeParityCleanRoom), "sculpture", SculptMergeParityCleanRoom),
         One(nameof(SculptSeaProfileCleanRoom), "sculpture", SculptSeaProfileCleanRoom),     // TASK-0585
         One(nameof(SculptSeaGpuCleanRoom), "sculpture", SculptSeaGpuCleanRoom),             // TASK-0585
+        // 雕刻平滑渲染＋材質反光（TASK-0645）：本體在 SelfTest.SculptSmooth0645.cs
+        One(nameof(SculptSmoothMeshCleanRoom), "sculpture", SculptSmoothMeshCleanRoom),
+        One(nameof(SculptSmoothGpuCleanRoom), "sculpture", SculptSmoothGpuCleanRoom),
         One(nameof(SculptPartsCleanRoom), "sculpture", SculptPartsCleanRoom, iImportant: true),
         One(nameof(SculptGlbCleanRoom), "sculpture", SculptGlbCleanRoom),
         One(nameof(SculptMeshCacheCleanRoom), "sculpture", SculptMeshCacheCleanRoom),
