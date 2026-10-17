@@ -12,7 +12,7 @@ namespace Senate.Core;
 
 public sealed partial class Cmd_Sculpture
 {
-    static readonly string[] s_VxkInclude = { "rig", "models", "parts", "meta", "ends" };
+    static readonly string[] s_VxkInclude = { "rig", "models", "parts", "meta", "ends", "recipe" };
 
     static string? ExportVxk(Ctx c)
     {
@@ -23,11 +23,12 @@ public sealed partial class Cmd_Sculpture
         foreach (string s in c.Args.Get("include").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
         {
             string k = s.Trim().ToLowerInvariant();
-            if (Array.IndexOf(s_VxkInclude, k) < 0) return Blocked(c, 2, "include 只認 rig,models,parts,meta,ends（got '" + s.Trim() + "'）");
+            if (Array.IndexOf(s_VxkInclude, k) < 0) return Blocked(c, 2, "include 只認 rig,models,parts,meta,ends,recipe（got '" + s.Trim() + "'）");
             aInc.Add(k);
         }
         if (aInc.Contains("models") && !aInc.Contains("rig")) return Blocked(c, 2, "include=models 要配 rig（模型放在 header 的 rig.models／rig.meshes）");
         if (aInc.Contains("ends") && !aInc.Contains("rig")) return Blocked(c, 2, "include=ends 要配 rig（繩的兩端放在 header 的 rig.ropes）");
+        if (aInc.Contains("recipe") && !aInc.Contains("rig")) return Blocked(c, 2, "include=recipe 要配 rig（帆的配方放在 header 的 rig.sails[].recipe）");
         if (c.Args.Get("region").Trim().Length > 0 || c.Args.Get("exclude_color").Trim().Length > 0) return Blocked(c, 2, "vxk 是整件作品的封裝 —— 不吃 region／exclude_color");
         SCP_SculptWork aCard = c.Work;
 
@@ -70,7 +71,7 @@ public sealed partial class Cmd_Sculpture
             try
             {
                 aRigJ.Set("ropes", SCP_SculptVxk.Ropes(SCP_SculptRopes.Drawable(aRig.Ropes)));
-                aRigJ.Set("sails", SCP_SculptVxk.Sails(aRig.SailGeoms()));
+                aRigJ.Set("sails", SCP_SculptVxk.Sails(aRig.SailGeoms(), aInc.Contains("recipe")));   // recipe：帆的配方（Blockside TASK-0602 ①：遊戲照配方切平布、自己吹鼓）
             }
             catch (InvalidDataException e) { return Blocked(c, 1, "vxk：" + e.Message); }
             var aSkipped = SCP_JsonData.NewObject();
