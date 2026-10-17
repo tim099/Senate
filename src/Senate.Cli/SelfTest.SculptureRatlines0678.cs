@@ -99,6 +99,14 @@ public static partial class SelfTest
             var c1 = Ropes().Find(r => r.Path == "R.01");
             Check(cl.ExitCode == 0 && c1 != null && c1.Rope.meta["climb"].AsDouble() == 1 && c1.Rope.meta["foot"].AsString() == "15.5,6.5,1.5" && c1.Rope.meta["head"].AsString() == "8.5,3.5,31.5"
                   && c1.Rope.meta["ratlines"].AsString() == "R", "climb=1 ⇒ meta climb／foot／head／ratlines：" + (c1 == null ? "—" : SCP_SculptMeta.Describe(c1.Rope.meta)));
+            // 不限作者（Tim 2026-10-17「遊戲meta相關可以調整」）：別人改橫繩組 ⇒ 成功、記進 meta_log；一條一條的繩照舊只有作者
+            var other = room.Run(("op", "work"), ("sub", "ratlines"), ("work", "ship"), ("persona", "q"), ("name", "R"), ("step", "5"));
+            string log = File.Exists(store.SpacePaths("ship").MetaLogFile) ? File.ReadAllText(store.SpacePaths("ship").MetaLogFile) : "";
+            Check(other.ExitCode == 0 && log.Contains("\"part\":\"ratlines\"") && log.Contains("\"persona\":\"q\"") && log.Contains("\"step\":\"5\"") && !log.Contains("thickness"),
+                  "不是作者改橫繩組 ⇒ 成功、meta_log 記 part=ratlines、persona q、只記有給的參數（exit " + other.ExitCode + "）：" + log);
+            Check(room.Run(("op", "work"), ("sub", "rope"), ("work", "ship"), ("persona", "q"), ("name", "A"), ("thickness", "0.9")).ExitCode == 2, "一條一條的繩：不是作者 ⇒ 照舊擋");
+            // ⚠ 「沒給 persona ⇒ 擋」這裡驗不了：宿主會照呼叫的工作階段補 persona（量過：淨室裡不帶 persona 照樣 exit 0）
+            Check(Sub("ratlines", ("name", "R"), ("step", "4")).ExitCode == 0, "作者改回 step 4");
             byte[] withSet = File.ReadAllBytes(RopesFile());
             Check(Sub("ratlines", ("name", "R"), ("rope_b", "A")).ExitCode == 2 && File.ReadAllBytes(RopesFile()).SequenceEqual(withSet), "🔴 換母繩沒 overwrite ⇒ 擋、零寫入");
             var un = Sub("unrope", ("name", "B"));

@@ -306,6 +306,9 @@ public sealed partial class Cmd_Sculpture
 
     // ───────────────────────── 橫繩組（TASK-0678）─────────────────────────
 
+    /// <summary>橫繩組不限作者的規則出處（記進 meta_log；GameLayer）。</summary>
+    const string RatlinesRule = "TASK-0678：遊戲 meta 相關（橫繩組、繩梯）不限作者（Tim 2026-10-17「遊戲meta相關可以調整」）";
+
     /// <summary>每個橫繩組一行：幾道、z 範圍、最短／最長一道、狀態、繩梯的兩個落腳點。回 組數。</summary>
     static int AppendRatlinesReport(Ctx c, List<SCP_SculptRopeReading> iReadings)
     {
@@ -345,7 +348,7 @@ public sealed partial class Cmd_Sculpture
     /// </summary>
     static string? WorkRatlines(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改繩索");
+        if (GameLayerPersona(c, "橫繩組") is string aNoPersona) return aNoPersona;   // 不限作者（Tim 2026-10-17「遊戲meta相關可以調整」；不是作者 ⇒ GameLayer 記 meta_log）
         string aName = c.Args.Get("name");
         if (SCP_SculptRopes.ValidName(aName, "橫繩組") is string aBadName) return Blocked(c, 2, aBadName);
         var aPaths = c.Works.SpacePaths(iCard.id);
@@ -414,7 +417,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>work sub=unratlines name=：拿掉一個橫繩組（展開的橫繩跟著沒了；它們只在觀測時存在）。</summary>
     static string? WorkUnratlines(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改繩索");
+        if (GameLayerPersona(c, "橫繩組") is string aNoPersona) return aNoPersona;
         string aName = c.Args.Get("name").Trim();
         var aPaths = c.Works.SpacePaths(iCard.id);
         SCP_SculptRopeFile aFile = SCP_SculptRopes.ReadRopes(aPaths);

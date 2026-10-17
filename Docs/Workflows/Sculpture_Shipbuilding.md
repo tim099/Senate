@@ -236,7 +236,7 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
 - 上 deadeye 用一段短而粗的繩當圓盤（軸朝舷外、直徑 3、長 2），lanyards 3 條排開 ±0.9（階段二十五）。
 - 全部分組（`rope_groups.tsv`）：standing/…、ratlines/…、running/…、guns/…、ladders/…、steering —— 觀測時可以一組一組開關。
 - 順序坑：會改同一批繩的工具（rig_standing → rig_deadeyes → ratlines）要照順序重跑，前一支會把後一支改過的端點改回去。
-- **ratlines 用橫繩組，⛔ 不再一條一條下子繩**（TASK-0678，Tim 2026-10-17）：每根桅、每一層 shrouds、每一舷一組，只標**最前、最後那兩根 shroud**＋間距 ⇒ 觀測時引擎照它們現在的形狀等高展開（`組名.01…`，由下往上）。shroud 的下端換了（rig_deadeyes）也不用重跑 ratlines（上一條的順序坑對 ratlines 不再成立）。寫法與擋法見 `Sculpture.md` §9.4.6「橫繩組」。
+- **ratlines 用橫繩組，⛔ 不再一條一條下子繩**（TASK-0678，Tim 2026-10-17）：每根桅、每一層 shrouds、每一舷一組，只標**最前、最後那兩根 shroud**＋間距 ⇒ 觀測時引擎照它們現在的形狀等高展開（`組名.01…`，由下往上）。shroud 的下端換了（rig_deadeyes）也不用重跑 ratlines（上一條的順序坑對 ratlines 不再成立）。寫法與擋法見 `Sculpture.md` §9.4.6「橫繩組」。**不限作者**（Tim 2026-10-17「遊戲meta相關可以調整」）：遊戲那側可以直接替別人的船改橫繩組、標繩梯（記在 `meta_log.jsonl`）。
   ```bash
   senate cmd sculpture --arg op=work --arg sub=ratlines --arg work=<組裝件> --arg persona=<P> --arg name=fore-lower-P --arg rope_a=fore-shroud-P1 --arg rope_b=fore-shroud-P8 --arg step=4 --arg start=7 --arg stop=16 --arg min_span=5 --arg thickness=0.3 --arg color=#2b2620 --arg group=ratlines/lower
   ```

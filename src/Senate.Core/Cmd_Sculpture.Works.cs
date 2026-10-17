@@ -122,8 +122,8 @@ public sealed partial class Cmd_Sculpture
             if (sub == "unrope") return WorkUnrope(c, cardNow);
             if (sub == "ropes") return WorkRopes(c, cardNow);
             if (sub == "ropegroup") return WorkRopeGroup(c, cardNow);   // TASK-0512
-            if (sub == "ratlines") return WorkRatlines(c, cardNow);       // TASK-0678
-            if (sub == "unratlines") return WorkUnratlines(c, cardNow);
+            if (sub == "ratlines") return GameLayer(c, cardNow, "ratlines", sub, () => WorkRatlines(c, cardNow), RatlinesRule);       // TASK-0678：不限作者（遊戲 meta）
+            if (sub == "unratlines") return GameLayer(c, cardNow, "ratlines", sub, () => WorkUnratlines(c, cardNow), RatlinesRule);
             // TASK-0503：帆（作品資料，不是 voxel；改的只有作者）
             if (sub == "sail") return WorkSail(c, cardNow);
             if (sub == "unsail") return WorkUnsail(c, cardNow);

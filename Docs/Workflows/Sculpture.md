@@ -759,6 +759,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_rope_groups=standi
   - **繩梯**：`climb=1` 要給 `foot`／`head`（固定點｜關聯/…/固定點｜x,y,z｜model:；整數 ＝ 格心）—— 兩個**站得住**的格（腳下實心、上面 7 格空，同遊戲的 `standZ`）；寫入前解一次，解不到 ⇒ exit 2。展開的每道帶 meta：`kind=ratline`、`ratlines=<組路徑>`、`rung`、`rungs`，繩梯再加 `climb=1`、`foot`／`head`（組裝件座標 `x,y,z`，同繩的 pts）。`export vxk include=rig,meta` 照常帶出 ⇒ 遊戲認成一座梯子（foot → 最低一道 → 最高一道 → head）。
   - **擋**（exit 2、零寫入）：母繩不存在、a＝b、step 不在 0.5..1000、start／stop／min_span < 0、climb 沒給落腳點、落腳點是 `rope:`／`sail:`、名字跟繩撞（`組名` 或 `組名.…`）、換母繩沒 `overwrite=1`、一道都展不出來。觀測時母繩或落腳點壞了 ⇒ 整組一筆 broken（路徑 ＝ 組名，原因寫哪一條）。
   - `sub=ropes` 多一段「橫繩組」：每組幾道、z 範圍、最短／最長一道、狀態、🪜 繩梯的兩個落腳點。有橫繩組的 `ropes.json` 寫 `schema 4`（沒更新的 senate.exe 讀到會大聲讀不了）；拿掉最後一組 ⇒ 檔逐位元組回原樣。
+  - **不限作者**（Tim 2026-10-17「遊戲meta相關可以調整」）：橫繩組（間距、繩梯 climb／foot／head）是給遊戲的配置 ⇒ `sub=ratlines`／`unratlines` 誰都能改（要給 persona）；不是作者改的記進那件作品的 `meta_log.jsonl`（part `ratlines`、只記有給的參數、rule 寫出處）。一條一條的繩（`sub=rope`／`unrope`／`ropegroup`）照舊只有作者。
 
 ### 9.4.7 帆 —— 布料模擬，綁在固定點與繩上（TASK-0503）
 
