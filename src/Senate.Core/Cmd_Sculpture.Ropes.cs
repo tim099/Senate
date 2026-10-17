@@ -297,10 +297,133 @@ public sealed partial class Cmd_Sculpture
                                                                     new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }, null, null,
                                                                     ModelsForRig(c, iCard.id, aTree, new SCP_SculptLinkSelection())).Ropes;
         AppendRopeReport(c, aReadings, true);
+        AppendRatlinesReport(c, aReadings);
         int aGroups = AppendRopeGroupReport(c, aReadings, iCard.id);
         c.Result.AddValue("rope_count", aReadings.Count.ToString(CultureInfo.InvariantCulture));
         int aBroken = aReadings.FindAll(r => r.State == SCP_SculptRopeReading.Broken).Count;
         return Finish(c, 0, "✓ 繩 " + aReadings.Count + " 條（含關聯）" + (aGroups > 0 ? "、分 " + aGroups + " 組" : "") + (aBroken > 0 ? "｜🔴 " + aBroken + " 條綁定壞了" : ""));
+    }
+
+    // ───────────────────────── 橫繩組（TASK-0678）─────────────────────────
+
+    /// <summary>每個橫繩組一行：幾道、z 範圍、最短／最長一道、狀態、繩梯的兩個落腳點。回 組數。</summary>
+    static int AppendRatlinesReport(Ctx c, List<SCP_SculptRopeReading> iReadings)
+    {
+        var aBy = new SortedDictionary<string, List<SCP_SculptRopeReading>>(StringComparer.Ordinal);
+        foreach (var r in iReadings)
+            if (r.Ratlines.Length > 0) { if (!aBy.TryGetValue(r.Ratlines, out var l)) aBy[r.Ratlines] = l = new List<SCP_SculptRopeReading>(); l.Add(r); }
+        if (aBy.Count == 0) return 0;
+        c.Report.Append("\n## 橫繩組（兩條母繩之間等高展開的子繩；觀測時才展開 —— 單位：格）\n");
+        int aRungs = 0;
+        foreach (var kv in aBy)
+        {
+            var l = kv.Value;
+            SCP_SculptRopeReading f = l[0];
+            if (l.Count == 1 && f.State == SCP_SculptRopeReading.Broken && f.Path == kv.Key)
+            {
+                c.Report.Append("- 🔴 `").Append(kv.Key).Append("`：").Append(f.Reason).Append('\n');
+                continue;
+            }
+            aRungs += l.Count;
+            double aMin = double.MaxValue, aMax = 0;
+            foreach (var r in l) { aMin = Math.Min(aMin, r.Length); aMax = Math.Max(aMax, r.Length); }
+            var aStates = l.GroupBy(r => r.State).Select(g => g.Key + " " + g.Count());
+            c.Report.Append("- `").Append(kv.Key).Append("`：").Append(l.Count).Append(" 道｜z ").Append(F2(l[0].From?[2] ?? 0)).Append(" → ").Append(F2(l[l.Count - 1].From?[2] ?? 0))
+                    .Append("｜一道長 ").Append(F2(aMin)).Append("–").Append(F2(aMax)).Append("｜").Append(string.Join("、", aStates));
+            if (f.Rope.meta.TryGetValue("climb", out _))
+                c.Report.Append("｜🪜 繩梯 foot ").Append(f.Rope.meta["foot"].AsString()).Append(" → head ").Append(f.Rope.meta["head"].AsString());
+            c.Report.Append('\n');
+        }
+        c.Result.AddValue("ratlines_sets", aBy.Count.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("ratlines_rungs", aRungs.ToString(CultureInfo.InvariantCulture));
+        return aBy.Count;
+    }
+
+    /// <summary>
+    /// work sub=ratlines name= rope_a= rope_b= [step=] [start=] [stop=] [min_span=] [color=] [thickness=] [group=] [enabled=] [climb= foot= head=] [note=]（TASK-0678）：
+    /// 加（或改）一個橫繩組。同名已在 ⇒ 給的欄位直接改（換母繩要 overwrite=1）。寫之前用寫了之後的樣子解一次：母繩、落腳點解不到、一道都展不出來 ⇒ 擋、未寫入。
+    /// </summary>
+    static string? WorkRatlines(Ctx c, SCP_SculptWork iCard)
+    {
+        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改繩索");
+        string aName = c.Args.Get("name");
+        if (SCP_SculptRopes.ValidName(aName, "橫繩組") is string aBadName) return Blocked(c, 2, aBadName);
+        var aPaths = c.Works.SpacePaths(iCard.id);
+        SCP_SculptRopeFile aFile = SCP_SculptRopes.ReadRopes(aPaths);
+        int aIdx = aFile.ratlines.FindIndex(s => s.name == aName);
+        SCP_SculptRatlines? aOld = aIdx >= 0 ? aFile.ratlines[aIdx] : null;
+        string[] aKeys = { "rope_a", "rope_b", "step", "start", "stop", "min_span", "color", "thickness", "group", "enabled", "climb", "foot", "head", "note" };
+        if (aOld != null && !aKeys.Any(k => c.Args.IsExplicit(k))) return Blocked(c, 2, "橫繩組 `" + aName + "` 已經在了 —— 沒有要改什麼（" + string.Join("／", aKeys) + "）");
+        if (aOld != null && (c.Args.IsExplicit("rope_a") || c.Args.IsExplicit("rope_b")) && !WorkOverwrite(c)) return Blocked(c, 2, "已經有橫繩組 `" + aName + "`（" + aOld.a + " ↔ " + aOld.b + "）—— ⛔ 不默默換母繩；要換請加 overwrite=1");
+        if (aOld == null && (!c.Args.IsExplicit("rope_a") || !c.Args.IsExplicit("rope_b"))) return Blocked(c, 2, "加橫繩組要 name=<名> rope_a=<母繩> rope_b=<母繩>（繩名｜關聯/…/繩名）[step=4]");
+        var s = new SCP_SculptRatlines
+        {
+            name = aName,
+            a = c.Args.IsExplicit("rope_a") ? c.Args.Get("rope_a").Trim().Trim('/') : aOld!.a,
+            b = c.Args.IsExplicit("rope_b") ? c.Args.Get("rope_b").Trim().Trim('/') : aOld!.b,
+            step = aOld?.step ?? 4, start = aOld?.start ?? 0, stop = aOld?.stop ?? 0, min_span = aOld?.min_span ?? 0,
+            color = aOld?.color ?? SCP_SculptRopes.DefaultColor, thickness = aOld?.thickness ?? SCP_SculptRopes.DefaultThickness,
+            enabled = aOld?.enabled ?? true, group = aOld?.group ?? "", climb = aOld?.climb ?? false, foot = aOld?.foot ?? "", head = aOld?.head ?? "",
+            note = c.Args.IsExplicit("note") ? c.Args.Get("note").Trim() : aOld?.note ?? "",
+            persona = aOld?.persona ?? c.Persona,
+            created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+        };
+        foreach (string k in new[] { "step", "start", "stop", "min_span", "thickness" })
+        {
+            if (!c.Args.IsExplicit(k)) continue;
+            if (!TryFinite(c.Args.Get(k).Trim(), out double v)) return Blocked(c, 2, k + " 不是數字；未寫入");
+            switch (k) { case "step": s.step = v; break; case "start": s.start = v; break; case "stop": s.stop = v; break; case "min_span": s.min_span = v; break; default: s.thickness = v; break; }
+        }
+        if (c.Args.IsExplicit("color"))
+        {
+            if (SCP_SculptRopes.TryParseColor(c.Args.Get("color"), out _, out _, out _, out string aNorm) is string aBadColor) return Blocked(c, 2, aBadColor + "；未寫入");
+            s.color = aNorm;
+        }
+        foreach (string k in new[] { "enabled", "climb" })
+        {
+            if (!c.Args.IsExplicit(k)) continue;
+            string v = c.Args.Get(k).Trim();
+            if (v != "0" && v != "1") return Blocked(c, 2, k + " 要是 1 或 0（got '" + v + "'）；未寫入");
+            if (k == "enabled") s.enabled = v == "1"; else s.climb = v == "1";
+        }
+        if (c.Args.IsExplicit("group")) { string g = c.Args.Get("group").Trim().Trim('/'); s.group = g == "none" ? "" : g; }
+        if (c.Args.IsExplicit("foot")) s.foot = c.Args.Get("foot").Trim();
+        if (c.Args.IsExplicit("head")) s.head = c.Args.Get("head").Trim();
+        if (aIdx >= 0) aFile.ratlines[aIdx] = s; else aFile.ratlines.Add(s);
+        if (SCP_SculptRopes.CheckRatlines(aFile, s) is string aBad) return Blocked(c, 2, aBad + "；未寫入");
+
+        // 寫之前用「寫了之後的樣子」解一次（同 rope）
+        List<SCP_SculptLinkNode>? aTree = null;
+        try { aTree = SCP_SculptLinks.Tree(c.Works, iCard.id); }
+        catch (Exception e) when (e is ArgumentException || e is InvalidOperationException) { return Blocked(c, 2, "關聯樹讀不了（母繩驗不了）：" + e.Message + "；未寫入"); }
+        List<SCP_SculptRopeReading> aAll = SCP_SculptSails.Rig(c.Works, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", ""), new SCP_SculptRopeSelection(), new SCP_SculptSailSelection(),
+                                                               new SCP_SculptSailEnv { MetersPerVoxel = iCard.MetersPerVoxel }, null, aFile,
+                                                               ModelsForRig(c, iCard.id, aTree, SCP_SculptLinkSelection.Parse("all", ""))).Ropes;
+        List<SCP_SculptRopeReading> aMine = aAll.FindAll(r => r.Ratlines == s.name);
+        SCP_SculptRopeReading? aBroken = aMine.Find(r => r.State == SCP_SculptRopeReading.Broken);
+        if (aMine.Count == 0) return Blocked(c, 1, "寫之前的回讀沒找到這一組（不該發生）；未寫入");
+        if (aBroken != null) return Blocked(c, 2, aBroken.Reason + "；未寫入");
+        SCP_SculptRopes.SaveRopes(aPaths, aFile);
+        AppendRatlinesReport(c, aMine);
+        c.Result.AddValue("ratlines", s.name);
+        c.Result.AddValue("ropes_file", aPaths.RopesFile.Replace('\\', '/'));
+        return Finish(c, 0, "✓ 橫繩組 `" + s.name + "` " + s.a + " ↔ " + s.b + "：" + aMine.Count + " 道（每 " + F2(s.step) + " 格）" + (s.climb ? "｜🪜 繩梯" : "") + (s.enabled ? "" : "（關）")
+                            + (s.group.Length > 0 ? "｜組 " + s.group : "") + "｜不是 voxel，一格都沒動");
+    }
+
+    /// <summary>work sub=unratlines name=：拿掉一個橫繩組（展開的橫繩跟著沒了；它們只在觀測時存在）。</summary>
+    static string? WorkUnratlines(Ctx c, SCP_SculptWork iCard)
+    {
+        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改繩索");
+        string aName = c.Args.Get("name").Trim();
+        var aPaths = c.Works.SpacePaths(iCard.id);
+        SCP_SculptRopeFile aFile = SCP_SculptRopes.ReadRopes(aPaths);
+        int aIdx = aFile.ratlines.FindIndex(s => s.name == aName);
+        if (aIdx < 0) return Blocked(c, 2, "沒有橫繩組 `" + aName + "`（現有：" + (aFile.ratlines.Count == 0 ? "（沒有）" : string.Join("、", aFile.ratlines.ConvertAll(s => s.name))) + "）");
+        aFile.ratlines.RemoveAt(aIdx);
+        SCP_SculptRopes.SaveRopes(aPaths, aFile);
+        c.Result.AddValue("ratlines_count", aFile.ratlines.Count.ToString(CultureInfo.InvariantCulture));
+        return Finish(c, 0, "✓ 拿掉橫繩組 `" + aName + "`");
     }
 
     // ───────────────────────── 子繩（TASK-0511）與分組（TASK-0512）─────────────────────────
@@ -414,7 +537,8 @@ public sealed partial class Cmd_Sculpture
                 if (aRx.IsMatch(r.name)) { r.group = aName; aAssigned++; }
             if (aAssigned == 0) return Blocked(c, 2, "assign=`" + c.Args.Get("assign") + "` 一條繩都沒符合（本作品 " + aFile.ropes.Count + " 條）；未寫入");
         }
-        bool aUsed = aFile.ropes.Exists(r => r.group == aName || r.group.StartsWith(aName + "/", StringComparison.Ordinal));
+        bool aUsed = aFile.ropes.Exists(r => r.group == aName || r.group.StartsWith(aName + "/", StringComparison.Ordinal))
+                     || aFile.ratlines.Exists(s => s.group == aName || s.group.StartsWith(aName + "/", StringComparison.Ordinal));   // TASK-0678：橫繩組也算組裡有繩
         if (!aUsed)
         {
             var aHave = new SortedSet<string>(StringComparer.Ordinal);

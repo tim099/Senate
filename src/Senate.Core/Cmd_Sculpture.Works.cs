@@ -36,7 +36,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>拿作品鎖之後才分派的 sub（create／list／assemble 自己管鎖）。</summary>
     static readonly string[] s_WorkLockedSubs =
         { "show", "update", "import", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links", "preset", "unpreset", "presets",
-          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "sea", "lamps", "meta", "split-events" };
+          "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "ratlines", "unratlines", "sail", "unsail", "sails", "wind", "sea", "lamps", "meta", "split-events" };
 
     static string? OpWork(Ctx c)
     {
@@ -122,6 +122,8 @@ public sealed partial class Cmd_Sculpture
             if (sub == "unrope") return WorkUnrope(c, cardNow);
             if (sub == "ropes") return WorkRopes(c, cardNow);
             if (sub == "ropegroup") return WorkRopeGroup(c, cardNow);   // TASK-0512
+            if (sub == "ratlines") return WorkRatlines(c, cardNow);       // TASK-0678
+            if (sub == "unratlines") return WorkUnratlines(c, cardNow);
             // TASK-0503：帆（作品資料，不是 voxel；改的只有作者）
             if (sub == "sail") return WorkSail(c, cardNow);
             if (sub == "unsail") return WorkUnsail(c, cardNow);

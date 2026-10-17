@@ -55,6 +55,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         + "受重力下垂（懸鏈線），跟著關聯的 at／turn／mirror 走；sub=ropes 印每條的長度與最大下垂；view／export obj 畫成管子（ropes=0｜hide_ropes=路徑 一次性關掉）。\n"
         + "  子繩（TASK-0511）：端點寫 rope:繩名/比例（0..1）⇒ 掛在那條繩上、跟著它動、兩端拉直不算物理、畫成省面數的細管。"
         + "分組（TASK-0512）：sub=rope group=組路徑、sub=ropegroup name=組 [assign=繩名 regex] [enabled=0|1]；觀測 rope_groups=／hide_rope_groups= 一次只畫／拿掉幾組。\n"
+        + "  橫繩組（TASK-0678）：sub=ratlines name= rope_a= rope_b= [step=4] [start=] [stop=] [min_span=] ⇒ 只記兩條母繩＋間距，觀測時照母繩現在的形狀等高展開成子繩 名字.01…；climb=1 foot= head= ⇒ 繩梯（每道 meta 帶落腳點，遊戲照它爬）；sub=unratlines 拿掉。\n"
         + "· 帆（TASK-0503，不是 voxel）：work sub=sail name= corners=\"角0|角1|角2[|角3]\" [bind=邊] [free=角] [color=] 掛帆（角 ＝ 固定點｜關聯/…/固定點｜x,y,z）；"
         + "布料模擬（重力＋風），view／export 帶 wind=x,y,z（m/s）sail_seconds=秒 取那一刻；繩端點 sail:帆名/角 ⇒ 繩拉住 free 角；sub=sails 印讀數、sub=wind 設預設風；sails=0｜hide_sails= 一次性不畫。\n"
         + "· 預授權用**最壞費用**擋餘額 —— 不夠 ⇒ 引擎不跑、一毛不扣（exit 3）。\n"
@@ -158,6 +159,15 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("rope_groups", "view／export：這次只畫這幾組繩（組的全路徑,…：組裝件自己的寫組路徑，關聯裡的寫 關聯/…/組路徑；連同子組；打錯 ⇒ 擋；TASK-0512）"),
         new SCP_CmdArgSpec("hide_rope_groups", "view／export：這次拿掉這幾組繩（同 rope_groups 的寫法；連同子組；打錯 ⇒ 擋；TASK-0512）"),
         new SCP_CmdArgSpec("group", "work rope：這條繩歸到哪一組（組路徑，/ 分層，例 standing/shrouds；none ＝ 不分組；TASK-0512）"),
+        new SCP_CmdArgSpec("rope_a", "work ratlines：母繩之一（繩名｜關聯/…/繩名，相對於本作品；TASK-0678）—— 橫繩從 rope_a 拉到 rope_b"),
+        new SCP_CmdArgSpec("rope_b", "work ratlines：另一條母繩（同 rope_a）"),
+        new SCP_CmdArgSpec("step", "work ratlines：每幾格一道（沿 z，等高 ⇒ 水平；0.5..1000，預設 4）"),
+        new SCP_CmdArgSpec("start", "work ratlines：兩條母繩較高的那個下端往上幾格起第一道（預設 0）"),
+        new SCP_CmdArgSpec("stop", "work ratlines：兩條母繩較低的那個上端往下幾格為止（預設 0）"),
+        new SCP_CmdArgSpec("min_span", "work ratlines：一道短於幾格就停（母繩往上收攏；0 ＝ 不限，預設 0）"),
+        new SCP_CmdArgSpec("climb", "work ratlines：1 ＝ 繩梯（遊戲裡爬得上去：展開的每道帶 meta climb／foot／head）｜0", iChoices: new[] { "0", "1" }),
+        new SCP_CmdArgSpec("foot", "work ratlines climb=1：繩梯下面的落腳點（固定點名｜關聯/…/固定點名｜x,y,z｜model:模型名/點；整數 ＝ 格心）"),
+        new SCP_CmdArgSpec("head", "work ratlines climb=1：繩梯上面的落腳點（同 foot）"),
         new SCP_CmdArgSpec("assign", "work ropegroup：把名字符合這個 regex 的繩（本作品的）都歸到 name= 這一組（一個都沒符合 ⇒ 擋、零寫入）"),
         new SCP_CmdArgSpec("sails", "view／export：1（預設）畫帆｜0 ＝ 這次不畫帆（照樣模擬；TASK-0503）"),
         new SCP_CmdArgSpec("hide_sails", "view／export：這次拿掉哪幾面帆（帆路徑,…；照樣模擬；打錯 ⇒ 擋）"),
@@ -287,9 +297,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("out_dir", "export：輸出資料夾（預設 Sculpture/exports）"),
         new SCP_CmdArgSpec("merge", "export obj：同色共面合併 greedy（預設，面數大減、頂點共用）｜none（逐 voxel 面，與舊輸出相同；要 watertight 時用）", iChoices: new[] { "greedy", "none" }),
         new SCP_CmdArgSpec("sealed", "export obj：完全封在模型裡的面（朝向封閉空腔、跟外面不連通的空格；同 stats structure 的定義）omit 省略（預設，作品不動）｜keep 照常輸出（除錯、或 3D 列印要印出中空）", iChoices: new[] { "omit", "keep" }),
-        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|sail|unsail|sails|wind|sea|lamps|meta|model|unmodel|models|split|components|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
+        new SCP_CmdArgSpec("sub", "work：create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|ropegroup|ratlines|unratlines|sail|unsail|sails|wind|sea|lamps|meta|model|unmodel|models|split|components|split-events；exhibit：list|register；render-profile：list|show|set|use|copy|delete|reset",
                            iChoices: new[] { "list", "register", "show", "set", "use", "copy", "delete", "reset", "create", "update", "import", "assemble", "move", "undo", "redo", "history", "mark", "marks", "draft", "apply", "discard", "link", "unlink", "links", "preset", "unpreset", "presets",
-                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "sail", "unsail", "sails", "wind", "sea", "lamps", "meta", "model", "unmodel", "models", "split", "components", "split-events" }),
+                                             "anchor", "unanchor", "anchors", "rope", "unrope", "ropes", "ropegroup", "ratlines", "unratlines", "sail", "unsail", "sails", "wind", "sea", "lamps", "meta", "model", "unmodel", "models", "split", "components", "split-events" }),
         new SCP_CmdArgSpec("id", "work create：全庫唯一作品ID；exhibit register：展品 id"),
         new SCP_CmdArgSpec("title", "work create/update：作品名稱；exhibit register：標題"),
         new SCP_CmdArgSpec("author", "exhibit register：創作者（不給 ⇒ persona）"),

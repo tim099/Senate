@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-12（子繩 rope:繩名/比例、繩分組 sub=ropegroup／rope_groups／hide_rope_groups（§9.4.6））
+last_updated: 2026-10-17（橫繩組 sub=ratlines／unratlines、繩梯 climb（§9.4.6））
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -747,6 +747,18 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_rope_groups=standi
 - **分組**（TASK-0512）：繩的 `group` ＝ 組路徑（`/` 分層，例 `standing/shrouds`；`group=none` 不分組）。`sub=ropegroup name=<組> [assign=<繩名 regex>] [enabled=0|1] [note=]`：`assign` 把本作品名字符合的繩歸進這組（一條都沒符合 ⇒ exit 2）；`enabled=0` ⇒ 這組連同子組**平常**不畫（state `disabled`，原因寫哪一組）；組裡沒有繩 ⇒ exit 2。
   - **全路徑** ＝ 繩所在那一層的關聯路徑＋`/`＋組路徑（組裝件自己的就是組路徑；桅上的 `stays` 在組裝件看是 `主桅/stays`）。觀測 `rope_groups=全路徑,…`（這次只畫這幾組）／`hide_rope_groups=全路徑,…`（這次拿掉），都連同子組；打錯 ⇒ exit 2。`sub=ropes` 多一段「繩的組」：每組幾條（含子組）、各狀態幾條、平常開關。
   - 用到組或子繩的 `ropes.json` 寫 `schema 2` ⇒ 沒更新的 senate.exe 讀到會**大聲讀不了**（⛔ 不會默默丟掉組再寫回去）；都沒用的照舊 `schema 1`。
+- **橫繩組**（TASK-0678）：ratlines 那種「兩條繩之間一道一道的橫繩」不用一條一條下子繩 —— 只記兩條母繩＋間距，**觀測時**才照母繩現在的形狀展開。
+  ```bash
+  senate cmd sculpture --arg op=work --arg sub=ratlines --arg work=ship --arg persona=<P> --arg name=fore-lower-P --arg rope_a=fore-shroud-P1 --arg rope_b=fore-shroud-P8 --arg step=4 --arg start=7 --arg stop=16 --arg min_span=5 --arg thickness=0.3 --arg color=#2b2620 --arg group=ratlines/lower
+  senate cmd sculpture --arg op=work --arg sub=ratlines --arg work=ship --arg persona=<P> --arg name=fore-lower-P --arg climb=1 --arg foot=567,116,105 --arg head=582,132,264   # 繩梯
+  senate cmd sculpture --arg op=work --arg sub=unratlines --arg work=ship --arg persona=<P> --arg name=fore-lower-P
+  ```
+  - **展開**：z 從「兩條母繩較高的那個下端＋`start`」到「較低的那個上端−`stop`」，每 `step` 格一道（z0＋k·step，等高 ⇒ 水平）；每道就是一條子繩 `rope:<rope_a>/比例 → rope:<rope_b>/比例`（比例照母繩**實際的曲線**算：垂下來的繩取靠下端那一次穿過），名字 `組名.01`、`.02`…（由下往上）、組／色／粗照這一組。一道兩端距離短於 `min_span` ⇒ 停（母繩往上收攏）；上限 400 道。
+  - **跟著母繩**：母繩換端點、改 slack ⇒ 下一次觀測就重排（⛔ 不用重下）；展開的橫繩跟手寫的子繩同一支解、同一支畫 ⇒ view、觀測頁、`export obj`／`vxk`、`hide_ropes`（路徑 `組名.NN`）、`rope_groups` 都照舊。母繩上有橫繩 ⇒ `unrope` 擋（同子繩）。
+  - **只看兩條母繩**：中間的其他 shroud 不算 ⇒ 起點是**這兩條**較高的下端。（憲法號：舊的 `ratlines.py` 拿整排最高的 deadeye，換成橫繩組後每道低 0.00–0.02 格。）
+  - **繩梯**：`climb=1` 要給 `foot`／`head`（固定點｜關聯/…/固定點｜x,y,z｜model:；整數 ＝ 格心）—— 兩個**站得住**的格（腳下實心、上面 7 格空，同遊戲的 `standZ`）；寫入前解一次，解不到 ⇒ exit 2。展開的每道帶 meta：`kind=ratline`、`ratlines=<組路徑>`、`rung`、`rungs`，繩梯再加 `climb=1`、`foot`／`head`（組裝件座標 `x,y,z`，同繩的 pts）。`export vxk include=rig,meta` 照常帶出 ⇒ 遊戲認成一座梯子（foot → 最低一道 → 最高一道 → head）。
+  - **擋**（exit 2、零寫入）：母繩不存在、a＝b、step 不在 0.5..1000、start／stop／min_span < 0、climb 沒給落腳點、落腳點是 `rope:`／`sail:`、名字跟繩撞（`組名` 或 `組名.…`）、換母繩沒 `overwrite=1`、一道都展不出來。觀測時母繩或落腳點壞了 ⇒ 整組一筆 broken（路徑 ＝ 組名，原因寫哪一條）。
+  - `sub=ropes` 多一段「橫繩組」：每組幾道、z 範圍、最短／最長一道、狀態、🪜 繩梯的兩個落腳點。有橫繩組的 `ropes.json` 寫 `schema 4`（沒更新的 senate.exe 讀到會大聲讀不了）；拿掉最後一組 ⇒ 檔逐位元組回原樣。
 
 ### 9.4.7 帆 —— 布料模擬，綁在固定點與繩上（TASK-0503）
 

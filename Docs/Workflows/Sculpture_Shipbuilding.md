@@ -1,7 +1,7 @@
 ---
 title: 造船規格與做法（從憲法號整理）—— 結構、建造順序、砲、帆桁、繩、帆、彈藥庫、給遊戲的 meta
 description: 風帆戰艦這一類作品專用的規格：座標與比例、作品怎麼拆（船殼／組裝件／子作品／一舷＋鏡像）、建議的建造順序、砲（一門一件子作品、外部模型、退到零碰撞、固定點、砲索）、迴旋砲與整座轉的砲塔、帆桁（每根一件子作品、pivot、繞 z 轉）、繩與帆的數值、彈藥庫與火藥桶、蒸汽動力（主機、鍋爐、煙囪、軸、螺旋槳）、給遊戲的 meta 與 .vxk 匯出；每條附憲法號當時的讀數與踩過的坑。
-last_updated: 2026-10-15（§4.6 整座轉的砲塔怎麼做、§9.6 蒸汽動力怎麼設；meadow。2026-10-14 §2.1、§9.4；ame。原稿 2026-10-12 憲法號 TASK-0478 階段一～三十三；basecamp）
+last_updated: 2026-10-17（§6 ratlines 改用橫繩組、繩梯 climb；§9、§9.3 繩梯也是通道；§10；basecamp TASK-0678。2026-10-15 §4.6 整座轉的砲塔怎麼做、§9.6 蒸汽動力怎麼設；meadow。2026-10-14 §2.1、§9.4；ame。原稿 2026-10-12 憲法號 TASK-0478 階段一～三十三；basecamp）
 target_audience: [AI_Agent]
 related:
   - Sculpture_Blueprint_Build.md | Sculpture_Blueprint_Build | 照圖紙雕大型作品的通用流程（新圖紙、兩本帳、反向對照、verifier）
@@ -227,7 +227,7 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
 | 類 | 色 | 粗 | slack | 備註 |
 |---|---|---|---|---|
 | 靜索（shrouds、backstays、stays）| #2b2620（上過焦油）| 0.4–1.5 | shrouds／backstays 1.0；stays 1.0006–1.0008 | ⚠ 長而陡的繩一點點鬆就垂很多：backstays 1.0004 垂 19–37 格 ⇒ 1.0 |
-| ratlines | #2b2620 | 0.3／0.25 | 子繩（`rope:<shroud>/比例`）| 每 4 格一道；從上 deadeye 頂往上 7 格起；短於 5 格不畫 |
+| ratlines | #2b2620 | 0.3／0.25 | **橫繩組**（`sub=ratlines`，見下）| 每 4 格一道（`step=4`）；從上 deadeye 頂往上 7 格起（lower `start=7 stop=16`、topmast `start=4 stop=10`）；短於 5 格不畫（`min_span=5`） |
 | 動索（sheets、tacks）| #a08458 | 0.35–0.5 | course sheet 0.85、tack 0.8 | — |
 | 砲索 | #b59a6a | 0.6／0.35 | 1.12／1.03／1.05 | §4.4 |
 | 扶手繩（梯子、entry port）| #cdb88e | 0.35 | 1.02／拉直 | — |
@@ -236,6 +236,13 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
 - 上 deadeye 用一段短而粗的繩當圓盤（軸朝舷外、直徑 3、長 2），lanyards 3 條排開 ±0.9（階段二十五）。
 - 全部分組（`rope_groups.tsv`）：standing/…、ratlines/…、running/…、guns/…、ladders/…、steering —— 觀測時可以一組一組開關。
 - 順序坑：會改同一批繩的工具（rig_standing → rig_deadeyes → ratlines）要照順序重跑，前一支會把後一支改過的端點改回去。
+- **ratlines 用橫繩組，⛔ 不再一條一條下子繩**（TASK-0678，Tim 2026-10-17）：每根桅、每一層 shrouds、每一舷一組，只標**最前、最後那兩根 shroud**＋間距 ⇒ 觀測時引擎照它們現在的形狀等高展開（`組名.01…`，由下往上）。shroud 的下端換了（rig_deadeyes）也不用重跑 ratlines（上一條的順序坑對 ratlines 不再成立）。寫法與擋法見 `Sculpture.md` §9.4.6「橫繩組」。
+  ```bash
+  senate cmd sculpture --arg op=work --arg sub=ratlines --arg work=<組裝件> --arg persona=<P> --arg name=fore-lower-P --arg rope_a=fore-shroud-P1 --arg rope_b=fore-shroud-P8 --arg step=4 --arg start=7 --arg stop=16 --arg min_span=5 --arg thickness=0.3 --arg color=#2b2620 --arg group=ratlines/lower
+  ```
+  - 組名照 `<桅>-<lower|topmast>-<P|S>`；`rope_a` 用最前那根（x 最大）、`rope_b` 最後那根 ⇒ 每道從前往後拉（跟舊的子繩同方向）。
+  - 起點只看這兩根的下端（中間那幾根不算）：憲法號換成橫繩組後，每道比舊的 `ratlines.py`（拿整排最高的 deadeye）低 0.00–0.02 格；道數 12 組全部相同（328 道）。
+- **繩梯**（`climb=1 foot= head=`）：標了的那一組，遊戲（第一人稱）照 foot → 最低一道 → 最高一道 → head 爬（§9 `ladders` 那一列、§9.3 通道）。lower ratlines：foot ＝ 舷牆**內側**的甲板（channel 在船殼外，⛔ 不要放在 channel 上）、head ＝ 桅頂平台靠這一舷的邊（＝ topmast ratlines 的起點那一格）；topmast ratlines 上面的 crosstrees 沒有站得住的格 ⇒ 先不標 climb。落腳點要**站得住**：腳下實心、上面 7 格空（同遊戲的 `standZ`）——量法：沿這一組最低一道的中點往船內走，過了舷牆之後第一格甲板再往內 2 格。
 
 ## 7. 帆
 
@@ -266,6 +273,7 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
 | `powder` | 火藥桶模型 | `powder_lb=100` | — |
 | `yard` | 帆桁模型 | 見 §5 | pivot、earing… |
 | `ladders` | 梯子所在的關聯（一個關聯可放好幾座） | — | 每座 4 個：`<梯名>.foot`／`.lo`／`.hi`／`.head` |
+| `ratline`（繩梯） | 橫繩組展開的每一道（**引擎自己寫**，⛔ 不用 `sub=meta` 標；TASK-0678） | `ratlines`（組路徑）、`rung`、`rungs`；`climb=1` 那一組再加 `climb`、`foot`、`head`（組裝件座標 `x,y,z`） | —（foot／head 是橫繩組的參數 `climb=1 foot= head=`；lo／hi ＝ 最低／最高一道的中點，遊戲自己算） |
 | `wheel` | 舵輪模型 | — | 來源作品有的照給（憲法號 -wheel：`hub-aft`、`hub-fore`、`drum-rope-a／b`）|
 | `binnacle` | 羅經櫃模型 | — | 沒有（用模型外框）|
 | `capstan` | 絞盤模型 | — | 沒有（用模型外框）|
@@ -290,6 +298,7 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
 - meta 是平的 `{鍵: 字串或數字}`，`work sub=model｜link meta=` 合併進去；有 meta 的檔 schema 會升（models 2、links 3），舊 exe 讀不了會大聲擋。
 - 梯子的四個點都取「腳踩的那一格」＝ 地板或踏板上面第一格空氣（讀的人取格心）：foot ＝ 下層甲板、最低一階往下梯方向站著等的那一格；lo／hi ＝ 最低／最高那一階；head ＝ 上層甲板、跨過艙口圍欄站穩的那一格（往外第一段連續 3 欄一樣高的平地）。哪兩層甲板由 foot／head 的高度判斷，不另外標。
   算點：餘燼號 `design/tools/ladder_points.py <組裝件> <甲板子作品>:<關聯名>:<梯子子作品>…`（梯名與方向從扶手繩固定點 `manrope-<梯名>-<P|S>-<top|bot>` 讀；不帶 `--apply` 只算）。
+- 繩梯（橫繩組 `climb=1`，§6）跟梯子同一套：遊戲把它當一座梯子（第一人稱 E 爬、水手照 §9.3 走）。差別只在踏板是繩 ⇒ 斷不斷照橫繩（斷一半以上 ⇒ 斷了），不看格子。
 - 匯出：`op=export format=parts`（外框＋meta＋固定點的 JSON）、`format=vxk include=rig,models,parts,meta`（給遊戲；out 要絕對路徑）。改完任何部件都重匯一次，**格數與 checksum 會變**，要跟遊戲那側說。
 
 ### 9.1 帆、繩、旗的 meta（遊戲照 meta 判斷；TASK-0539）
@@ -376,6 +385,7 @@ python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺�
 - 房間、梯子、砲照**關聯路徑**屬於那一層（`甲板-berth/艙房`、`甲板-berth/梯子`）；路徑看不出來的照高度落在哪一層。
 
 **通道**：梯子（§9 `kind=ladders`，foot／lo／hi／head）。兩頭各落在哪一層照那一欄的 `floor` 判斷（x 也看：兩層高度重疊、前後不重疊也分得開 —— 風暴角號後甲板與艏樓）。
+- **繩梯也是通道**（TASK-0678，Tim 2026-10-17「跨甲板也可以靠繩梯」）：橫繩組 `climb=1`（§6）的 foot／head 兩頭都落在甲板上（照 `floor` 判，同梯子）⇒ 預備水手也走它；一頭不在任何一層甲板上（例：桅頂平台，離甲板地板 20 格以上）⇒ 只有第一人稱爬得上去，水手照舊走梯子、⛔ 不會因為它多出一層。直接指定兩層：繩梯沒有關聯 meta 可寫 `.decks` ⇒ 目前只能照 `floor` 自動判。⚠ 跨甲板的繩梯（2026-10-17）只有程式路徑、還沒有一艘船實際用過。
 - 要直接指定：同一條梯子關聯的 meta 加 `<梯名>.decks`，值是兩層的 `deck` 代號、`name` 或 `level`，逗號分隔（例 `{"bak-P.decks":"upper,forecastle"}`）⇒ 遊戲照它接，不看其他判定；level 低的那層接 foot。寫錯（找不到那層）⇒ 遊戲主控台警告、照 `floor` 自動判。
 - 兩頭各自離那一層的走路格太遠（自動判 1 m、直接指定 2 m 內接不上）⇒ 那座梯子不用。遊戲裡 lo、hi 底下的踏板被打掉、或兩頭的甲板被打穿 ⇒ 那條通道斷（遊戲設定「尋路更新」開著時）。
 - 沒有梯子通到的甲板 ⇒ 預備水手走不到（憲法號、餘燼號的 orlop 現在沒有梯子）。
@@ -515,6 +525,7 @@ Tim 2026-10-16：「跟隨船隻轉彎方向去轉舵輪&舵(參考螺旋槳跟�
 - [ ] 舵與舵輪跟著轉向轉（§9.8.1）：舵模型 meta `spin`（±max_deg）、舵輪模型 `kind=wheel`＋`hub-aft`／`hub-fore`＋meta `spin`（540、無上限）；舵還是關聯或船殼格子 ⇒ 照 §9.8.1 改成模型
 - [ ] 船殼的關聯（或組裝件）meta `kind=ship, waterline_z=<設計水線>`；notes 寫下量過的高度（水線、甲板地板、砲口、桅頂平台、帆頂、船殼前後端）給遊戲那側填 geo
 - [ ] 梯子的關聯 meta `kind=ladders`，每座 foot／lo／hi／head 四個固定點
+- [ ] ratlines 是橫繩組（`sub=ratlines`，§6），不是一條一條的子繩；lower ratlines 標繩梯（`climb=1`，foot 在舷牆內側甲板、head 在桅頂平台），`sub=ropes` 的「橫繩組」那一段每組都有 🪜
 - [ ] 每間彈藥庫裡都有火藥桶模型（`kind=powder`，掛在彈藥庫子作品裡；§8）—— 沒有桶 ⇒ 遊戲沒有取用點、砲打完藥箱就停；匯入檢查的「火藥」那一行要每門都走得到
 - [ ] 每一層甲板的關聯照 §9.3 標 `kind=deck`（level、name、floor、thick）；每一層都有梯子通到（要讓人走得到的）
 - [ ] 不是木頭的部分（鐵甲、銅皮…）是獨立的關聯、meta 寫了 `material`（§9.5）；全船不是木頭 ⇒ 跟遊戲那側說全船預設材質
