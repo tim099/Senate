@@ -101,12 +101,26 @@ Tim 2026-10-18：「有缺的炮種或裝備 就加成新的通用部件吧」�
 - **不是大砲的武器做成「換皮大砲」**（Tim 2026-10-18：「弩炮目前我想直接做成換皮大炮(只是彈藥不同) 一樣走裝彈 發射流程」「弩炮可以給一定的轉動空間(參考維吉尼亞號的前後炮)」）：
   照砲的規格做元件（§4.1 座標、`muzzle`／`breech`／`pivot`），模型 meta `kind=gun, gun=<砲種表的代碼>, weapon=<武器種類>, ammo=<彈種>`；遊戲砲種表要有那一種（缺的照上一條自己加）。
   走同一套裝填、送藥、發射；彈種照砲種表的 `ammo`（固定彈種 ⇒ 換彈鍵換不到它；只有主武器的彈種能換）。要轉 ⇒ `mount=pivot, ports=0,±N`（§4.5，**每個停靠角度都量零碰撞**）。
-  持火號：弩砲 `gun=ballista, weapon=toxoballistra, ammo=bolt`（彈種弩箭：照實心彈飛、畫成一支箭、沒有砲煙）、船頭 `ports=0,35,-35`（±40 擦到艏樓欄杆 9 格）、木塔 `ports=0,45,-45`；siphon `gun=siphon, ammo=greekfire`。
-  ⚠ 投石機還沒有（機制等 Tim）。
+  持火號：弩砲 `gun=ballista, weapon=toxoballistra, ammo=firebolt`（彈種火箭：照弩箭飛、畫成一支帶火的箭、沒有砲煙，碰到船那一點著火，見下面「彈種」）、船頭 `ports=0,35,-35`（±40 擦到艏樓欄杆 9 格）、木塔 `ports=0,45,-45`；
+  siphon `gun=siphon, ammo=greekfire`；投石機 `gun=mangonel, weapon=manganikon, ammo=stone, mount=turret, arc=-180,180`（整圈轉：船頭對敵的船只給兩舷 `ports=0,180` ⇒ 120 秒只對得到 6.5 秒、一發都沒開；每 30° 量零碰撞）。
+  - **砲種表的通用鍵**（Blockside `src/config/game.json` 的 `guns`；Tim 2026-10-18）—— 不寫 ⇒ 跟大砲一樣，別的船戰局一個值都不變：
+    | 鍵 | 意思 | 例 |
+    |---|---|---|
+    | `ammo` | 固定彈種：`greekfire`、`bolt`（弩箭）、`firebolt`（火箭）、`stone`（石彈）；沒寫 ⇒ 實心／爆裂／鏈彈輪流 | 弩砲 `firebolt`、投石機 `stone` |
+    | `box` | 彈藥量倍率（Tim：「跟共用的是乘數關係(弩炮設定三倍彈藥的話 就是裝填一次可以發射六發 但不是連射)」）：砲旁藥箱裝 `lim.box`（遊戲設定，預設 2）× `box` 發；送藥手一趟補一份 ＝ `box` 發。每發照樣走裝填時間 ⇒ 不是連射（連射是 `burst`） | 弩砲 `3` ⇒ 一箱 6 發 |
+    | `elev` | 最大仰角（度）；沒寫 ＝ 15°（大砲的砲門）。射程照 min(elev, 45°) 算 | 投石機 `75` |
+    | `lob` | `true` ⇒ 曲射：兩條拋物線取高的那一條（從上面砸到甲板）；高的那條超過 `elev`（目標太近）⇒ 退回低的；前置量照真的飛行時間算。臼砲照用 | 投石機 `true` |
+  - **彈種**：火箭 `firebolt` 照實心彈咬進去，第一次碰到船那一點著火 —— 半徑 `fire.arrow`（6 格）的人燒傷、帆扣血、細繩燒斷；木頭點火半徑 `fire.arrowIgn`（3 格，希臘火 10）、旁邊 `fire.arrowSail`（4 格）內的帆也著，之後照著火那一套延燒、燒穿、滅火（TASK-0717）；飛過帆 ⇒ 打個小洞、帆從那一點燒起來。
+    石彈 `stone`：照實心彈算、沒有砲煙。⚠ 投石機的數字（V 30、8 kg、每發傷害 `dmgmg` 60）是估的，不是史料。
 - **武器演出**（Tim 2026-10-18：「弩炮的弦是否可以改用繩索 並在開火時有動態」「可以讓武器系統支援演出」；Blockside 26_gunanim.js）：會動的部分拆出來、用 meta 宣告，遊戲照「開火與裝填的進度」動（開火那一刻放出去、彈過頭，裝填時回到作品的樣子）：
   - **弦、拉繩**：畫成繩（不是格子），兩端寫明 `model:<模型>/<固定點>`；繩 meta `anim=gun, rest=<拉滿時那一端的固定點>, fire=<放出去之後的固定點>`；固定點登記在武器元件裡。綁在迴旋砲上的繩會跟著砲轉。
     持火號的弩弦：每座兩條 `string-a → nock`、`nock → string-b`，`kind=bowstring anim=gun rest=nock fire=nock-fire`（`nock-fire` 在兩弓臂尖的連線上）；產生程式 `design/apply_bowstrings.py`。
+  - **綁在會轉的零件上的繩**（投石機的拉繩、投袋繩；繩 meta `kind=gunrope`）：一端（或兩端）綁在會轉的零件的固定點上 ⇒ 那一端跟著零件轉；另一端綁在武器上、照 `rest`／`fire` 走（沒寫 `rest`／`fire` ⇒ 只跟著零件轉）。
+    持火號的投石機（`design/apply_mangonel_ropes.py`，建在投石機所在的 assembly）：拉繩 ×3 `mangonel-arm/pull-N → mangonel/grip-N`、`kind=gunrope anim=gun rest=grip-N fire=grip-N-fire`（上端跟著投臂甩、下端從拉好拉到底）；
+    投袋繩 ×2 `mangonel-arm/sling → mangonel-arm/pouch-a｜b`、`kind=gunrope anim=gun`（兩端都在投臂上）。
   - **會轉的零件**（投石機的投臂、弩砲的弓臂）：拆成自己的子模型（整船的框或照武器的座標都行），模型 meta `spin=gun, spin_k=<放出去轉幾度>, spin_gun=<武器模型的路徑或 id>, spin_lag=0`、固定點 `spin-a → spin-b`（轉軸，§9.8）。
+    武器是迴旋砲（`mount=pivot｜turret`）⇒ 零件先繞自己的軸轉、再跟著砲迴旋（Blockside 26_spin.js）⇒ 零件跟武器**同框、同 pivot、同 at** 放，才對得齊。
+    持火號：投石機拆成架子 `erina-dromon-01m-mangonel`（固定點 `grip-1..3`、`grip-N-fire`）＋投臂 `-mangonel-arm`（`spin-a`／`spin-b` 鐵軸、`pull-1..3`、`sling`、`pouch-a／b`），投臂 `spin=gun spin_gun=mangonel spin_k=-135`（長臂甩到正上方）；產生程式 `design/draft_weapons.py`。
 
 **遊戲還不認得的**（新的砲種代碼、新的 kind）—— 一起加，⛔ 不要借一個接近的代碼湊數（借了 ⇒ 遊戲照那一種的初速、彈重、砲班算）：
 
@@ -289,7 +303,8 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
 - 方帆：上緣（邊 0）整條釘在兩個 `earing` 之間、下兩角 free；topsail 以上的 sheet 綁到下一根帆桁同舷的 earing；course 的 sheet 往後、tack 往前綁到舷牆的 belaying pin。
 - spanker：gaff、boom、桅三條邊釘住，只有 leech 自由。三角帆：tack 在 stay 下端、head 是 stay 上 70–80% 那一格、luff 沿 stay（那條 stay 改 slack 1 拉直）。
 - 數值：預設風 **4.5,−1.5,0**（4.7 m/s）、fullness 1.05（7.6 m/s ＋ 1.08 ⇒ 像降落傘）；帆布 #f2ead8。鼓度主要的旋鈕是**風**，fullness 只差幾格（kotoko 兩點的試驗表）。
-- 帆角綁帆桁模型（`model:<桅關聯>/yard-<帆桁>/earing-P`）⇒ 帆桁一轉，帆跟著走；⚠ course 下角綁在甲板 pin 上、不跟帆桁轉，轉很大時會被拉歪。
+- 帆角綁帆桁模型（`model:<桅關聯>/yard-<帆桁>/earing-P`）⇒ 帆桁一轉，帆跟著走。下角綁在甲板上的（course、三角帆的 sheet）：遊戲把 sheet 長度照「帆腳跟著這面帆的帆桁轉過之後」到甲板那一端的距離放長（Blockside 30_rig_physics.js tethYard，2026-10-18）⇒ 帆桁轉很大（拋錨、大轉彎）帆腳不會被拉回原處、整片拖到甲板（持火號前帆以前偏 7.3 m，修完 1.7 m）。
+  ⇒ sheet 一定要標 `kind=sheet, sail=<帆名>`（§9.1）；帆要綁在帆桁模型上（綁最多點的那根算這面帆的帆桁）。
 
 ## 8. 彈藥庫與火藥桶（階段三十二）
 
@@ -305,6 +320,8 @@ Tim 2026-10-16：「讓砲塔本身只是一層殼 上面可以放置炮(跟在�
   那座梯子的梯頭落在哪一層砲甲板，那一層的取用點就改成這座梯子 —— 桶擺在**梯腳那一層**（室內）旁一塊 9×9 的空地、送藥手在**梯頭旁**（艙口邊）取，⛔ 不再照彈藥庫在露天甲板找空地。
   梯子路徑 ＝ 梯子關聯的路徑＋`/`＋梯名（固定點 `<梯名>.foot／.head` 的那個名字）。梯腳找不到空地或梯頭找不到站位 ⇒ 照舊找（匯入檢查看得到取用點在哪）。梯子隨時能走（Tim：「讓樓梯隨時都能通行」）。
   莫尼特號：`彈藥庫` `hoist=梯子/turret` ⇒ 取用點 1 個（砲塔裡艙口旁，桶在住艙甲板梯腳）；180 秒對維吉尼亞號照樣持續開火（原船：火藥經甲板與砲塔地板的艙口吊進砲塔，Greene〈In the Monitor Turret〉）。
+  - **好幾座梯子**（逗號分開，例 `hoist=ladders-1#forecastle,ladders-1#castle`）：每一層只用梯頭落在那一層甲板（甲板 meta 的 floor）上的那一座。高起的小平台（艏樓、木塔、艉樓）沒有自己的彈藥庫 ⇒ 每座平台的梯子都寫進去。
+    ⛔ 不寫 ⇒ 那幾層照彈藥庫往船頭船尾找空地：高度範圍重疊的兩層會找到同一格（持火號：艏樓、木塔的取用點疊在木塔上，三個桶把木塔內側的走道堵死 ⇒ 匯入檢查 ⚠ 走路格不連通、艏樓弩砲的送藥手從木塔直線飛過去）。
 - 封閉空腔：產生程式最後局部掃一次，≤ 50 格的封閉空腔填實、新格每一塊都要連到原本的實心。
 
 ## 9. 給遊戲的 meta 與匯出（TASK-0517／0518）
@@ -359,7 +376,7 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 | `kind` | `sail`／`flag` | 旗：不收、不算推力 |
 | `mast` | `fore`／`main`／`mizzen`／`bowsprit` | 掛在哪根桅（跟帆桁 meta 的 `mast` 同一套；三角帆掛艏斜桅 ⇒ `bowsprit`） |
 | `sail`（帆） | `course`／`topsail`／`topgallant`／`royal`／`gaff`（縱主帆：spanker、夜隼號的 mainsail）／`staysail`／`jib` | 帆的種類 ⇒ 帆裝（W／S）的預設：收帆 ＝ topsail、jib；戰鬥帆再加 topgallant、gaff；滿帆 ＝ 全部 |
-| `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`） |
+| `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`；只有兩面帆的船要分得出段：持火號前帆 `3`、中帆 `1` ⇒ 收帆、戰鬥帆只張中帆，Tim 2026-10-18「沒有單帆狀態」） |
 | `flag`（旗；`kind=flag` 才寫） | `ensign`（國旗：船尾旗桿或後桅斜桁頂）／`pennant`（長旗：桅頂）／`jack`（艏旗：艏斜桅旗桿）／`signal`（信號旗） | 降旗時降 `ensign`；遊戲的陣營旗要換掉作品的哪一面，照這個種類找（下面「旗」） |
 
 **旗**：作品裡每一面旗都標 `kind=flag` ＋ `flag=<種類>`（Tim 2026-10-15：作品原本的旗標上 meta、遊戲照 meta 認是不是旗、是哪一種）。
@@ -371,7 +388,7 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 
 | 鍵 | 值 | 遊戲拿來做什麼 |
 |---|---|---|
-| `kind` | `sheet`／`tack`（導索、延長段同一類）；其他繩若要標：`shroud`、`backstay`、`stay`、`ratline`、`brace`、`lift`、`halyard`、`footrope`、`steering`、`gun`、`manrope` | 分類 |
+| `kind` | `sheet`／`tack`（導索、延長段同一類）；其他繩若要標：`shroud`、`backstay`、`stay`、`ratline`、`brace`、`lift`、`halyard`、`footrope`、`steering`、`gun`、`manrope`；武器演出的繩 `bowstring`（弦）、`gunrope`（拉繩、投袋繩）＋ `anim=gun`（§2.2） | 分類 |
 | `sail` | 帆名 | 這條繩屬於哪面帆 ⇒ topsail 以上的 sheet 綁在哪根帆桁 ＝ 帆腳跟那根帆桁轉；帆掉了這幾條一起斷 |
 
 **關聯**：彈藥庫 `kind=magazine` 加 `pos=fore／mid／aft`（廣播「前／中／後彈藥庫」）。
