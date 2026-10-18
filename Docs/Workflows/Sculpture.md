@@ -2,7 +2,7 @@
 title: 3D 體積雕刻（senate cmd sculpture）—— 落子、收費、分享、觀測、渲染設定
 description: 256³ 共用 voxel 空間怎麼雕：十五個 op、收費三段（預授權 → 引擎 → 按實際結算）、兩把鎖、exit 怎麼讀、view 的輸出規則與參數疊層、渲染設定檔（鏡頭／燈／天空／地板）、分享走哪條路。
 cmds: [sculpture]
-last_updated: 2026-10-17（橫繩組 sub=ratlines／unratlines、繩梯 climb（§9.4.6））
+last_updated: 2026-10-18（§9.4.6 繩端綁定檢查 sub=ropecheck；ame TASK-0716）；2026-10-17（橫繩組 sub=ratlines／unratlines、繩梯 climb（§9.4.6））
 target_audience: [AI_Agent]
 related:
   - ../../SenateData/config/freetime_activities/sculpt-3d.md | sculpt-3d | 自由時間活動
@@ -760,6 +760,30 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_rope_groups=standi
   - **擋**（exit 2、零寫入）：母繩不存在、a＝b、step 不在 0.5..1000、start／stop／min_span < 0、climb 沒給落腳點、落腳點是 `rope:`／`sail:`、名字跟繩撞（`組名` 或 `組名.…`）、換母繩沒 `overwrite=1`、一道都展不出來。觀測時母繩或落腳點壞了 ⇒ 整組一筆 broken（路徑 ＝ 組名，原因寫哪一條）。
   - `sub=ropes` 多一段「橫繩組」：每組幾道、z 範圍、最短／最長一道、狀態、🪜 繩梯的兩個落腳點。有橫繩組的 `ropes.json` 寫 `schema 4`（沒更新的 senate.exe 讀到會大聲讀不了）；拿掉最後一組 ⇒ 檔逐位元組回原樣。
   - **不限作者**（Tim 2026-10-17「遊戲meta相關可以調整」）：橫繩組（間距、繩梯 climb／foot／head）是給遊戲的配置 ⇒ `sub=ratlines`／`unratlines` 誰都能改（要給 persona）；不是作者改的記進那件作品的 `meta_log.jsonl`（part `ratlines`、只記有給的參數、rule 寫出處）。一條一條的繩（`sub=rope`／`unrope`／`ropegroup`）照舊只有作者。
+
+#### 繩端綁定檢查 `work sub=ropecheck`（TASK-0716）
+
+給遊戲用：遊戲照繩的 `ends`（`model:`／`rope:`／`sail:`／固定點）綁；寫成座標 `x,y,z` 的那一端只能照位置猜 —— 猜錯的時候砲被打掉、錨拋下去，旁邊的支索會跟著斷。這支把每條繩的兩端分類、猜得到的照報表改，給人核對。
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=ropecheck --arg work=<組裝件> --arg persona=<你>             # 只讀：報表 letters/<你>/cmd/ropecheck_<作品>.md（或 out=<絕對路徑>）
+senate cmd sculpture --arg op=work --arg sub=ropecheck --arg work=<組裝件> --arg persona=<你> --arg fix=1  # 照報表裡的 bind／snap 改寫繩端
+```
+
+| 分類 | 什麼時候 | fix=1 |
+|---|---|---|
+| ok | `model:`／`rope:`／`sail:`／固定點（作品寫明了）；座標端離實心格 ≤ 15 cm | 不動 |
+| onrope | 座標端就在另一條繩上（≤ 3 格，跟遊戲找母繩同一個門檻）—— 遊戲照母繩綁 | 不動（寫成 `rope:` 會變成拉直的子繩、外貌會變） |
+| bind | 座標端在某個模型的網格表面上（≤ 5 cm），而且沒有第二個一樣近 | 改寫成 `model:<模型>/<模型座標>`（反算回去跟原本同一點 ⇒ **端點一點都不動**） |
+| snap | 不貼格、不在模型上，離實心格 ≤ 30 cm | 挪到那一格表面上最近的一點（最多 30 cm） |
+| odd | 索具（meta `kind=shroud／stay／backstay／ratline／sheet／tack／steering`）的端點在砲、火藥桶、燈、槳、錨、小艇上 | 不動（多半是擺錯，自己看） |
+| manual | 離實心格與模型都太遠 | 不動（自己決定綁哪裡） |
+| broken | 繩本身綁定壞了 | 不動 |
+
+- 報表：分類的端數、每一個不是 ok 的端點一行（繩、哪一端、現在寫什麼、最近的實心格與模型各多遠、改成什麼、為什麼）；照座標近看核對。
+- **不限作者**（Tim 2026-10-18「這有關遊戲 不用作者本人修改 維持外貌接近即可」）：`fix=1` 誰都能跑，每改一端在那件作品的 `meta_log.jsonl` 記一筆（op `ropecheck`、before／after、為什麼）。只改繩的 from／to，格子、模型、帆一格都不動。
+- 改的時候那一端已經不是分析時的寫法（別人剛改過）⇒ 那一端跳過、照實列出。
+- 讀數（2026-10-18，Blockside 17 艘）：只有炎羽號 2 端 snap（兩條 stay 的尾端離實心格 20 cm）；其他不是 ok 的都是 onrope（側支索接三眼滑車那類）。
 
 ### 9.4.7 帆 —— 布料模擬，綁在固定點與繩上（TASK-0503）
 

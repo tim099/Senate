@@ -229,6 +229,7 @@ public static partial class SelfTest
         One(nameof(SculptureRopeGroupsCleanRoom), "sculpture", SculptureRopeGroupsCleanRoom),
         // 雕刻橫繩組與繩梯（TASK-0678）：本體在 SelfTest.SculptureRatlines0678.cs
         One(nameof(SculptureRatlinesCleanRoom), "sculpture", SculptureRatlinesCleanRoom),
+        One(nameof(SculptureRopeCheckCleanRoom), "sculpture", SculptureRopeCheckCleanRoom),
         // 雕刻帆（TASK-0503）：本體在 SelfTest.SculptureSails0503.cs
         One(nameof(SculptureSailsCleanRoom), "sculpture", SculptureSailsCleanRoom),
         // 雕刻帆貼圖（TASK-0530）：本體在 SelfTest.SculptureSailTexture0530.cs

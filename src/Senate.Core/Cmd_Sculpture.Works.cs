@@ -62,8 +62,9 @@ public sealed partial class Cmd_Sculpture
             if (sub == "model") return GameLayer(c, c.Works.Load(id), "model", sub, () => WorkModel(c, id));
             if (sub == "unmodel") return GameLayer(c, c.Works.Load(id), "model", sub, () => WorkUnmodel(c, id));
             if (sub == "models") return WorkModels(c, id);
-            if (sub == "split") return WorkSplit(c, id);   // TASK-0646：拆件（自己管鎖：registry → A＋引用它的作品＋關聯樹）
-            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|sea|lamps|meta|model|unmodel|models|split|split-events");
+            if (sub == "split") return WorkSplit(c, id);
+            if (sub == "ropecheck") return WorkRopeCheck(c, id);   // TASK-0716：繩端綁定的檢查／猜／修＋報表（只讀不拿鎖；fix=1 自己拿要改的那幾件的鎖）   // TASK-0646：拆件（自己管鎖：registry → A＋引用它的作品＋關聯樹）
+            if (Array.IndexOf(s_WorkLockedSubs, sub) < 0) return Blocked(c, 2, "work sub=create|list|show|update|import|assemble|ropecheck|move|undo|redo|history|mark|marks|draft|apply|discard|link|unlink|links|preset|unpreset|presets|anchor|unanchor|anchors|rope|unrope|ropes|sail|unsail|sails|wind|sea|lamps|meta|model|unmodel|models|split|split-events");
             c.Works.Load(id); // 先確認存在，不能為不存在的ID建立鎖目錄而佔掉它。
             // show／import 會把關聯組進來（攤平）⇒ 關聯樹上的作品一起拿鎖，依 ID 排序一次拿齊（TASK-0494：全系統只有一種鎖序）
             List<SCP_SculptLinkNode>? tree = null;
