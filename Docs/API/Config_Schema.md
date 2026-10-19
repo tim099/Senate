@@ -34,7 +34,11 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
   },
   "awakening": { "lettersRoot": "auto" },
   "ui": { "scale": 1, "textWidth": 96 },
-  "install": { "pythonEnvRoot": "", "modelsRoot": "" }
+  "install": { "pythonEnvRoot": "", "modelsRoot": "" },
+  "linkedProjects": [
+    { "name": "Blocksail", "path": "D:/Unity/Blocksail", "docs": "docs" },
+    { "name": "Blockside", "path": "D:/Unity/Valhalla/Blockside", "docs": "src" }
+  ]
 }
 ```
 
@@ -49,6 +53,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `ui.textWidth` | int | 純文字輸出寬（字元格，預設 96）⚠ **不吃 `ui.scale`** —— 終端機的一格是字元不是像素 |
 | `install.pythonEnvRoot` | string | 安裝系統把 Python 套件裝進哪一份 Python（資料夾：安裝目錄或 venv）。**空白＝自動找系統安裝的 Python**（TASK-0375，見 [`Install`](../Workflows/Install.md)） |
 | `install.modelsRoot` | string | 模型快取根（＝`HF_HOME`）。**空白＝HF 預設**（`%USERPROFILE%/.cache/huggingface`） |
+| `linkedProjects[]` | array | 綁定的外部專案（2026-10-19）：`name`（跟任務單的 `project` 同一把尺、不分大小寫）、`path`（專案根，絕對路徑）、`docs`（文件資料夾：相對 `path` 或絕對；空 ＝ 沒有）。用途：`tasks --arg index=<N>` 印出那張單的專案路徑；`docs` 接成文件根（`senate cmd doc`、skill 的 `docs:`）。⚠ 不叫 `projects` —— 那是舊的 Unity 專案清單，讀檔時會被拿掉。舊檔沒有 ⇒ 空清單 |
 
 所有路徑格的解析（auto、推導、存不存在）統一走 `senate cmd paths`（描述表 `SCP_PathRegistry`，對映在 `SenatePathBinding`）。
 

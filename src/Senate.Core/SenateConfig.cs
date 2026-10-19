@@ -132,6 +132,33 @@ public sealed class SenatePathsSettings
     public Dictionary<string, JsonElement> Extra { get; set; } = new();
 }
 
+/// <summary>
+/// 一個綁定的外部專案（Tim 2026-10-19：「讓 CLI 支援綁定外部專案&amp;文件」「把目前的Blocksail &amp; Blockside綁定吧
+/// (同時跟 /scp-task 系統整合 可以知道這個task對應專案路徑在哪裡」）。
+/// <para>名字跟任務單的 <c>project</c> 欄位同一把尺（不分大小寫）；<see cref="Docs"/> 有填 ⇒ 接成文件根（<c>senate cmd doc</c>、skill 的 <c>docs:</c>）。</para>
+/// </summary>
+public sealed class LinkedProjectSettings
+{
+    /// <summary>專案名（任務單 <c>project</c> 寫的那個名字，例 <c>Blocksail</c>）。</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>專案根（絕對路徑）。</summary>
+    public string Path { get; set; } = "";
+
+    /// <summary>文件資料夾：相對於 <see cref="Path"/>（例 <c>docs</c>）或絕對路徑；空 ＝ 沒有。</summary>
+    public string Docs { get; set; } = "";
+
+    /// <summary>本版不認得的欄位 —— 讀進來、寫回去，原樣保留。</summary>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+
+    /// <summary>文件資料夾的絕對路徑（空 ＝ 沒設）。</summary>
+    public string DocsAbsolute()
+        => string.IsNullOrWhiteSpace(Docs) ? ""
+         : (System.IO.Path.IsPathRooted(Docs) ? Docs : System.IO.Path.Combine(Path, Docs)).Replace('\\', '/');
+}
+
 /// <summary>senate.local.json 的根物件。</summary>
 public sealed class SenateConfig
 {
@@ -171,6 +198,14 @@ public sealed class SenateConfig
 
     /// <summary>安裝系統（TASK-0375）。純新增欄位 ⇒ schemaVersion 不動；舊檔沒有這一段 ⇒ 兩格空白＝用預設。</summary>
     public InstallSettings Install { get; set; } = new();
+
+    /// <summary>
+    /// 綁定的外部專案（<see cref="LinkedProjectSettings"/>）。純新增欄位 ⇒ schemaVersion 不動；舊檔沒有 ⇒ 空清單。
+    /// <para>⚠ 不叫 <c>projects</c>：那個鍵是舊的 Unity 專案清單，讀檔時會被當成舊資料拿掉（<see cref="MigrateLegacyProjects"/>）。</para>
+    /// </summary>
+    /// <remarks>[SCP_Ignore]：清單不進自動畫面（手改設定檔）。</remarks>
+    [SCP_Ignore]
+    public List<LinkedProjectSettings> LinkedProjects { get; set; } = new();
 
     /// <summary>
     /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。

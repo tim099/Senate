@@ -160,6 +160,7 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
   - **傘標了，子單就不用標** —— 子單沒標時，讀的人（`tasks`、後台頁）算它跟著母單（`epic_id` 或母單的 `subtask_indices`），母單換專案子單自然跟著走。⛔ 不必為了湊齊把每張子單都標一次（標了就不再跟著母單換）。
   - 專案名**不分大小寫**：已經有 `Blockside` 時寫 `blockside` 會被擋下並指出既有拼法（同一個專案分兩類，兩類各自看起來都是完整的）。`none`／`all`／`全部`／`未分類` 是篩選用的保留字。
   - 開單時想不出屬於哪個專案 ⇒ 不標（顯示成「未分類」），⛔ 不硬套。
+  - **專案在哪個資料夾**（Tim 2026-10-19：「跟 /scp-task 系統整合 可以知道這個task對應專案路徑在哪裡」）：專案名綁在 `senate.local.json` 的 `linkedProjects`（名字同一把尺、不分大小寫）⇒ `tasks --arg index=<N>` 在「專案」下面多一行「↳ 路徑：… 文件：…」，values 多 `project_root`／`project_docs`。接單後**照這一行去那個資料夾做事、讀那裡的文件**（`senate cmd doc` 也查得到）。沒綁、路徑不存在都會明說（⛔ 不印空白）—— 要綁就加進 `linkedProjects`。
 
 ## 10. 讀單
 
@@ -167,7 +168,7 @@ senate cmd task --arg op=wrapup --arg persona=<我> --arg index=<N> --arg-file p
 senate cmd tasks --arg status=open                 # 計數＋清單（status／type 可疊）
 senate cmd tasks --arg persona=<我>                 # 多印兩把尺：「參與」與「涉及（我開的＋參與）」各幾張、開著幾張（只是計數，不篩清單）
 senate cmd tasks --arg persona=<我> --arg mine=1 --arg status=open   # 清單只列我涉及的未結單 —— 早安 brief §2.5／§6 數的就是這個
-senate cmd tasks --arg index=<N>                   # 單張摘要（狀態、參與者、blocker、記憶主題、專案、留言數）
+senate cmd tasks --arg index=<N>                   # 單張摘要（狀態、參與者、blocker、記憶主題、專案＋專案路徑與文件、留言數）
 senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專案（子單沒標算母單的；不分大小寫）；project=none ＝ 未分類
 ```
 

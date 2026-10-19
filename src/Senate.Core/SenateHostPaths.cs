@@ -46,11 +46,31 @@ public static class SenateHostPaths
         //   ⛔ 沒裝的話，只拿到資料根的那半邊程式會寫慣例那棵，而讀設定的那半邊寫另一棵。
         SenatePathBinding.InstallLettersResolver(iRepoRoot);
 
-        // 文件根（TASK-0337）：Senate 的 Cmd ⇒ `Docs/`，SCP_Core 的 ⇒ `SCP_Core/Docs~/`；錨在 exe 所在的 repo，⛔ 不用 cwd。
-        SCP.Core.Docs.SCP_DocStore.RootsProvider = () => new[]
+        // 綁定的外部專案（senate.local.json `linkedProjects`）：專案名 ⇒ 路徑＋文件資料夾；任務單的 `project` 照這個找路徑。
+        //   每次問都重讀設定（改了設定不用重開 Server）；設定檔不在 ⇒ 空清單。
+        SCP.Core.Paths.SCP_ProjectLinks.Provider = () =>
         {
-            new SCP.Core.Docs.SCP_DocRoot("senate", Path.Combine(iRepoRoot, "Docs")),
-            new SCP.Core.Docs.SCP_DocRoot("scp_core", Path.Combine(iRepoRoot, "SCP_Core", "Docs~")),
+            var aOut = new List<SCP.Core.Paths.SCP_ProjectLink>();
+            SenateConfig? aCfg = SenateConfig.Load(SenateConfig.DefaultPath(iRepoRoot));
+            if (aCfg == null) return aOut;
+            foreach (LinkedProjectSettings p in aCfg.LinkedProjects)
+                if (!string.IsNullOrWhiteSpace(p.Name) && !string.IsNullOrWhiteSpace(p.Path))
+                    aOut.Add(new SCP.Core.Paths.SCP_ProjectLink(p.Name.Trim(), p.Path.Replace('\\', '/').TrimEnd('/'), p.DocsAbsolute()));
+            return aOut;
+        };
+
+        // 文件根（TASK-0337）：Senate 的 Cmd ⇒ `Docs/`，SCP_Core 的 ⇒ `SCP_Core/Docs~/`；錨在 exe 所在的 repo，⛔ 不用 cwd。
+        //   後面接綁定的外部專案的文件資料夾（標籤 ＝ 專案名小寫）：不存在、撞名照 SCP_DocStore 的規矩記進 problems。
+        SCP.Core.Docs.SCP_DocStore.RootsProvider = () =>
+        {
+            var aRoots = new List<SCP.Core.Docs.SCP_DocRoot>
+            {
+                new SCP.Core.Docs.SCP_DocRoot("senate", Path.Combine(iRepoRoot, "Docs")),
+                new SCP.Core.Docs.SCP_DocRoot("scp_core", Path.Combine(iRepoRoot, "SCP_Core", "Docs~")),
+            };
+            foreach (SCP.Core.Paths.SCP_ProjectLink p in SCP.Core.Paths.SCP_ProjectLinks.All())
+                if (p.Docs.Length > 0) aRoots.Add(new SCP.Core.Docs.SCP_DocRoot(p.Name.ToLowerInvariant(), p.Docs));
+            return aRoots;
         };
 
         // 工作記憶 related_docs 的具名根：沒前綴＝資料根；`senate:`／`scp_core:` 錨在 exe 所在的 repo。
