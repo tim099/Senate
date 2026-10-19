@@ -699,13 +699,21 @@ public sealed class GuiImGuiRenderer
     /// <summary>
     /// 把標籤畫在控件**左邊**並對齊到 style 的欄寬。
     /// <para>⚠ 標籤比欄寬長時不裁字、直接推開 —— 裁掉的字不會報錯，只會讓人讀不懂那一格是什麼。</para>
+    /// <para>⚠ 欄寬是從**行首**量的：標籤不在行首（Row 裡排在別的控件後面）時，那條欄線可能在標籤的左邊 ——
+    ///   照樣跳回去，輸入框就蓋在標籤上（🩸 2026-10-19 任務頁「專案：Blocksail　改成」，Tim 截圖）。
+    ///   ⇒ 跳過去之後量一次，落點比標籤的右緣還左 ⇒ 改成緊貼標籤。</para>
     /// </summary>
     void LabelLeft(string iLabel)
     {
         if (string.IsNullOrEmpty(iLabel)) return;
+        float aStartX = ImGui.GetCursorPosX();
         ImGui.TextUnformatted(T(iLabel));
         float aTextW = ImGui.CalcTextSize(T(iLabel)).X;
-        if (aTextW + m_Style.ItemSpacingX < m_Style.LabelWidth) ImGui.SameLine(m_Style.LabelWidth);
+        if (aTextW + m_Style.ItemSpacingX < m_Style.LabelWidth)
+        {
+            ImGui.SameLine(m_Style.LabelWidth);
+            if (ImGui.GetCursorPosX() < aStartX + aTextW + m_Style.ItemSpacingX) ImGui.SameLine();
+        }
         else ImGui.SameLine();
     }
 
