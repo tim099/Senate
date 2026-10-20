@@ -275,6 +275,7 @@ public static partial class SelfTest
         One(nameof(GlobeRegridCleanRoom), "globe", GlobeRegridCleanRoom),
         One(nameof(GlobeExportCleanRoom), "globe", GlobeExportCleanRoom),
         One(nameof(GlobeZoneCleanRoom), "globe", GlobeZoneCleanRoom),
+        One(nameof(GlobeWaterCleanRoom), "globe", GlobeWaterCleanRoom),
         // 球面 GPU 預覽（TASK-0470）：本體在 SelfTest.GlobeGpu.cs
         One(nameof(GlobeGpuParityCleanRoom), "globe", GlobeGpuParityCleanRoom),
         One(nameof(GlobeGpuTileSyncCleanRoom), "globe", GlobeGpuTileSyncCleanRoom),

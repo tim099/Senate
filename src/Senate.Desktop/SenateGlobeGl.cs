@@ -73,7 +73,7 @@ public sealed class SenateGlobeGl : IDisposable
         if (ReferenceEquals(m_SyncedState, iState) && m_SyncedVersion == iVersion) return LastSync;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var r = new SyncReading();
-        SCP_GlobeCells c = iState.Cells;
+        SCP_GlobeCells c = iState.Display;   // 格子顏色＋水體疊圖（沒有水體 ⇒ 就是 Cells 本身）
         string aSig = FacesSig(iState.Grid);
         if (c.N != m_N || c.Tile != m_Tile || aSig != m_FacesSig || m_IndexTex == 0)
         {
