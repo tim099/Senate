@@ -37,7 +37,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
   "install": { "pythonEnvRoot": "", "modelsRoot": "" },
   "linkedProjects": [
     { "name": "Blocksail", "path": "D:/Unity/Blocksail", "docs": "docs" },
-    { "name": "Blockside", "path": "D:/Unity/Valhalla/Blockside", "docs": "src" }
+    { "name": "Blockside", "path": "D:/Unity/Blocksail/external/Blockside", "docs": "src" }   // 2026-10-20 起在 Blocksail 的 submodule 裡開發
   ]
 }
 ```

@@ -471,7 +471,8 @@ python -I Blockside/src/rooms.py check --id <船的代號>   # 標好的：尺�
 - 遊戲建成品（`admin.py build`，匯入、重新匯入、同步 meta、後台「儲存並重建」都走它）時才壓縮：模型網格收成一個池子 —— **同一份網格不管幾艘船用到只存一次**、頂點去重＋差值；寫出去之前照遊戲的讀法還原、跟原檔逐個比（對不上 ⇒ 不寫）。六艘：成品 9.09 MB → 5.36 MB。
 - 量過大小的組成（壓縮後）：格子整艘約 0.1–0.2 MB，**模型網格才是大頭**（憲法號、三叉戟號各約 1 MB）⇒ 對成品大小最有效的是 §2.1「用已有的元件」，不是少雕幾格。
 - 原格式 `admin.py build --raw`；`admin.py verify` 把成品跟 `_cache` 原檔比。壓縮版的成品解不回原本的 .vxk ⇒ 遊戲那側 `_cache` 掉了（換機器）走 `admin.py cache`：從雕刻作品重新匯出、跟指紋比（`Blockside/src/README.md`）。
-- 📦 遊戲 2026-10-15 起獨立成 **Blockside**（Valhalla 的 `Blockside/` submodule，線上 https://tim099.github.io/Blockside/；TASK-0586）—— `admin.py`、`rooms.py`、`decks.py` 都在 `Blockside/src/`，`.vxk` 快取在 `Blockside/VoxelKit/_cache/`。
+- 📦 遊戲 2026-10-15 起獨立成 **Blockside**（線上 https://tim099.github.io/Blockside/；TASK-0586）—— `admin.py`、`rooms.py`、`decks.py` 都在 `Blockside/src/`，`.vxk` 快取在 `Blockside/VoxelKit/_cache/`。
+  - **開發用的那一份在 Blocksail 的 `external/Blockside`**（submodule，`dev` 分支；Tim 2026-10-20「之後我希望Blockside開發直接在Blocksail的submodule內開發(確保同步)」）⇒ 本檔寫的 `Blockside/…` 從 Blocksail 的 `external/` 底下算；Valhalla 的 `Blockside/` 不再開發（會落後）。專案路徑照 `senate cmd tasks --arg index=<單號>` 印的（本機設定 `linkedProjects`）。
 - ⚠ 改了已經在遊戲裡的船（重匯 vxk），遊戲那側 `admin.py cache --all` 會說「作品變過了」—— 要不要換成新的由遊戲那側 reimport（會改戰局），造船這側照舊跟 ame 說一聲。
 - **遊戲那側另外要填的**（`Blockside/src/config/game.json` 的 `ships[]`，ame 填、造船這側不用）：`geo`（陸戰隊站的範圍、鏡頭中心、各種瞄準高度 —— 沒填 ⇒ 吃憲法號的數字，小船的陸戰隊站不下；炎羽號 2026-10-15 從 4 人補到 8 人）、`cfg`（航速、靈活、逆風、硬度）、`crew`、`names`、`rooms`（艙房預設）、`lamps`。
   造船這側幫得上忙的是在 notes 寫下量過的高度：水線、每層甲板的地板、砲口、桅頂平台、帆頂、船殼前後端（geo 照這些換算）。
