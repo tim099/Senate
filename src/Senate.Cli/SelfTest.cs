@@ -177,6 +177,7 @@ public static partial class SelfTest
         One(nameof(TavernMsgIndexWriterMaintained), "tavern", TavernMsgIndexWriterMaintained),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
+        One(nameof(DiscordPeerWebhookCleanRoom), "tavern", DiscordPeerWebhookCleanRoom),   // 同伴 webhook：本體在 SelfTest.DiscordPeer.cs
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         One(nameof(BankRequestSourceNotInLedgerNotice), "bank", BankRequestSourceNotInLedgerNotice),
         One(nameof(DocEditCleanRoom), "freetime", DocEditCleanRoom),
