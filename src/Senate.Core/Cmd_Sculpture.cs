@@ -231,7 +231,9 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
             + "／work assemble／link：**翻面**（TASK-0497）x／y／z 或組合（例 x、xz），空＝不翻；先在零件自己的框裡翻、再 turn、再放到 at（外框不變）—— 左右對稱的零件只做一份、另一邊 mirror=x（或 y）關聯進來"
             + "／work model：在模型座標裡繞 pivot 翻面（none ＝ 不翻）"),
         new SCP_CmdArgSpec("recolor", "work link：替換色（TASK-0584）舊色:新色,…（例 218:213,213:218 ＝ 互換）—— 換這條關聯底下整棵子樹組好的格（巢狀：外層看到內層換完的色）；"
-            + "同時換、不連鎖；表外的色不動；色 1..255（0 ＝ 空，不收）；不用 overwrite；none ＝ 清掉。用到就寫 links.json schema 4（沒更新的 senate.exe 讀到會擋）"),
+            + "同時換、不連鎖；表外的色不動；色 1..255（0 ＝ 空，不收）；不用 overwrite；none ＝ 清掉。用到就寫 links.json schema 4（沒更新的 senate.exe 讀到會擋）。"
+            + "work model：同一個格式，換的是模型的材質色（材質色正好是調色盤色的才換；作品來源的模型一律是）；⚠ 關聯的 recolor 只換格子、不套到那一層的模型；"
+            + "不能跟 color 一起給；.vxk 裡換色的擺放跟原色共用一份網格（換過的色寫在擺放的 mats）；用到就寫 models.json schema 3"),
         new SCP_CmdArgSpec("link_hide", "work link：覆寫・拿掉（TASK-0656 改裝船）—— 被關聯的作品**裡面**要拿掉的關聯或外部模型，路徑相對這條關聯、逗號隔開（例 駕駛塔,甲板-main/砲塔）；"
             + "觀測、匯出、繩、部件預覽都當它們不在；找不到的路徑 ⇒ 擋下；none ＝ 清掉。只有作者能設（會改外觀）；用到就寫 links.json schema 5"),
         new SCP_CmdArgSpec("link_carve", "work link：覆寫・挖格子（TASK-0656 改裝船）—— 遮罩子作品的 ID：它的格（不管顏色）在被關聯作品自己的座標裡挖掉這條關聯底下整棵組好的格；"

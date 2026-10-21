@@ -640,7 +640,8 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
   - ⚠ links.json 只要有一條用了替換色就寫 **schema 4**（清掉就回到原本的號）：沒更新的 senate.exe 讀到會 exit 2「schema=4」，⛔ 而不是默默畫成原色。schema 3 以下的檔卻帶 `recolor` ⇒ 大聲讀不了（手改的，或舊版寫回去的）。
   - 只能換「一個舊色 → 一個新色」：同一個色在兩處要換成不同的色 ⇒ 先在零件裡把那兩群分成兩個色。
   - 樣本（量的，2026-10-16）：summit 岩堡港 `summit-rocher-01m-house-a2` ＝ `house-a1` 加 `recolor=218:213,168:109,132:73,49:42`（101,542 格，形狀相同、每個舊色只對到一個新色）⇒ 換成關聯可省一件約 1.47 MB 的雕刻庫檔。`house-a3` 形狀也相同，但色 218 有 12,324 格留著、22,626 格換成 246 ⇒ 單靠替換色做不到。
-  - ⚠ vxk 裡關聯是展開成格子的 ⇒ 省的是雕刻庫，不是遊戲檔；遊戲檔要省得靠外部模型的替換色（TASK-0584 另一半，等跟 ame 對好 vxk）。
+  - ⚠ vxk 裡關聯是展開成格子的 ⇒ 省的是雕刻庫，不是遊戲檔；遊戲檔要省得靠外部模型的替換色（§9.4.8「替換色」：換色的擺放跟原色共用一份網格）。
+  - ⚠ 關聯的 recolor **只換格子**，不套到那一層作品自己的外部模型（2026-10-21 量過：17 件作品的 86 條關聯用了替換色，城鎮房屋為主 —— 房子的換色是寫給牆與門窗的，子樹裡的燈籠、酒桶、貨箱也是模型 —— 套上去會讓剛好同色的道具一起換、已經畫好的城鎮悄悄變色）。要換模型的色 ⇒ 在模型上寫 `recolor`（§9.4.8）。
 - **覆寫：改裝船**（TASK-0656；Tim 2026-10-16：「可以把一艘船當成子作品概念去做改裝船」「修改可以包含挖掉原本船體上的格子 移除原有的子模組 概念類似 Unity 的 nested prefab」「只要記錄 diff 的部分」）：
   一條關聯除了替換色，還能存兩種覆寫 —— 改的是**這條關聯看到的樣子**，被關聯的作品本身一格都不動（另一條關聯、另一艘船照舊看到原樣）。
   ```bash
@@ -852,12 +853,24 @@ senate cmd sculpture --arg op=work --arg sub=rope --arg work=ship --arg persona=
 senate cmd sculpture --arg op=view --arg work=ship --arg hide_models=wheel --arg out=<png>   # 這次拿掉；models=0 ＝ 一個都不畫
 ```
 
-- **`sub=model name= (file=<obj> [axes=] | source_work=<作品>) [at=] [pivot=] [rotate=] [scale=] [mirror=] [color=] [enabled=] [note=]`**：
+- **`sub=model name= (file=<obj> [axes=] | source_work=<作品>) [at=] [pivot=] [rotate=] [scale=] [mirror=] [color=] [recolor=] [enabled=] [note=]`**：
   - **座標三層**：① 檔案座標（obj 自己的 x,y,z）→ ② 模型座標（z 朝上）→ ③ 作品座標。`axes` 管 ①→②：`yup`（預設；Blender／Maya 匯出的 obj）＝ (x, −z, y)、`zup` ＝ 原樣、`sculpt` ＝ 本引擎 `export` 出來的 obj（(x, z, y)，export 的反函數）。②→③：**p ＝ at ＋ R·(scale ⊙ mirror(p − pivot))**，`rotate=rx,ry,rz`（度）先繞 X、再 Y、再 Z（都繞作品的軸）；`scale` 一個數或三個數（> 0）；`mirror=x|y|z`（組合）在模型座標裡繞 pivot 翻面。at／pivot 可帶小數。
   - **file 來源**：obj 與它 `mtllib` 引用的 mtl 一起複製進 `models/<名字>/`（⛔ 不指向作品外的檔）；記下位元組數與 SHA256。換檔 ＝ 同名＋`file=`＋`overwrite=1`。
   - **work 來源**：那件作品（含它的關聯、繩、帆、模型）匯出成 obj，快取在 `<雕刻根>/model_cache/<作品>/<鍵>.obj`（⛔ 不入版控）；鍵 ＝ 那一整串作品的事件水位與資料檔雜湊 ⇒ 來源一改，下一次觀測**自動重出**（回報 `cache=produced|reused`）。模型座標 ＝ 那件作品的格座標。`scale` 不給 ⇒ 來源的一格幾公尺 ÷ 本作品的（寫進 models.json）。成環（A 用 B、B 又用 A；含經過關聯與隔層）⇒ exit 2 —— `sub=model` 與 `sub=link` 寫入時都看關聯＋模型兩種邊，零寫入並印出那條環。
-  - 同名已在：改 at／pivot／rotate／scale／mirror／color／enabled／note 直接改；**換來源**要 `overwrite=1`。寫之前先讀一次 obj（work 來源先產生快取）：讀不了、沒有面、索引越界 ⇒ exit 2、**一個檔都沒寫**。`sub=unmodel name=` 拿掉（file 來源連同 `models/<名字>/`；綁在它上面的繩當下全庫掃一次，`ropes_now_broken`）。
+  - 同名已在：改 at／pivot／rotate／scale／mirror／color／recolor／enabled／note 直接改；**換來源**要 `overwrite=1`。寫之前先讀一次 obj（work 來源先產生快取）：讀不了、沒有面、索引越界 ⇒ exit 2、**一個檔都沒寫**。`sub=unmodel name=` 拿掉（file 來源連同 `models/<名字>/`；綁在它上面的繩當下全庫掃一次，`ropes_now_broken`）。
   - 只讀幾何與顏色：`v`／`vn`／`f`（多邊形扇形切成三角形；索引可負）／`usemtl`／`mtllib` 的 `Kd`。沒有 `vn` ⇒ 面法線（平面著色）；缺 mtl 或材質 ⇒ 預設灰並列警告；`color=` ⇒ 整個模型一個色。貼圖、曲面、線段不讀。上限 256 MB、800 萬個三角形。
+  - **替換色**（TASK-0584）：`recolor=舊色:新色,…` —— 同一件零件換個配色再擺一次，⛔ 不用另做一件只改色的作品。格式與規則同關聯的 `recolor`（§9.4.4：同時換、不連鎖；表外不動；1..255；`none` 清掉；壞值 ⇒ exit 2、models.json 不動；不用 `overwrite`）。
+    ```bash
+    senate cmd sculpture --arg op=work --arg sub=model --arg work=deck --arg persona=<P> --arg name=砲門蓋-S01 --arg source_work=kaguya-gloire-01m-portlid --arg at=… --arg recolor=141:177
+    ```
+    - 換的是**材質色**：材質的 `Kd` 正好是某個調色盤色 ⇒ 照表換；不是調色盤色的材質不動。作品來源的模型一律是調色盤色（快取的材質 `c<色號>`）；obj 檔要是作者用調色盤色畫的才換得到。
+    - 讀數：每個模型行印 `換色 舊:新,…（換到 n 種材質色）`；回傳值 `model_recolor`、`model_recolor_hits`。**換到 0 種 ⇒ ⚠**（表裡的舊色這個模型一個都沒有，多半是寫錯色號）。
+    - 跟 `color=` 不能同時給（`color` 已經把整個模型換成一個色 ⇒ 直接改 `color`）。所在關聯的 `recolor` **不**套到模型上（§9.4.4）。
+    - 觀測、`export`（obj／glb／vxk）、觀測頁 GPU 的分開畫（§5.4：替換表不同 ⇒ 各一份來源）看到的都是換過的色。
+    - **.vxk**：網格照**換之前**的色去重 ⇒ 換色的擺放跟原色**共用同一份網格**；換過的色寫在擺放上的 `mats`（跟網格的 `mats` 一一對應），遊戲載入時展開（Blockside `05_hull.js` `modelMats`）。沒換色的擺放沒有這一欄（位元組跟以前一樣）。
+    - ⚠ models.json 只要有一個模型用了替換色就寫 **schema 3**（清掉就回到原本的號）：沒更新的 senate.exe 讀到會大聲讀不了，⛔ 而不是默默畫成原色。schema 2 以下的檔卻帶 `recolor` ⇒ 讀不了（手改的，或舊版寫回去的）。
+    - **省多少**（量的，2026-10-21）：遊戲 `_cache` 19 艘船的 vxk 裡「幾何一樣、只差顏色」的網格 **0 份** —— 一艘船裡同一件零件目前都只用一種色，所以**今天的遊戲檔省不到**；省的時候是「同一艘船同一件零件擺兩種色」。雕刻庫裡形狀相同、只差顏色的模型來源只有一對：`kaguya-gloire-01m-portlid`／`kotoko-napoleon-01m-portlid`（141 對 177，各約 8.6 KB）。實測見 TASK-0584 留言。
+    - 驗收：淨室 `SculptureModelRecolorCleanRoom`。
 - **繩與帆角綁模型**：端點寫 `model:[關聯/…/]模型名/點`（相對於繩所在的作品，同固定點路徑）。點 ＝ `x,y,z`：file 來源是**檔案座標**（照 axes 換）、work 來源是那件作品的格座標（整數 ⇒ 格心）；work 來源也可以寫那件作品的**固定點名**。模型搬、轉、縮、跟著關聯走 ⇒ 端點跟著動。帆的角同一種寫法（`corners="model:mast/12,0,40|…"`）。
 - **跟著關聯走**：被關聯進來的作品自己的模型照那條關聯的 mirror→turn→at 換座標（模型路徑 ＝ `關聯/…/模型名`）。所在那一層這次沒畫 ⇒ `hidden`（綁在上面的繩跟著 hidden）；自己 `enabled=0` ⇒ `disabled`；`models=0`／`hide_models=路徑,…` ⇒ 這次**不畫**（綁在上面的繩照畫；打錯路徑 ⇒ exit 2）。檔不見、來源作品不在、成環、快取產生失敗 ⇒ `broken`：⛔ 不靜默消失，觀測照樣出圖、回傳行大聲列 🔴。
 - **讀數**（`sub=models` 與 view／export 每個模型一行）：狀態、來源（檔名＋SHA 前 8 碼／作品＋快取鍵與 produced|reused）、變換、三角形數、在組裝件裡的外框；回傳值 `models_drawn／hidden／disabled／broken`。

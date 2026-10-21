@@ -98,6 +98,12 @@ public sealed partial class Cmd_Sculpture
             if (m.Geom != null) c.Report.Append("｜").Append((m.Geom.Triangles.Length / 3).ToString("N0", CultureInfo.InvariantCulture)).Append(" 三角形");
             if (m.Min != null && m.Max != null) c.Report.Append("｜外框 (").Append(SCP_SculptRopes.Fmt(m.Min)).Append(")–(").Append(SCP_SculptRopes.Fmt(m.Max)).Append(")");
             if (m.Model.color.Length > 0) c.Report.Append("｜色 ").Append(m.Model.color);
+            if (m.RecolorKey.Length > 0)
+            {
+                // TASK-0584：有讀網格 ⇒ 印換到幾種材質色（0 ⇒ ⚠：表裡的舊色這個模型一個都沒有）
+                c.Report.Append("｜換色 ").Append(m.RecolorKey);
+                if (m.Mesh != null) c.Report.Append(m.RecolorHits > 0 ? "（換到 " + m.RecolorHits + " 種材質色）" : "（⚠ 一種材質色都沒換到 —— 材質色要正好是調色盤色才換）");
+            }
             if (m.Model.meta.Count > 0) c.Report.Append("｜meta ").Append(SCP_SculptMeta.Describe(m.Model.meta));
             if (m.Reason.Length > 0) c.Report.Append("｜").Append(m.Reason);
             c.Report.Append('\n');
@@ -126,8 +132,8 @@ public sealed partial class Cmd_Sculpture
     // ───────────────────────── work sub=model／unmodel／models ─────────────────────────
 
     /// <summary>
-    /// work sub=model name= (file=<obj> [axes=] | source_work=<作品>) [at=] [pivot=] [rotate=] [scale=] [mirror=] [color=] [enabled=] [note=]：加（或改）一個外部模型。
-    /// 同名已在：變換、color、enabled、note 直接改；換來源（file=／source_work=）要 overwrite=1。
+    /// work sub=model name= (file=<obj> [axes=] | source_work=<作品>) [at=] [pivot=] [rotate=] [scale=] [mirror=] [color=] [recolor=] [enabled=] [note=]：加（或改）一個外部模型。
+    /// 同名已在：變換、color、recolor、enabled、note 直接改；換來源（file=／source_work=）要 overwrite=1。
     /// 寫之前先讀一次 obj（work 來源先產生快取）：讀不了 ⇒ 擋、一個檔都沒寫。成環（含經過關聯、隔層）⇒ 擋。
     /// </summary>
     static string? WorkModel(Ctx c, string iId)
@@ -142,9 +148,9 @@ public sealed partial class Cmd_Sculpture
         bool aFileGiven = c.Args.IsExplicit("file"), aWorkGiven = c.Args.IsExplicit("source_work");
         if (aFileGiven && aWorkGiven) return Blocked(c, 2, "file= 與 source_work= 只能給一個（obj 檔，或另一件作品）");
         bool aSource = aFileGiven || aWorkGiven;
-        string[] aPropKeys = { "axes", "at", "pivot", "rotate", "scale", "mirror", "color", "enabled", "note", "meta" };
+        string[] aPropKeys = { "axes", "at", "pivot", "rotate", "scale", "mirror", "color", "enabled", "note", "meta", "recolor" };
         bool aProps = Array.Exists(aPropKeys, k => c.Args.IsExplicit(k));
-        if (aOld != null && !aSource && !aProps) return Blocked(c, 2, "模型 `" + aName + "` 已經在了 —— 沒有要改什麼（at／pivot／rotate／scale／mirror／color／enabled／note／meta 直接改；換來源要 file=／source_work= 加 overwrite=1）");
+        if (aOld != null && !aSource && !aProps) return Blocked(c, 2, "模型 `" + aName + "` 已經在了 —— 沒有要改什麼（at／pivot／rotate／scale／mirror／color／recolor／enabled／note／meta 直接改；換來源要 file=／source_work= 加 overwrite=1）");
         if (aOld != null && aSource && !WorkOverwrite(c)) return Blocked(c, 2, "已經有模型 `" + aName + "`（" + (aOld.source == SCP_SculptModels.SourceFile ? aOld.file : "作品 " + aOld.work) + "）—— ⛔ 不默默換來源；要換請加 overwrite=1");
         if (aOld == null && !aSource) return Blocked(c, 2, "加模型要 name=<名> 加 file=<obj 絕對路徑> 或 source_work=<作品>");
 
@@ -160,7 +166,7 @@ public sealed partial class Cmd_Sculpture
             pivot = new List<double>(aOld?.pivot ?? new List<double> { 0, 0, 0 }),
             rotate = new List<double>(aOld?.rotate ?? new List<double> { 0, 0, 0 }),
             scale = new List<double>(aOld?.scale ?? new List<double> { 1, 1, 1 }),
-            mirror = aOld?.mirror ?? "", color = aOld?.color ?? "", enabled = aOld?.enabled ?? true,
+            mirror = aOld?.mirror ?? "", color = aOld?.color ?? "", recolor = aOld?.recolor ?? "", enabled = aOld?.enabled ?? true,
             note = c.Args.IsExplicit("note") ? c.Args.Get("note").Trim() : aOld?.note ?? "",
             persona = aOld?.persona ?? c.Persona,
             created_at = aOld?.created_at ?? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
@@ -203,6 +209,12 @@ public sealed partial class Cmd_Sculpture
             if (cl.Length == 0 || cl == "none") m.color = "";
             else if (SCP_SculptRopes.TryParseColor(cl, out _, out _, out _, out string aNorm) is string aBadColor) return Blocked(c, 2, aBadColor + "；未寫入");
             else m.color = aNorm;
+        }
+        // 替換色（TASK-0584）：同關聯的 recolor（舊色:新色,…；none ＝ 清掉）；換的是材質色（正好是調色盤色的那幾種）
+        if (c.Args.IsExplicit("recolor"))
+        {
+            if (SCP_SculptLinks.NormalizeRecolor(c.Args.Get("recolor"), out string aNormRe, out _) is string aBadRe) return Blocked(c, 2, aBadRe + "；未寫入");
+            m.recolor = aNormRe;
         }
         if (c.Args.IsExplicit("enabled"))
         {
@@ -298,6 +310,8 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("model", m.name);
         c.Result.AddValue("model_source", m.source == SCP_SculptModels.SourceFile ? m.file : "work:" + m.work);
         c.Result.AddValue("model_triangles", aTris.ToString(CultureInfo.InvariantCulture));
+        c.Result.AddValue("model_recolor", m.recolor.Length == 0 ? "none" : m.recolor);
+        if (aReading != null && aReading.RecolorKey.Length > 0) c.Result.AddValue("model_recolor_hits", aReading.RecolorHits.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("model_count", aCount.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("models_file", aPaths.ModelsFile.Replace('\\', '/'));
         if (aMesh != null && aMesh.Warnings.Count > 0) c.Result.Lines.Add("⚠ " + string.Join("；", aMesh.Warnings));
