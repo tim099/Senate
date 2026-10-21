@@ -1,6 +1,6 @@
 ---
 title: Senate 架構總覽
-description: 五層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli / Senate.Server）、共用碼的邊界與方言限制、Senate 與 Unity 的關係
+description: 五層分工（SCP_Core 共用碼 / Senate.Core / Senate.Desktop / Senate.Cli / Senate.Server）、共用碼的邊界與方言限制
 last_updated: 2026-10-08
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
@@ -10,7 +10,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ## 分層
 
 ```
-SCP_Core/            submodule —— Unity 與 .NET **共用**（C# 9 / netstandard2.1 / 零第三方套件）
+SCP_Core/            submodule —— 跨專案共用碼（C# 9 / netstandard2.1 / 零第三方套件）
 └── Runtime/
     ├── Json/        JSON 值樹＋parser＋writer
     └── Gui/         UI 中間層：節點樹、撰寫 API、文字 renderer、非 UI 操控介面
@@ -23,7 +23,7 @@ src/
 ```
 
 依賴方向單向：`Cli → Desktop → SCP_Core`、`Cli → Core → SCP_Core`、`Server → Core → SCP_Core`。
-**SCP_Core 不依賴任何人**（那是它能被 Unity 吃下去的前提）。
+**SCP_Core 不依賴任何人**。
 
 ### 為什麼 Server 要自己一顆 exe（TASK-0209 A7）
 `Senate.Cli` 為了後台頁參照 `Senate.Desktop` ⇒ publish 實測 **78MB**、含 `cimgui.dll` ＋ `glfw3.dll`，
@@ -46,15 +46,14 @@ src/
 
 ### ① 方言：C# 9 / netstandard2.1 / 零第三方套件
 
-共用碼必須是 **Unity 編得過的子集**：
+共用碼限定在這個子集：
 
 - `SCP_Core.csproj` 釘 `<LangVersion>9.0</LangVersion>` ⇒ 檔案級 namespace、`record`、
-  raw string literal 這些**在 .NET 這側就編不過**，不會等到 Unity 編它時才發現。
+  raw string literal 這些**編不過**。
   🩸 實測（2026-08-22）：塞一個檔案級 namespace 進去 →
   `error CS8773: Feature 'file-scoped namespace' is not available in C# 9.0`。護欄有咬。
-- `Runtime/SCP_Core.asmdef` 帶 `"noEngineReferences": true` ⇒ **Unity 那側**擋下任何 `UnityEngine` 引用。
-- **零 `PackageReference`**：Unity 不吃 NuGet。這條沒有自動護欄 ——
-  加套件前先問「Unity 那邊哪來這個？」。`System.Text.Json` 就是因此不能用，也正是自帶 JSON 層的理由。
+- **零 `PackageReference`**：共用碼不帶任何套件相依（這條沒有自動護欄，加之前先問）。
+  `System.Text.Json` 因此不能用，這也是自帶 JSON 層的理由。
 - `init` 存取子要 `System.Runtime.CompilerServices.IsExternalInit`，netstandard2.1 的 BCL 沒有
   ⇒ `Runtime/SCP_Polyfill.cs` 補一顆 `internal` 的（每個 assembly 各一份不衝突）。
 
@@ -87,23 +86,6 @@ D25 把它升成**整個 repo 的規則**：`src/Senate.Core` / `Senate.Desktop`
 
 📌 射程、逐檔讀數、以及 `SenateConfig.cs` 那三處 `[JsonExtensionData]` 為什麼**不是機械替換** → 見 [D25](../Logs/Decisions.md)。
 ⚠ 規則已立，**程式碼尚未遷移**（7 檔 ~70 處）。新寫的碼從現在起就照這條。
-
----
-
-## Senate 與 Unity
-
-Senate 不依賴任何 Unity 專案：設定裡沒有 Unity 專案、不派指令給 Editor、不讀 Unity 專案裡的檔。
-要操作 Unity 專案（重編、讀編譯錯誤、跑 C#）一律用官方 Unity CLI → [`Unity_CLI`](../Workflows/Unity_CLI.md)。
-UCL_Core 也不引用 SCP_Core（各自獨立編譯）。
-
----
-
-## 為什麼不共用 C# 服務碼（而是共用資料與純函式）
-
-考慮過「把整套邏輯做成 submodule 兩邊共編」，代價是：**共用碼從此永遠住在舊方言裡**、
-`.meta` 與 GUID 的雜訊、以及每個消費專案多一個要 bump 的 pointer。
-⇒ 結論：**規則是資產、讀規則的程式是消耗品**。規則走資料（JSON ＋ fixture 對拍），
-只有真正兩邊都要跑的**純函式**才進 SCP_Core。決策細節見 [Logs/Decisions](../Logs/Decisions.md)。
 
 ---
 

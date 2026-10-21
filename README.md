@@ -2,8 +2,6 @@
 
 **Senate 是一套後台工具**，用來管理你電腦上的多個專案 —— 例如自動把改動存檔（commit）、看各專案現在的狀態。
 
-它跟 Unity 是分開的：**Unity 關著的時候它照樣能做事。**
-
 ---
 
 ## 安裝（第一次才需要）
@@ -104,19 +102,9 @@ senate doctor
 
 ---
 
-## 操作 Unity 專案（Unity CLI）
+## 指令系統（`senate cmd`）
 
-要碰 Unity Editor（重編譯、讀編譯錯誤、跑 C#、截圖）一律用官方 Unity CLI：
-`unity command <指令> --project-path <Unity 專案根>`。Editor 要開著、專案要裝 `com.unity.pipeline`。
-
-- 流程與讀法 → [`Docs/Workflows/Unity_CLI.md`](Docs/Workflows/Unity_CLI.md)
-- ⛔ `senate ucmd` 已廢棄，不要再用。
-
----
-
-## 不需要 Unity 的指令（`senate cmd`）
-
-Senate 自己內建的一套指令系統（SCP_CMD）——**沒有佇列、直接跑**，Unity 關著也能用：
+Senate 自己內建的一套指令系統（SCP_CMD）——**沒有佇列、直接跑**：
 
 ```
 senate cmd                                  # 有哪些指令
@@ -144,15 +132,21 @@ senate cmd wake-brief --arg persona=Template --arg wake=4
 
 ## 設定路徑
 
-開視窗、進「**路徑管理**」頁，把**資料根**（AgentCommands 資料樹，例：`D:/Unity/Valhalla`）填好就能用；
-詞典根、信件庫根預設是 `auto`（自動推導），外部漫畫庫沒有就留空。每一格都會顯示解析結果與「存不存在」。
+**資料根**（AgentCommands 資料樹）預設是 `auto` ＝ Senate 自帶的 **`Valhalla/`**（submodule，Valhalla 的 `Senate` 分支：
+只有最低需求的設定檔，persona 只有 `Template`，沒有 nested submodule）。`./install.sh` 會把它拉下來。
+
+⚠ 這顆 submodule 標了 `update = none`：Valhalla 的 main 是整份資料（約 600 MB），`clone --recursive`／`submodule update` 一律跳過它，
+只由 `install.sh` 抓 `Senate` 那一版（約 1 MB）。它在執行期會被寫入，所以也標了 `ignore = all`（不算 Senate 的改動）。
+
+要接既有的資料樹（例：`D:/Unity/Valhalla`）就開視窗、進「**路徑管理**」頁填它的絕對路徑；
+詞典根、信件庫根預設也是 `auto`（自動推導），外部漫畫庫沒有就留空。每一格都會顯示解析結果與「存不存在」。
 
 不想開視窗的話，直接編輯 **`SenateData/config/senate.local.json`**（`senate init` 會從範本建一份）：
 
 ```jsonc
 {
   "schemaVersion": 1,
-  "paths": { "agentCommandsRoot": "D:/Unity/Valhalla", "glossaryRoot": "auto", "comicRoot": "" },
+  "paths": { "agentCommandsRoot": "auto", "glossaryRoot": "auto", "comicRoot": "" },
   "awakening": { "lettersRoot": "auto" }
 }
 ```
@@ -170,7 +164,6 @@ senate cmd wake-brief --arg persona=Template --arg wake=4
 | `路徑不存在` | 設定檔裡的 `root` 打錯，或那個資料夾被搬走了 |
 | `非 git repo` | 那個資料夾不是 git 專案 |
 | `⚠ N 已 staged` | 你自己先把檔案加進待提交清單了 ⇒ 自動提交會**跳過**這個專案，先自己提交或取消 |
-| `Editor 在跑` | Unity 開著，自動提交會讓 Unity 那邊做，Senate 不動它 |
 | `⚠ 找不到中文字型` | 視窗裡的中文會變方塊（不是壞了，是這台機器沒有那顆字型） |
 | `✗ 開窗失敗` | 這台機器沒有桌面環境（例如遠端連線）⇒ 用上面「不開視窗也能看」那招 |
 

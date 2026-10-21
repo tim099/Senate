@@ -4,3 +4,9 @@
 [submodule "Glossary"]
 	path = Glossary
 	url = https://github.com/tim099/Glossary.git
+[submodule "Valhalla"]
+	path = Valhalla
+	url = https://github.com/tim099/Valhalla.git
+	branch = Senate
+	update = none
+	ignore = all

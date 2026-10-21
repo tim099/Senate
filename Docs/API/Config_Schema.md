@@ -45,7 +45,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 欄位 | 型別 | 規則 |
 |---|---|---|
 | `schemaVersion` | int | 目前只認得 `1`。**讀到未知版本擋下並說出來**，不盡力而為 |
-| `paths.agentCommandsRoot` | string | 資料根，**絕對路徑**。空 ＝ 還沒設定；⛔ 不支援 `auto` |
+| `paths.agentCommandsRoot` | string | 資料根。`auto`（或空白）＝ `<Senate 專案根>/Valhalla`（自帶的最小資料樹，見 [`Data_Layout`](../Architecture/Data_Layout.md)）；接既有的資料樹就填**絕對路徑** |
 | `paths.glossaryRoot` | string | 詞典根。`auto` ＝ `<Senate 專案根>/Glossary` |
 | `paths.comicRoot` | string | 外部漫畫庫根。空 ＝ 沒有外部漫畫庫（不是錯誤） |
 | `awakening.lettersRoot` | string | persona 信件庫根。`auto` ＝ `<資料根>/ChatTavern/baton/letters` |
@@ -53,7 +53,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `ui.textWidth` | int | 純文字輸出寬（字元格，預設 96）⚠ **不吃 `ui.scale`** —— 終端機的一格是字元不是像素 |
 | `install.pythonEnvRoot` | string | 安裝系統把 Python 套件裝進哪一份 Python（資料夾：安裝目錄或 venv）。**空白＝自動找系統安裝的 Python**（TASK-0375，見 [`Install`](../Workflows/Install.md)） |
 | `install.modelsRoot` | string | 模型快取根（＝`HF_HOME`）。**空白＝HF 預設**（`%USERPROFILE%/.cache/huggingface`） |
-| `linkedProjects[]` | array | 綁定的外部專案（2026-10-19）：`name`（跟任務單的 `project` 同一把尺、不分大小寫）、`path`（專案根，絕對路徑）、`docs`（文件資料夾：相對 `path` 或絕對；空 ＝ 沒有）。用途：`tasks --arg index=<N>` 印出那張單的專案路徑；`docs` 接成文件根（`senate cmd doc`、skill 的 `docs:`）。⚠ 不叫 `projects` —— 那是舊的 Unity 專案清單，讀檔時會被拿掉。舊檔沒有 ⇒ 空清單 |
+| `linkedProjects[]` | array | 綁定的外部專案（2026-10-19）：`name`（跟任務單的 `project` 同一把尺、不分大小寫）、`path`（專案根，絕對路徑）、`docs`（文件資料夾：相對 `path` 或絕對；空 ＝ 沒有）。用途：`tasks --arg index=<N>` 印出那張單的專案路徑；`docs` 接成文件根（`senate cmd doc`、skill 的 `docs:`）。⚠ 不叫 `projects` —— 舊檔的 `projects` 讀檔時會被拿掉。舊檔沒有 ⇒ 空清單 |
 
 所有路徑格的解析（auto、推導、存不存在）統一走 `senate cmd paths`（描述表 `SCP_PathRegistry`，對映在 `SenatePathBinding`）。
 
@@ -66,7 +66,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 `"//"` 開頭的 key 當註解用（parser 也容忍 `//` 與 `/* */`，但那是給手改檔案的寬容，不是格式的一部分）。
 
 舊檔的 `projects` 區塊讀入時拿掉（下次存檔就不在了）；舊檔沒有 `paths` 而 `projects` 只有一筆啟用的，
-那一筆上的 `agentCommandsRoot`／`glossaryRoot`／`comicRoot` 搬進 `paths`（`auto` 不搬）。
+那一筆上的 `agentCommandsRoot`／`glossaryRoot`／`comicRoot` 搬進 `paths`（`auto` 不搬，留空即走自帶的資料樹）。
 
 ### 寫回檔案時不會弄丟的東西（D12 的血證）
 

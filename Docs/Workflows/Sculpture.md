@@ -642,7 +642,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
   - 樣本（量的，2026-10-16）：summit 岩堡港 `summit-rocher-01m-house-a2` ＝ `house-a1` 加 `recolor=218:213,168:109,132:73,49:42`（101,542 格，形狀相同、每個舊色只對到一個新色）⇒ 換成關聯可省一件約 1.47 MB 的雕刻庫檔。`house-a3` 形狀也相同，但色 218 有 12,324 格留著、22,626 格換成 246 ⇒ 單靠替換色做不到。
   - ⚠ vxk 裡關聯是展開成格子的 ⇒ 省的是雕刻庫，不是遊戲檔；遊戲檔要省得靠外部模型的替換色（§9.4.8「替換色」：換色的擺放跟原色共用一份網格）。
   - ⚠ 關聯的 recolor **只換格子**，不套到那一層作品自己的外部模型（2026-10-21 量過：17 件作品的 86 條關聯用了替換色，城鎮房屋為主 —— 房子的換色是寫給牆與門窗的，子樹裡的燈籠、酒桶、貨箱也是模型 —— 套上去會讓剛好同色的道具一起換、已經畫好的城鎮悄悄變色）。要換模型的色 ⇒ 在模型上寫 `recolor`（§9.4.8）。
-- **覆寫：改裝船**（TASK-0656；Tim 2026-10-16：「可以把一艘船當成子作品概念去做改裝船」「修改可以包含挖掉原本船體上的格子 移除原有的子模組 概念類似 Unity 的 nested prefab」「只要記錄 diff 的部分」）：
+- **覆寫：改裝船**（TASK-0656；需求：把一艘船當成子作品去做改裝船，可以挖掉原船體上的格子、移除原有的子模組，只記錄差異）：
   一條關聯除了替換色，還能存兩種覆寫 —— 改的是**這條關聯看到的樣子**，被關聯的作品本身一格都不動（另一條關聯、另一艘船照舊看到原樣）。
   ```bash
   # 原船整艘關聯進來，拿掉它裡面的駕駛塔（關聯）、前艙蓋（甲板-main 這一層的外部模型），並照遮罩挖格子
@@ -665,7 +665,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_links=甲板2/船�
 - **效能與鎖**：被關聯的作品讀它自己的快取（只讀、不寫回）；同一件只讀一次（28 門砲關聯同一件 cannon 也只讀一次）。鎖：作品＋關聯樹上所有作品依 ID 排序一次拿齊（全系統只有這一種鎖序）。
 - `diff` 只比本作品自己的事件（不含關聯）；`mark` 回到過去時，被關聯的作品照現在。觀測頁：「只組這些關聯／拿掉這些關聯」兩欄；被關聯的作品改了之後，預覽要換一下參數（或按渲染）才會重組。
 - **觀測頁的關聯開關**（TASK-0499）：選了有關聯的作品，「作品」下拉底下列出整棵關聯樹（巢狀縮排），**一條一個 toggle**，預設照那一條在作品裡的 `enabled`。關掉一條 ⇒ 連同底下都不畫；只關底下那條 ⇒ 上一層照畫；作品裡設為關的也可以這次打開。頁面把開關換成 `links=`（畫的那幾條全部點名）＋`hide_links=`（關掉而上一層有畫的）送出去 —— ⚠ 只送 `links=` 不夠：點名那條底下沒點名的會照自己的 enabled 被畫回來。全部在預設 ⇒ 什麼都不送；全關 ⇒ `links=none`。⛔ 開關**不寫回** links.json（長期開關用 `work sub=link enabled=0|1`）。開關的 id 帶作品 id ⇒ 換作品清單就換。**兩個文字欄有填 ⇒ 以文字欄為準**，開關這一次不生效（頁面上有寫）。GPU 預覽每幀照開關組參數；spawn 出圖（文字模式）要按渲染。
-  - **Unity Hierarchy 式**（TASK-0500）：子模組的子模組（幾層都行）一樣列、一樣開關。勾 ＝ 那一條**自己的**開關（像 activeSelf）；上一層關了 ⇒ 底下每一層都不畫，但它們的勾照留、標「◌ 上層關著 ⇒ 不畫」（像 activeInHierarchy），上一層打開就照自己的勾回來。有子關聯的那一條前面有 ▶／▼ 折疊鈕（方形、跟勾選框一樣大；**預設折起來**），折起來標「底下 N 條」；另有「全部展開／全部折疊」。**折疊只管列不列，不管畫不畫**。開關與折疊都住頁面 session，⛔ 不寫回 links.json。
+  - **樹狀階層式**（TASK-0500）：子模組的子模組（幾層都行）一樣列、一樣開關。勾 ＝ 那一條**自己的**開關；上一層關了 ⇒ 底下每一層都不畫，但它們的勾照留、標「◌ 上層關著 ⇒ 不畫」，上一層打開就照自己的勾回來。有子關聯的那一條前面有 ▶／▼ 折疊鈕（方形、跟勾選框一樣大；**預設折起來**），折起來標「底下 N 條」；另有「全部展開／全部折疊」。**折疊只管列不列，不管畫不畫**。開關與折疊都住頁面 session，⛔ 不寫回 links.json。
 - **預覽 preset**（TASK-0571）：作品存幾組「這次只看／藏哪些」，觀測時用名字叫出來 —— 看藏在船殼裡面、已完工的部分。存在作品的 `view_presets.json`（入版控，⛔ 不是 voxel、不進 events）。
   ```bash
   senate cmd sculpture --arg op=work --arg sub=preset --arg work=ship --arg persona=<P> --arg name=藏船殼 --arg hide_links=船殼 --arg note=看甲板
@@ -739,7 +739,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg hide_rope_groups=standi
 - **壞掉的綁定**（固定點刪了／改名、關聯路徑不在了、固定點檔壞了）⇒ `broken`：⛔ 不靜默消失 —— 觀測照樣出圖，但回傳行大聲列 🔴 與原因（`ropes_broken`）；`sub=unanchor` 當下就全庫掃一次，印出哪幾條繩（含上層作品用關聯路徑綁的）現在壞了（`ropes_now_broken`）。把固定點用原名加回去就接上。
 - **畫**：view 與觀測頁的 GPU 預覽把繩畫成管子，跟 voxel 同一個網格（吃同一組燈、會投影子、也接影子）；繩不是 voxel ⇒ `visible_voxels` 不變。回傳值 `ropes_drawn`／`ropes_hidden`／`ropes_disabled`／`ropes_broken`。`slice`／`section`／`stats` 量的是格子，不畫繩。
 - **觀測頁**：選了有繩的作品，「繩索開關」：總開關「畫繩索」＋**一組一個勾**（照組樹排，取消勾 ⇒ `hide_rope_groups`，連同子組）；組裡的繩收在折疊裡、一條一個勾（`hide_ropes`），沒分組的收在「（未分組）」；完全沒分組的作品照舊一條一個勾。只影響這次觀測、⛔ 不寫回 ropes.json；壞掉的列 🔴＋原因；作品裡設為關（自己或組）的只列不勾。
-- **匯出**：`export format=obj` 把繩接在 voxel 面後面輸出成管狀網格（每條一個 `o rope_n`＋材質 `rope_n`，mtl 有 Kd；有法線、繞序跟法線同向）⇒ 匯進 Unity 看得到。`format=list|vox` 只有格子 ⇒ 繩不輸出、`ropes_exported=0`。
+- **匯出**：`export format=obj` 把繩接在 voxel 面後面輸出成管狀網格（每條一個 `o rope_n`＋材質 `rope_n`，mtl 有 Kd；有法線、繞序跟法線同向）⇒ 匯進其他引擎／工具看得到。`format=list|vox` 只有格子 ⇒ 繩不輸出、`ropes_exported=0`。
 - **帆**：端點寫帆角 `sail:[關聯/…/]帆名/角` ⇒ 繩綁在帆的角上（TASK-0503，見 §9.4.7）；其他 `種類:` 一律 exit 2（不猜）。固定點與繩的格式就是帆共用的那一份。
 - **子繩**（TASK-0511）：端點寫 `rope:[關聯/…/]繩名/比例`（相對於繩所在的作品；比例 0..1 ＝ 沿母繩**實際的曲線**量的長度比，0 ＝ 母繩的 from、1 ＝ to）⇒ 那一端掛在母繩上。
   - **不算物理**：兩端之間拉直（`slack` 只能是 1）；另一端可以是固定點、座標、模型上的點或另一條繩，⛔ 不能是帆角。子繩上可以再掛子繩。
@@ -831,7 +831,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_
   - **壞掉的綁定**（固定點刪了／改名、關聯路徑不在了、角幾乎在一條線上）⇒ `broken`：⛔ 不靜默消失 —— 觀測照樣出圖，回傳行大聲列 🔴（`sails_broken`）；`sub=unanchor`／`sub=unsail` 當下全庫掃一次（`sails_now_broken`／`ropes_now_broken`）。用原名把固定點加回去就接上。
 - **畫**：view 與觀測頁的 GPU 預覽把帆畫成**雙面**的布（正反各一份、各往法線推半個布厚 ⇒ 兩面都看得到、也不會自己遮自己的影子），吃同一組燈、會投影子也接影子。帆與綁帆角的繩是**另一趟**（每次換形狀只重傳帆，⛔ voxel 網格不重建）。帆不是 voxel ⇒ `visible_voxels` 不變。
 - **觀測頁**：選了有帆的作品，「帆」區：風／秒數欄位（空 ＝ 作品預設）、「持續模擬」開關、總開關「畫帆」＋一面一個勾（只影響這次觀測，⛔ 不寫回 sails.json）；壞掉的列 🔴＋原因；作品裡設為關的只列不勾。
-- **匯出**：`export format=obj` 把帆（模擬到 `sail_seconds` 那一刻）接在繩後面輸出成雙面三角網格（每份網格一個 `o sail_n`＋材質 `sail_n`，mtl 有 Kd；有法線、繞序跟法線同向；帶貼圖的帆每色一份），綁帆角的繩也一起 ⇒ 匯進 Unity 看得到。`sails_exported` ＝ 幾面帆、`sail_meshes_exported` ＝ 幾份網格。`format=list|vox` 只有格子 ⇒ `sails_exported=0`。
+- **匯出**：`export format=obj` 把帆（模擬到 `sail_seconds` 那一刻）接在繩後面輸出成雙面三角網格（每份網格一個 `o sail_n`＋材質 `sail_n`，mtl 有 Kd；有法線、繞序跟法線同向；帶貼圖的帆每色一份），綁帆角的繩也一起 ⇒ 匯進其他引擎／工具看得到。`sails_exported` ＝ 幾面帆、`sail_meshes_exported` ＝ 幾份網格。`format=list|vox` 只有格子 ⇒ `sails_exported=0`。
   - `format=vxk include=rig`：帆**一面一份**（遊戲拿它跑布料物理）；帶貼圖的多一個 `texture`：`file`、`w`／`h`、`rgba`（RGBA8 列優先、第 0 列是圖的最上面、base64）、`alpha_min`、`uv`（跟 `verts` 一一對應、每頂點 2 個；u ＝ 角 0→角 1、v ＝ 角 0→角 3／三角帆角 0→角 2）。沒貼圖的帆輸出不變。
 - **讀數**（淨室 SculptureSailsCleanRoom，Release）：24 面帆、每面 25×25 布點，模擬 3 秒（180 步）約 1.2 秒、每步約 6.8 ms。
 - 收帆（furled，捲在 yard 上）、縮帆（reef）不做。
@@ -941,7 +941,7 @@ senate cmd sculpture --arg op=export --arg format=vxk --arg work=<作品> --arg 
 
 ### 9.4.11 `.glb` —— 子模型各自成物件、同件共用 mesh（TASK-0510）
 
-Tim 2026-10-12：「匯出時子模型（關聯、外部模型）各自是獨立的物件、不合併進主模型；多個同樣的子模型共用一份 mesh」；格式 2026-10-16 定 glTF 2.0 二進位（obj 沒有「同一份 mesh 套不同變換」的寫法）。Blender 內建匯入；Unity 用 glTFast（或 UnityGLTF）。
+Tim 2026-10-12：「匯出時子模型（關聯、外部模型）各自是獨立的物件、不合併進主模型；多個同樣的子模型共用一份 mesh」；格式 2026-10-16 定 glTF 2.0 二進位（obj 沒有「同一份 mesh 套不同變換」的寫法）。Blender 內建匯入。
 
 ```bash
 senate cmd sculpture --arg op=export --arg format=glb --arg work=<作品> [--arg out=<路徑.glb>] [--arg links=… --arg hide_links=…|self] [--arg models=0|1 --arg hide_models=…]

@@ -747,7 +747,7 @@ SCP_GuiStyle
   ├── Scaled(n) / ScaledInt(n)        ← 基準值 × Scale
   ├── FontSize / TitleFontSize / ItemSpacing* / FramePadding* / CellPadding*
   │   IndentSpacing / ScrollbarSize / ButtonMinWidth / WindowWidth …（＝基準值 × Scale）
-  ├── NoteColor / BackgroundColor      ← renderer 無關的顏色（不碰 Vector4 / UnityEngine.Color）
+  ├── NoteColor / BackgroundColor      ← renderer 無關的顏色（不碰任何 renderer 的向量／顏色型別）
   ├── Text* （TextWidth / TextIndent / TextColumnGap …）⚠ **不吃 Scale**
   ├── Describe()                       ← 一行人可讀的當前設定（尺寸也要有讀數）
   ├── DrawPicker(ui)                   ← 畫四顆尺寸按鈕，回傳被按的那一段（不自己套用、不寫檔）

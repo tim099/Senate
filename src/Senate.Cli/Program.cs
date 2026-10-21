@@ -293,15 +293,40 @@ public static class Program
         {
             File.Copy(aExample, aTarget);
             Console.WriteLine($"✓ 已建立：{aTarget}（樣板：{Rel(iRepoRoot, aExample)}）");
-            Console.WriteLine("  下一步：把資料根填進 paths.agentCommandsRoot（或到 `senate ui` 的「路徑管理」頁設定）。");
         }
         else
         {
             Console.Error.WriteLine($"✗ 找不到樣板 {aExample} —— repo 不完整？");
             return 1;
         }
+        ReportDataRoot(aTarget);
         Console.WriteLine();
         return CmdDoctor(iRepoRoot, Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// 資料根讀數。預設 `auto` ＝ 自帶的 `Valhalla/` submodule —— 沒拉下來時它是空目錄，
+    /// 而空目錄跟「設定好了」在設定檔上同形 ⇒ 要說出來。
+    /// </summary>
+    static void ReportDataRoot(string iConfigPath)
+    {
+        SenateConfig? aCfg;
+        try { aCfg = SenateConfig.Load(iConfigPath); }
+        catch (InvalidDataException e) { Console.WriteLine($"⚠ 設定檔讀不了：{e.Message}"); return; }
+        if (aCfg == null) return;
+        SCP_PathResolution aRes = SCP_PathRegistry.Resolve(SCP_PathId.AgentCommandsRoot, id => SenatePathBinding.StoredOf(aCfg, id));
+        if (aRes.Error != null)
+        {
+            Console.WriteLine($"⚠ 資料根解不出來（{aRes.Origin}）：{aRes.Error} —— 到 `senate ui` 的「路徑管理」頁設定");
+            return;
+        }
+        Console.WriteLine($"・資料根：{aRes.Value}（{aRes.Origin}）");
+        bool aEmpty = !Directory.Exists(aRes.Value) || !Directory.EnumerateFileSystemEntries(aRes.Value).Any();
+        if (!aEmpty) return;
+        bool aBuiltIn = aRes.Origin.StartsWith(SCP_PathRegistry.AutoLiteral, StringComparison.Ordinal);
+        Console.WriteLine(aBuiltIn
+            ? "  ⚠ 目錄是空的 —— 自帶的資料樹是 submodule，`./install.sh` 會拉（只抓 Senate 分支那一版）"
+            : "  ⚠ 目錄不存在或是空的 —— 路徑打錯，或那棵資料樹被搬走了");
     }
 
     // ── senate doctor ─────────────────────────────────────────
@@ -1782,7 +1807,7 @@ public static class Program
                 --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               ui --soak <秒>      開窗**真的轉這麼多秒**再收工，印幀數／fps／最慢一幀（可跟 --screenshot 併用）
-              cmd [<name>]        SCP_CMD —— 不依賴 Unity 的指令系統（沒有 queue，直接呼叫 C#）
+              cmd [<name>]        SCP_CMD —— 內建的指令系統（沒有 queue，直接呼叫 C#）
                                   不給 name ＝ 印出所有可用指令（等同 cmd help）
                 --arg k=v         指令參數，可重複。**沒宣告的參數名會被擋下**，不會靜默取預設
                 --arg-file k=<路徑>  參數值從檔案讀（UTF-8）—— 長內文不經過 shell
