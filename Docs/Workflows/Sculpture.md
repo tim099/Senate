@@ -920,6 +920,21 @@ senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> [--arg par
 - **存法**：sails.json／ropes.json 每一筆的 `meta`；用到 meta 的檔升 **schema 3**（帆：含貼圖的 2；繩：含組與子繩的 2）—— 舊版讀到會大聲讀不了。清光 ⇒ schema 回原本、逐位元組回原樣。
   作者用 `sub=sail／rope` 改屬性、換端點，meta 照留（⛔ 以前「新建物件再抄欄位」的寫法會默默清掉）。
 - **讀數**：`sub=sails`、`sub=ropes`、view／export 的帆與繩那一行後面印 `meta k=v, …`（沒 meta 的行一個字都不差）。
+
+#### 作品本身的預設 meta（`part=work`，TASK-0795）
+
+被引用很多次的元件（火藥桶、砲、舵輪）**標一次就好**（Tim 2026-10-21「meta應該只要標共用的那個子模型」「雕刻引擎加預設 meta 功能(可以加)」）：
+
+```bash
+senate cmd sculpture --arg op=work --arg sub=meta --arg work=<元件作品> --arg persona=<P> --arg part=work --arg 'meta={"render":"lathe"}'   # 不用 name
+senate cmd sculpture --arg op=work --arg sub=meta --arg work=<元件作品> --arg persona=<P> --arg file=<絕對路徑.tsv>                          # 批次：work<TAB><TAB>meta-JSON（名字欄留空）
+```
+
+- 存在元件作品資料夾的 **`work_meta.json`**（`{"schema": 1, "meta": {…}}`）；清光（`meta=none`）⇒ 檔刪掉。不限作者、記 `meta_log.jsonl`（`part=work`、`name` ＝ 作品 id），同上。
+- **匯出時合併**：`export format=parts` 與 `format=vxk include=meta` 的每個外部模型（來源是作品的）、每條關聯，照它的來源作品補上預設 meta；**擺放上自己寫的鍵優先**（同一個鍵 ⇒ 擺放的贏）。作品裡的 links.json／models.json 一位元組都不動。
+- 沒有 `work_meta.json` 的作品 ⇒ 匯出跟以前逐欄相同。檔壞了（不是物件、schema 不認得、meta 不合）⇒ 匯出大聲擋下（exit 2、⛔ 不當成沒有）。
+- ⚠ 關聯的 `material`、`render` 會變成格子的材質層、render 層（引擎照**擺放上**的 meta 算）⇒ 這兩個鍵寫在預設 meta 裡只進 meta、不改格子的層；要改格子的層照舊寫在關聯上。外部模型的 meta 全部有效。
+- 讀數：`sub=meta` 多一節「作品本身」。
 - **匯出 .vxk**：`include=meta` ⇒ 帆與繩**有 meta 才**多一個 `meta`（⇒ 沒標的作品跟以前逐欄相同）；`include=ends`（配 rig）⇒ 每條繩多 `frame`（繩所在那一層的關聯路徑，組裝件自己 ＝ ""）與 `ends`（兩端原樣的參照，相對於 frame：`固定點`、`關聯/…/固定點`、`model:…`、`sail:帆/角`、`rope:…`、`x,y,z`）。
   ⚠ `voxel_export.py`（對拍用的舊生產端）不帶帆與繩的 meta、ends ⇒ 這兩段跟 senate 那支比會不同。
 - 驗收：淨室 `SculptureRigMetaCleanRoom`（非作者寫得進去並記 log、批次合併、一筆不合整份不寫、作者改屬性不清 meta、非作者改形狀照擋、vxk 帶與不帶、清掉逐位元組回原樣、手改 schema 1 帶 meta 讀不了）。

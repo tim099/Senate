@@ -241,6 +241,7 @@ public static partial class SelfTest
         One(nameof(SculptureMetaCleanRoom), "sculpture", SculptureMetaCleanRoom),
         // 雕刻帆與繩的 meta、work sub=meta（TASK-0539）：本體在 SelfTest.SculptureRigMeta0539.cs
         One(nameof(SculptureRigMetaCleanRoom), "sculpture", SculptureRigMetaCleanRoom),
+        One(nameof(SculptureWorkMetaCleanRoom), "sculpture", SculptureWorkMetaCleanRoom),
         // 不影響外觀的修改不限作者＋拆件（TASK-0646）：本體在 SelfTest.SculptSplit0646.cs
         One(nameof(SculptSplitCleanRoom), "sculpture", SculptSplitCleanRoom),
         // 雕刻關聯材質 → .vxk 檔頭 materials（TASK-0616）：本體在 SelfTest.SculptureMaterial0616.cs

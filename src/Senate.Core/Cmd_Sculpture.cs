@@ -185,7 +185,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("upto", "work mark：標在哪個事件（相對 events/ 的路徑或唯一檔名；start ＝ 第一個事件之前）；不給 ⇒ 現在"),
         new SCP_CmdArgSpec("note", "work mark／link／anchor／rope／ropegroup／sail／model／preset：備註"),
         new SCP_CmdArgSpec("kind", "work components：只列 meta kind 是這個的（gun、boat、wheel、light…；gun:24l 只列那一種砲）；不給 ＝ 全部"),
-        new SCP_CmdArgSpec("part", "work meta：改哪一種部件的 meta —— sail｜rope｜model｜link（TASK-0539；讀數時只列那一種）"),
+        new SCP_CmdArgSpec("part", "work meta：改哪一種部件的 meta —— sail｜rope｜model｜link（TASK-0539；讀數時只列那一種）｜work ＝ 作品本身的預設 meta（不用 name；引用這件的外部模型、關聯匯出時帶上，擺放上寫的鍵優先；TASK-0795）"),
         new SCP_CmdArgSpec("meta", "work model／link／meta：給下游認部件的資訊（TASK-0517；帆與繩 TASK-0539 走 sub=meta，不限作者）—— 一個 JSON 物件 {鍵: 字串或數字}，**合併**進現有的（值給 null ⇒ 刪那個鍵）；none ＝ 全清。例 {\"kind\":\"gun\",\"gun\":\"24l\"}、{\"kind\":\"magazine\",\"powder_lb\":9000}"),
         new SCP_CmdArgSpec("confirm", "work import：1 才落地並扣費；預設只預覽／spray：1 才落刀（要帶 expect_plan）；預設只預覽／work split-events：1 才改寫；預設只試算"),
         new SCP_CmdArgSpec("expect_revision", "work import：預覽的來源版本 SHA256"),

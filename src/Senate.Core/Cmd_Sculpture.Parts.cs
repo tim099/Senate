@@ -28,6 +28,9 @@ public sealed partial class Cmd_Sculpture
         catch (ArgumentException e) { return Blocked(c, 2, e.Message); }
         if (ResolveViewModels(c, aCard, aTree, aSel, true, out SCP_SculptModelSet aSet) is string aBad) return Blocked(c, 2, aBad);
         SCP_JsonData aJson = SCP_SculptPartsExport.Build(c.Works, aCard, aTree, aSel, aSet);
+        int aDefaulted;                                                    // 作品本身的預設 meta（TASK-0795，Cmd_Sculpture.WorkMeta.cs）：引用它的模型、關聯帶上，擺放上寫的優先
+        try { aDefaulted = ApplyWorkMeta(c.Works, aJson); }
+        catch (InvalidOperationException e) { return Blocked(c, 2, e.Message); }
         string? aDir = Path.GetDirectoryName(aOut);
         if (!string.IsNullOrEmpty(aDir)) Directory.CreateDirectory(aDir);
         File.WriteAllText(aOut, SCP_JsonWriter.Write(aJson, true) + "\n", new UTF8Encoding(false));
@@ -46,6 +49,7 @@ public sealed partial class Cmd_Sculpture
         c.Result.AddValue("parts_models", aModels.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("parts_with_meta", aWithMeta.ToString(CultureInfo.InvariantCulture));
         c.Result.AddValue("parts_points", aPoints.ToString(CultureInfo.InvariantCulture));
+        if (aDefaulted > 0) c.Result.AddValue("parts_work_meta", aDefaulted.ToString(CultureInfo.InvariantCulture));
         if (aErrors > 0)
         {
             c.Result.AddValue("parts_points_errors", aErrors.ToString(CultureInfo.InvariantCulture));
