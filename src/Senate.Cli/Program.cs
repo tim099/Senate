@@ -1807,7 +1807,7 @@ public static class Program
                 --seed-session    開窗時接續 CLI session 的欄位／勾選／摺疊（截圖模式自動開）
               ui --screenshot <p> 開窗、畫幾幀、把畫面存成 PNG 後結束（給沒有眼睛的人驗收）
               ui --soak <秒>      開窗**真的轉這麼多秒**再收工，印幀數／fps／最慢一幀（可跟 --screenshot 併用）
-              cmd [<name>]        SCP_CMD —— 不依賴 Unity 的指令系統（沒有 queue，直接呼叫 C#）
+              cmd [<name>]        SCP_CMD —— 內建的指令系統（沒有 queue，直接呼叫 C#）
                                   不給 name ＝ 印出所有可用指令（等同 cmd help）
                 --arg k=v         指令參數，可重複。**沒宣告的參數名會被擋下**，不會靜默取預設
                 --arg-file k=<路徑>  參數值從檔案讀（UTF-8）—— 長內文不經過 shell
