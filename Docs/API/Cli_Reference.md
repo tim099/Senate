@@ -351,9 +351,7 @@ SCP_Core 內建的指令系統：**沒有 queue，CLI 直接呼叫 C#**。
 
 三格定語，**每一格都是會咬人的**：
 
-- 🔴 **射程＝這個 process 已載入的組件**（`Senate.Core` / `SCP_Core` / BCL）。
-  ⛔ 打 `UnityEditor.*` 在這裡一定找不到 —— 要在 Editor 裡跑 C# 走 Unity CLI 的 `eval`
-  （[`Unity_CLI`](../Workflows/Unity_CLI.md)）。
+- 🔴 **射程＝這個 process 已載入的組件**（`Senate.Core` / `SCP_Core` / BCL）—— 其他組件的型別一定找不到。
 - ⚠ **變數（`store_as` / `$name`）只活在同一次呼叫內。**
   CLI 每次都是新 process ⇒ 分兩次跑的話
   `$var` 永遠找不到。⇒ 鏈式呼叫**把每一步寫在同一份 `steps` 裡**（一行一步，`k=v|k=v`；
@@ -446,11 +444,6 @@ CLI 那側撞到的四種「沒有結果」都是 exit 3，細分在 `🔢 deleg
 | `timeout` | 送了但**本端**沒在時限內拿到 result；**不讀回傳檔**、**不寫錯誤報告** | 先看 `_cmd_results/<cmd_id>.json` 的 mtime（多半已經跑完），不要重打指令（會多送一筆） |
 
 Server 端回報失敗 ⇒ exit 1（`delegate_failure = cmd_failed`），Server 說的話（result 檔 `lines`）原樣印回來。
-
-### Unity 專案 → Unity CLI
-
-`senate` 不派指令給 Unity Editor（`senate ucmd` 已廢棄）。要碰 Editor 一律用官方 Unity CLI，
-流程與讀法在 [`Unity_CLI`](../Workflows/Unity_CLI.md)。
 
 ### `server start` / `server stop` / `server status`
 

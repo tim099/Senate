@@ -202,6 +202,7 @@ git check-ignore -v --no-index SenateData/config/senate.local.example.json  # �
 | `build/` `publish/` | **產物**，跟資料是兩回事（產物可以整個刪掉重建，資料不行）。執行檔 `publish/senate.exe` 住這裡 |
 | `senate.lnk` | 一鍵 build 放的雙擊捷徑，**只服務滑鼠**（PATH 掛的是 `publish/`） |
 | `.claude/` `.codex/` `.agents/` | 那是 agent 工具的家，不是 Senate 的 |
+| `Glossary/` `Valhalla/` | submodule：詞典、自帶的最小資料樹（Valhalla 的 `Senate` 分支：最低需求的設定檔，persona 只有 `Template`）—— `glossaryRoot`／`agentCommandsRoot` 的 `auto` 指這裡。各自是 git repo，寫入與提交進它們自己的歷史，⛔ 不收進 `SenateData/`。`Valhalla` 標 `update = none`（main 約 600 MB，只由 `install.sh` 抓 Senate 那一版）＋ `ignore = all`（執行期寫入不算 Senate 的改動） |
 
 ## 相關
 

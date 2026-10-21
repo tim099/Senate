@@ -164,6 +164,25 @@ command -v git >/dev/null 2>&1 || {
 }
 echo "  git    : $(git --version | sed 's/^git version //')"
 
+# 自帶的最小資料樹（資料根 `auto` 指這裡）：Valhalla 的 `Senate` 分支，掛成 submodule `Valhalla/`。
+# ⚠ `.gitmodules` 標了 `update = none`：Valhalla 的 main 是整份資料（約 600 MB），一般的
+#   `submodule update`／`clone --recursive` 會先抓它 ⇒ 一律跳過，只走這裡：只抓 Senate 那一版
+#   （--depth 1 --filter=tree:0，約 1 MB），放上 `Senate` 分支、只追蹤 origin/Senate。
+# ⚠ 已經拉下來就不動 —— 裡面是資料，不是產物。
+echo '── 內建資料樹（Valhalla/）──────────────────────'
+if [ -e "$root/Valhalla/.git" ]; then
+  echo "・Valhalla/ 已經在了 —— 不動它"
+elif git -C "$root" submodule update --init --checkout --depth 1 --filter=tree:0 Valhalla \
+  && git -C "$root/Valhalla" config remote.origin.fetch '+refs/heads/Senate:refs/remotes/origin/Senate' \
+  && git -C "$root/Valhalla" fetch -q --depth 1 origin \
+  && git -C "$root/Valhalla" switch -q -c Senate \
+  && git -C "$root/Valhalla" branch -q -u origin/Senate \
+  && git -C "$root/Valhalla" branch -q -D main; then   # clone 留下的 main 只有一個 commit 物件，checkout 它會懶載入整份資料
+  echo "✓ Valhalla/ 已拉下來（$(git -C "$root/Valhalla" rev-parse --abbrev-ref HEAD) @ $(git -C "$root/Valhalla" rev-parse --short HEAD)）"
+else
+  echo "⚠ Valhalla/ 沒拉成 —— 資料根 auto 會指著一個空目錄（init 會再說一次）；網路好了重跑本腳本" >&2
+fi
+
 # build 一律走 build.sh —— ⛔ **不要在這裡另寫一條 dotnet build**。
 # 🩸 為什麼寫成硬規則：舊版 setup.sh 跑的是 `dotnet build Senate.slnx -c Release`，
 #   產出 src/Senate.Cli/bin/Release 的 framework-dependent DLL；而 build.sh 產出的是

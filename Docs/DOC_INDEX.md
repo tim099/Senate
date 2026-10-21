@@ -30,7 +30,6 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [DeepSeek_Harness_Local_Deployment](Workflows/DeepSeek_Harness_Local_Deployment.md) | Windows 與 LY 換機部署的工具鏈、啟停與驗收流程，以及本次問題、解法和未驗備案。 |
 | [DeepSeek_Harness_Ollama_Integration](Workflows/DeepSeek_Harness_Ollama_Integration.md) | 將 LlmModelPage 管理的 Ollama 模型接入 DSH，包含設定、查驗、故障排查與 LY 換機驗收。 |
 | [SCP_Cmd_System](Workflows/SCP_Cmd_System.md) | `senate cmd`：SCP_Core 內建的指令系統（**沒有 queue、直接呼叫 C#**）、參數規格與四種 exit code、怎麼寫一支新 Cmd |
-| [Unity_CLI](Workflows/Unity_CLI.md) | 操作 Unity 專案一律走官方 Unity CLI：重編譯並拿到這一趟的錯誤、Editor 存活、常用指令（`senate ucmd` 已廢棄） |
 | [Bank](Workflows/Bank.md) | `senate cmd bank`：Server 單一寫入端、op 分類（查詢／消費 pay／後台管理／審批／結帳）、動錢必填 kind／ref／caller、pay 先扣券、transfer 守恆、approve 的 central／mint |
 | [Goodnight](Workflows/Goodnight.md) | 晚安入口（`scp-goodnight` skill 的內容）：只有第一步與回傳檔管不到的幾格（persona 顯式、親筆、private_body） |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
@@ -50,7 +49,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | 文件 | 用途 |
 |---|---|
 | [Agent 入口檔的受管區塊](../SCP_Core/Docs~/Entry_Doc_Blocks.md) | CLAUDE.md / AGENTS.md 的**附加式**安裝：marker 格式（成對 BEGIN/END）、七種狀態、舊版整檔安裝的遷移、備份與回讀 |
-| [SCP 專案撰寫規範](../SCP_Core/Docs~/Coding_Standards.md) | 住在 **SCP_Core submodule** 裡（規則跟著共用碼走，Unity 那側才讀得到同一份）：方言限制、**JSON 一律走 `SCP_Json`**、**設定一律走專案層 prefs**、純函式邊界、血證登記處 |
+| [SCP 專案撰寫規範](../SCP_Core/Docs~/Coding_Standards.md) | 住在 **SCP_Core submodule** 裡（規則跟著共用碼走，每個消費端讀到的是同一份）：方言限制、**JSON 一律走 `SCP_Json`**、**設定一律走專案層 prefs**、純函式邊界、血證登記處 |
 
 ## Logs — 決策紀錄
 

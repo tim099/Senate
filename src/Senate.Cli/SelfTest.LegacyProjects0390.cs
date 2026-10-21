@@ -55,14 +55,17 @@ public static partial class SelfTest
                 if (!aDoc.RootElement.TryGetProperty("paths", out _)) aFails.Add("存回去後應有 paths 區塊");
             }
 
-            // 🔴 反向：舊設定的 "auto"（從專案推資料根）不搬 —— 現在沒有那條路，留空讓人明說
+            // 🔴 反向：舊設定的 "auto"（從專案推資料根）不搬 —— 留空 ⇒ 走 Senate 自帶的資料樹，⛔ 不從專案推
             File.WriteAllText(aLegacyPath, "{\"schemaVersion\":1,\"projects\":[{\"name\":\"Bar\",\"root\":\"D:/x/Bar\",\"agentCommandsRoot\":\"auto\",\"enabled\":true}]}");
             SenateConfig aAuto = SenateConfig.Load(aLegacyPath)!;
             if (aAuto.Paths.AgentCommandsRoot.Length != 0) aFails.Add($"舊的 auto 不該被搬成資料根（得 {aAuto.Paths.AgentCommandsRoot}）");
-            if (SenatePathBinding.ResolveDataRoot(aAuto, out _) != null) aFails.Add("資料根沒設時應解不出來（⛔ 不從專案推）");
+            string? aBuiltIn = SenatePathBinding.ResolveDataRoot(aAuto, out string? aAutoErr);
+            string aExpect = SenatePathBinding.HostRepoRoot.Replace('\\', '/').TrimEnd('/') + "/Valhalla";
+            if (!string.Equals(aBuiltIn, aExpect, StringComparison.OrdinalIgnoreCase))
+                aFails.Add($"資料根沒設時應解成自帶的 {aExpect}（⛔ 不從專案推；得 {aBuiltIn ?? "null：" + aAutoErr}）");
 
             return new CheckRow(aName, aFails.Count == 0
-                ? "資料根／本地殼照常、顯示基準＝Senate 專案根；第二棵資料根擋下；舊檔的 projects 路徑搬進 paths 且存檔後 projects 消失；舊 auto 不搬"
+                ? "資料根／本地殼照常、顯示基準＝Senate 專案根；第二棵資料根擋下；舊檔的 projects 路徑搬進 paths 且存檔後 projects 消失；舊 auto 不搬（留空走自帶的 Valhalla）"
                 : string.Join("／", aFails), aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, $"例外：{e.GetType().Name}: {e.Message}", CheckResult.Fail); }

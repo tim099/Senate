@@ -9,7 +9,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Tim]
 
 本流程對應 Bar 的 TASK-0439 與 LY 的 TASK-0442。以原始碼建置後啟動官方 `dsh web` profile；資料與模型設定由 Harness 管理，不寫入 Senate 設定。雲端模型需有效 API 憑證；本地 Ollama 可依 §8 接入。
 
-§1–5 保存 Bar 電腦的實測；§6 區分已遇到的問題與未驗備案；§7 提供換機參數、指令與驗收；§9 記錄 2026-10-07 的 LY 部署。LY 不必沿用 `Tim` 帳號、D 槽或 Codex runtime 路徑，也不必把 Harness 放進 Unity 的 `Assets`。
+§1–5 保存 Bar 電腦的實測；§6 區分已遇到的問題與未驗備案；§7 提供換機參數、指令與驗收；§9 記錄 2026-10-07 的 LY 部署。LY 不必沿用 `Tim` 帳號、D 槽或 Codex runtime 路徑，也不必把 Harness 放進 LY 專案目錄。
 
 LY 部署由 **TASK-0442 — LY 區域部署 DeepSeek Harness** 追蹤，與已完成的 TASK-0439 關聯。查單：`senate cmd tasks --arg index=442`；進度與驗收勾選以任務單為準。
 
@@ -206,7 +206,7 @@ Stop-Process -Id $dshPid
 
 | 值 | 設定方式 |
 |---|---|
-| `$dshRepo` | LY 電腦的 Harness clone 路徑；獨立於 LY Unity 的 Assets，例如 `D:\Unity\deepseek-harness` |
+| `$dshRepo` | LY 電腦的 Harness clone 路徑；獨立於 LY 專案目錄，例如 `D:\Unity\deepseek-harness` |
 | `$dshNodeExe` | 該電腦可用的 Node 24.19 executable；Codex runtime 或獨立 Node 安裝均可，先確認存在 |
 | `$dshLogDir` | 本機 log／PID／驗收輸出目錄，放在 repo 外，例如 `D:\Unity\deepseek-harness-local` |
 | `$dshPort` | 3080；已有 listener 時改 3081，不停止不明 process |

@@ -1,14 +1,14 @@
 ---
 title: 設計拍板紀錄（ADR）
-description: Senate 與 SCP_Core 的關鍵決策、當時的理由、以及被實測推翻或修正的部分。新決策往下加，不改舊條目
-last_updated: 2026-09-02
+description: Senate 與 SCP_Core 的關鍵決策、理由、以及被實測推翻或修正的部分
+last_updated: 2026-10-21
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
 # 🧭 設計拍板紀錄
 
-> 規矩：**新決策往下加，不改舊條目。** 被推翻的條目留著並在下面標註被哪一條取代 ——
-> 「當時為什麼那樣想」跟「現在怎麼做」一樣重要，砍掉前者會讓下一個人重犯同一次。
+> 規矩：新決策往下加；舊條目可以照現況改寫（歷史由 git 保存）。
+> 被推翻的條目標註被哪一條取代。**編號不重排** —— 程式註解與其他文件用 D 編號引用。
 
 ---
 
@@ -23,26 +23,19 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ---
 
-## D2 · Senate 是真相源，Unity 降級成 client（2026-08-22，Tim）
+## D2 · Senate 是規則與狀態的真相源（2026-08-22，Tim）
 
-**決策**：規則與狀態的所有權往 Senate 收；Unity 只保留真的需要 Editor API 的事。
-
-⚠ **但「以 Senate 為準」這句話本身不會讓任何事情發生** ——
-真正讓 Unity 端不再是真相源的，是「Unity 端改成讀 Senate 那份 JSON」這個動作。
-在那行碼落地之前，Senate 只是第二份實作，而兩份實作裡沒有一份是「準」的。
-
-**過渡期規矩**：每種資料只有一個寫入者；git index 靠心跳互斥
-（詳見 [../Architecture/Overview](../Architecture/Overview.md)）。
+**決策**：規則與狀態的所有權在 Senate；每種資料只有一個寫入者（寫入者的容器見 D20）。
 
 ---
 
-## D3 · 共用碼寫「Unity 方言」，放 SCP_Core submodule（2026-08-22，Tim）
+## D3 · 共用碼守方言限制，放 SCP_Core submodule（2026-08-22，Tim）
 
-**決策**：共用部分以 Unity 支援的語言／API 子集撰寫（C# 9 / netstandard2.1 / 零第三方套件），
-放 `SCP_Core` submodule，同步給兩邊。
+**決策**：共用部分以受限的語言／API 子集撰寫（C# 9 / netstandard2.1 / 零第三方套件），
+放 `SCP_Core` submodule，各專案共用。
 
-**護欄**（兩道，方向相反）：csproj 的 `LangVersion 9.0` 擋太新的語法；
-asmdef 的 `noEngineReferences` 擋 Unity 專屬 API。⇒ 「請記得用舊方言」變成編譯錯誤。
+**護欄**：csproj 的 `LangVersion 9.0` 擋太新的語法、`<Error>` 擋 `PackageReference`
+⇒ 「請記得用舊方言」變成編譯錯誤。
 
 **邊界**：只放純函式＋零依賴；碰 IO／log／UI 的不進來。
 
@@ -53,13 +46,13 @@ asmdef 的 `noEngineReferences` 擋 Unity 專屬 API。⇒ 「請記得用舊方
 **決策**：概念沿用 `UCL_Core.JsonData`（節點樹、下標取值、隱式轉換），但重寫。
 
 **理由**：逐字搬會拖進 `IJsonSerializable → UCL.Core.UCLI_CopyPaste` 的相依鏈，
-而 `JsonData` 裡還埋著一個 `OnGUI()`（IMGUI 繪製）—— 那等於把 Unity 帶進共用層。
+而 `JsonData` 裡還埋著一個 `OnGUI()`（IMGUI 繪製）—— 那等於把 UI 繪製帶進共用層。
 
 **三個刻意的設計**：① **Missing 是型別不是空值**（讀它丟例外並附路徑；要寬鬆得顯式）
 ② key 保留插入順序、非 ASCII 不轉義、縮排用 tab（為了輸出可 diff）
 ③ 數字保留原文，讀取時才轉（不讓 `long` 繞一趟 `double` 掉尾數）。
 
-**驗收**：拿 **Unity 端寫出來的真檔案**跑 round-trip，不是自己造樣本。
+**驗收**：拿**磁碟上既有的真檔案**跑 round-trip，不是自己造樣本。
 
 ---
 
@@ -70,7 +63,7 @@ UI 底層（節點樹／撰寫 API／文字 renderer／操控介面）放 SCP_Co
 碰硬體的（ImGui／視窗／截圖）留 Senate.Desktop。
 
 **理由**：純 ImGui 的兩個硬限制是「只能本機」與「中文 IME 待驗」；
-中間層讓將來換 Blazor／HTML／Unity GUILayout 只換 renderer。
+中間層讓將來換 Blazor／HTML 只換 renderer。
 **而它順手買到的是「UI 有讀數」**：文字可 diff、互動可用指令重放、畫面可落 PNG。
 
 **尚未驗**：中文 IME 輸入（畫面上還沒有輸入框可以打字）。
@@ -162,9 +155,9 @@ Missing closing '}' in statement block or type definition.
 ## D11 · 顯示參數收成一個統合 class，預設縮放 **2.0**（2026-08-23，Tim）　⚠ **預設值那半已被 D13 取代**
 
 **決策**：新增 `SCP_GuiStyle`（共用層，renderer 無關）當**顯示參數的單一來源** ——
-元件尺寸、間距、字級、顏色、文字模式排版寬全部從它問。概念取自 Unity 端的
-`UCL_GUIStyle`（全域 `Scale` ＋ `GetScaledSize()` ＋ Small/Medium/Big/XL 四段），
-但**不照抄 `GUIStyle` 那一層**：共用層一碰 UI 函式庫的型別，另一邊就搬不進去。
+元件尺寸、間距、字級、顏色、文字模式排版寬全部從它問。結構是
+全域 `Scale` ＋ `GetScaledSize()` ＋ Small/Medium/Big/XL 四段；
+**不碰任何 UI 函式庫的型別**（共用層一碰就綁死 renderer）。
 
 **為什麼要有**：那些數字原本散在三處（`GuiImGuiRenderer` 的 `Vector4(0.65f…)`、
 `SCP_GuiTextRenderer.DefaultWidth = 96`、`SenateWindow.FontSize = 18f`）——
@@ -213,7 +206,7 @@ Missing closing '}' in statement block or type definition.
 
 ### ① 頁面系統
 
-新增 `SCP_GuiPage` / `SCP_GuiPageController`（共用層）—— 概念取自 Unity 端的
+新增 `SCP_GuiPage` / `SCP_GuiPageController`（共用層）—— 概念取自
 `UCL_GUIPage` / `UCL_GUIPageController`：stack、只畫最上方那頁、
 `OnPush`／`OnPause`／`OnResume`／`OnClose` 生命週期、`PopUntil`／`PopAll`／`Remove`。
 
@@ -254,8 +247,7 @@ D11 因為「太小到不想讀」把預設改成 2.0；Tim 在真的視窗裡�
 **決策**：共用層加三層（由下往上）——
 `SCP_Reflect`（反射結果快取）、`SCP_TypeSchema`／`SCP_MemberSchema`（成員描述＋種類分類）、
 以及吃同一份描述的兩個消費端：`SCP_JsonMapper`（物件 ↔ `SCP_JsonData`）與
-`SCP_GuiInspector`（物件 ↔ 畫面）。概念取自 Unity 端那套 GUILayout 自動 inspector 與
-JSON 反射工具，**命名與 API 重新取過**（Tim：不用參考原命名）。
+`SCP_GuiInspector`（物件 ↔ 畫面）。
 
 **為什麼分成三層而不是一支自動繪製**：如果繪製自己判斷「這成員是數字還是清單」、
 序列化再判斷一次，遲早出現**畫得出來但存不進去**（或反過來）——
@@ -368,7 +360,7 @@ UCL 那側 `new Regex(input)` 編譯失敗就退回「不篩」⇒ 打一個 `(`
 **頁面自己改一個欄位沒有落點**（清空搜尋框、記住選擇、翻頁都做不到）。
 ⇒ 加 `SetField`（記下請求）＋ `FieldValue`（讀，不畫節點），由驅動端在 Draw 之後套用。
 
-這是 Unity 端 `UCL_ObjectDictionary` 的對應物，但**狀態住在驅動端而不是頁面物件裡** ⇒
+**狀態住在驅動端而不是頁面物件裡** ⇒
 它進 session、可以 `--set`、可以 diff。代價：元件的內部狀態跟使用者資料混在同一個
 `Fields` 字典裡（session 會看到 `home/page/open` 這種不是資料的資料）。對照表見 Ui_Framework。
 
@@ -459,7 +451,7 @@ reveal 成功 → reveal **這次**失敗就自動退到複製 → 沒裝 reveal
 
 ---
 
-## D18 · 下拉的版位：等寬 ＋ 對齊自己的頭（2026-08-23，Tim 指定，附 Unity 端參考圖）
+## D18 · 下拉的版位：等寬 ＋ 對齊自己的頭（2026-08-23，Tim 指定）
 
 ### ① ImGui 的 Row 改用 `BeginGroup`（推翻 D17 ① 的修法，不是推翻診斷）
 
@@ -468,7 +460,6 @@ D17 診斷對了（`SameLine` 把群組疊在前一項上面），**修法選小
 `BeginGroup` 會把游標的 X 當成群組的新左緣，群組裡每一行都從那裡開始。
 
 ⇒ 正解是**包成群組**而不是換行：一顆鈕旁邊可以放一整塊垂直內容，而那塊內容對齊它自己的起點。
-（那正是 Unity 端 `GUILayout.BeginVertical` 在 `BeginHorizontal` 裡的手感。）
 
 📌 一般形：**「不要疊在一起」與「排在正確的位置」是兩個要求，第一個滿足了不代表第二個。**
 我當時只驗了第一個，因為截圖上看起來「不壞了」。
@@ -586,7 +577,7 @@ D18 之前那頁只有一張唯讀表，而 UCL 原頁的價值**有一半在逐
 ### ⑥ repo 目標＝**可以直接打路徑的欄位**（預設 Senate 自己）（Tim 2026-08-28 當面要求）
 
 第一版是「只能從 `senate.local.json` 的專案清單裡挑」的下拉。而這一頁最常見的用途本來就是
-**操作別的 repo** —— Senate 是後台，要整理的是 Unity 專案 ⇒ 只能挑清單等於把主要用途擋在設定之後
+**操作別的 repo** —— Senate 是後台，要整理的常是別的專案 ⇒ 只能挑清單等於把主要用途擋在設定之後
 （而且那台機器上根本還沒有 `senate.local.json`，下拉裡只有 Senate 自己一項）。
 
 ⇒ 改成 `TextField`（預設 `m_Model.RepoRoot`）＋「↩ 改回 Senate 自己」鈕；
@@ -923,9 +914,9 @@ SCP_GuiHost.RedrawsContinuously ── true: 丟背景＋每幀顯示進度／fa
 | 何時退 | **永駐直到 `stop`** | idle 自退 —— 讓「Server 沒起來」多一種成因，錯誤訊息得多解釋一句 |
 | 誰啟動 | **人手動**；委派 Cmd 撞到沒 Server 只印 `senate server start` 並 exit 3 | CLI 自動 spawn —— 兩顆 CLI 同時發現沒 Server 的 race，且違反 R18「不做降級路」 |
 
-**為什麼這條線存在**（①）：LY 的酒館 `_seq.txt` 註解白紙黑字「prototype 不做跨 process lock」，
-per-room lock 只在同一 process 內成立。Server 的第一價值不是「多執行緒要鎖」，是**把「同一 process」這個
-前提從 Unity Editor 搬到 Senate**。⇒ 要鎖的清單就是 seq 與 ledger 兩格；其餘 per-persona 檔案的 Cmd 不遷移（⑧）。
+**為什麼這條線存在**（①）：酒館 `_seq.txt` 的 per-room lock 只在同一 process 內成立。
+Server 的第一價值不是「多執行緒要鎖」，是**讓這些寫入都發生在同一個 process（Server）裡**。
+⇒ 要鎖的清單就是 seq 與 ledger 兩格；其餘 per-persona 檔案的 Cmd 不遷移（⑧）。
 
 **它翻掉了 SCP_Cmd_System「為什麼沒有 queue」那節的前提**（呼叫端與執行端同一個 process）。
 那節不改寫 —— 本條目記下前提已變，執行器（TASK-0103）沿用檔案協議、Server 當 Watcher，
@@ -1018,7 +1009,7 @@ D25 收掉的就是那一格 —— **在 Senate 這一側**。
    而 2026-09-14 分析 Senate.Server 獨立 exe 時，卡住它們往下搬進 `SCP_Core` 的**就是 `System.Text.Json`**
    （SCP_Core 是 `netstandard2.1` ＋ 零 `PackageReference`，csproj 有 `<Error>` 明著擋）。
    ⇒ §2.1 自己那句「搬家時才換等於把移植成本延後並放大」，實測應驗在寫它的人身上。
-2. **兩套 JSON 寫入器對同一批磁碟檔。** 那些檔同時被 Unity（`SCP_Json`）與 python 讀寫 ——
+2. **兩套 JSON 寫入器對同一批磁碟檔。** 那些檔同時被 `SCP_Json` 與 `System.Text.Json` 讀寫 ——
    兩個 writer 的跳脫、數字格式與鍵序不保證同形，而**位元組漂掉不會報錯**。
 3. 量到的成本很小（見下），沒有「太大所以不做」的理由。
 
@@ -1036,11 +1027,11 @@ API 形狀以 DOM 為主（`JsonObject` 38／`JsonArray` 24／`JsonNode` 6／`Js
 
 而 `SCP_JsonMapper` 目前只有 `ToJson` / `Populate` / `Create`，**沒有 attribute 形式的未知鍵收容**。
 ⇒ 兩條出路，**擇一前不要動那個檔**：
-(a) `SCP_JsonMapper` 補一個等價機制（新增能力，要一起想 Unity 那側）；
+(a) `SCP_JsonMapper` 補一個等價機制（新增共用層能力）；
 (b) `Extra` 改存 `SCP_JsonData`，在讀寫兩端顯式 merge（不動共用碼，但那段 merge 要有反向對照）。
 🩸 **這一格做壞的樣子是「使用者的設定檔安靜地少一塊」，不是編譯錯誤。** 沒有反向對照就等於沒驗。
 
-**不在射程內**：`SCP_Core/**` 本來就沒有在用（兩處命中**都是註解**，說的正是「Unity 那側沒有它」）。
+**不在射程內**：`SCP_Core/**` 本來就沒有在用（兩處命中**都是註解**）。
 
 **落地**：`Docs/Architecture/Overview.md`（把規則從「SCP_Core 的規矩」升成 Senate 全域）、
 `<SCP_Core>/Docs~/Coding_Standards.md` §2.1（標註消費端可自行收窄，Senate 已收）。
@@ -1094,18 +1085,17 @@ parent 接管線 ⇒ parent 跑完就退，非同步讀取器跟著死 ⇒ 輸�
 
 ## D27 · 新銀行與舊 Treasury **並存**：遷移前新銀行是測試用，實際以舊系統為準（2026-09-15，Tim 拍板）　⚠ **整條已被 D28 取代**（2026-09-18 兩區都切完，並存期結束）
 
-**拍的是什麼**：`SCP_Bank*`（Senate 原生銀行）與 Unity 側的 `UCL_TreasuryLedger`
+**拍的是什麼**：`SCP_Bank*`（Senate 原生銀行）與舊 Treasury 帳本（`Treasury/ledger/`）
 **完全獨立、長期並存**，而且：
 
 > 🔴 **遷移前新銀行一律視為測試用；「我有多少錢」的唯一權威仍是舊系統。**
 
 **這一條取消了 TASK-0209 原本的 C8**（「全部消費端切到新系統，必須與 B 同一次上線」）。
-C8 的理由是「只接 Server 而 Editor 仍直寫磁碟 ＝ 兩個寫入端，比現在更糟」——
+C8 的理由是「只接 Server 而舊消費端仍直寫磁碟 ＝ 兩個寫入端，比現在更糟」——
 ⚠ **那句話的前提是兩邊在搶同一筆錢**。前提換掉之後它就不成立了：
 兩套系統各自寫各自的帳本，**它們不是同一本帳**。
 
-⇒ 消費端（Editor 側 `UCL_TreasuryLedger` 全庫 **86 處／26 檔**：Credit 29／Debit 17／GetBalance 24）
-**一行都不動**。
+⇒ 舊帳本的消費端**一行都不動**。
 
 **未來遷移的射程（拍板當天就寫死，⛔ 不是等到那天再想）**：
 - 只搬**開帳金額**（`opening_balance` 一筆一戶），⛔ 不搬歷史分錄
@@ -1126,14 +1116,13 @@ C8 的理由是「只接 Server 而 Editor 仍直寫磁碟 ＝ 兩個寫入端�
 
 > 🔴 Tim 逐字：**「不刪，轉唯讀就好」**（問的是舊帳本那 14,000+ 筆分錄要不要刪）。
 
-**⇒ 拍出來的三格，⛔ 不要再重新討論：**
+**⇒ 拍出來的兩格，⛔ 不要再重新討論：**
 1. **資料留著**：`Treasury/ledger/` 與 `accounts/` 原封不動，狀態＝唯讀歷史。
    新銀行每一戶的第一筆 `opening_balance` 帶 `source_ref` 指回它 —— 刪掉會讓那個指標指向不存在的東西，
    而它在畫面上仍然是一個合法字串。
 2. **選它的那條路不留**：`money_authority` 旗標、`legacy` 分支、雙寫鏡像、雙寫期的對帳器
    全部整段移除（TASK-0242 ④）。⇒ **退路留在資料上，不留在程式碼上** ——
    一個編得過、讀得到、呼叫得到的舊分支，會讓下一個人把錢寫進一本凍結的帳，而沒有任何一層會喊。
-3. **讀歷史有自己的名字**：`UCL_TreasuryHistory`（Unity 側）。名字本身就回答了「這是哪個時代的答案」。
 
 **🩸 這一條為什麼要寫**（D27 的處置在切換那天整句變成假的）：
 D27 的風險處置是「輸出帶定語：遷移前＝測試用」。那句定語**在 2026-09-18 之後每一次都是假話** ——

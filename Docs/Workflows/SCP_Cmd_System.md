@@ -1,6 +1,6 @@
 ---
 title: SCP_CMD（`senate cmd`）—— SCP_Core 的指令系統
-description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生；Unity 專案走官方 Unity CLI
+description: SCP_Core 內建的指令目錄與派遣：沒有 queue、直接呼叫 C#、參數規格由 ArgSpecs 宣告、help 由系統產生
 last_updated: 2026-10-06
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
@@ -12,20 +12,12 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 ---
 
-## Unity 專案不走這裡
-
-操作 Unity 專案（重編、讀編譯錯誤、跑 C#）一律用官方 Unity CLI → [`Unity_CLI`](Unity_CLI.md)。
-⛔ `senate ucmd` 已廢棄，不要再用。
-
 ## Coding 退場驗編譯
 
 `coding op=end` 與綁單自動收場依本場 `scope` 的每條絕對路徑（`|` 分隔）找所屬工程，資料根只用來讀 session，不拿來推工程。每條路徑各自回報，任一條未通過即保留施工場。
 
-- 路徑往上有 `ProjectSettings/`：用官方 Unity CLI；不編 Unity 產生式 csproj，也不在 Assets 裡產生 dotnet 建置產物。
-- 其餘路徑：從近到遠找 .NET 工程（csproj／fsproj／vbproj／sln／slnx），同一層優先唯一 solution；多個候選不能確定歸屬時擋下。同一工程在這趟只編一次，各條路徑仍保留結果。
-- 未宣告、路徑不存在、找不到工程、CLI 起不來或逾時：明說未驗並擋下，不拿 Senate 本身的綠燈代替。
-
-Unity 流程為 `console_status` 取數字游標 → `recompile` → `recompile_status` 輪詢（上限兩分鐘），以 `compilationFailed` 判定；缺欄位或非終態不放行。`up_to_date` 明說只有當前 Editor 讀數、沒有新重編。錯誤明細用 `console --level error --since <cursor> --tail 0`，有 capture session 時一併帶 `--since_session`。重編後 domain reload 的 exit 6 只重試狀態讀取，不重送重編。
+- 每條路徑從近到遠找 .NET 工程（csproj／fsproj／vbproj／sln／slnx），同一層優先唯一 solution；多個候選不能確定歸屬時擋下。同一工程在這趟只編一次，各條路徑仍保留結果。
+- 未宣告、路徑不存在、找不到工程、建置工具起不來或逾時：明說未驗並擋下，不拿 Senate 本身的綠燈代替。
 
 本閘只驗編譯；Senate 出廠仍須另外跑 `build.sh` 與 `check.sh`。
 
@@ -165,5 +157,4 @@ SCP_CmdRegistry.InvocationHint = "senate cmd";
 
 ## 相關文件
 
-- [`Unity_CLI`](Unity_CLI.md) —— 操作 Unity 專案（官方 Unity CLI）
 - [`Cli_Reference`](../API/Cli_Reference.md) —— 所有指令與旗標速查

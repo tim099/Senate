@@ -1,13 +1,13 @@
 {
   "//": "senate.local.json 的樣板。`senate init` 會把本檔複製成同目錄的 senate.local.json（已存在則不覆寫）。",
   "//1": "⚠ 本檔入版控，所以裡面不可以有任何機器絕對路徑；實際路徑填在複製出去的那份（.gitignore 已擋）。",
-  "//2": "paths.agentCommandsRoot：資料根（絕對路徑，必填，不支援 auto）。paths.glossaryRoot：auto = <Senate 專案根>/Glossary。paths.comicRoot：空 = 沒有外部漫畫庫。",
+  "//2": "paths.agentCommandsRoot：資料根。auto = <Senate 專案根>/Valhalla（Senate 自帶的最小資料樹，submodule）；要接既有的資料樹就填絕對路徑。paths.glossaryRoot：auto = <Senate 專案根>/Glossary。paths.comicRoot：空 = 沒有外部漫畫庫。",
   "//3": "awakening.lettersRoot：persona 信件庫根。auto = <資料根>/ChatTavern/baton/letters。",
   "//4": "persona lock 沒有設定項：它住 <lettersRoot>/<persona>/profile/_session.json，位置由 persona 目錄唯一決定（TASK-0105）。",
   "//5": "linkedProjects：綁定的外部專案 [{name, path, docs}]。name 跟任務單的 project 欄位同一把尺（不分大小寫）⇒ 查單印出路徑；docs（相對 path 或絕對）有填 ⇒ 接成文件根（senate cmd doc 查得到）。例 {name: Blocksail, path: <專案根的絕對路徑>, docs: docs}。",
   "schemaVersion": 1,
   "paths": {
-    "agentCommandsRoot": "",
+    "agentCommandsRoot": "auto",
     "glossaryRoot": "auto",
     "comicRoot": ""
   },

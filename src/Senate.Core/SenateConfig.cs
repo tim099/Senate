@@ -117,7 +117,7 @@ public sealed class InstallSettings
 /// </summary>
 public sealed class SenatePathsSettings
 {
-    /// <summary>AgentCommands 資料根（`SCP_PathId.AgentCommandsRoot`）。空 ＝ 還沒設定（⛔ 不從任何專案推）。</summary>
+    /// <summary>AgentCommands 資料根（`SCP_PathId.AgentCommandsRoot`）。空／<c>"auto"</c> ＝ <c>&lt;Senate 專案根&gt;/Valhalla</c>（自帶的最小資料樹）。</summary>
     public string AgentCommandsRoot { get; set; } = "";
 
     /// <summary>詞典根（`SCP_PathId.GlossaryRoot`）。<c>"auto"</c> ＝ <c>&lt;Senate 專案根&gt;/Glossary</c>。</summary>
@@ -314,7 +314,7 @@ public sealed class SenateConfig
         string? aData = Str(aP, "agentCommandsRoot");
         string? aGlo = Str(aP, "glossaryRoot");
         string? aComic = Str(aP, "comicRoot");
-        // 舊的 "auto" 是「從 Unity 專案推」—— 那條路不存在 ⇒ 不搬 auto，留空讓人明說
+        // 舊的 "auto" 是「從 Unity 專案推」—— 那條路不存在 ⇒ 不搬 auto，留空（＝走 Senate 自帶的資料樹）
         if (aData != null && !string.Equals(aData.Trim(), "auto", StringComparison.OrdinalIgnoreCase)) Paths.AgentCommandsRoot = aData;
         if (aGlo != null) Paths.GlossaryRoot = aGlo;
         if (aComic != null) Paths.ComicRoot = aComic;
