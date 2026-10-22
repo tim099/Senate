@@ -182,11 +182,14 @@ public sealed class SyncTargetSettings
     public bool IsSet => Repo.Trim().Length > 0 && Branch.Trim().Length > 0;
 }
 
-/// <summary>哪些資料要同步到遠端（目前只有任務單；書籤、畫像之後照同一形狀加）。</summary>
+/// <summary>哪些資料要同步到遠端（任務單、閱讀筆記；畫像之後照同一形狀加）。</summary>
 public sealed class SyncSettings
 {
     /// <summary>任務單（<c>&lt;資料根&gt;/Tasks</c>）的遠端。</summary>
     public SyncTargetSettings Tasks { get; set; } = new();
+
+    /// <summary>閱讀筆記與書稿（<c>&lt;資料根&gt;/BookNotes</c>：閱讀庫 Library/、書的草稿）的遠端。</summary>
+    public SyncTargetSettings BookNotes { get; set; } = new();
 
     /// <summary>本版不認得的欄位 —— 讀進來、寫回去，原樣保留。</summary>
     [JsonExtensionData]

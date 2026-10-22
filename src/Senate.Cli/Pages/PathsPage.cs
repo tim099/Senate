@@ -182,36 +182,49 @@ public sealed class PathsPage : SCP_GuiToolPage
     }
 
     /// <summary>
-    /// 同步遠端（`sync.tasks`）—— repo 網址不是路徑，所以不進描述表，在這裡另開一格（同一份檔、同一顆「儲存」）。
+    /// 同步遠端（`sync.tasks`、`sync.bookNotes`）—— repo 網址不是路徑，所以不進描述表，在這裡另開格子（同一份檔、同一顆「儲存」）。
     /// <para>狀態讀數在 <see cref="Load"/> 算一次（只讀本機 git，不走網路）：⛔ 不在每一幀跑 git。</para>
     /// </summary>
     void DrawSync(SCP_Ui g)
     {
         if (m_Draft == null) return;
-        SyncTargetSettings t = m_Draft.Sync.Tasks;
-        using (g.Box("同步遠端：任務單（sync.tasks）"))
+        DrawSyncTarget(g, "任務單（sync.tasks）", "tasks", m_Draft.Sync.Tasks,
+            "兩格都填了 ⇒ 每次開單／改單自動 commit＋push；`<資料根>/Tasks` 不存在時第一次用到會自動 clone；"
+            + "兩邊同時開單撞號會自動改號，解不了的衝突擋下並發酒館通知。",
+            m_SyncStatus,
+            "手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推，撞了會重放）");
+        DrawSyncTarget(g, "閱讀筆記（sync.bookNotes）", "booknotes", m_Draft.Sync.BookNotes,
+            "兩格都填了 ⇒ library／book 跑之前先拉（每分鐘最多一次）、跑完自動 commit＋push；`<資料根>/BookNotes` 不存在 ⇒ 自動 clone，"
+            + "已經有、但還不是 git repo ⇒ 第一次用到時就地接上（兩邊內容不同的以遠端為準、本機那份備份）；rebase 接不上的衝突擋下並發酒館通知。",
+            m_BookNotesStatus,
+            "手動：`senate cmd booknotes-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推）");
+    }
+
+    void DrawSyncTarget(SCP_Ui g, string iTitle, string iKey, SyncTargetSettings t, string iOnNote, string? iStatus, string iManual)
+    {
+        using (g.Box("同步遠端：" + iTitle))
         {
-            string aRepo = g.TextField("repo（clone 用的網址或路徑）", t.Repo, "paths/sync/tasks/repo");
+            string aRepo = g.TextField("repo（clone 用的網址或路徑）", t.Repo, $"paths/sync/{iKey}/repo");
             if (aRepo != t.Repo) { t.Repo = aRepo.Trim(); m_Dirty = true; }
-            string aBranch = g.TextField("branch", t.Branch, "paths/sync/tasks/branch");
+            string aBranch = g.TextField("branch", t.Branch, $"paths/sync/{iKey}/branch");
             if (aBranch != t.Branch) { t.Branch = aBranch.Trim(); m_Dirty = true; }
-            g.Note(t.IsSet
-                ? "兩格都填了 ⇒ 每次開單／改單自動 commit＋push；`<資料根>/Tasks` 不存在時第一次用到會自動 clone；"
-                  + "兩邊同時開單撞號會自動改號，解不了的衝突擋下並發酒館通知。"
+            g.Note(t.IsSet ? iOnNote
                 : (t.Repo.Length > 0 || t.Branch.Length > 0) ? "⚠ 只填了一格 ⇒ **不同步**（兩格都填才算）" : "空白 ＝ 不同步（只寫本機）");
-            if (m_SyncStatus != null) g.Note("⇒ " + m_SyncStatus);
-            g.Note("手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推，撞了會重放）");
+            if (iStatus != null) g.Note("⇒ " + iStatus);
+            g.Note(iManual);
         }
     }
 
     string? m_SyncStatus;
+    string? m_BookNotesStatus;
 
     void LoadSyncStatus()
     {
         m_SyncStatus = null;
+        m_BookNotesStatus = null;
         if (m_Draft == null) return;
         string? aRoot = SenatePathBinding.ResolveDataRoot(m_Draft, out string? aErr);
-        if (aRoot == null) { m_SyncStatus = "資料根解不出來（" + aErr + "）"; return; }
+        if (aRoot == null) { m_SyncStatus = m_BookNotesStatus = "資料根解不出來（" + aErr + "）"; return; }
         try
         {
             TaskRepoStatus s = SenateTaskRepoSync.Status(aRoot, TaskRepoTarget.From(m_Draft), iFetch: false);
@@ -219,6 +232,13 @@ public sealed class PathsPage : SCP_GuiToolPage
                          + s.Note;
         }
         catch (Exception e) { m_SyncStatus = "狀態讀不到（" + e.Message + "）"; }
+        try
+        {
+            BookNotesRepoStatus b = SenateBookNotesSync.Status(aRoot, RepoSyncTarget.From(m_Draft.Sync.BookNotes), iFetch: false);
+            m_BookNotesStatus = (b.IsRepo ? $"本機 `{SenateBookNotesSync.Dir(aRoot)}`：origin `{b.Origin}`／`{b.Branch}`，領先 {b.Ahead}／落後 {b.Behind}（上次抓遠端時）。" : "")
+                              + b.Note;
+        }
+        catch (Exception e) { m_BookNotesStatus = "狀態讀不到（" + e.Message + "）"; }
     }
 
     /// <summary>

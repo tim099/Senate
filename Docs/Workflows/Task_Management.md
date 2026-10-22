@@ -208,3 +208,4 @@ Tim 2026-10-22：「支援填寫git repo與branch 自動同步到遠端的git re
 - **推上去之前，新單的號碼都可能還會變**（`pending` 時尤其）—— 號碼以推上去之後為準。
 - 手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推；背景工作撞了不重放，交給這一支）。
 - Tasks 的 origin 或 branch 跟設定不同、或不是 git repo ⇒ **不同步**（⛔ 不替人改 origin、不切 branch），寫照舊落本機並說出來。
+- ⚠ **寫入端在 Server 裡，而經 WMI 起的 Server 一跑 git 同步就會被 Microsoft Defender 的行為偵測砍掉**（2026-10-22 實測，exit 0、從行程裡看不到任何訊號） —— 細節與對照在 [Repo_Sync §0](Repo_Sync.md#0--server-經-wmi-起--跑-git-同步會被-defender-砍)。修法拍板之前，撞到的機器先別開 `sync.tasks`。

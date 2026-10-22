@@ -18,6 +18,7 @@ using System.Text.Json;
 using SCP.Core.Git;
 using SCP.Core.Paths;
 using SCP.Core.Tasks;
+using static Senate.Core.RepoSyncGit;
 
 namespace Senate.Core;
 
@@ -30,6 +31,7 @@ public sealed record TaskRepoTarget(string Repo, string Branch)
             : null;
 
     public string RemoteRef => "origin/" + Branch;
+    public string RefSpec => $"+refs/heads/{Branch}:refs/remotes/origin/{Branch}";
 }
 
 public enum TaskSyncState
@@ -164,7 +166,7 @@ public static class SenateTaskRepoSync
             string aDir = TasksDir(iDataRoot);
             PullBeforeWrite(aDir, iTarget, aSync);
             if (aSync.State is TaskSyncState.Pending or TaskSyncState.Failed) return aSync;   // 抓不到遠端就不推
-            (int aAhead, _) = AheadBehind(aDir, iTarget);
+            (int aAhead, _) = AheadBehind(aDir, iTarget.RemoteRef);
             if (aAhead == 0) { aSync.State = TaskSyncState.UpToDate; return aSync; }
             Push(iDataRoot, aDir, iTarget, aSync, iAllowReplay, null);
             return aSync;
@@ -185,10 +187,10 @@ public static class SenateTaskRepoSync
             return new TaskRepoStatus(true, true, false, "", "", 0, 0, 0, "Tasks 存在但不是 git repo ⇒ 不同步");
         lock (s_Lock)
         {
-            if (iFetch) Git(aDir, NetTimeoutMs, "fetch", "origin", RefSpec(iTarget));
+            if (iFetch) Git(aDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec);
             string aOrigin = Git(aDir, SCP_Git.DefaultTimeoutMs, "remote", "get-url", "origin").StdOut.Trim();
             string aBranch = Git(aDir, SCP_Git.DefaultTimeoutMs, "rev-parse", "--abbrev-ref", "HEAD").StdOut.Trim();
-            (int aAhead, int aBehind) = AheadBehind(aDir, iTarget);
+            (int aAhead, int aBehind) = AheadBehind(aDir, iTarget.RemoteRef);
             int aDirty = Git(aDir, SCP_Git.DefaultTimeoutMs, "status", "--porcelain").OutLines().Count;
             string aNote = !SameRepo(aOrigin, iTarget.Repo) ? "⚠ origin 跟設定的 repo 不同 ⇒ 不同步"
                          : aBranch != iTarget.Branch ? $"⚠ 現在在 `{aBranch}`，設定是 `{iTarget.Branch}` ⇒ 不同步"
@@ -262,14 +264,14 @@ public static class SenateTaskRepoSync
     static void PullBeforeWrite(string iDir, TaskRepoTarget iTarget, TaskSyncReport ioSync)
     {
         CommitLeftovers(iDir, ioSync);
-        SCP_GitResult f = Git(iDir, NetTimeoutMs, "fetch", "origin", RefSpec(iTarget));
+        SCP_GitResult f = Git(iDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec);
         if (!f.Ok)
         {
             ioSync.State = TaskSyncState.Pending;
             ioSync.Lines.Add($"⚠ 抓不到遠端（{f.ReasonLine}）—— 先照本機的版本寫；**推上去之前，新單的號碼可能還會變**");
             return;
         }
-        (int aAhead, int aBehind) = AheadBehind(iDir, iTarget);
+        (int aAhead, int aBehind) = AheadBehind(iDir, iTarget.RemoteRef);
         if (aBehind == 0) return;
         if (aAhead == 0)
         {
@@ -320,7 +322,7 @@ public static class SenateTaskRepoSync
                 ioSync.Lines.Add($"⚠ 推不上去（{p.ReasonLine}）—— **已在本機提交**，Server 背景工作會再推；推上去之前新單的號碼可能還會變");
                 return aOut;
             }
-            SCP_GitResult f = Git(iDir, NetTimeoutMs, "fetch", "origin", RefSpec(iTarget));
+            SCP_GitResult f = Git(iDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec);
             if (!f.Ok)
             {
                 ioSync.State = TaskSyncState.Pending;
@@ -373,7 +375,7 @@ public static class SenateTaskRepoSync
             return false;
         }
 
-        string aBackup = BackupRef(iDir, aHead);
+        string aBackup = BackupRef(iDir, aHead, "task-sync");
         Git(iDir, SCP_Git.DefaultTimeoutMs, "reset", "--hard", aRemote);
         var aRenumber = new Dictionary<int, int>();
         var aRoot = new SCP_DataRoot(iDataRoot);
@@ -463,7 +465,7 @@ public static class SenateTaskRepoSync
         List<(string Sha, JournalEntry? J, List<string> Files)> iItems, int iFrom, string iWhy, string? iCurrentSha,
         bool iReset, string? iBackup = null)
     {
-        string aBackup = iBackup ?? BackupRef(iDir, iHead);
+        string aBackup = iBackup ?? BackupRef(iDir, iHead, "task-sync");
         string aStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         string aFile = Path.Combine(GitDir(iDir), ConflictDirName, $"conflict_{aStamp}.md").Replace('\\', '/');
         var sb = new StringBuilder();
@@ -575,95 +577,12 @@ public static class SenateTaskRepoSync
 
     // ── 雜項 ───────────────────────────────────────────────────
 
-    /// <summary>
-    /// 資料樹本身是 git repo、而它把 Tasks/ 列成未追蹤 ⇒ 加進它的 info/exclude（本機、不入版控），
-    /// 免得巢狀 repo 被當成未追蹤的東西收進資料樹。每次同步都問一次（已經不列了 ⇒ 什麼都不做）。
-    /// <para>🩸 2026-10-22：第一版用 `git check-ignore` 判「已經忽略了」—— 目標是巢狀 repo 時它會讀到
-    /// Tasks **自己的** .gitignore，回一個錯的「有」，於是 exclude 沒加，Valhalla 照樣列 `?? Tasks/`。
-    /// ⇒ 判準改成症狀本身：資料樹的 status 有沒有把它列成未追蹤；加完再問一次（回讀）。</para>
-    /// </summary>
+    /// <summary>資料樹是 git repo ⇒ 把 Tasks/ 排除出去（本體在 <see cref="RepoSyncGit.ExcludeFromParent"/>）。</summary>
     static void ExcludeFromParent(string iDataRoot, string iTasksDir, TaskSyncReport ioSync)
     {
-        SCP_GitResult aTop = Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "rev-parse", "--show-toplevel");
-        if (!aTop.Ok) return;
-        string aRel = Path.GetRelativePath(aTop.StdOut.Trim(), iTasksDir).Replace('\\', '/');      // exclude 那一行：相對 repo 根
-        string aSpec = Path.GetRelativePath(iDataRoot, iTasksDir).Replace('\\', '/') + "/";       // pathspec：相對工作目錄
-        if (aRel.StartsWith("..", StringComparison.Ordinal)) return;
-        bool Untracked() => Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "status", "--porcelain", "--untracked-files=normal", "--", aSpec)
-                            .OutLines().Any(l => l.StartsWith("?? ", StringComparison.Ordinal));
-        if (!Untracked()) return;
-        string aExclude = Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "rev-parse", "--git-path", "info/exclude").StdOut.Trim();
-        if (aExclude.Length == 0) return;
-        if (!Path.IsPathRooted(aExclude)) aExclude = Path.Combine(iDataRoot, aExclude);
-        Directory.CreateDirectory(Path.GetDirectoryName(aExclude)!);
-        File.AppendAllText(aExclude, $"\n# Senate：任務單是另一個 repo（sync.tasks），不收進資料樹\n/{aRel}/\n", new UTF8Encoding(false));
-        ioSync.Lines.Add(Untracked()
-            ? $"⚠ 資料樹的 info/exclude 加了 `/{aRel}/`，可是它還是把 Tasks/ 列成未追蹤 —— 去看 `{aExclude}`"
-            : $"· 資料樹的 info/exclude 加上 `/{aRel}/`（本機，不入版控；回讀：已不列成未追蹤）");
+        string? aLine = RepoSyncGit.ExcludeFromParent(iDataRoot, iTasksDir, "任務單是另一個 repo（sync.tasks）");
+        if (aLine != null) ioSync.Lines.Add(aLine);
     }
 
     static string TitleOf(SCP_DataRoot iRoot, int iIndex) => SCP_TaskIO.Find(iRoot, iIndex)?.title ?? "";
-
-    static string BackupRef(string iDir, string iHead)
-    {
-        string aRef = "refs/senate/task-sync/backup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
-        Git(iDir, SCP_Git.DefaultTimeoutMs, "update-ref", aRef, iHead);
-        return aRef;
-    }
-
-    static (int Ahead, int Behind) AheadBehind(string iDir, TaskRepoTarget iTarget)
-    {
-        SCP_GitResult r = Git(iDir, SCP_Git.DefaultTimeoutMs, "rev-list", "--left-right", "--count", "HEAD..." + iTarget.RemoteRef);
-        string[] p = r.StdOut.Trim().Split('\t', ' ');
-        return r.Ok && p.Length >= 2
-               && int.TryParse(p[0], out int a) && int.TryParse(p[^1], out int b) ? (a, b) : (0, 0);
-    }
-
-    /// <summary>push 被拒是因為遠端比我新（要先拉）—— 跟斷網、沒權限分開：前者 rebase／重放，後者等之後再推。</summary>
-    static bool IsRejected(SCP_GitResult iPush)
-    {
-        string m = iPush.Message;
-        return m.Contains("[rejected]", StringComparison.Ordinal) || m.Contains("non-fast-forward", StringComparison.Ordinal)
-            || m.Contains("fetch first", StringComparison.Ordinal);
-    }
-
-    static string RefSpec(TaskRepoTarget iTarget) => $"+refs/heads/{iTarget.Branch}:refs/remotes/origin/{iTarget.Branch}";
-
-    /// <summary>同一個 repo？（大小寫、結尾斜線、`.git` 後綴、反斜線都不算差別）</summary>
-    public static bool SameRepo(string iA, string iB)
-    {
-        static string N(string s)
-        {
-            s = s.Trim().Replace('\\', '/').TrimEnd('/');
-            if (s.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) s = s.Substring(0, s.Length - 4);
-            return s.ToLowerInvariant();
-        }
-        return N(iA) == N(iB);
-    }
-
-    /// <summary>這個目錄**本身**是一顆 repo 的根（⛔ 不用 `SCP_Git.IsRepo` —— Tasks 住在資料樹裡，問它會回答「在 repo 裡」）。</summary>
-    static bool IsRepoRoot(string iDir)
-        => Directory.Exists(Path.Combine(iDir, ".git")) || File.Exists(Path.Combine(iDir, ".git"));
-
-    static string GitDir(string iDir) => Git(iDir, SCP_Git.DefaultTimeoutMs, "rev-parse", "--absolute-git-dir").StdOut.Trim();
-    static string RevParse(string iDir, string iRev) => Git(iDir, SCP_Git.DefaultTimeoutMs, "rev-parse", iRev).StdOut.Trim();
-    static string Short(string iSha) => iSha.Length > 7 ? iSha.Substring(0, 7) : iSha;
-
-    static SCP_GitResult Git(string iDir, int iTimeoutMs, params string[] iArgs) => SCP_Git.RunTimeout(iDir, iTimeoutMs, iArgs);
-
-    /// <summary>
-    /// 會產生 commit 的指令（commit、rebase）。這台機器沒設 git 身分 ⇒ 用 `Senate` 頂上 ——
-    /// 🩸 新機器上第一次寫單就會撞「Please tell me who you are」，而那時單子已經寫在本機了。
-    /// </summary>
-    static SCP_GitResult GitId(string iDir, int iTimeoutMs, params string[] iArgs)
-    {
-        bool aHasName = Git(iDir, SCP_Git.DefaultTimeoutMs, "config", "user.name").StdOut.Trim().Length > 0;
-        bool aHasMail = Git(iDir, SCP_Git.DefaultTimeoutMs, "config", "user.email").StdOut.Trim().Length > 0;
-        if (aHasName && aHasMail) return Git(iDir, iTimeoutMs, iArgs);
-        var aArgs = new List<string>();
-        if (!aHasName) { aArgs.Add("-c"); aArgs.Add("user.name=Senate"); }
-        if (!aHasMail) { aArgs.Add("-c"); aArgs.Add("user.email=senate@localhost"); }
-        aArgs.AddRange(iArgs);
-        return Git(iDir, iTimeoutMs, aArgs.ToArray());
-    }
 }
