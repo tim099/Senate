@@ -164,21 +164,14 @@ command -v git >/dev/null 2>&1 || {
 }
 echo "  git    : $(git --version | sed 's/^git version //')"
 
-# 自帶的最小資料樹（資料根 `auto` 指這裡）：Valhalla 的 `Senate` 分支，掛成 submodule `Valhalla/`。
-# ⚠ `.gitmodules` 標了 `update = none`：Valhalla 的 main 是整份資料（約 600 MB），一般的
-#   `submodule update`／`clone --recursive` 會先抓它 ⇒ 一律跳過，只走這裡：只抓 Senate 那一版
-#   （--depth 1 --filter=tree:0，約 1 MB），放上 `Senate` 分支、只追蹤 origin/Senate。
-# ⚠ 已經拉下來就不動 —— 裡面是資料，不是產物。
+# 自帶的資料樹（資料根 `auto` 指這裡）：submodule `Valhalla/` ＝ Persona9999/Fate（只有 main 一條分支；
+#   裡面只掛 persona 的信件庫）。`git clone --recurse-submodules` 就一起拉了；沒帶 ⇒ 這裡補。
+# 拉完切到 main（submodule update 留下的是 detached HEAD ⇒ 執行期的提交會落在游離節點、分支不前進）。
+# ⚠ 已經拉下來就不動 —— 裡面是資料，不是產物（只補 detached ⇒ main 這一步）。
 echo '── 內建資料樹（Valhalla/）──────────────────────'
-if [ -e "$root/Valhalla/.git" ]; then
-  echo "・Valhalla/ 已經在了 —— 不動它"
-elif git -C "$root" submodule update --init --checkout --depth 1 --filter=tree:0 Valhalla \
-  && git -C "$root/Valhalla" config remote.origin.fetch '+refs/heads/Senate:refs/remotes/origin/Senate' \
-  && git -C "$root/Valhalla" fetch -q --depth 1 origin \
-  && git -C "$root/Valhalla" switch -q -c Senate \
-  && git -C "$root/Valhalla" branch -q -u origin/Senate \
-  && git -C "$root/Valhalla" branch -q -D main; then   # clone 留下的 main 只有一個 commit 物件，checkout 它會懶載入整份資料
-  echo "✓ Valhalla/ 已拉下來（$(git -C "$root/Valhalla" rev-parse --abbrev-ref HEAD) @ $(git -C "$root/Valhalla" rev-parse --short HEAD)）"
+if [ -e "$root/Valhalla/.git" ] || git -C "$root" submodule update --init --recursive Valhalla; then
+  if [ "$(git -C "$root/Valhalla" rev-parse --abbrev-ref HEAD)" = HEAD ]; then git -C "$root/Valhalla" switch -q main; fi
+  echo "✓ Valhalla/ 在了（$(git -C "$root/Valhalla" rev-parse --abbrev-ref HEAD) @ $(git -C "$root/Valhalla" rev-parse --short HEAD)）"
 else
   echo "⚠ Valhalla/ 沒拉成 —— 資料根 auto 會指著一個空目錄（init 會再說一次）；網路好了重跑本腳本" >&2
 fi

@@ -6,6 +6,7 @@
 //   單筆：part=sail|rope|model|link name=<名> meta=<JSON 物件>（合併：給的鍵覆寫、值 null ⇒ 刪那個鍵；meta=none ⇒ 全清）
 //   批次：file=<檔>：每行 `part<TAB>名<TAB>meta-JSON`（`#` 開頭、空行略過）；先全部驗過，**一筆不合 ⇒ 整份不寫**（零寫入）
 //   讀數：不給 meta／file ⇒ 列出本作品帆、繩、模型、關聯的 meta（`part=` 只列那一種）
+//   作品本身（TASK-0795）：part=work（不用 name；批次的名字欄留空）⇒ 這件作品的預設 meta（work_meta.json）：引用它的外部模型、關聯匯出時帶上，擺放上自己的鍵優先（Cmd_Sculpture.WorkMeta.cs）
 // 只認本作品自己的部件 —— 關聯進來的作品裡的帆、繩要到那件作品下（`work=<那件>`）。
 // 數值影響：只改那幾個檔的 meta 欄；沒變的檔不寫（位元組不變）。用到 meta 的檔照各自規則升 schema（帆、繩 3、模型 2、關聯 3）。
 // 失敗處置：參數不合、名字找不到、meta 不合 ⇒ exit 2、零寫入；讀檔失敗 ⇒ exit 2（⛔ 不當成沒有）。
@@ -20,8 +21,8 @@ namespace Senate.Core;
 
 public sealed partial class Cmd_Sculpture
 {
-    static readonly string[] s_MetaParts = { "sail", "rope", "model", "link" };
-    static readonly Dictionary<string, string> s_MetaPartName = new(StringComparer.Ordinal) { ["sail"] = "帆", ["rope"] = "繩", ["model"] = "模型", ["link"] = "關聯" };
+    static readonly string[] s_MetaParts = { "sail", "rope", "model", "link", "work" };
+    static readonly Dictionary<string, string> s_MetaPartName = new(StringComparer.Ordinal) { ["sail"] = "帆", ["rope"] = "繩", ["model"] = "模型", ["link"] = "關聯", ["work"] = "作品本身" };
     /// <summary>批次檔最多幾行（三艘船的帆與繩加起來兩千出頭；超過多半是給錯檔）。</summary>
     const int MetaBatchMax = 20000;
 
@@ -29,22 +30,24 @@ public sealed partial class Cmd_Sculpture
     {
         var aPaths = c.Works.SpacePaths(iCard.id);
         string aOnly = c.Args.Get("part").Trim();
-        if (aOnly.Length > 0 && Array.IndexOf(s_MetaParts, aOnly) < 0) return Blocked(c, 2, "part 只認 sail｜rope｜model｜link（got '" + aOnly + "'）");
-        SCP_SculptSailFile aSails; SCP_SculptRopeFile aRopes; SCP_SculptModelFile aModels; SCP_SculptLinkFile aLinks;
+        if (aOnly.Length > 0 && Array.IndexOf(s_MetaParts, aOnly) < 0) return Blocked(c, 2, "part 只認 sail｜rope｜model｜link｜work（got '" + aOnly + "'）");
+        SCP_SculptSailFile aSails; SCP_SculptRopeFile aRopes; SCP_SculptModelFile aModels; SCP_SculptLinkFile aLinks; SortedDictionary<string, SCP_JsonData> aWorkMeta;
         try
         {
             aSails = SCP_SculptSails.ReadSails(aPaths);
             aRopes = SCP_SculptRopes.ReadRopes(aPaths);
             aModels = SCP_SculptModels.ReadModels(aPaths);
             aLinks = SCP_SculptLinks.Read(aPaths);
+            aWorkMeta = ReadWorkMeta(c.Works, iCard.id);                    // 作品本身的預設 meta（TASK-0795）
         }
         catch (InvalidOperationException e) { return Blocked(c, 2, e.Message); }
 
         // 每一種部件：名字 → 那一筆 live 的 meta（改的時候直接改它，再存那個檔）
         var aLive = new Dictionary<string, Dictionary<string, SortedDictionary<string, SCP_JsonData>>>(StringComparer.Ordinal)
         {
-            ["sail"] = new(StringComparer.Ordinal), ["rope"] = new(StringComparer.Ordinal), ["model"] = new(StringComparer.Ordinal), ["link"] = new(StringComparer.Ordinal),
+            ["sail"] = new(StringComparer.Ordinal), ["rope"] = new(StringComparer.Ordinal), ["model"] = new(StringComparer.Ordinal), ["link"] = new(StringComparer.Ordinal), ["work"] = new(StringComparer.Ordinal),
         };
+        aLive["work"][""] = aWorkMeta;                                        // 作品本身只有一筆（名字 ＝ 空）
         foreach (var s in aSails.sails) aLive["sail"][s.name] = s.meta;
         foreach (var r in aRopes.ropes) aLive["rope"][r.name] = r.meta;
         foreach (var m in aModels.models) aLive["model"][m.name] = m.meta;
@@ -59,9 +62,9 @@ public sealed partial class Cmd_Sculpture
         var aItems = new List<(string Part, string Name, string Meta, int Line)>();
         if (aHasMeta)
         {
-            if (aOnly.Length == 0) return Blocked(c, 2, "單筆要 part=sail|rope|model|link name=<名> meta=<JSON>");
-            string aName = c.Args.Get("name").Trim();
-            if (aName.Length == 0) return Blocked(c, 2, "單筆要 name=<" + s_MetaPartName[aOnly] + "名>");
+            if (aOnly.Length == 0) return Blocked(c, 2, "單筆要 part=sail|rope|model|link name=<名> meta=<JSON>（作品本身：part=work meta=<JSON>）");
+            string aName = aOnly == "work" ? "" : c.Args.Get("name").Trim();
+            if (aName.Length == 0 && aOnly != "work") return Blocked(c, 2, "單筆要 name=<" + s_MetaPartName[aOnly] + "名>");
             aItems.Add((aOnly, aName, c.Args.Get("meta"), 0));
         }
         else
@@ -78,8 +81,8 @@ public sealed partial class Cmd_Sculpture
                 string[] f = t.Split('\t');
                 if (f.Length != 3) return Blocked(c, 2, "file 第 " + (i + 1) + " 行要三欄（part<TAB>名<TAB>meta-JSON），got " + f.Length + " 欄；未寫入");
                 string p = f[0].Trim();
-                if (Array.IndexOf(s_MetaParts, p) < 0) return Blocked(c, 2, "file 第 " + (i + 1) + " 行的 part 只認 sail｜rope｜model｜link（got '" + p + "'）；未寫入");
-                aItems.Add((p, f[1].Trim(), f[2], i + 1));
+                if (Array.IndexOf(s_MetaParts, p) < 0) return Blocked(c, 2, "file 第 " + (i + 1) + " 行的 part 只認 sail｜rope｜model｜link｜work（got '" + p + "'）；未寫入");
+                aItems.Add((p, p == "work" ? "" : f[1].Trim(), f[2], i + 1));
                 if (aItems.Count > MetaBatchMax) return Blocked(c, 2, "file 超過 " + MetaBatchMax + " 筆；未寫入");
             }
             if (aItems.Count == 0) return Blocked(c, 2, "file 裡沒有任何一筆；未寫入");
@@ -119,7 +122,7 @@ public sealed partial class Cmd_Sculpture
             foreach (var kv in aNext) aCur[kv.Key] = kv.Value;
             aChanged.Add(p);
             var o = SCP_JsonData.NewObject();
-            o.Set("at", aNow); o.Set("persona", c.Persona); o.Set("owner", iCard.owner); o.Set("part", p); o.Set("name", n);
+            o.Set("at", aNow); o.Set("persona", c.Persona); o.Set("owner", iCard.owner); o.Set("part", p); o.Set("name", p == "work" ? iCard.id : n);
             o.Set("before", SCP_JsonParser.Parse(aBefore, false)); o.Set("after", SCP_JsonParser.Parse(aAfter, false));
             aLog.Append(o.ToJson(false)).Append('\n');
         }
@@ -130,6 +133,7 @@ public sealed partial class Cmd_Sculpture
             if (aChanged.Contains("rope")) SCP_SculptRopes.SaveRopes(aPaths, aRopes);
             if (aChanged.Contains("model")) SCP_SculptModels.SaveModels(aPaths, aModels);
             if (aChanged.Contains("link")) SCP_SculptLinks.Save(aPaths, aLinks);
+            if (aChanged.Contains("work")) SaveWorkMeta(c.Works, iCard.id, aWorkMeta);
             File.AppendAllText(aPaths.MetaLogFile, aLog.ToString(), new UTF8Encoding(false));
         }
         c.Result.AddValue("meta_changed", aCount.ToString(CultureInfo.InvariantCulture));
@@ -141,7 +145,7 @@ public sealed partial class Cmd_Sculpture
         }
         if (aCount > 0) c.Result.AddValue("meta_log", aPaths.MetaLogFile.Replace('\\', '/'));
         c.Report.Append("\n## meta 變更（").Append(aCount).Append(" 筆改了、").Append(aSame).Append(" 筆本來就一樣）\n");
-        foreach (var (p, n) in aOrder) c.Report.Append("- ").Append(s_MetaPartName[p]).Append(" `").Append(n).Append("`：").Append(aLive[p][n].Count == 0 ? "（空）" : SCP_SculptMeta.Describe(aLive[p][n])).Append('\n');
+        foreach (var (p, n) in aOrder) c.Report.Append("- ").Append(s_MetaPartName[p]).Append(" `").Append(p == "work" ? iCard.id : n).Append("`：").Append(aLive[p][n].Count == 0 ? "（空）" : SCP_SculptMeta.Describe(aLive[p][n])).Append('\n');
         bool aNotOwner = c.Persona != iCard.owner;
         return Finish(c, 0, "✓ meta：" + aCount + " 筆改了、" + aSame + " 筆本來就一樣" + (aCount > 0 ? "｜記在 meta_log.jsonl" : "")
                             + (aNotOwner ? "｜作者是 " + iCard.owner + "（meta 不限作者，TASK-0539）" : "") + "｜不是 voxel，一格都沒動");
@@ -156,14 +160,14 @@ public sealed partial class Cmd_Sculpture
             if (iOnly.Length > 0 && p != iOnly) continue;
             var aAll = iLive[p];
             int aWith = 0;
-            c.Report.Append("\n## ").Append(s_MetaPartName[p]).Append("（").Append(aAll.Count).Append(" 筆）\n");
+            c.Report.Append("\n## ").Append(s_MetaPartName[p]).Append(p == "work" ? "（預設 meta：引用這件的外部模型、關聯匯出時帶上，擺放上寫的優先）" : "（" + aAll.Count + " 筆）").Append('\n');
             var aNames = new List<string>(aAll.Keys); aNames.Sort(StringComparer.Ordinal);
             var aWithout = new List<string>();
             foreach (string n in aNames)
             {
-                if (aAll[n].Count == 0) { aWithout.Add(n); continue; }
+                if (aAll[n].Count == 0) { aWithout.Add(p == "work" ? iCard.id : n); continue; }
                 aWith++;
-                c.Report.Append("- `").Append(n).Append("`：").Append(SCP_SculptMeta.Describe(aAll[n])).Append('\n');
+                c.Report.Append("- `").Append(p == "work" ? iCard.id : n).Append("`：").Append(SCP_SculptMeta.Describe(aAll[n])).Append('\n');
             }
             if (aWithout.Count > 0) c.Report.Append("- 沒有 meta：").Append(aWithout.Count).Append(" 筆（").Append(string.Join("、", aWithout.GetRange(0, Math.Min(12, aWithout.Count)))).Append(aWithout.Count > 12 ? "…" : "").Append("）\n");
             c.Result.AddValue("meta_" + p, aWith.ToString(CultureInfo.InvariantCulture));

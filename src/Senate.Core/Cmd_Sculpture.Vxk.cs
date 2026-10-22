@@ -91,6 +91,8 @@ public sealed partial class Cmd_Sculpture
         {
             // meta＋固定點：同 export format=parts（TASK-0517）那一份；對不上路徑、固定點讀不了 ⇒ 擋（同 voxel_export.py --meta）
             SCP_JsonData aPj = SCP_SculptPartsExport.Build(c.Works, aCard, aTree, aSel, aRig?.Models ?? new SCP_SculptModelSet());
+            try { ApplyWorkMeta(c.Works, aPj); }                            // 作品本身的預設 meta（TASK-0795）：同 export format=parts
+            catch (InvalidOperationException e) { return Blocked(c, 2, e.Message); }
             var aByLink = new Dictionary<string, SCP_JsonData>(StringComparer.Ordinal);
             var aByModel = new Dictionary<string, SCP_JsonData>(StringComparer.Ordinal);
             foreach (SCP_JsonData o in aPj["links"]) aByLink[o["path"].AsString()] = o;
