@@ -31,7 +31,8 @@ public static partial class SelfTest
             G(aTmp, "init", "--bare", "-b", "main", aRemote);
             string aSeed = Path.Combine(aTmp, "seed");
             G(aTmp, "clone", aRemote, aSeed);
-            File.WriteAllText(Path.Combine(aSeed, ".gitignore"), "_last_task_report.md\n_index.txt.lock\n");
+            // ⚠ CRLF ＋ 空行：tim099/Tasks 的 .gitignore 就是這個形狀，而它會讓 `git check-ignore Tasks/` 在外層 repo 回錯的「已忽略」（2026-10-22 實撞）
+            File.WriteAllText(Path.Combine(aSeed, ".gitignore"), "# 任務單\r\n_last_task_report.md\r\n\r\n_index.txt.lock\r\n");
             File.WriteAllText(Path.Combine(aSeed, "_index.txt"), "0");
             G(aSeed, "add", "-A");
             G(aSeed, Id.Concat(new[] { "commit", "-q", "-m", "seed" }).ToArray());
@@ -39,6 +40,7 @@ public static partial class SelfTest
 
             string Root(string n) { string p = Path.Combine(aTmp, n).Replace('\\', '/'); Directory.CreateDirectory(Path.Combine(p, "ChatTavern")); return p; }
             string A = Root("A"), B = Root("B");
+            G(A, "init", "-q", ".");   // A 的資料樹本身是 git repo（像 Valhalla）；B 不是 ⇒ 兩種都走過
             var aTarget = new TaskRepoTarget(aRemote, "main");
             (SCP_TaskOpResult R, TaskSyncReport S) W(string root, bool pre, string op, params (string k, string v)[] kv)
                 => SenateTaskRepoSync.RunWrite(root, aTarget, op, "Template", kv.ToDictionary(x => x.k, x => x.v), pre);
@@ -50,6 +52,8 @@ public static partial class SelfTest
             Expect(a1.R.Index == 1 && a1.S.State == TaskSyncState.Pushed, $"① A 開單：index={a1.R.Index} sync={a1.S.StateWord}");
             Expect(Directory.Exists(Path.Combine(A, "Tasks", ".git")), "① A 沒有 clone 出 Tasks/.git");
             Expect(Title(1) == "A1", $"① 遠端沒有 0001=A1（{Title(1)}）");
+            Expect(!G(A, "status", "--porcelain").OutLines().Any(l => l.Contains("Tasks/")),
+                $"① A 的資料樹把 Tasks/ 列成未追蹤（巢狀 repo 沒排除）：{string.Join(" / ", G(A, "status", "--porcelain").OutLines())}");
 
             // ② B 第一次用到 ⇒ clone 下來看得到 0001 ⇒ 開出 0002
             var b1 = W(B, true, "create", ("title", "B1"), ("criteria", "- [ ] b"));

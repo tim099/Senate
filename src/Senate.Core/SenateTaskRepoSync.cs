@@ -223,8 +223,6 @@ public static class SenateTaskRepoSync
                 return false;
             }
             ioSync.Lines.Add($"✓ 第一次用到 ⇒ 已從 `{iTarget.Repo}`（{iTarget.Branch}）clone 到 `{aDir}`");
-            ExcludeFromParent(iDataRoot, aDir, ioSync);
-            return true;
         }
         if (!IsRepoRoot(aDir))
         {
@@ -252,6 +250,7 @@ public static class SenateTaskRepoSync
             ioSync.Lines.Add($"✗ Tasks 停在一次沒做完的 rebase ⇒ 不同步。先看 `git -C {aDir} status`，處理完（或 `rebase --abort`）再來");
             return false;
         }
+        ExcludeFromParent(iDataRoot, aDir, ioSync);
         return true;
     }
 
@@ -576,20 +575,31 @@ public static class SenateTaskRepoSync
 
     // ── 雜項 ───────────────────────────────────────────────────
 
-    /// <summary>資料樹本身是 git repo ⇒ 把 Tasks/ 加進它的 info/exclude（本機、不入版控），免得巢狀 repo 被當成未追蹤的東西收進資料樹。</summary>
+    /// <summary>
+    /// 資料樹本身是 git repo、而它把 Tasks/ 列成未追蹤 ⇒ 加進它的 info/exclude（本機、不入版控），
+    /// 免得巢狀 repo 被當成未追蹤的東西收進資料樹。每次同步都問一次（已經不列了 ⇒ 什麼都不做）。
+    /// <para>🩸 2026-10-22：第一版用 `git check-ignore` 判「已經忽略了」—— 目標是巢狀 repo 時它會讀到
+    /// Tasks **自己的** .gitignore，回一個錯的「有」，於是 exclude 沒加，Valhalla 照樣列 `?? Tasks/`。
+    /// ⇒ 判準改成症狀本身：資料樹的 status 有沒有把它列成未追蹤；加完再問一次（回讀）。</para>
+    /// </summary>
     static void ExcludeFromParent(string iDataRoot, string iTasksDir, TaskSyncReport ioSync)
     {
         SCP_GitResult aTop = Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "rev-parse", "--show-toplevel");
         if (!aTop.Ok) return;
-        string aRel = Path.GetRelativePath(aTop.StdOut.Trim(), iTasksDir).Replace('\\', '/');
+        string aRel = Path.GetRelativePath(aTop.StdOut.Trim(), iTasksDir).Replace('\\', '/');      // exclude 那一行：相對 repo 根
+        string aSpec = Path.GetRelativePath(iDataRoot, iTasksDir).Replace('\\', '/') + "/";       // pathspec：相對工作目錄
         if (aRel.StartsWith("..", StringComparison.Ordinal)) return;
-        if (Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "check-ignore", "-q", aRel + "/").Exit == 0) return;
+        bool Untracked() => Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "status", "--porcelain", "--untracked-files=normal", "--", aSpec)
+                            .OutLines().Any(l => l.StartsWith("?? ", StringComparison.Ordinal));
+        if (!Untracked()) return;
         string aExclude = Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "rev-parse", "--git-path", "info/exclude").StdOut.Trim();
         if (aExclude.Length == 0) return;
         if (!Path.IsPathRooted(aExclude)) aExclude = Path.Combine(iDataRoot, aExclude);
         Directory.CreateDirectory(Path.GetDirectoryName(aExclude)!);
         File.AppendAllText(aExclude, $"\n# Senate：任務單是另一個 repo（sync.tasks），不收進資料樹\n/{aRel}/\n", new UTF8Encoding(false));
-        ioSync.Lines.Add($"· 資料樹的 info/exclude 加上 `/{aRel}/`（本機，不入版控）");
+        ioSync.Lines.Add(Untracked()
+            ? $"⚠ 資料樹的 info/exclude 加了 `/{aRel}/`，可是它還是把 Tasks/ 列成未追蹤 —— 去看 `{aExclude}`"
+            : $"· 資料樹的 info/exclude 加上 `/{aRel}/`（本機，不入版控；回讀：已不列成未追蹤）");
     }
 
     static string TitleOf(SCP_DataRoot iRoot, int iIndex) => SCP_TaskIO.Find(iRoot, iIndex)?.title ?? "";
