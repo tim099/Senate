@@ -56,6 +56,10 @@ public static partial class SelfTest
             Expect(Title(1) == "A1", $"① 遠端沒有 0001=A1（{Title(1)}）");
             Expect(!G(A, "status", "--porcelain").OutLines().Any(l => l.Contains("Tasks/")),
                 $"① A 的資料樹把 Tasks/ 列成未追蹤（巢狀 repo 沒排除）：{string.Join(" / ", G(A, "status", "--porcelain").OutLines())}");
+            // commit 標題裡這張的單號只出現一次（🩸 探針單 TASK-0825 兩筆都印成「TASK-0825 已建單 TASK-0825」）
+            string LastSubject(string root) => G(Path.Combine(root, "Tasks"), "log", "-1", "--format=%s").StdOut.Trim();
+            int IdCount(string root, int i) { string s = LastSubject(root), id = $"TASK-{i:0000}"; return (s.Length - s.Replace(id, "").Length) / id.Length; }
+            Expect(IdCount(A, 1) == 1, $"① commit 標題的單號應只出現一次：{LastSubject(A)}");
 
             // ② B 第一次用到 ⇒ clone 下來看得到 0001 ⇒ 開出 0002
             var b1 = W(B, true, "create", ("title", "B1"), ("criteria", "- [ ] b"));
@@ -89,6 +93,7 @@ public static partial class SelfTest
             var a5 = W(A, true, "update", ("index", "2"), ("title", "A 改的標題"));
             var b5 = W(B, false, "update", ("index", "2"), ("title", "B 改的標題"));
             Expect(a5.S.State == TaskSyncState.Pushed, $"⑥ A 改標題沒推上去（{a5.S.StateWord}）");
+            Expect(IdCount(A, 2) == 1, $"⑥ commit 標題的單號應只出現一次：{LastSubject(A)}");
             Expect(b5.R.ExitCode == 1 && b5.R.Wrote == 0 && b5.S.State == TaskSyncState.Conflict,
                 $"⑥ B 應擋下：exit={b5.R.ExitCode} wrote={b5.R.Wrote} sync={b5.S.StateWord}｜{string.Join(" / ", b5.S.Lines)}");
             Expect(b5.S.Notices.Any(n => n.Kind == "sync_conflict"), "⑥ 沒有 sync_conflict 通知");

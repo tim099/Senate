@@ -580,15 +580,17 @@ public static class SenateTaskRepoSync
 
     // ── commit ─────────────────────────────────────────────────
 
-    /// <summary>把這一筆收成一個 commit（沒有東西可收 ⇒ null）。訊息第一行：`task(<op>): TASK-NNNN <摘要> (auto)`。</summary>
+    /// <summary>把這一筆收成一個 commit（沒有東西可收 ⇒ null）。訊息第一行：`task(<op>): TASK-NNNN <摘要> (auto)`（摘要已經帶單號 ⇒ 不再補，單號只出現一次）。</summary>
     static string? Commit(string iDir, string iOp, string iPersona, SCP_TaskOpResult iR, TaskSyncReport ioSync)
     {
         SCP_GitResult a = Git(iDir, SCP_Git.DefaultTimeoutMs, "add", "-A", "--", ".");
         if (!a.Ok) { ioSync.Lines.Add($"⚠ git add 失敗：{a.ReasonLine}"); return null; }
         if (Git(iDir, SCP_Git.DefaultTimeoutMs, "diff", "--cached", "--quiet").Exit == 0) return null;
         string aHead = iR.Headline.TrimStart('✓', '✗', ' ');
+        // 單號只放一次：摘要本來就帶（「已建單 TASK-0825：…」「TASK-0825 已結單：…」）⇒ 不再補在前面
+        //   （🩸 2026-10-22 探針單的兩筆都印成「TASK-0825 已建單 TASK-0825」）。先判再截 —— 截掉之後就判不到了。
+        string aId = iR.Index > 0 && !aHead.Contains($"TASK-{iR.Index:0000}", StringComparison.Ordinal) ? $"TASK-{iR.Index:0000} " : "";
         if (aHead.Length > 90) aHead = aHead.Substring(0, 90) + "…";
-        string aId = iR.Index > 0 ? $"TASK-{iR.Index:0000} " : "";
         string aMsg = $"task({iOp}): {aId}{aHead} (auto)\n\npersona: {iPersona}\nop: {iOp}\n";
         SCP_GitResult c = GitId(iDir, SCP_Git.DefaultTimeoutMs, "commit", "-q", "-m", aMsg);
         if (!c.Ok) { ioSync.Lines.Add($"⚠ git commit 失敗：{c.ReasonLine}"); return null; }
