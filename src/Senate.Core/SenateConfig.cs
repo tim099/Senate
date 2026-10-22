@@ -159,6 +159,41 @@ public sealed class LinkedProjectSettings
          : (System.IO.Path.IsPathRooted(Docs) ? Docs : System.IO.Path.Combine(Path, Docs)).Replace('\\', '/');
 }
 
+/// <summary>
+/// 一份資料跟哪一個遠端 git repo 的哪一條 branch 同步（Tim 2026-10-22：「支援填寫git repo與branch 自動同步到遠端的git repo」）。
+/// <para>兩格都填才算設定；空 ＝ 不同步（照舊只寫本機）。本機目錄**不存在這裡**——它由資料根推導（能推導的路徑不准被儲存）。</para>
+/// </summary>
+public sealed class SyncTargetSettings
+{
+    /// <summary>遠端 repo（clone 用的那個網址或路徑），例 <c>https://github.com/tim099/Tasks.git</c>。</summary>
+    public string Repo { get; set; } = "";
+
+    /// <summary>同步哪一條 branch，例 <c>master</c>。</summary>
+    public string Branch { get; set; } = "";
+
+    /// <summary>本版不認得的欄位 —— 讀進來、寫回去，原樣保留。</summary>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+
+    /// <summary>兩格都填了才算「要同步」—— 只填一格是沒填完，⛔ 不猜另一格。</summary>
+    [JsonIgnore]
+    [SCP_Ignore]
+    public bool IsSet => Repo.Trim().Length > 0 && Branch.Trim().Length > 0;
+}
+
+/// <summary>哪些資料要同步到遠端（目前只有任務單；書籤、畫像之後照同一形狀加）。</summary>
+public sealed class SyncSettings
+{
+    /// <summary>任務單（<c>&lt;資料根&gt;/Tasks</c>）的遠端。</summary>
+    public SyncTargetSettings Tasks { get; set; } = new();
+
+    /// <summary>本版不認得的欄位 —— 讀進來、寫回去，原樣保留。</summary>
+    [JsonExtensionData]
+    [SCP_Ignore]
+    public Dictionary<string, JsonElement> Extra { get; set; } = new();
+}
+
 /// <summary>senate.local.json 的根物件。</summary>
 public sealed class SenateConfig
 {
@@ -206,6 +241,13 @@ public sealed class SenateConfig
     /// <remarks>[SCP_Ignore]：清單不進自動畫面（手改設定檔）。</remarks>
     [SCP_Ignore]
     public List<LinkedProjectSettings> LinkedProjects { get; set; } = new();
+
+    /// <summary>
+    /// 資料同步到遠端 git repo（<see cref="SyncSettings"/>）。純新增欄位 ⇒ schemaVersion 不動；舊檔沒有 ⇒ 全部不同步。
+    /// </summary>
+    /// <remarks>[SCP_Ignore]：在「路徑管理」頁編（同一份檔），不進自動畫面。</remarks>
+    [SCP_Ignore]
+    public SyncSettings Sync { get; set; } = new();
 
     /// <summary>
     /// 本版不認得的欄位（含 <c>"//"</c> 註解鍵）—— 讀進來、寫回去，原樣保留。

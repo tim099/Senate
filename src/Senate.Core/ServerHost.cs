@@ -533,6 +533,9 @@ public static class ServerHost
                     // 每日結算（TASK-0315）：這一格只看時間，到期才起背景工作 ⇒ ⛔ 不擋服務迴圈與心跳。
                     try { SenateOvernightJob.Tick(aEndpointDataRoot!, iOut, iErr); }
                     catch (Exception e) { iErr("⚠ 每日結算這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
+                    // 任務單同步（sync.tasks）：同一顆 —— 任務寫入端就在這裡。沒設遠端 ⇒ 一圈什麼都不做；網路在背景執行緒，⛔ 不擋心跳。
+                    try { SenateTaskRepoSyncJob.Tick(aEndpointDataRoot!, iOut, iErr); }
+                    catch (Exception e) { iErr("⚠ 任務同步這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
                 if (aFlushDeferred)
                 {

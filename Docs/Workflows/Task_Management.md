@@ -190,3 +190,21 @@ senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專�
 | 7 | **不知道**（送出了但等不到回執） | ⛔ 先 `senate cmd tasks --arg index=<N>` 回讀，別直接重打 |
 
 寫完之後的酒館通知失敗只是警告 —— 單子已寫好，⛔ 別因此重打（留言會多一則、勾會多一格）；通知顯示「已排隊」也不要補發。
+
+## 12. 跨機器同步（`sync.tasks`）
+
+Tim 2026-10-22：「支援填寫git repo與branch 自動同步到遠端的git repo」「讓task有新增 或改動時自動commit」「同時push」。
+在「路徑管理」頁的「同步遠端」填 repo ＋ branch（`senate.local.json` 的 `sync.tasks`，兩格都填才同步；空 ＝ 只寫本機）。
+
+- **本機的 `<資料根>/Tasks` 就是那條 branch 的工作副本** —— 讀單照舊讀本機；主 Server 每分鐘拉一次，別台開的單才看得到。
+- **缺目錄 ⇒ 第一次用到時自動 clone**（寫單或 Server 背景工作）。⛔ 設了遠端就不建空目錄：clone 不下來時寫單擋下（空板接上遠端會從 0001 整排撞號）。
+- **每次寫單（`task` 寫入成功）⇒ 寫入端自動 commit＋push**，回傳檔多一段「🔄 同步遠端」，`🔢 sync` = `pushed`／`pending`（斷網、沒權限：已在本機提交，之後再推）／`conflict`／`mismatch`。
+- **push 被拒 ⇒ rebase；rebase 撞了 ⇒ 重放**：把還沒推上去的操作（op／persona／參數，記在 Tasks 的 `.git/senate-task-journal/`）在遠端最新版上重跑。
+  - **兩邊同時開單撞號 ⇒ 自動改號**（重跑 create 會配到下一號）。這一筆還沒公告 ⇒ 酒館公告的就是新號；之前已經公告過舊號的 ⇒ 多發一則 `sync_renumber`。
+  - 留言、指派、關聯、認領、commit、收工、帶 `expect_text` 的 check ⇒ 一律可以重放（兩邊的都在）。
+  - ⛔ **自動解不了的**：整段覆寫的 op（update／resolve／sweep、不帶 `expect_text` 的 check）而遠端也改了同一張、或重跑被閘擋下 ⇒
+    這一筆**不套上共用板**（`task` 回 exit 1、`wrote=0`），發 `sync_conflict` 酒館通知；我的版本留在備份 ref `refs/senate/task-sync/backup-*`，
+    衝突報告（沒套上的操作＋可以直接重跑的 `task-write` 指令）在 `Tasks/.git/senate-task-sync/`。看過共用板的現況再決定要不要重跑。
+- **推上去之前，新單的號碼都可能還會變**（`pending` 時尤其）—— 號碼以推上去之後為準。
+- 手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推；背景工作撞了不重放，交給這一支）。
+- Tasks 的 origin 或 branch 跟設定不同、或不是 git repo ⇒ **不同步**（⛔ 不替人改 origin、不切 branch），寫照舊落本機並說出來。

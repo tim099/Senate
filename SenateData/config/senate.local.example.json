@@ -5,6 +5,7 @@
   "//3": "awakening.lettersRoot：persona 信件庫根。auto = <資料根>/ChatTavern/baton/letters。",
   "//4": "persona lock 沒有設定項：它住 <lettersRoot>/<persona>/profile/_session.json，位置由 persona 目錄唯一決定（TASK-0105）。",
   "//5": "linkedProjects：綁定的外部專案 [{name, path, docs}]。name 跟任務單的 project 欄位同一把尺（不分大小寫）⇒ 查單印出路徑；docs（相對 path 或絕對）有填 ⇒ 接成文件根（senate cmd doc 查得到）。例 {name: Blocksail, path: <專案根的絕對路徑>, docs: docs}。",
+  "//6": "sync.tasks：任務單同步到哪個遠端 repo 的哪條 branch（repo、branch 都填才同步；空 = 只寫本機）。設了之後 <資料根>/Tasks 不存在 ⇒ 第一次用到時自動 clone；每次開單／改單自動 commit + push，兩邊同時開單撞號會自動改號，解不了的衝突擋下並發酒館通知。",
   "schemaVersion": 1,
   "paths": {
     "agentCommandsRoot": "auto",
@@ -14,5 +15,11 @@
   "awakening": {
     "lettersRoot": "auto"
   },
-  "linkedProjects": []
+  "linkedProjects": [],
+  "sync": {
+    "tasks": {
+      "repo": "",
+      "branch": ""
+    }
+  }
 }

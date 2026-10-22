@@ -357,6 +357,7 @@ public static partial class SelfTest
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
         One(nameof(TaskOpsGatesCleanRoom), "tasks", TaskOpsGatesCleanRoom),
         One(nameof(TaskProjectCleanRoom), "tasks", TaskProjectCleanRoom),   // 專案（TASK-0618）：本體在 SelfTest.TaskProject0618.cs
+        One(nameof(TaskRepoSyncCleanRoom), "tasks", TaskRepoSyncCleanRoom), // 同步到遠端 repo（sync.tasks）：本體在 SelfTest.TaskRepoSync.cs
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iTargets)),
 

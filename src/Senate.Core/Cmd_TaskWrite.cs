@@ -79,14 +79,25 @@ public class Cmd_TaskWrite : ServerDelegateCmd
         }
         if (aArgs == null) return SCP_CmdResult.Fail(2, "✗ args_json 是 null —— 要的是一個 JSON 物件（`{}` 也行）");
 
-        SCP_TaskOpResult r = SCP_TaskOps.Run(new SCP_DataRoot(aDataRoot), aOp, aPersona, aArgs);
+        // 設了 sync.tasks ⇒ 寫完 commit＋push（撞了 rebase／重放；解不了的回失敗＋sync_conflict 通知）；沒設 ⇒ 跟以前一樣只寫本機
+        TaskRepoTarget? aTarget = TaskRepoTarget.From(SenateConfigSource.Provider?.Invoke().Config);
+        (SCP_TaskOpResult r, TaskSyncReport aSync) = SenateTaskRepoSync.RunWrite(aDataRoot, aTarget, aOp, aPersona, aArgs);
         var aResult = new SCP_CmdResult { ExitCode = r.ExitCode };
         aResult.Lines.Add("⤷ 任務單寫入端：Senate Server（" + ServerContext.Describe() + "）");
         foreach (string aLine in r.Report.ToString().Replace("\r", "").TrimEnd().Split('\n')) aResult.Lines.Add(aLine);
+        if (aSync.Lines.Count > 0)
+        {
+            aResult.Lines.Add("");
+            aResult.Lines.Add($"## 🔄 同步遠端（{aTarget?.Repo} {aTarget?.Branch}）");
+            foreach (string l in aSync.Lines) aResult.Lines.Add("- " + l);
+        }
         aResult.AddValue("headline", r.Headline);
         foreach (var kv in r.Values) aResult.AddValue(kv.Key, kv.Value);
+        aResult.AddValue("sync", aSync.StateWord);
+        if (aSync.ConflictFile.Length > 0) aResult.AddValue("sync_conflict_file", aSync.ConflictFile);
         aResult.AddValue("notices_json", JsonSerializer.Serialize(
-            r.Notices.Select(n => new Dictionary<string, string> { ["kind"] = n.Kind, ["task"] = n.TaskId, ["body"] = n.Body }).ToList()));
+            r.Notices.Concat(aSync.Notices)
+             .Select(n => new Dictionary<string, string> { ["kind"] = n.Kind, ["task"] = n.TaskId, ["body"] = n.Body }).ToList()));
         if (r.Memory != null)
             aResult.AddValue("memory_json", JsonSerializer.Serialize(new Dictionary<string, string>
             {
