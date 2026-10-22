@@ -934,6 +934,7 @@ senate cmd sculpture --arg op=work --arg sub=meta --arg work=<元件作品> --ar
 - **匯出時合併**：`export format=parts` 與 `format=vxk include=meta` 的每個外部模型（來源是作品的）、每條關聯，照它的來源作品補上預設 meta；**擺放上自己寫的鍵優先**（同一個鍵 ⇒ 擺放的贏）。作品裡的 links.json／models.json 一位元組都不動。
 - 沒有 `work_meta.json` 的作品 ⇒ 匯出跟以前逐欄相同。檔壞了（不是物件、schema 不認得、meta 不合）⇒ 匯出大聲擋下（exit 2、⛔ 不當成沒有）。
 - ⚠ 關聯的 `material`、`render` 會變成格子的材質層、render 層（引擎照**擺放上**的 meta 算）⇒ 這兩個鍵寫在預設 meta 裡只進 meta、不改格子的層；要改格子的層照舊寫在關聯上。外部模型的 meta 全部有效。
+- 外部模型的 `render`（Blockside 照它選網格算法）：`lathe` 車床式（繞軸對稱的：火藥桶）、`pole` 長桿式（細長的：槳；TASK-0815）；沒標 ⇒ 照原本的方塊網格。細節見 Sculpture_Shipbuilding.md §8。
 - 讀數：`sub=meta` 多一節「作品本身」。
 - **匯出 .vxk**：`include=meta` ⇒ 帆與繩**有 meta 才**多一個 `meta`（⇒ 沒標的作品跟以前逐欄相同）；`include=ends`（配 rig）⇒ 每條繩多 `frame`（繩所在那一層的關聯路徑，組裝件自己 ＝ ""）與 `ends`（兩端原樣的參照，相對於 frame：`固定點`、`關聯/…/固定點`、`model:…`、`sail:帆/角`、`rope:…`、`x,y,z`）。
   ⚠ `voxel_export.py`（對拍用的舊生產端）不帶帆與繩的 meta、ends ⇒ 這兩段跟 senate 那支比會不同。
