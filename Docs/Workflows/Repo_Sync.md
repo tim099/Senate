@@ -1,3 +1,9 @@
+---
+title: 資料同步到遠端 repo（sync.*）—— 任務單、閱讀筆記
+description: 資料樹裡的資料夾跟遠端 repo 的某條 branch 同步：怎麼設、誰在什麼時候拉推、缺目錄與已有資料夾怎麼自動補上、兩台同時寫怎麼接、接不上的衝突怎麼手動解；以及經 WMI 起的 Server 跑 git 同步會被 Defender 砍的實測。
+cmds: [booknotes-sync, task-sync]
+---
+
 # 資料同步到遠端 repo（`sync.*`）
 
 > 一句話：資料樹裡的某個資料夾 ＝ 遠端某個 repo 某條 branch 的**工作副本**；讀寫的路徑一行都不用改，寫完自動 commit＋push，兩台同時寫接得上的自動接、接不上的擋下來交給人。
