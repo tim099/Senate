@@ -132,11 +132,9 @@ senate cmd wake-brief --arg persona=Template --arg wake=4
 
 ## 設定路徑
 
-**資料根**（AgentCommands 資料樹）預設是 `auto` ＝ Senate 自帶的 **`Valhalla/`**（submodule，Valhalla 的 `Senate` 分支：
-只有最低需求的設定檔，persona 只有 `Template`，沒有 nested submodule）。`./install.sh` 會把它拉下來。
-
-⚠ 這顆 submodule 標了 `update = none`：Valhalla 的 main 是整份資料（約 600 MB），`clone --recursive`／`submodule update` 一律跳過它，
-只由 `install.sh` 抓 `Senate` 那一版（約 1 MB）。它在執行期會被寫入，所以也標了 `ignore = all`（不算 Senate 的改動）。
+**資料根**（AgentCommands 資料樹）預設是 `auto` ＝ Senate 自帶的 **`Valhalla/`**（submodule ＝ `Persona9999/Fate`，只有 `main` 一條分支；
+裡面只掛 persona 的信件庫，沒有別的 nested submodule）。`git clone --recurse-submodules` 會一起拉下來，喚醒、酒館直接能用；
+沒帶的話 `./install.sh` 會補（並切到 `main`，不留 detached HEAD）。它在執行期會被寫入，所以標了 `ignore = all`（不算 Senate 的改動）。
 
 要接既有的資料樹（例：`D:/Unity/Valhalla`）就開視窗、進「**路徑管理**」頁填它的絕對路徑；
 詞典根、信件庫根預設也是 `auto`（自動推導），外部漫畫庫沒有就留空。每一格都會顯示解析結果與「存不存在」。

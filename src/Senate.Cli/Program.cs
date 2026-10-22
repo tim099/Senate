@@ -325,7 +325,7 @@ public static class Program
         if (!aEmpty) return;
         bool aBuiltIn = aRes.Origin.StartsWith(SCP_PathRegistry.AutoLiteral, StringComparison.Ordinal);
         Console.WriteLine(aBuiltIn
-            ? "  ⚠ 目錄是空的 —— 自帶的資料樹是 submodule，`./install.sh` 會拉（只抓 Senate 分支那一版）"
+            ? "  ⚠ 目錄是空的 —— 自帶的資料樹是 submodule，`git submodule update --init --recursive Valhalla`（或 `./install.sh`）會拉"
             : "  ⚠ 目錄不存在或是空的 —— 路徑打錯，或那棵資料樹被搬走了");
     }
 
