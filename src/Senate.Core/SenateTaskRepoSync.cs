@@ -9,8 +9,11 @@
 //           重放不安全的（整段覆寫的 op，而遠端也改了同一張單）、或重跑被閘擋下的 ⇒ **不自動解**：
 //             我的版本留在備份 ref、寫一份衝突報告（含重跑指令），回報失敗並交回 `sync_conflict` 通知（入口發酒館）。
 // 數值影響：每次寫入多兩次網路往返（fetch、push）；推不上去（斷網、沒權限）⇒ 已在本機提交，回報 Pending，
-//           背景工作（`SenateTaskRepoSyncJob`）之後再推 —— **推上去之前，新單的號碼都可能還會變**。
-// ⚠ 只在寫入端（Senate Server 的 task lane）與它的背景工作裡呼叫；git 操作一律在 s_Lock 裡（同一顆 repo 不准兩條執行緒一起動 index）。
+//           下次用到（`task` 寫單、`tasks` 讀單、`task-sync op=sync`）時再推 —— **推上去之前，新單的號碼都可能還會變**。
+// ⚠ **git 只在 CLI 那一邊跑**（Tim 2026-10-22 選「3」）：sync.tasks 開著時，`task` 的寫入由入口（CLI）在跨行程鎖裡做完整套
+//   （拉 → 寫 → commit → push → 重放），⛔ 不交給 Server —— 🩸 經 WMI 起的 Server 一跑 git 同步就被 Microsoft Defender 的行為偵測砍掉
+//   （Repo_Sync §0）。Server 的 `task-write` 收到寫入時只寫檔、不碰 git（WriteWithoutGit），下一次 CLI 同步把它收成一筆。
+//   同一顆任務板的寫入與 git 操作一律在 TaskLock（Global 具名 mutex：CLI 與 Server 不一定在同一個 session）裡。
 #nullable enable
 using System.Globalization;
 using System.Text;
@@ -96,7 +99,11 @@ public static class SenateTaskRepoSync
     static readonly HashSet<string> s_AppendOps = new(StringComparer.Ordinal)
         { "create", "comment", "assign", "unassign", "link", "claim", "commit", "wrapup", "wrapup_skip" };
 
-    static readonly object s_Lock = new();
+    /// <summary>拿不到任務板的鎖最多等幾秒（一次寫入含 push 通常幾秒；網路慢時一次 git 最長 NetTimeoutMs）。</summary>
+    const int LockWaitSec = 150;
+
+    /// <summary>讀單（`tasks`）之前的同步節流：每這麼多秒最多抓一次遠端。</summary>
+    public const int PullEverySec = 60;
 
     public static string TasksDir(string iDataRoot) => SCP_TaskIO.Dir(new SCP_DataRoot(iDataRoot));
 
@@ -112,8 +119,11 @@ public static class SenateTaskRepoSync
         string iOp, string iPersona, IReadOnlyDictionary<string, string> iArgs, bool iPreSync = true)
     {
         var aSync = new TaskSyncReport();
-        lock (s_Lock)
+        using (TaskLock? aLock = TaskLock.TryAcquire(iDataRoot))
         {
+            if (aLock == null)
+                return (Refused("✗ 任務板正被另一個 senate 寫著 ⇒ 這一筆沒寫",
+                    $"等了 {LockWaitSec} 秒還拿不到任務板的鎖（另一筆寫入或同步卡在網路上）—— 零寫入，晚一點重跑就好。", aSync), aSync);
             string aDir = TasksDir(iDataRoot);
             bool aGit = iTarget != null && Ensure(iDataRoot, iTarget, aSync);
             if (iTarget != null && !Directory.Exists(aDir))
@@ -141,6 +151,34 @@ public static class SenateTaskRepoSync
         }
     }
 
+    // ===========================================================
+    // 區塊職責：Server 的 `task-write` 收到寫入、而 sync.tasks 開著 ⇒ **只寫檔、不碰 git**。
+    // 物理意義：正常路徑是入口（CLI）自己寫；走到這裡的是例外（舊入口、Server 內部派發）。照寫，留給下一次 CLI 同步
+    //           收成一筆（CommitLeftovers：沒有操作紀錄 ⇒ 撞了只能交給人）。⛔ 沒 clone 下來照樣擋（不長空板）。
+    // ===========================================================
+    public static (SCP_TaskOpResult Result, TaskSyncReport Sync) WriteWithoutGit(string iDataRoot, string iOp, string iPersona,
+        IReadOnlyDictionary<string, string> iArgs)
+    {
+        var aSync = new TaskSyncReport();
+        using (TaskLock? aLock = TaskLock.TryAcquire(iDataRoot))
+        {
+            if (aLock == null)
+                return (Refused("✗ 任務板正被另一個 senate 寫著 ⇒ 這一筆沒寫",
+                    $"等了 {LockWaitSec} 秒還拿不到任務板的鎖 —— 零寫入，晚一點重跑就好。", aSync), aSync);
+            if (!Directory.Exists(TasksDir(iDataRoot)))
+                return (Refused("✗ 任務板還沒 clone 下來 ⇒ 這一筆沒寫",
+                    "設了遠端（sync.tasks）卻沒有本機那一份 —— 跑一次 `senate cmd task-sync --arg op=sync`（CLI 那一邊會 clone）再寫。",
+                    aSync), aSync);
+            SCP_TaskOpResult r = SCP_TaskOps.Run(new SCP_DataRoot(iDataRoot), iOp, iPersona, iArgs);
+            if (r.ExitCode == 0 && r.Wrote > 0)
+            {
+                aSync.State = TaskSyncState.Pending;
+                aSync.Lines.Add("⚠ 這一筆由 Server 寫入（Server 不跑 git）⇒ **還沒提交、還沒推上去**；下次 CLI 用到 task／tasks 時收成一筆推上去（推上去之前新單的號碼可能還會變）");
+            }
+            return (r, aSync);
+        }
+    }
+
     /// <summary>寫入前就擋下（零寫入）的結果 —— 形狀跟 `SCP_TaskOps.Run` 擋下時一樣，入口照「被擋下」回報。</summary>
     static SCP_TaskOpResult Refused(string iHeadline, string iWhy, TaskSyncReport iSync)
     {
@@ -153,17 +191,26 @@ public static class SenateTaskRepoSync
     }
 
     // ===========================================================
-    // 區塊職責：不寫單、只同步（`task-sync op=sync`、背景工作）。
-    // 物理意義：缺目錄 ⇒ clone；有本機提交 ⇒ 推（`iAllowReplay` 才重放 —— 背景工作不重放：
-    //           重放產生的通知要有人看，那屬於有人在場的入口）；落後 ⇒ 快轉。
+    // 區塊職責：不寫單、只同步（`task-sync op=sync`；`tasks` 讀單之前 —— 節流、不重放）。
+    // 物理意義：缺目錄 ⇒ clone；有本機提交（含 Server 只寫檔沒提交的）⇒ 推（`iAllowReplay` 才重放 —— 讀單那條不重放：
+    //           重放產生的通知要有人看，那屬於有人明說要同步的入口）；落後 ⇒ 快轉。
+    //           `iPullEverySec` > 0 ⇒ 上次抓遠端還沒過這麼久就什麼都不做（讀單一分鐘可能跑好幾次）。
     // ===========================================================
-    public static TaskSyncReport Sync(string iDataRoot, TaskRepoTarget iTarget, bool iAllowReplay)
+    public static TaskSyncReport Sync(string iDataRoot, TaskRepoTarget iTarget, bool iAllowReplay, int iPullEverySec = 0,
+                                      int iLockWaitSec = LockWaitSec)
     {
         var aSync = new TaskSyncReport();
-        lock (s_Lock)
+        using (TaskLock? aLock = TaskLock.TryAcquire(iDataRoot, iLockWaitSec))
         {
+            if (aLock == null)
+            {
+                aSync.State = TaskSyncState.Pending;
+                aSync.Lines.Add($"⚠ 任務板正被另一個 senate 寫著（等了 {iLockWaitSec} 秒）⇒ 這次不同步");
+                return aSync;
+            }
             if (!Ensure(iDataRoot, iTarget, aSync)) return aSync;
             string aDir = TasksDir(iDataRoot);
+            if (!FetchDue(aDir, iPullEverySec)) { aSync.State = TaskSyncState.UpToDate; return aSync; }
             PullBeforeWrite(aDir, iTarget, aSync);
             if (aSync.State is TaskSyncState.Pending or TaskSyncState.Failed) return aSync;   // 抓不到遠端就不推
             (int aAhead, _) = AheadBehind(aDir, iTarget.RemoteRef);
@@ -182,12 +229,13 @@ public static class SenateTaskRepoSync
         if (iTarget == null)
             return new TaskRepoStatus(false, aExists, aRepo, "", "", 0, 0, 0, "沒設定遠端（sync.tasks）⇒ 只寫本機");
         if (!aExists)
-            return new TaskRepoStatus(true, false, false, "", "", 0, 0, 0, "還沒 clone —— 第一次用到時（開單、或 Server 背景工作）會自動 clone");
+            return new TaskRepoStatus(true, false, false, "", "", 0, 0, 0, "還沒 clone —— 第一次用到時（`task` 開單、`tasks` 讀單、`task-sync op=sync`）會自動 clone");
         if (!aRepo)
             return new TaskRepoStatus(true, true, false, "", "", 0, 0, 0, "Tasks 存在但不是 git repo ⇒ 不同步");
-        lock (s_Lock)
+        using (TaskLock? aLock = TaskLock.TryAcquire(iDataRoot))
         {
-            if (iFetch) Git(aDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec);
+            if (aLock == null) return new TaskRepoStatus(true, true, true, "", "", 0, 0, 0, "任務板正被另一個 senate 寫著 —— 等一下再看");
+            if (iFetch && Git(aDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec).Ok) MarkFetched(aDir);
             string aOrigin = Git(aDir, SCP_Git.DefaultTimeoutMs, "remote", "get-url", "origin").StdOut.Trim();
             string aBranch = Git(aDir, SCP_Git.DefaultTimeoutMs, "rev-parse", "--abbrev-ref", "HEAD").StdOut.Trim();
             (int aAhead, int aBehind) = AheadBehind(aDir, iTarget.RemoteRef);
@@ -265,6 +313,7 @@ public static class SenateTaskRepoSync
     {
         CommitLeftovers(iDir, ioSync);
         SCP_GitResult f = Git(iDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec);
+        if (f.Ok) MarkFetched(iDir);
         if (!f.Ok)
         {
             ioSync.State = TaskSyncState.Pending;
@@ -319,7 +368,7 @@ public static class SenateTaskRepoSync
             if (!IsRejected(p))
             {
                 if (ioSync.State != TaskSyncState.Conflict) ioSync.State = TaskSyncState.Pending;
-                ioSync.Lines.Add($"⚠ 推不上去（{p.ReasonLine}）—— **已在本機提交**，Server 背景工作會再推；推上去之前新單的號碼可能還會變");
+                ioSync.Lines.Add($"⚠ 推不上去（{p.ReasonLine}）—— **已在本機提交**，下次用到（task／tasks）時再推；推上去之前新單的號碼可能還會變");
                 return aOut;
             }
             SCP_GitResult f = Git(iDir, NetTimeoutMs, "fetch", "origin", iTarget.RefSpec);
@@ -335,7 +384,7 @@ public static class SenateTaskRepoSync
             if (!iAllowReplay)
             {
                 ioSync.State = TaskSyncState.Pending;
-                ioSync.Lines.Add("⚠ 本機的提交跟遠端撞了 —— 背景工作不重放；跑 `senate cmd task-sync --arg op=sync` 或下一次寫單時處理");
+                ioSync.Lines.Add("⚠ 本機的提交跟遠端撞了 —— 讀單前的同步不重放；跑 `senate cmd task-sync --arg op=sync` 或下一次寫單時處理");
                 return aOut;
             }
             ioSync.Lines.Add("· rebase 撞到衝突 ⇒ 改用**重放**：把還沒推上去的操作在遠端最新版上重跑一次");
@@ -585,4 +634,59 @@ public static class SenateTaskRepoSync
     }
 
     static string TitleOf(SCP_DataRoot iRoot, int iIndex) => SCP_TaskIO.Find(iRoot, iIndex)?.title ?? "";
+
+    // ── 節流（讀單前的同步）────────────────────────────────────
+
+    static string FetchStampPath(string iDir) => Path.Combine(GitDir(iDir), ConflictDirName, "last_fetch");
+
+    static bool FetchDue(string iDir, int iEverySec)
+    {
+        if (iEverySec <= 0) return true;
+        string p = FetchStampPath(iDir);
+        return !File.Exists(p) || (DateTime.UtcNow - File.GetLastWriteTimeUtc(p)).TotalSeconds >= iEverySec;
+    }
+
+    static void MarkFetched(string iDir)
+    {
+        try
+        {
+            string p = FetchStampPath(iDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+            File.WriteAllText(p, DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+        }
+        catch { /* 寫不進去只是下一次會多抓一次 */ }
+    }
+
+    /// <summary>
+    /// 任務板的跨行程鎖 —— 寫單、git 操作都在裡面（CLI 好幾個、Server 一顆，同一顆任務板一次一個）。
+    /// <para>⚠ 用 **Global** 具名 mutex：Server 經 WMI 起，不保證跟 CLI 在同一個 session，`Local\` 的名字彼此看不到。
+    /// 名字由任務板目錄的絕對路徑算出來（不同資料根各一把）。行程死掉 ⇒ OS 放掉（AbandonedMutexException ⇒ 照拿）。</para>
+    /// <para>同一條執行緒可以重入（mutex 的語意）；同一個行程的不同執行緒照樣互斥 —— 取代原本行程內的 lock。</para>
+    /// </summary>
+    public sealed class TaskLock : IDisposable
+    {
+        readonly Mutex m_Mutex;
+        TaskLock(Mutex iMutex) { m_Mutex = iMutex; }
+
+        /// <summary>拿到 ⇒ 鎖；等了 <paramref name="iWaitSec"/> 秒還拿不到 ⇒ null（⛔ 不丟例外：呼叫端要回「零寫入」）。</summary>
+        public static TaskLock? TryAcquire(string iDataRoot, int iWaitSec = LockWaitSec)
+        {
+            string aPath = Path.GetFullPath(TasksDir(iDataRoot)).Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
+            string aKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(aPath)))[..16];
+            var m = new Mutex(false, @"Global\Senate.TaskSync." + aKey);
+            try
+            {
+                if (m.WaitOne(TimeSpan.FromSeconds(iWaitSec))) return new TaskLock(m);
+            }
+            catch (AbandonedMutexException) { return new TaskLock(m); }   // 上一個拿著的行程死了 ⇒ 鎖已經是我的
+            m.Dispose();
+            return null;
+        }
+
+        public void Dispose()
+        {
+            try { m_Mutex.ReleaseMutex(); } catch (ApplicationException) { }
+            m_Mutex.Dispose();
+        }
+    }
 }

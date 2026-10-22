@@ -1633,6 +1633,7 @@ public static class Program
         // 資料夾同步（sync.bookNotes／sync.workMemory）：那幾支跑之前拉、跑完 commit＋push —— 在 CLI 這一邊做，⛔ 不交給 Server（見 FolderSyncHook）。
         List<FolderSyncHook.Target> aFolderSync = FolderSyncHook.Resolve(iRepoRoot, aName);
         FolderSyncHook.Before(aFolderSync, aRawArgs);
+        TaskSyncHook.BeforeRead(iRepoRoot, aName);   // 任務單（sync.tasks）：`tasks` 讀單之前拉（寫單的那一側在 Cmd_Task 自己做）
 
         SCP.Core.Cmd.SCP_CmdResult aResult = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
 

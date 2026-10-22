@@ -1,47 +1,37 @@
 // 區塊職責：`task-sync` —— 任務單跟遠端 repo（`sync.tasks`）的狀態與手動同步。
-// 物理意義：平常不用打它：寫單時寫入端自己 commit＋push、Server 背景工作定時拉。
-//           它給兩種時候用：① 想看現在跟遠端差多少（status）；② 背景工作推不上去、說「撞了」的時候，
+// 物理意義：平常不用打它：寫單時入口自己 commit＋push、`tasks` 讀單之前每分鐘最多拉一次。
+//           它給兩種時候用：① 想看現在跟遠端差多少（status）；② 讀單前的同步推不上去、說「撞了」的時候，
 //           由有人在場的這一支來**重放**（sync）—— 重放的結果（改號、衝突）要有人看。
 // 數值影響：status 不帶 fetch ⇒ 純讀本機；帶 fetch=1 ⇒ 抓一次遠端。sync ⇒ clone／拉／推（可能重放）。
-// ⚠ 跟 `task-write` 同一條 lane：同步與寫單不會同時動同一顆 repo。
+// ⚠ **本地跑**（2026-10-22 起，原本在 Server 的 task lane）：經 WMI 起的 Server 跑 git 同步會被 Defender 砍（Repo_Sync §0）。
+//   跟寫單用同一把任務板的跨行程鎖（SenateTaskRepoSync.TaskLock）⇒ 同步與寫單不會同時動同一顆 repo。
 using SCP.Core.Cmd;
 
 namespace Senate.Core;
 
-public sealed class Cmd_TaskSync : ServerDelegateCmd
+public sealed class Cmd_TaskSync : SCP_Cmd
 {
     public override string Name => "task-sync";
     public override string Category => SCP_CmdCategory.Task;
 
     public override string Summary =>
-        "任務單跟遠端 repo（senate.local.json 的 sync.tasks）同步：status 看差多少／sync 手動拉推（撞了會重放）";
+        "任務單跟遠端 repo（senate.local.json 的 sync.tasks）同步：status 看差多少／sync 手動拉推（撞了會重放）。**本地跑。**";
 
     public override string Details =>
-        "平常不用打：寫單時寫入端自己 commit＋push，Server 背景工作每分鐘拉一次。\n"
-        + "⚠ 背景工作推不上去又撞了 ⇒ 它不重放（重放的結果要有人看）⇒ 打 `op=sync` 由這一支重放。\n"
+        "平常不用打：寫單時入口自己 commit＋push，`tasks` 讀單之前每分鐘最多拉一次。\n"
+        + "⚠ 讀單前的同步推不上去又撞了 ⇒ 它不重放（重放的結果要有人看）⇒ 打 `op=sync` 由這一支重放。\n"
         + "⚠ 解不了的衝突：我的版本留在備份 ref（refs/senate/task-sync/…），報告在 Tasks 的 .git/senate-task-sync/ 底下。";
 
     public override string Example => SCP_CmdRegistry.Invoke("task-sync --arg op=status --arg fetch=1");
 
-    protected override string Lane(SCP_CmdArgs iArgs) => Cmd_TaskWrite.TaskLane;
-    protected override bool IsPersonaLane(string iLane) => false;
-
-    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs
+    public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
-        get
-        {
-            var aSpecs = new List<SCP_CmdArgSpec>
-            {
-                new SCP_CmdArgSpec("op", "status（預設）｜sync", iDefault: "status", iChoices: new[] { "status", "sync" }),
-                new SCP_CmdArgSpec("data_root", "資料根（絕對路徑）；不給 ⇒ 照設定檔解析"),
-                new SCP_CmdArgSpec("fetch", "status 用：1 ⇒ 先抓一次遠端（走網路）"),
-            };
-            aSpecs.AddRange(CommonSpecs());
-            return aSpecs;
-        }
-    }
+        new SCP_CmdArgSpec("op", "status（預設）｜sync", iDefault: "status", iChoices: new[] { "status", "sync" }),
+        new SCP_CmdArgSpec("data_root", "資料根（宿主照設定檔補上）"),
+        new SCP_CmdArgSpec("fetch", "status 用：1 ⇒ 先抓一次遠端（走網路）"),
+    };
 
-    protected override SCP_CmdResult ExecuteOnServer(SCP_CmdArgs iArgs)
+    public override SCP_CmdResult Execute(SCP_CmdArgs iArgs)
     {
         if (SenateConfigSource.Provider == null)
             return SCP_CmdResult.Fail(70, "✗ 宿主沒有裝上設定來源（SenateConfigSource.Provider）—— 程式錯誤，不是用法錯");
@@ -57,7 +47,7 @@ public sealed class Cmd_TaskSync : ServerDelegateCmd
         TaskRepoTarget? aTarget = TaskRepoTarget.From(aConfig);
 
         var r = new SCP_CmdResult();
-        r.Lines.Add($"⤷ 任務同步：Senate Server（{ServerContext.Describe()}）@ {SenateTaskRepoSync.TasksDir(aDataRoot)}");
+        r.Lines.Add($"⤷ 任務同步（本地）@ {SenateTaskRepoSync.TasksDir(aDataRoot)}");
         r.Lines.Add(aTarget == null
             ? $"· 遠端：**沒設定**（{aConfigPath} 的 sync.tasks 兩格都填才同步）"
             : $"· 遠端：`{aTarget.Repo}`（{aTarget.Branch}）");

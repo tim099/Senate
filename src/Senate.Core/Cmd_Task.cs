@@ -130,7 +130,12 @@ public sealed class Cmd_Task : SCP_Cmd
         if (!TryResolveRoots(iArgs, out string aDataRoot, out string aWhere, out SCP_CmdResult? aFail))
             return aFail!;
         var aResult = new SCP_CmdResult();
-        aResult.Lines.Add($"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單 @ {aWhere}");
+        // sync.tasks 開著 ⇒ 入口在本行程（CLI）自己寫＋git（⛔ 不交給 Server：經 WMI 起的 Server 跑 git 會被 Defender 砍，Repo_Sync §0）。
+        //   已經在 Server 裡（內部派發）⇒ 照舊交給 task-write，那一支只寫檔、不碰 git。
+        TaskRepoTarget? aSyncTarget = ServerContext.InServer ? null : TaskRepoTarget.From(SenateConfigSource.Provider?.Invoke().Config);
+        aResult.Lines.Add(aSyncTarget != null
+            ? $"⤷ 任務寫入：Senate 入口驗參數 → 本機寫單＋同步（sync.tasks：{aSyncTarget.Repo} {aSyncTarget.Branch}）@ {aWhere}"
+            : $"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單 @ {aWhere}");
         var aLetters = SCP_DataPaths.Letters(new SCP_DataRoot(aDataRoot));
         string aPayload = SCP_LettersPaths.CmdPayload(aLetters, aPersona, "task_" + aOp);
 
@@ -161,14 +166,16 @@ public sealed class Cmd_Task : SCP_Cmd
 
         // ── ④ 交給寫入端 ─────────────────────────────────────────────
         string aTimeout = iArgs.Get("timeout").Trim();
-        SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("task-write", new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["data_root"] = aDataRoot,
-            ["op"] = aOp,
-            ["persona"] = aPersona,
-            ["args_json"] = JsonSerializer.Serialize(aOpArgs),
-            ["timeout"] = aTimeout.Length > 0 ? aTimeout : "60",
-        });
+        SCP_CmdResult aWrite = aSyncTarget != null
+            ? WriteHere(aDataRoot, aSyncTarget, aOp, aPersona, aOpArgs)
+            : SCP_CmdRegistry.Dispatch("task-write", new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["data_root"] = aDataRoot,
+                ["op"] = aOp,
+                ["persona"] = aPersona,
+                ["args_json"] = JsonSerializer.Serialize(aOpArgs),
+                ["timeout"] = aTimeout.Length > 0 ? aTimeout : "60",
+            });
         string aWrote = Value(aWrite, "wrote");
         string aFailure = Value(aWrite, "delegate_failure");
         if (aWrote.Length == 0)
@@ -225,6 +232,27 @@ public sealed class Cmd_Task : SCP_Cmd
         catch (Exception e) { aResult.Lines.Add($"⚠ 回傳檔沒寫成（{e.Message}）—— 單子的寫入不受影響"); }
         if (aWrite.ExitCode != 0) aResult.Lines.Add("  ⇒ 原因在回傳檔的 `## ❌ 失敗`／`## blocked`／`## ❌ 同步衝突`");
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：sync.tasks 開著 ⇒ 在本行程（CLI）寫＋同步（拉 → 寫 → commit → push → 重放，全在任務板的跨行程鎖裡）。
+    // 物理意義：回的形狀跟 Server `task-write` 一模一樣（同一支 BuildResult）⇒ 入口後面的通知、記憶、回傳檔不分兩條。
+    //           半路炸掉 ⇒ 不知道寫了沒（可能寫了、可能已提交）⇒ 照「結果不明」回（不帶 wrote ＋ delegate_failure=unknown ⇒ exit 7）。
+    // ===========================================================
+    static SCP_CmdResult WriteHere(string iDataRoot, TaskRepoTarget iTarget, string iOp, string iPersona, Dictionary<string, string> iArgs)
+    {
+        try
+        {
+            (SCP_TaskOpResult r, TaskSyncReport s) = SenateTaskRepoSync.RunWrite(iDataRoot, iTarget, iOp, iPersona, iArgs);
+            return Cmd_TaskWrite.BuildResult(r, s, iTarget, "⤷ 任務單寫入端：本機 CLI（sync.tasks 開著 ⇒ 寫單與 git 都在這一邊，任務板的跨行程鎖裡）");
+        }
+        catch (Exception e)
+        {
+            var aR = new SCP_CmdResult { ExitCode = 70 };
+            aR.Lines.Add($"✗ 本機寫單＋同步炸了：{e.GetType().Name}: {e.Message}");
+            aR.AddValue("delegate_failure", "unknown");
+            return aR;
+        }
     }
 
     // ===========================================================

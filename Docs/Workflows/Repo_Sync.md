@@ -13,7 +13,7 @@ cmds: [booknotes-sync, workmemory-sync, task-sync]
 
 | 設定 | 本機資料夾 | 誰在什麼時候同步 | 細節 |
 |---|---|---|---|
-| `sync.tasks` | `<資料根>/Tasks` | 寫入端（Server 的 task lane）每次寫單；主 Server 每分鐘拉 | [Task_Management §12](Task_Management.md#12-跨機器同步synctasks) |
+| `sync.tasks` | `<資料根>/Tasks` | **CLI**：`task` 寫單整套在 CLI（跨行程鎖）、`tasks` 讀單之前拉（每分鐘最多一次） | [Task_Management §12](Task_Management.md#12-跨機器同步synctasks) |
 | `sync.bookNotes` | `<資料根>/BookNotes`（閱讀庫 `Library/`、書的草稿） | **CLI**：`library`／`book` 跑之前拉、跑完推 | 本檔 §1 |
 | `sync.workMemory` | `<資料根>/WorkMemory`（各主題資料夾、`_tombstones.md`） | **CLI**：`work-memory`／`task`（wrapup 寫工作記憶的是 CLI 入口）跑之前拉、跑完推 | 本檔 §2 |
 
@@ -27,8 +27,8 @@ cmds: [booknotes-sync, workmemory-sync, task-sync]
 - 樣子：Server 起來 2–70 秒後消失，**exit code 0**，沒有 ProcessExit、沒有 signal、沒有 console ctrl 事件 —— 從行程裡面看不到任何東西。
 - 證據在事件檢視器 `Microsoft-Windows-Windows Defender/Operational` 的 1116／1117（會寫出 `senate-server.exe` 跟那顆的 pid）。
 - 對照：同一顆 exe、同一份環境變數，改從 shell 直接起 ⇒ 開著同步跑 4 分鐘以上、0 次偵測。關掉同步 ⇒ WMI 起的照樣活一整天。
-- ⇒ **新的同步一律放在 CLI 那一邊**（CLI 是使用者的行程樹，不是「遠端起的」）。`sync.tasks` 的寫入端在 Server 裡，所以受影響：
-  修法（加 Defender 排除、換一種脫樹方式、或把 git 搬到 CLI）是 Tim 要拍板的事，拍板之前**這台的 `sync.tasks` 先不開**。
+- ⇒ **同步的 git 一律在 CLI 那一邊**（CLI 是使用者的行程樹，不是「遠端起的」）。`sync.tasks` 原本的寫入與背景拉取在 Server 裡，2026-10-22 Tim 選「把 git 搬到 CLI」：寫單整套由入口在 CLI 做、背景工作拿掉改成讀單前拉、`task-sync` 本地跑；Server 收到寫入只寫檔、不提交。
+- ⛔ 不做「換一種起法讓它不被抓」那種實驗 —— 那是在探安全偵測的縫。正規的路是向 Microsoft 回報誤判、或由人加排除。
 
 ## 1. 閱讀筆記（`sync.bookNotes`）
 

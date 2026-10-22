@@ -4,6 +4,8 @@
 //           兩邊同時整段改同一張 ⇒ 不自動解（擋下＋衝突通知＋備份 ref、遠端那份不被蓋掉）；
 //           反向對照：沒設遠端 ⇒ 照舊只寫本機；設了遠端卻 clone 不下來 ⇒ 不長出空任務板。
 //           「同時」用 `iPreSync=false` 模擬：B 還沒看到 A 剛推上去的那一筆就寫了。
+//           2026-10-22 git 搬到 CLI 那一邊之後多驗五格：⑨ Server 那一側只寫檔、下一次 CLI 同步收成一筆推上去；
+//           ⑩ Server 那一側沒 clone 照樣擋；⑪ 讀單前的同步有節流；⑫ 鎖被別人拿著 ⇒ 這次不同步；⑬ 入口 `task` 在本行程寫＋推。
 #nullable enable
 using SCP.Core.Git;
 using SCP.Core.Paths;
@@ -110,8 +112,74 @@ public static partial class SelfTest
             Expect(d1.Result.ExitCode == 1 && !Directory.Exists(Path.Combine(D, "Tasks")),
                 $"⑧ clone 不下來應擋下且不建目錄：exit={d1.Result.ExitCode} 有Tasks={Directory.Exists(Path.Combine(D, "Tasks"))}");
 
+            // ── 2026-10-22 起 git 只在 CLI 那一邊（Server 跑 git 會被 Defender 砍，Repo_Sync §0）──
+            int FindTitle(string t) { for (int i = 1; i <= 20; i++) if (Title(i) == t) return i; return 0; }
+
+            // ⑨ Server 那一側（WriteWithoutGit）：只寫檔、不提交、回 pending；下一次 CLI 同步收成一筆推上去
+            var s1 = SenateTaskRepoSync.WriteWithoutGit(A, "create", "Template", new Dictionary<string, string> { ["title"] = "Server 寫的", ["criteria"] = "- [ ] s" });
+            Expect(s1.Result.ExitCode == 0 && s1.Result.Wrote > 0 && s1.Sync.State == TaskSyncState.Pending,
+                $"⑨ Server 那一側應只寫檔、回 pending：exit={s1.Result.ExitCode} sync={s1.Sync.StateWord}");
+            Expect(G(Path.Combine(A, "Tasks"), "status", "--porcelain").OutLines().Count > 0 && FindTitle("Server 寫的") == 0,
+                "⑨ Server 那一側不該提交／推（工作區應該是髒的、遠端還沒有）");
+            var s2 = SenateTaskRepoSync.Sync(A, aTarget, iAllowReplay: false);
+            Expect(s2.State == TaskSyncState.Pushed && FindTitle("Server 寫的") > 0, $"⑨ 下一次 CLI 同步沒把它推上去：{s2.StateWord}｜{string.Join(" / ", s2.Lines)}");
+
+            // ⑩ Server 那一側：沒 clone 下來照樣擋（不長空板）
+            var s3 = SenateTaskRepoSync.WriteWithoutGit(D, "create", "Template", new Dictionary<string, string> { ["title"] = "D2", ["criteria"] = "- [ ] d" });
+            Expect(s3.Result.ExitCode == 1 && !Directory.Exists(Path.Combine(D, "Tasks")), $"⑩ Server 那一側沒 clone 應擋下：exit={s3.Result.ExitCode}");
+
+            // ⑪ 讀單前的同步有節流：B 剛抓過 ⇒ 不抓（看不到 A 剛開的）；不節流 ⇒ 看得到
+            SenateTaskRepoSync.Sync(B, aTarget, iAllowReplay: false);
+            var a6 = W(A, true, "create", ("title", "A6"), ("criteria", "- [ ] a"));
+            var t1 = SenateTaskRepoSync.Sync(B, aTarget, iAllowReplay: false, iPullEverySec: SenateTaskRepoSync.PullEverySec);
+            Expect(t1.State == TaskSyncState.UpToDate && SCP_TaskIO.Find(new SCP_DataRoot(B), a6.R.Index) == null, $"⑪ 節流內不該抓：{t1.StateWord}｜{string.Join(" / ", t1.Lines)}");
+            SenateTaskRepoSync.Sync(B, aTarget, iAllowReplay: false);
+            Expect(SCP_TaskIO.Find(new SCP_DataRoot(B), a6.R.Index)?.title == "A6", "⑪ 不節流應拉到 A6");
+
+            // ⑫ 任務板的鎖被別人拿著 ⇒ 等不到就這次不同步（pending），⛔ 不卡住
+            using (var aHeld = new ManualResetEventSlim())
+            using (var aRelease = new ManualResetEventSlim())
+            {
+                var aHolder = new Thread(() =>
+                {
+                    using (SenateTaskRepoSync.TaskLock.TryAcquire(A, 5)) { aHeld.Set(); aRelease.Wait(15_000); }
+                });
+                aHolder.Start();
+                aHeld.Wait(10_000);
+                var t2 = SenateTaskRepoSync.Sync(A, aTarget, iAllowReplay: false, iLockWaitSec: 1);
+                aRelease.Set();
+                aHolder.Join();
+                Expect(t2.State == TaskSyncState.Pending && t2.Lines.Any(l => l.Contains("正被另一個")), $"⑫ 鎖被拿著應回 pending：{t2.StateWord}｜{string.Join(" / ", t2.Lines)}");
+            }
+
+            // ⑬ 入口 `task` 全程（sync.tasks 開著 ⇒ 在本行程寫＋推，不交給 Server）—— 設定換成淨室這一份、酒館閘拿掉（不發真的通知）
+            var aSavedProvider = SenateConfigSource.Provider;
+            var aSavedGate = SCP.Core.Letters.SCP_TavernPostGatewayHost.Factory;
+            try
+            {
+                var aCfg = new SenateConfig();
+                aCfg.Sync.Tasks.Repo = aRemote;
+                aCfg.Sync.Tasks.Branch = "main";
+                SenateConfigSource.Provider = () => (aCfg, "(selftest)");
+                SCP.Core.Letters.SCP_TavernPostGatewayHost.Factory = null;
+                var e2e = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch("task", new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["op"] = "create", ["persona"] = "Template", ["data_root"] = A, ["title"] = "經入口開的單", ["criteria"] = "- [ ] e",
+                });
+                string V(string k) => e2e.Values.LastOrDefault(kv => kv.Key == k).Value ?? "";
+                Expect(e2e.ExitCode == 0 && V("sync") == "pushed" && e2e.Lines.Any(l => l.Contains("本機 CLI")),
+                    $"⑬ 入口應在本行程寫＋推：exit={e2e.ExitCode} sync={V("sync")}｜{string.Join(" / ", e2e.Lines.Take(6))}");
+                Expect(FindTitle("經入口開的單") > 0, "⑬ 遠端沒有經入口開的那張");
+            }
+            finally
+            {
+                SenateConfigSource.Provider = aSavedProvider;
+                SCP.Core.Letters.SCP_TavernPostGatewayHost.Factory = aSavedGate;
+            }
+
             return new CheckRow(aName,
-                aFail.Count == 0 ? "clone／commit＋push／撞號改號 0003→0004／同張留言兩則都在／不同張 rebase／同張整段改擋下＋通知＋備份／沒設遠端只寫本機／clone 不下來不長空板 全對"
+                aFail.Count == 0 ? "clone／commit＋push／撞號改號 0003→0004／同張留言兩則都在／不同張 rebase／同張整段改擋下＋通知＋備份／沒設遠端只寫本機／clone 不下來不長空板"
+                                   + "／Server 那一側只寫檔、下次 CLI 同步推上去／Server 那一側沒 clone 擋下／讀單前節流／鎖被拿著回 pending／入口在本行程寫＋推 全對"
                                  : string.Join("；", aFail),
                 aFail.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }

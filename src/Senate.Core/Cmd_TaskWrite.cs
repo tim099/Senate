@@ -5,6 +5,10 @@
 //           ⚠ 酒館通知、工作記憶、Coding 場**不在這裡做**：它們要等別的 process，
 //             在持鎖的寫入端裡做會卡住所有人 ⇒ 交回入口 `senate cmd task`（CLI 那一側）寫完之後做。
 // 數值影響：一次寫入 ＝ 至多一張單（link 兩張、sweep N 張）一次讀 ＋ 一次寫。
+// ⚠ sync.tasks 開著時（Tim 2026-10-22 選「3」）寫入**不經過這裡**：入口 `task` 在 CLI 那一邊、任務板的跨行程鎖裡自己做完整套
+//   （拉 → 寫 → commit → push → 重放），結果用同一支 <see cref="BuildResult"/> 包，入口後面一行都不用分兩條。
+//   🩸 原因：經 WMI 起的 Server 一跑 git 同步就被 Defender 的行為偵測砍掉（Repo_Sync §0）。
+//   還是走到這裡的（舊入口、Server 內部派發）⇒ **只寫檔、不碰 git**，留給下一次 CLI 同步收成一筆。
 //
 // ⚠ 參數**整包以 JSON 傳**（`args_json`），⛔ 不是一個欄位一個 `--arg`（同 `tavern-write` 的 `msg_json`）：
 //   13 個 op 的參數聯集有 30 幾格，逐個穿協議的話加一格要改三處（宣告／打包／解包），漏掉的那格
@@ -79,11 +83,22 @@ public class Cmd_TaskWrite : ServerDelegateCmd
         }
         if (aArgs == null) return SCP_CmdResult.Fail(2, "✗ args_json 是 null —— 要的是一個 JSON 物件（`{}` 也行）");
 
-        // 設了 sync.tasks ⇒ 寫完 commit＋push（撞了 rebase／重放；解不了的回失敗＋sync_conflict 通知）；沒設 ⇒ 跟以前一樣只寫本機
+        // 設了 sync.tasks ⇒ git 在 CLI 那一邊（入口自己寫）；走到 Server 這裡的只寫檔、不碰 git。沒設 ⇒ 跟以前一樣只寫本機
         TaskRepoTarget? aTarget = TaskRepoTarget.From(SenateConfigSource.Provider?.Invoke().Config);
-        (SCP_TaskOpResult r, TaskSyncReport aSync) = SenateTaskRepoSync.RunWrite(aDataRoot, aTarget, aOp, aPersona, aArgs);
+        (SCP_TaskOpResult r, TaskSyncReport aSync) = aTarget != null
+            ? SenateTaskRepoSync.WriteWithoutGit(aDataRoot, aOp, aPersona, aArgs)
+            : SenateTaskRepoSync.RunWrite(aDataRoot, null, aOp, aPersona, aArgs);
+        return BuildResult(r, aSync, aTarget, "⤷ 任務單寫入端：Senate Server（" + ServerContext.Describe() + "）");
+    }
+
+    /// <summary>
+    /// 一次寫入的結果 ⇒ 入口吃的那個形狀（Lines：寫入端定語＋回傳檔本體；Values：wrote／index／sync／notices_json／memory_json…）。
+    /// <para>Server 這一支與入口在 CLI 自己寫（sync.tasks 開著）共用這一支 —— ⛔ 兩邊各包一份就是兩個會漂的協議。</para>
+    /// </summary>
+    public static SCP_CmdResult BuildResult(SCP_TaskOpResult r, TaskSyncReport aSync, TaskRepoTarget? aTarget, string iWriterLine)
+    {
         var aResult = new SCP_CmdResult { ExitCode = r.ExitCode };
-        aResult.Lines.Add("⤷ 任務單寫入端：Senate Server（" + ServerContext.Describe() + "）");
+        aResult.Lines.Add(iWriterLine);
         foreach (string aLine in r.Report.ToString().Replace("\r", "").TrimEnd().Split('\n')) aResult.Lines.Add(aLine);
         if (aSync.Lines.Count > 0)
         {
