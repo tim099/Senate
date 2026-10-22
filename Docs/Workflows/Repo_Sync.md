@@ -1,7 +1,7 @@
 ---
-title: 資料同步到遠端 repo（sync.*）—— 任務單、閱讀筆記
+title: 資料同步到遠端 repo（sync.*）—— 任務單、閱讀筆記、工作記憶
 description: 資料樹裡的資料夾跟遠端 repo 的某條 branch 同步：怎麼設、誰在什麼時候拉推、缺目錄與已有資料夾怎麼自動補上、兩台同時寫怎麼接、接不上的衝突怎麼手動解；以及經 WMI 起的 Server 跑 git 同步會被 Defender 砍的實測。
-cmds: [booknotes-sync, task-sync]
+cmds: [booknotes-sync, workmemory-sync, task-sync]
 ---
 
 # 資料同步到遠端 repo（`sync.*`）
@@ -15,6 +15,9 @@ cmds: [booknotes-sync, task-sync]
 |---|---|---|---|
 | `sync.tasks` | `<資料根>/Tasks` | 寫入端（Server 的 task lane）每次寫單；主 Server 每分鐘拉 | [Task_Management §12](Task_Management.md#12-跨機器同步synctasks) |
 | `sync.bookNotes` | `<資料根>/BookNotes`（閱讀庫 `Library/`、書的草稿） | **CLI**：`library`／`book` 跑之前拉、跑完推 | 本檔 §1 |
+| `sync.workMemory` | `<資料根>/WorkMemory`（各主題資料夾、`_tombstones.md`） | **CLI**：`work-memory`／`task`（wrapup 寫工作記憶的是 CLI 入口）跑之前拉、跑完推 | 本檔 §2 |
+
+§1、§2 是同一個本體（`SenateFolderSync`，差別只在 `FolderSyncSpec`）：**加一種資料夾 ＝ 加一個 spec 成員＋ `SyncSettings` 一格＋一支手動 Cmd**，路徑管理頁與 CLI 前後掛勾照 spec 清單走。
 
 ## 0. ⚠ Server 經 WMI 起 ⇒ 跑 git 同步會被 Defender 砍
 
@@ -49,3 +52,15 @@ cmds: [booknotes-sync, task-sync]
 - 手動：`senate cmd booknotes-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（不節流地拉推一次）。**本地跑。**
 - BookNotes 的 origin 或 branch 跟設定不同、或停在一次沒做完的 rebase ⇒ **不同步**（⛔ 不替人改 origin、不切 branch、不碰手上的 rebase），讀寫照舊落本機並說出來。
 - 同一顆 BookNotes 同時有好幾個 CLI 在跑 ⇒ git 操作排隊（跨行程的具名 mutex）；等超過 60 秒 ⇒ 這次不同步（`pending`），⛔ 不擋閱讀。
+
+## 2. 工作記憶（`sync.workMemory`）
+
+跟 §1 同一套（clone／就地接上／用之前拉／寫完推／不同檔 rebase／同檔衝突擋下），只差這幾格：
+
+- 掛在 `work-memory`（本身）與 `task`（`wrapup` 帶 `why` 時，CLI 入口把它寫進工作記憶）。commit 前綴 `workmemory:`，stdout 是 `🔢 workmemory_sync`；手動那支是 `workmemory-sync`。
+- ⚠ **資料樹原本就在追蹤 `WorkMemory/` 的檔**（Fate 資料樹就是：2026-10-21 複製過來的兩個主題）：
+  🩸 外層已經追蹤了的資料夾**不算**巢狀 repo 的邊界 —— 改過的照樣列成 ` M`、遠端拉下來的上千個檔照樣列成 `??`，外層一跑 `add -A` 就整包收進去（2026-10-22 實驗）。
+  ⇒ 接上時自動做兩件**本機、不提交**的事：未追蹤的加進資料樹的 `info/exclude`、原本就追蹤的標成 `skip-worktree`（外層不再看它們的改動）。
+  ⛔ **不**替人 `git rm --cached`：那是資料樹的一筆提交，會從每一份資料樹 clone 刪掉那些檔 —— 要正式從資料樹拿掉由人決定（回報那一行附指令）。
+- 工作記憶的讀摘要（`WorkMemoryReadBriefs/`）不在同步範圍（它是每台自己的讀取紀錄）。
+

@@ -193,11 +193,12 @@ public sealed class PathsPage : SCP_GuiToolPage
             + "兩邊同時開單撞號會自動改號，解不了的衝突擋下並發酒館通知。",
             m_SyncStatus,
             "手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推，撞了會重放）");
-        DrawSyncTarget(g, "閱讀筆記（sync.bookNotes）", "booknotes", m_Draft.Sync.BookNotes,
-            "兩格都填了 ⇒ library／book 跑之前先拉（每分鐘最多一次）、跑完自動 commit＋push；`<資料根>/BookNotes` 不存在 ⇒ 自動 clone，"
-            + "已經有、但還不是 git repo ⇒ 第一次用到時就地接上（兩邊內容不同的以遠端為準、本機那份備份）；rebase 接不上的衝突擋下並發酒館通知。",
-            m_BookNotesStatus,
-            "手動：`senate cmd booknotes-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推）");
+        foreach (FolderSyncSpec aSpec in FolderSyncSpec.All)
+            DrawSyncTarget(g, $"{aSpec.Label}（sync.{aSpec.Key}）", aSpec.Slug, aSpec.SettingsOf(m_Draft),
+                $"兩格都填了 ⇒ {string.Join("／", aSpec.HookCmds)} 跑之前先拉（每分鐘最多一次）、跑完自動 commit＋push；`<資料根>/{aSpec.DirName}` 不存在 ⇒ 自動 clone，"
+                + "已經有、但還不是 git repo ⇒ 第一次用到時就地接上（兩邊內容不同的以遠端為準、本機那份備份）；rebase 接不上的衝突擋下並發酒館通知。",
+                m_FolderStatus.TryGetValue(aSpec.Key, out string? aSt) ? aSt : null,
+                $"手動：`senate cmd {aSpec.CmdName} --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推）");
     }
 
     void DrawSyncTarget(SCP_Ui g, string iTitle, string iKey, SyncTargetSettings t, string iOnNote, string? iStatus, string iManual)
@@ -216,15 +217,20 @@ public sealed class PathsPage : SCP_GuiToolPage
     }
 
     string? m_SyncStatus;
-    string? m_BookNotesStatus;
+    readonly Dictionary<string, string> m_FolderStatus = new(StringComparer.Ordinal);
 
     void LoadSyncStatus()
     {
         m_SyncStatus = null;
-        m_BookNotesStatus = null;
+        m_FolderStatus.Clear();
         if (m_Draft == null) return;
         string? aRoot = SenatePathBinding.ResolveDataRoot(m_Draft, out string? aErr);
-        if (aRoot == null) { m_SyncStatus = m_BookNotesStatus = "資料根解不出來（" + aErr + "）"; return; }
+        if (aRoot == null)
+        {
+            m_SyncStatus = "資料根解不出來（" + aErr + "）";
+            foreach (FolderSyncSpec aSpec in FolderSyncSpec.All) m_FolderStatus[aSpec.Key] = m_SyncStatus;
+            return;
+        }
         try
         {
             TaskRepoStatus s = SenateTaskRepoSync.Status(aRoot, TaskRepoTarget.From(m_Draft), iFetch: false);
@@ -232,13 +238,17 @@ public sealed class PathsPage : SCP_GuiToolPage
                          + s.Note;
         }
         catch (Exception e) { m_SyncStatus = "狀態讀不到（" + e.Message + "）"; }
-        try
+        foreach (FolderSyncSpec aSpec in FolderSyncSpec.All)
         {
-            BookNotesRepoStatus b = SenateBookNotesSync.Status(aRoot, RepoSyncTarget.From(m_Draft.Sync.BookNotes), iFetch: false);
-            m_BookNotesStatus = (b.IsRepo ? $"本機 `{SenateBookNotesSync.Dir(aRoot)}`：origin `{b.Origin}`／`{b.Branch}`，領先 {b.Ahead}／落後 {b.Behind}（上次抓遠端時）。" : "")
-                              + b.Note;
+            try
+            {
+                var aSync = new SenateFolderSync(aSpec);
+                FolderRepoStatus b = aSync.Status(aRoot, aSpec.TargetOf(m_Draft), iFetch: false);
+                m_FolderStatus[aSpec.Key] = (b.IsRepo ? $"本機 `{aSync.Dir(aRoot)}`：origin `{b.Origin}`／`{b.Branch}`，領先 {b.Ahead}／落後 {b.Behind}（上次抓遠端時）。" : "")
+                                            + b.Note;
+            }
+            catch (Exception e) { m_FolderStatus[aSpec.Key] = "狀態讀不到（" + e.Message + "）"; }
         }
-        catch (Exception e) { m_BookNotesStatus = "狀態讀不到（" + e.Message + "）"; }
     }
 
     /// <summary>

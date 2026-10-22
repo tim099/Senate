@@ -1,27 +1,29 @@
-// 區塊職責：`booknotes-sync` —— 閱讀筆記（`<資料根>/BookNotes`）跟遠端 repo（`sync.bookNotes`）的狀態與手動同步。
-// 物理意義：平常不用打它：library／book 跑之前 CLI 先拉（節流）、跑完自動 commit＋push。
+// 區塊職責：資料夾同步（`sync.bookNotes`、`sync.workMemory`）的手動指令 —— `booknotes-sync`、`workmemory-sync`：狀態與手動拉推。
+// 物理意義：平常不用打：那幾支讀寫的指令（FolderSyncSpec.HookCmds）跑之前 CLI 先拉（節流）、跑完自動 commit＋push。
 //           它給兩種時候用：① 想看現在跟遠端差多少（status）；② 手動解完衝突、或斷網一陣子之後，立刻拉推一次（sync）。
 // 數值影響：status 不帶 fetch ⇒ 純讀本機；帶 fetch=1 ⇒ 抓一次遠端。sync ⇒ clone／就地接上／拉／推（不節流）。
-// ⚠ **本地跑**（不經過 Server）：經 WMI 起的 Server 跑 git 同步會被 Defender 砍（見 SenateBookNotesSync 檔頭）。
+// ⚠ **本地跑**（不經過 Server）：經 WMI 起的 Server 跑 git 同步會被 Defender 砍（見 SenateFolderSync 檔頭）。
 using SCP.Core.Cmd;
 
 namespace Senate.Core;
 
-public sealed class Cmd_BookNotesSync : SCP_Cmd
+/// <summary>兩支只差在 <see cref="Spec"/> —— 本體一份。</summary>
+public abstract class FolderSyncCmd : SCP_Cmd
 {
-    public override string Name => "booknotes-sync";
-    public override string Category => SCP_CmdCategory.Reading;
+    protected abstract FolderSyncSpec Spec { get; }
+
+    public override string Name => Spec.CmdName;
 
     public override string Summary =>
-        "閱讀筆記（BookNotes）跟遠端 repo（senate.local.json 的 sync.bookNotes）同步：status 看差多少／sync 手動拉推。**本地跑。**";
+        $"{Spec.Label}（{Spec.DirName}）跟遠端 repo（senate.local.json 的 sync.{Spec.Key}）同步：status 看差多少／sync 手動拉推。**本地跑。**";
 
     public override string Details =>
-        "平常不用打：library／book 跑之前先拉（每分鐘最多一次）、跑完自動 commit＋push。\n"
-        + "⚠ 兩邊改了同一個檔、rebase 接不上 ⇒ 不自動解：本機的提交留著（推不上去、不會丟），"
-        + "報告在 BookNotes 的 .git/senate-booknotes-sync/ 底下、我的版本在備份 ref（refs/senate/booknotes-sync/…）；照報告解完再打 `op=sync`。\n"
-        + "⚠ BookNotes 已經在、但還不是 git repo ⇒ 第一次同步會就地接上：本機獨有的檔收進去推上去，兩邊都有而內容不同的以遠端為準、本機那份備份起來。";
+        $"平常不用打：{string.Join("／", Spec.HookCmds)} 跑之前先拉（每分鐘最多一次）、跑完自動 commit＋push。\n"
+        + $"⚠ 兩邊改了同一個檔、rebase 接不上 ⇒ 不自動解：本機的提交留著（推不上去、不會丟），"
+        + $"報告在 {Spec.DirName} 的 .git/senate-{Spec.Slug}-sync/ 底下、我的版本在備份 ref（refs/senate/{Spec.Slug}-sync/…）；照報告解完再打 `op=sync`。\n"
+        + $"⚠ {Spec.DirName} 已經在、但還不是 git repo ⇒ 第一次同步會就地接上：本機獨有的檔收進去推上去，兩邊都有而內容不同的以遠端為準、本機那份備份起來。";
 
-    public override string Example => SCP_CmdRegistry.Invoke("booknotes-sync --arg op=status --arg fetch=1");
+    public override string Example => SCP_CmdRegistry.Invoke($"{Spec.CmdName} --arg op=status --arg fetch=1");
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
@@ -45,26 +47,27 @@ public sealed class Cmd_BookNotesSync : SCP_Cmd
             aDataRoot = aRoot;
         }
         aDataRoot = aDataRoot.Replace('\\', '/').TrimEnd('/');
-        RepoSyncTarget? aTarget = RepoSyncTarget.From(aConfig.Sync.BookNotes);
+        RepoSyncTarget? aTarget = Spec.TargetOf(aConfig);
+        var aSync = new SenateFolderSync(Spec);
 
         var r = new SCP_CmdResult();
-        r.Lines.Add($"⤷ 閱讀筆記同步（本地）@ {SenateBookNotesSync.Dir(aDataRoot)}");
+        r.Lines.Add($"⤷ {Spec.Label}同步（本地）@ {aSync.Dir(aDataRoot)}");
         if (iArgs.Get("op").Trim() == "sync")
         {
             if (aTarget == null)
-                return SCP_CmdResult.Fail(2, "✗ 沒設定遠端（sync.bookNotes 的 repo、branch 兩格都要填）—— 後台「路徑管理」頁最下面那一格");
-            RepoSyncReport s = SenateBookNotesSync.BeforeUse(aDataRoot, aTarget, iPullEverySec: 0);
+                return SCP_CmdResult.Fail(2, $"✗ 沒設定遠端（sync.{Spec.Key} 的 repo、branch 兩格都要填）—— 後台「路徑管理」頁最下面的「同步遠端」");
+            RepoSyncReport s = aSync.BeforeUse(aDataRoot, aTarget, iPullEverySec: 0);
             foreach (string l in s.Lines) r.Lines.Add(l);
             if (s.Lines.Count == 0) r.Lines.Add("✓ 跟遠端一致（沒有要拉、也沒有要推的）");
-            SenateBookNotesSync.Notify(aDataRoot, iArgs.Get("persona").Trim(), s, r.Lines);
+            aSync.Notify(aDataRoot, iArgs.Get("persona").Trim(), s, r.Lines);
             r.AddValue("sync", s.StateWord);
             if (s.ConflictFile.Length > 0) r.AddValue("sync_conflict_file", s.ConflictFile);
             r.ExitCode = s.State is RepoSyncState.Conflict or RepoSyncState.Failed or RepoSyncState.Mismatch ? 1 : 0;
             return r;
         }
 
-        BookNotesRepoStatus st = SenateBookNotesSync.Status(aDataRoot, aTarget, iArgs.Get("fetch").Trim() == "1");
-        r.Lines.Add(st.Configured ? $"· 遠端：`{aTarget!.Repo}`（{aTarget.Branch}）" : "· 遠端：（沒設定 sync.bookNotes）");
+        FolderRepoStatus st = aSync.Status(aDataRoot, aTarget, iArgs.Get("fetch").Trim() == "1");
+        r.Lines.Add(st.Configured ? $"· 遠端：`{aTarget!.Repo}`（{aTarget.Branch}）" : $"· 遠端：（沒設定 sync.{Spec.Key}）");
         if (st.IsRepo) r.Lines.Add($"· 本機：origin `{st.Origin}`／`{st.Branch}`，領先 {st.Ahead}、落後 {st.Behind}、未提交 {st.Dirty}");
         r.Lines.Add("⇒ " + st.Note);
         r.AddValue("configured", st.Configured ? "1" : "0");
@@ -74,4 +77,16 @@ public sealed class Cmd_BookNotesSync : SCP_Cmd
         r.AddValue("behind", st.Behind.ToString());
         return r;
     }
+}
+
+public sealed class Cmd_BookNotesSync : FolderSyncCmd
+{
+    protected override FolderSyncSpec Spec => FolderSyncSpec.BookNotes;
+    public override string Category => SCP_CmdCategory.Reading;
+}
+
+public sealed class Cmd_WorkMemorySync : FolderSyncCmd
+{
+    protected override FolderSyncSpec Spec => FolderSyncSpec.WorkMemory;
+    public override string Category => SCP_CmdCategory.Memory;
 }

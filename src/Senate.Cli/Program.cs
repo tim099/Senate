@@ -1630,9 +1630,9 @@ public static class Program
         if (aRawArgs.Count > aUserKeys.Count && !aRawArgs.ContainsKey(SCP.Core.Cmd.SCP_CmdArgs.ForwardedExplicitKey))
             aRawArgs[SCP.Core.Cmd.SCP_CmdArgs.ForwardedExplicitKey] = string.Join(",", aUserKeys);
 
-        // 閱讀筆記同步（sync.bookNotes）：library／book 跑之前拉、跑完 commit＋push —— 在 CLI 這一邊做，⛔ 不交給 Server（見 BookNotesSyncHook）。
-        BookNotesSyncHook.Target? aBookNotes = BookNotesSyncHook.Resolve(iRepoRoot, aName);
-        if (aBookNotes != null) BookNotesSyncHook.Before(aBookNotes, aRawArgs);
+        // 資料夾同步（sync.bookNotes／sync.workMemory）：那幾支跑之前拉、跑完 commit＋push —— 在 CLI 這一邊做，⛔ 不交給 Server（見 FolderSyncHook）。
+        List<FolderSyncHook.Target> aFolderSync = FolderSyncHook.Resolve(iRepoRoot, aName);
+        FolderSyncHook.Before(aFolderSync, aRawArgs);
 
         SCP.Core.Cmd.SCP_CmdResult aResult = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
 
@@ -1653,8 +1653,7 @@ public static class Program
         foreach (KeyValuePair<string, string> aValue in aResult.Values)
             Console.WriteLine($"🔢 {aValue.Key} = {aValue.Value}");
         // 跑失敗的那一支不收（寫到一半的東西，下一次用到時由「收編沒提交的改動」那一格收成獨立的一筆）
-        if (aBookNotes != null && aResult.Ok)
-            Console.WriteLine($"🔢 booknotes_sync = {BookNotesSyncHook.After(aBookNotes, aName, aRawArgs)}");
+        if (aResult.Ok) FolderSyncHook.After(aFolderSync, aName, aRawArgs);
 
         // ── 錯誤報告（TASK-0104）：只有真的有一端失敗才寫 —— exit 1／70。2（用法錯）與 3（沒有結果）都不寫 ──
         // 🩸 exit 3 那格 2026-09-04 拿掉：逾時是本端放棄等待，對面往往跑完了（QA 量到 result 檔 Success）——

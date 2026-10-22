@@ -5,6 +5,9 @@
 //           ⑤ 兩台同時改同一個檔 ⇒ 不自動解（本機提交留著、遠端不被蓋、衝突報告＋通知，同一個衝突只通知一次）；
 //           反向對照：⑥ clone 不下來 ⇒ 不長出空目錄；⑦ 接上時連不到遠端 ⇒ 收掉剛建的 .git、本機的檔一個都不動；
 //           ⑧ 遠端是全新的空 repo ⇒ 本機那一份就是第一版。
+//           工作記憶那一支（WorkMemorySyncCleanRoom）走同一個本體，只驗它多出來的那一格：
+//           資料樹**原本就在追蹤** WorkMemory 的檔（Fate 資料樹就是）⇒ 接上之後外層 status 乾淨、那幾個檔標成 skip-worktree；
+//           還有「哪幾支指令前後要同步」的對應（task → 工作記憶、library → 閱讀筆記）。
 #nullable enable
 using SCP.Core.Git;
 using Senate.Core;
@@ -47,7 +50,8 @@ public static partial class SelfTest
             string RemoteFile(string rel) { var r = G(aSeed, "--git-dir=" + aRemote, "show", "main:" + rel); return r.Ok ? r.StdOut : ""; }
 
             string Root(string n) { string p = Path.Combine(aTmp, n).Replace('\\', '/'); Directory.CreateDirectory(p); return p; }
-            string BN(string root) => SenateBookNotesSync.Dir(root);
+            var BNS = new SenateFolderSync(FolderSyncSpec.BookNotes);
+            string BN(string root) => BNS.Dir(root);
             var aTarget = new RepoSyncTarget(aRemote, "main");
 
             // ① A 的資料樹本身是 git repo（像 Valhalla），BookNotes 已經有東西、還不是 repo ⇒ 就地接上
@@ -56,7 +60,7 @@ public static partial class SelfTest
             Put(BN(A), Work, "{\"title\":\"本機自動長的簡陋作品檔\"}");          // 兩邊都有、內容不同 ⇒ 用遠端版
             Put(BN(A), Media, "{\"id\":\"m1\"}");                               // 兩邊一樣
             Put(BN(A), "Library/media/m1/readers/A/chapters/0001/r1.md", "A 的第一話心得\n");   // 本機獨有
-            var a1 = SenateBookNotesSync.BeforeUse(A, aTarget, iPullEverySec: 0);
+            var a1 = BNS.BeforeUse(A, aTarget, iPullEverySec: 0);
             Expect(a1.State == RepoSyncState.Pushed, $"① 接上後應推上去：{Lines(a1)}");
             Expect(Directory.Exists(Path.Combine(BN(A), ".git")), "① 沒有長出 BookNotes/.git");
             Expect(RemoteFile("Library/media/m1/readers/A/chapters/0001/r1.md").Contains("A 的第一話心得"), "① 遠端沒有 A 的心得");
@@ -72,15 +76,15 @@ public static partial class SelfTest
 
             // ② B 沒有 BookNotes ⇒ 第一次用到就 clone，看得到 A 的心得
             string B = Root("B");
-            var b1 = SenateBookNotesSync.BeforeUse(B, aTarget);
+            var b1 = BNS.BeforeUse(B, aTarget);
             Expect(b1.Lines.Any(l => l.Contains("clone")) && File.Exists(Path.Combine(BN(B), "Library/media/m1/readers/A/chapters/0001/r1.md")),
                 $"② B 沒 clone 下來：{Lines(b1)}");
 
             // ③ 兩台同時寫不同的檔：A 先推；B 還沒拉就寫 ⇒ 推被拒 ⇒ rebase 接上
             Put(BN(A), "Library/media/m1/readers/A/chapters/0002/r1.md", "A 的第二話\n");
-            var a2 = SenateBookNotesSync.AfterWrite(A, aTarget, "library(note_chapter) m1 0002 A", "A");
+            var a2 = BNS.AfterWrite(A, aTarget, "library(note_chapter) m1 0002 A", "A");
             Put(BN(B), "Library/media/m1/readers/B/chapters/0001/r1.md", "B 的第一話\n");
-            var b2 = SenateBookNotesSync.AfterWrite(B, aTarget, "library(note_chapter) m1 0001 B", "B");
+            var b2 = BNS.AfterWrite(B, aTarget, "library(note_chapter) m1 0001 B", "B");
             Expect(a2.State == RepoSyncState.Pushed, $"③ A 沒推上去：{Lines(a2)}");
             Expect(b2.State == RepoSyncState.Pushed && b2.Lines.Any(l => l.Contains("rebase 接上")), $"③ B 應 rebase 接上再推：{Lines(b2)}");
             Expect(RemoteFile("Library/media/m1/readers/A/chapters/0002/r1.md").Length > 0
@@ -88,17 +92,17 @@ public static partial class SelfTest
             Expect(G(BN(A), "log", "-1", "--format=%s").StdOut.Contains("booknotes: library(note_chapter) m1 0002 A (auto)"), "③ commit 訊息不是預期的形狀");
 
             // ④ 節流：A 剛抓過 ⇒ 這次不抓（看不到 B 的）；不節流 ⇒ 抓到
-            var a3 = SenateBookNotesSync.BeforeUse(A, aTarget);
+            var a3 = BNS.BeforeUse(A, aTarget);
             Expect(!a3.Fetched && !File.Exists(Path.Combine(BN(A), "Library/media/m1/readers/B/chapters/0001/r1.md")), $"④ 節流內不該抓：{Lines(a3)}");
-            var a4 = SenateBookNotesSync.BeforeUse(A, aTarget, iPullEverySec: 0);
+            var a4 = BNS.BeforeUse(A, aTarget, iPullEverySec: 0);
             Expect(a4.Fetched && File.Exists(Path.Combine(BN(A), "Library/media/m1/readers/B/chapters/0001/r1.md")), $"④ 不節流應拉到 B 的：{Lines(a4)}");
 
             // ⑤ 兩台同時改同一個檔 ⇒ B 擋下：本機提交留著、遠端是 A 的、報告＋通知；再跑一次不重複通知
-            SenateBookNotesSync.BeforeUse(B, aTarget, iPullEverySec: 0);
+            BNS.BeforeUse(B, aTarget, iPullEverySec: 0);
             Put(BN(A), Shelf, "A 改的書架\n");
-            var a5 = SenateBookNotesSync.AfterWrite(A, aTarget, "library(bookmark) m1 A", "A");
+            var a5 = BNS.AfterWrite(A, aTarget, "library(bookmark) m1 A", "A");
             Put(BN(B), Shelf, "B 改的書架\n");
-            var b5 = SenateBookNotesSync.AfterWrite(B, aTarget, "library(bookmark) m1 B", "B");
+            var b5 = BNS.AfterWrite(B, aTarget, "library(bookmark) m1 B", "B");
             Expect(a5.State == RepoSyncState.Pushed, $"⑤ A 沒推上去：{Lines(a5)}");
             Expect(b5.State == RepoSyncState.Conflict, $"⑤ B 應是衝突：{Lines(b5)}");
             Expect(b5.ConflictFile.Length > 0 && File.Exists(b5.ConflictFile), "⑤ 衝突報告沒寫出來");
@@ -109,18 +113,18 @@ public static partial class SelfTest
             Expect(G(BN(B), "status", "--porcelain").OutLines().Count == 0 && !Directory.Exists(Path.Combine(G(BN(B), "rev-parse", "--absolute-git-dir").StdOut.Trim(), "rebase-merge")),
                 "⑤ B 停在 rebase 一半（應已退回）");
             Expect(G(BN(B), "for-each-ref", "refs/senate/booknotes-sync/").OutLines().Count > 0, "⑤ B 沒有備份 ref");
-            var b6 = SenateBookNotesSync.AfterWrite(B, aTarget, "library(bookmark) m1 B", "B");
+            var b6 = BNS.AfterWrite(B, aTarget, "library(bookmark) m1 B", "B");
             Expect(b6.State == RepoSyncState.Conflict && b6.Notices.Count == 0, $"⑤ 同一個衝突又通知了一次：{b6.Notices.Count}｜{Lines(b6)}");
 
             // ⑥ 反向對照：clone 不下來 ⇒ 不長出空的 BookNotes/
             string C = Root("C");
-            var c1 = SenateBookNotesSync.BeforeUse(C, new RepoSyncTarget(Path.Combine(aTmp, "沒有這個.git"), "main"));
+            var c1 = BNS.BeforeUse(C, new RepoSyncTarget(Path.Combine(aTmp, "沒有這個.git"), "main"));
             Expect(c1.State == RepoSyncState.Failed && !Directory.Exists(BN(C)), $"⑥ clone 不下來應失敗且不建目錄：{Lines(c1)}");
 
             // ⑦ 反向對照：接上時連不到遠端 ⇒ 收掉剛建的 .git，本機的檔一個都不動
             string D = Root("D");
             Put(BN(D), "Library/x.md", "D 的筆記\n");
-            var d1 = SenateBookNotesSync.BeforeUse(D, new RepoSyncTarget(Path.Combine(aTmp, "沒有這個.git"), "main"));
+            var d1 = BNS.BeforeUse(D, new RepoSyncTarget(Path.Combine(aTmp, "沒有這個.git"), "main"));
             Expect(d1.State == RepoSyncState.Failed && !Directory.Exists(Path.Combine(BN(D), ".git"))
                    && File.ReadAllText(Path.Combine(BN(D), "Library/x.md")) == "D 的筆記\n", $"⑦ 接不上應原封不動：{Lines(d1)}");
 
@@ -129,12 +133,82 @@ public static partial class SelfTest
             G(aTmp, "init", "--bare", "-b", "main", aEmpty);
             string E = Root("E");
             Put(BN(E), "Library/e.md", "E 的筆記\n");
-            var e1 = SenateBookNotesSync.BeforeUse(E, new RepoSyncTarget(aEmpty, "main"), iPullEverySec: 0);
+            var e1 = BNS.BeforeUse(E, new RepoSyncTarget(aEmpty, "main"), iPullEverySec: 0);
             var aEmptyShow = G(aTmp, "--git-dir=" + aEmpty, "show", "main:Library/e.md");
             Expect(e1.State == RepoSyncState.Pushed && aEmptyShow.Ok && aEmptyShow.StdOut.Contains("E 的筆記"), $"⑧ 空遠端應推上第一版：{Lines(e1)}");
 
             return new CheckRow(aName,
                 aFail.Count == 0 ? "就地接上（獨有推上、遠端拉下、不同用遠端版＋備份＋通知）／clone／不同檔 rebase／節流／同檔衝突擋下＋報告＋只通知一次／clone 不下來不長目錄／接不上原封不動／空遠端推第一版 全對"
+                                 : string.Join("；", aFail),
+                aFail.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+        }
+        catch (Exception e) { return new CheckRow(aName, "炸了：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }
+        finally { DeleteTreeForce(aTmp); }
+    }
+
+    static CheckRow WorkMemorySyncCleanRoom()
+    {
+        const string aName = "工作記憶同步到遠端 repo：資料樹原本就追蹤的檔標 skip-worktree、外層乾淨／指令對應（淨室）";
+        string aTmp = Path.Combine(Path.GetTempPath(), "senate_wmsync_" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var aFail = new List<string>();
+            void Expect(bool c, string what) { if (!c) aFail.Add(what); }
+            SCP_GitResult G(string dir, params string[] a) => SCP_Git.Run(dir, a);
+            string[] Id = { "-c", "user.name=selftest", "-c", "user.email=selftest@localhost" };
+            void Put(string root, string rel, string text)
+            {
+                string p = Path.Combine(root, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+                File.WriteAllText(p, text);
+            }
+
+            // 遠端：兩個主題（其中一個跟本機那份一樣、一個本機沒有）
+            Directory.CreateDirectory(aTmp);
+            string aRemote = Path.Combine(aTmp, "remote.git").Replace('\\', '/');
+            G(aTmp, "init", "--bare", "-b", "main", aRemote);
+            string aSeed = Path.Combine(aTmp, "seed");
+            G(aTmp, "clone", aRemote, aSeed);
+            Put(aSeed, "t-shared/_topic.md", "共用主題\n");
+            Put(aSeed, "t-remote/_topic.md", "遠端才有的主題\n");
+            G(aSeed, "add", "-A");
+            G(aSeed, Id.Concat(new[] { "commit", "-q", "-m", "seed" }).ToArray());
+            Expect(G(aSeed, "push", "-q", "origin", "HEAD:refs/heads/main").Ok, "種遠端失敗");
+
+            // A 的資料樹是 git repo，而且**已經追蹤**了 WorkMemory/t-shared/_topic.md（像 Fate 資料樹）
+            string A = Path.Combine(aTmp, "A").Replace('\\', '/');
+            Directory.CreateDirectory(A);
+            G(A, "init", "-q", ".");
+            var WMS = new SenateFolderSync(FolderSyncSpec.WorkMemory);
+            Put(WMS.Dir(A), "t-shared/_topic.md", "共用主題\n");
+            Put(A, "other.md", "資料樹自己的檔\n");
+            G(A, "add", "-A");
+            G(A, Id.Concat(new[] { "commit", "-q", "-m", "parent" }).ToArray());
+
+            var a1 = WMS.BeforeUse(A, new RepoSyncTarget(aRemote, "main"), iPullEverySec: 0);
+            Expect(a1.State is RepoSyncState.UpToDate or RepoSyncState.Pushed, $"① 接上失敗：{a1.StateWord}｜{string.Join(" / ", a1.Lines)}");
+            Expect(File.Exists(Path.Combine(WMS.Dir(A), "t-remote", "_topic.md")), "① 遠端才有的主題沒拉下來");
+            var aParent = G(A, "status", "--porcelain").OutLines();
+            Expect(aParent.Count == 0, $"① 外層資料樹不乾淨（巢狀的工作記憶漏出來了）：{string.Join(" / ", aParent)}");
+            Expect(G(A, "ls-files", "-v", "--", "WorkMemory/").OutLines().All(l => l.StartsWith("S ")), "① 外層原本追蹤的檔沒標成 skip-worktree");
+            Expect(a1.Lines.Any(l => l.Contains("skip-worktree")), "① 回報沒說標了 skip-worktree");
+
+            // ② 之後在工作記憶裡改原本被外層追蹤的檔 ⇒ 推上去，外層照樣乾淨
+            Put(WMS.Dir(A), "t-shared/_topic.md", "共用主題（改過）\n");
+            var a2 = WMS.AfterWrite(A, new RepoSyncTarget(aRemote, "main"), "work-memory(add) t-shared", "A");
+            Expect(a2.State == RepoSyncState.Pushed, $"② 沒推上去：{a2.StateWord}｜{string.Join(" / ", a2.Lines)}");
+            Expect(G(A, "status", "--porcelain").OutLines().Count == 0, "② 改了之後外層又看得到");
+            Expect(G(aSeed, "--git-dir=" + aRemote, "log", "-1", "--format=%s", "main").StdOut.Contains("workmemory: work-memory(add) t-shared (auto)"),
+                "② commit 訊息前綴不是 workmemory:");
+
+            // ③ 指令對應：task／work-memory ⇒ 工作記憶；library／book ⇒ 閱讀筆記；別的 ⇒ 都不同步
+            string[] Hit(string c) => FolderSyncSpec.All.Where(x => x.Hooks(c)).Select(x => x.Key).ToArray();
+            Expect(Hit("task").SequenceEqual(new[] { "workMemory" }) && Hit("work-memory").SequenceEqual(new[] { "workMemory" }), "③ task／work-memory 沒對到工作記憶");
+            Expect(Hit("library").SequenceEqual(new[] { "bookNotes" }) && Hit("book").SequenceEqual(new[] { "bookNotes" }), "③ library／book 沒對到閱讀筆記");
+            Expect(Hit("tasks").Length == 0 && Hit("tavern").Length == 0, "③ 不相干的指令也掛上同步了");
+
+            return new CheckRow(aName,
+                aFail.Count == 0 ? "外層原本追蹤的檔標 skip-worktree、外層 status 乾淨（接上後、改了之後都是）／遠端主題拉下來／workmemory: 前綴／指令對應 全對"
                                  : string.Join("；", aFail),
                 aFail.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }

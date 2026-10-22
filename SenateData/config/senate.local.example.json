@@ -7,6 +7,7 @@
   "//5": "linkedProjects：綁定的外部專案 [{name, path, docs}]。name 跟任務單的 project 欄位同一把尺（不分大小寫）⇒ 查單印出路徑；docs（相對 path 或絕對）有填 ⇒ 接成文件根（senate cmd doc 查得到）。例 {name: Blocksail, path: <專案根的絕對路徑>, docs: docs}。",
   "//6": "sync.tasks：任務單同步到哪個遠端 repo 的哪條 branch（repo、branch 都填才同步；空 = 只寫本機）。設了之後 <資料根>/Tasks 不存在 ⇒ 第一次用到時自動 clone；每次開單／改單自動 commit + push，兩邊同時開單撞號會自動改號，解不了的衝突擋下並發酒館通知。",
   "//7": "sync.bookNotes：閱讀筆記（<資料根>/BookNotes：閱讀心得、書籤、人物看法、書的草稿）同步到哪個遠端 repo 的哪條 branch（兩格都填才同步）。不存在 ⇒ 第一次用到時自動 clone；已經有、但還不是 git repo ⇒ 就地接上遠端（本機獨有的檔收進去推上去，兩邊都有而內容不同的以遠端為準、本機那份備份起來並發通知）。library／book 寫完自動 commit + push；git 在 CLI 那一邊跑，不經過 Server。",
+  "//8": "sync.workMemory：工作記憶（<資料根>/WorkMemory）同步到哪個遠端 repo 的哪條 branch，做法跟 sync.bookNotes 一樣；work-memory、task（wrapup 寫工作記憶）跑之前拉、跑完 commit + push。資料樹原本就在追蹤 WorkMemory 的檔 ⇒ 本機標成 skip-worktree（不提交）。",
   "schemaVersion": 1,
   "paths": {
     "agentCommandsRoot": "auto",
@@ -23,6 +24,10 @@
       "branch": ""
     },
     "bookNotes": {
+      "repo": "",
+      "branch": ""
+    },
+    "workMemory": {
       "repo": "",
       "branch": ""
     }

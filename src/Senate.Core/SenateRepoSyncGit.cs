@@ -1,5 +1,5 @@
 // 區塊職責：「資料樹裡的一個資料夾 ＝ 遠端某個 repo 某條 branch 的工作副本」的共用零件
-//           —— 任務單（sync.tasks，SenateTaskRepoSync）與閱讀筆記（sync.bookNotes，SenateBookNotesSync）都用這裡。
+//           —— 任務單（sync.tasks，SenateTaskRepoSync）與資料夾同步（sync.bookNotes／sync.workMemory，SenateFolderSync）都用這裡。
 // 物理意義：判「同一個 repo」、補 git 身分、分辨「推送被拒」與「斷網」、把巢狀 repo 排除出資料樹 ——
 //           這幾格兩份同步各抄一份就是兩個會漂的版本（漂了的樣子：一邊認得 `.git` 後綴、另一邊不認得，
 //           於是同一份設定在 A 那邊同步、在 B 那邊說「origin 不同」）。⇒ 只住這裡。
@@ -119,5 +119,38 @@ internal static class RepoSyncGit
         return Untracked()
             ? $"⚠ 資料樹的 info/exclude 加了 `/{aRel}/`，可是它還是把 {aSpec} 列成未追蹤 —— 去看 `{aExclude}`"
             : $"· 資料樹的 info/exclude 加上 `/{aRel}/`（本機，不入版控；回讀：已不列成未追蹤）";
+    }
+
+    /// <summary>
+    /// 資料樹**原本就在追蹤** <paramref name="iDir"/> 底下的檔 ⇒ 本機把它們標成 skip-worktree（不提交、不動資料樹的歷史）。
+    /// <para>🩸 2026-10-22 實驗：外層已經追蹤了某個資料夾裡的檔，那個資料夾就**不算**巢狀 repo 的邊界 ——
+    /// 改過的照樣列成 ` M`、遠端拉下來的照樣列成 `??`，外層 `add -A` 會把整份收進去（兩個 repo 記同一批檔）。
+    /// info/exclude 只管得到未追蹤的，已追蹤的要靠這一格。</para>
+    /// <para>⛔ 不替人 `git rm --cached`：那是資料樹的一筆提交，會從每一份 clone 的工作區刪掉那些檔 —— 要做由人決定（回傳的那行附指令）。</para>
+    /// </summary>
+    /// <returns>要印給人看的一行（標了幾個）；什麼都沒做 ⇒ null。</returns>
+    public static string? HideTrackedFromParent(string iDataRoot, string iDir, string iWhat)
+    {
+        SCP_GitResult aTop = Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "rev-parse", "--show-toplevel");
+        if (!aTop.Ok) return null;
+        string aTopDir = aTop.StdOut.Trim();
+        string aRel = Path.GetRelativePath(aTopDir, iDir).Replace('\\', '/');
+        string aSpec = Path.GetRelativePath(iDataRoot, iDir).Replace('\\', '/') + "/";
+        if (aRel.StartsWith("..", StringComparison.Ordinal)) return null;
+        // `ls-files -v`：`H` ＝ 一般追蹤中、`S` ＝ 已經是 skip-worktree（路徑相對工作目錄）
+        List<string> aTodo = Git(iDataRoot, SCP_Git.DefaultTimeoutMs, "ls-files", "-v", "--", aSpec).OutLines()
+            .Where(l => l.StartsWith("H ", StringComparison.Ordinal)).Select(l => l.Substring(2)).ToList();
+        if (aTodo.Count == 0) return null;
+        int aFailed = 0;
+        for (int i = 0; i < aTodo.Count; i += 200)   // 分批：一次塞上千個路徑會撞命令列長度
+        {
+            var aArgs = new List<string> { "update-index", "--skip-worktree", "--" };
+            aArgs.AddRange(aTodo.Skip(i).Take(200));
+            if (!Git(iDataRoot, SCP_Git.DefaultTimeoutMs, aArgs.ToArray()).Ok) aFailed++;
+        }
+        string aHow = $"要正式從資料樹拿掉：`git -C \"{aTopDir}\" rm -r --cached -q -- {aRel}` 再提交（會從每一份資料樹 clone 刪掉這些檔，⛔ 先問過再做）";
+        return aFailed > 0
+            ? $"⚠ 資料樹原本就在追蹤 {aSpec} 底下 {aTodo.Count} 個檔，標 skip-worktree 時有 {aFailed} 批失敗 —— 外層可能還會看到它們的改動。{aHow}"
+            : $"· 資料樹原本就在追蹤 {aSpec} 底下 {aTodo.Count} 個檔（{iWhat}）⇒ 本機標成 skip-worktree，外層不再看它們的改動（本機，不提交）。{aHow}";
     }
 }
