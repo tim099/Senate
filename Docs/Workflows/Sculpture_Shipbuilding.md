@@ -692,6 +692,9 @@ Tim 2026-10-16：「跟隨船隻轉彎方向去轉舵輪&舵(參考螺旋槳跟�
   模型在甲板子作品裡（部件清單路徑「甲板-spar/舵輪」）⇒ `work` 填那條關聯的作品、`name` 填斜線後面那一段。
 - 舵輪的軸也可以自己給（夜隼號、風暴角號的寫法）：`spin_pivot_x／y／z`（axle 固定點）＋`spin_axis_x／y／z`（朝船頭 1,0,0）。
 - 讀回：`senate cmd sculpture --arg op=export --arg format=parts --arg work=<組裝件>`，每個 `kind=rudder`／`kind=wheel` 的模型 meta 裡都要有 `spin`。
+- ⚠ **共用雙舵輪 `basecamp-frigate-constitution-01m-wheel` 只有輪、軸、鼓輪**：支柱與底座 2026-10-16 拆成 `-wheel-stand`（TASK-0640，跟著舵角轉的只有輪）⇒ 只掛輪 ⇒ 輪浮在甲板上（松島號 2026-10-23，Tim 截圖「松島號的舵輪會浮空」）。
+  掛輪的同時要掛一個座：擺法照抄輪那一條（at、pivot、scale 同一組）、meta `kind=wheel_stand`。帆船（憲法號、餘燼號、夜燈號…）用共用的木頭雙柱座 `-wheel-stand`；
+  ⛔ 鋼鐵艦不要照抄那件（Tim「其他船的舵輪支架跟松島號不同」）—— 松島號自己做了鑄鐵座 `ridge-001-matsushima-01m-wheel-stand`（底板＋兩根收窄的立柱＋黃銅軸承蓋，`design/draft_wheel_stand.py`，`material=iron`），同一套座標（0.02 m／格、軸 y 52 z 55.5、露出來的軸 x 13–25、74–85）可以照它改。
 
 **舵還是關聯（獨立子作品）或船殼裡的格子 ⇒ 改成模型**（⚠ 改模型、關聯、格子**只有作者能做**；改完舵會跟其他船一樣能被打飛 —— 打飛後只剩調帆轉向）：
 
