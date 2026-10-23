@@ -289,11 +289,13 @@ Tim 2026-10-16：「地形可以設定為柔和平面」「是否可讓 Sculptur
 觀測頁（GPU 即時預覽）與 CLI `op=view` 照**關聯的 meta** 畫，跟遊戲（Blockside 15_smooth.js）同一套規則、同一個算法 —— 標法見造船規格 §9.5，這裡只寫預覽這側。
 
 - `render=smooth` 的格畫成平滑面（surface nets：格角往表面拉、周圍同一面平均、夾回格角 ±0.5；跟一般格相鄰的格角釘住 ⇒ 交界不露縫）。巢狀照最近一層，子關聯寫 `render=voxel` 蓋回方塊。
+  - **沒寫 render、材質表標 `smooth: true` 的材質**（iron、boiler；TASK-0860，同遊戲 05_material.js）也畫成平滑面；`render=voxel` 照方塊。
   - 平滑格自己的方塊面不畫，但照樣擋住旁邊格子的面、照樣進框景與陰影。
   - 只改畫面：格子清單、讀數、匯出 list／obj 照舊是方塊（vxk 檔頭照舊多 `render`）。
 - `material=<ID>` 的**平滑面**照雕刻的材質表上金屬反光（天空／地面的反射、菲涅耳、每盞燈的鏡面高光，照陰影）；方塊面不反光（跟遊戲一樣）。
   - 材質表：`Sculpture/materials.json`（雕刻自己一份，Tim 2026-10-16 拍板；⛔ 不讀遊戲的 `game.json` —— 兩邊各管各的，數值要對齊時手動抄）。
-    格式 `{"schema":1,"list":{"iron":{"name":"鐵甲","metal":1,"rough":0.35}}}`：`metal`、`rough` 都是 0..1，沒寫 `rough` ⇒ 0.5；ID 小寫英數、底線、連字號。
+    格式 `{"schema":1,"list":{"iron":{"name":"鐵甲","metal":1,"rough":0.35,"smooth":true}}}`：`metal`、`rough` 都是 0..1，沒寫 `rough` ⇒ 0.5；`smooth` true／false（沒寫 ⇒ false）；ID 小寫英數、底線、連字號。
+  - **混合寫法**（`iron*0.15`、`iron*0.5+oak*0.5`；造船規格 §9.5）：外觀照**第一個成分**（反光、smooth 都照它）；成分要在表裡（或 `air`，不能當第一個）、比例 (0, 1]、加起來 ≤ 1，不合 ⇒ 照「表裡沒有」報。
   - 沒有檔 ⇒ 空表（平滑面一律不反光）；壞檔（不是 JSON、schema 不是 1、值越界、不認得的鍵）⇒ view 擋下 exit 2（⛔ 不默默當成沒有表）。
   - 表裡沒有的 ID ⇒ 照不反光畫，輸出那一行列出來。
   - **玻璃 `glass`**（TASK-0753）：表裡有（metal 0、rough 0.06），但預覽**照不透明的方塊畫**（不是平滑面 ⇒ 也不反光）；透明＋反光只有遊戲裡有（Blockside 材質表的 `clear`）。窗的玻璃怎麼標見造船規格 §9.5「窗的玻璃」。
