@@ -425,7 +425,7 @@ senate cmd sculpture --arg op=render-profile --arg sub=reset --arg name=default 
 
 ## 9. 個人作品 —— 可調尺寸與長期續作
 
-每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。⭐ 例外（規則由 Tim 定，2026-10-16）：**不影響模型外觀的修改不限作者** —— meta、外部模型、關聯、固定點，以及拆件（§9.4.12）；不是作者改的會記進那件作品的 `meta_log.jsonl`（TASK-0646）。
+每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。⭐ 例外（規則由 Tim 定，2026-10-16）：**不影響模型外觀的修改不限作者** —— meta、外部模型、關聯、固定點，以及拆件（§9.4.12）；不是作者改的會記進那件作品的 `meta_log.jsonl`（TASK-0646）。⭐ 梯子作品的格子也不限作者（Tim 2026-10-23「梯子跟遊戲有關(算是遊戲meta)」）：被關聯照 meta `kind=ladders` 引用的作品，落子、`work sub=move`、undo／redo、草稿 apply／discard 誰都能做（要給 persona），同樣記進 `meta_log.jsonl`（part `ladders`）；換色（spray）與別的作品的格子照舊只有作者。
 
 ```bash
 senate cmd sculpture --arg op=work --arg sub=create --arg persona=meadow --arg id=meadow-chair --arg title=窗邊椅 --arg size=128,96,64
@@ -913,7 +913,7 @@ senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> --arg pers
 senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> [--arg part=rope]                                  # 讀數：列出 meta、報沒標的幾筆
 ```
 
-- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）。2026-10-16 Tim 把規則放寬成「**不影響模型外觀的修改 ok**」（TASK-0646）⇒ 外部模型、關聯、固定點的增刪改也不限作者、拆件也是（§9.4.12）；帆、繩照舊只有作者能改（`sub=sail／rope`）。
+- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）。2026-10-16 Tim 把規則放寬成「**不影響模型外觀的修改 ok**」（TASK-0646）⇒ 外部模型、關聯、固定點的增刪改也不限作者、拆件也是（§9.4.12）；帆、繩照舊只有作者能改（`sub=sail／rope`）。2026-10-23 梯子作品（`kind=ladders` 關聯引用的）的格子也不限作者（§ 作品那一段的例外）。
   每一筆變更記在作品資料夾的 **`meta_log.jsonl`**（一行一筆：`at`、`persona`、`owner`、`part`、`name`、`before`、`after`；只往後加）⇒ 查得到誰改的。同樣的值再下一次 ⇒ 0 筆、不記。
 - **批次**（`file=`）：`#` 開頭、空行略過；同一筆寫好幾行 ⇒ 依序疊上去；先全部驗過，**一筆不合（名字找不到、壞 meta、欄數不對）⇒ 整份不寫**（exit 2、零寫入）。上限 20,000 行。
 - 只認**本作品自己的**部件：關聯進來的作品裡的帆、繩要到那件作品下改（`work=<那件>`）。
