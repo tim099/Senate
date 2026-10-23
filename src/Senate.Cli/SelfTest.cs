@@ -263,6 +263,7 @@ public static partial class SelfTest
         // 雕刻平滑渲染＋材質反光（TASK-0645）：本體在 SelfTest.SculptSmooth0645.cs
         One(nameof(SculptSmoothMeshCleanRoom), "sculpture", SculptSmoothMeshCleanRoom),
         One(nameof(SculptSmoothGpuCleanRoom), "sculpture", SculptSmoothGpuCleanRoom),
+        One(nameof(SculptMixMatCleanRoom), "sculpture", SculptMixMatCleanRoom),             // TASK-0860：混合材質、smooth 旗標（SelfTest.SculptMixMat0860.cs）
         // 雕刻觀測的點光源（TASK-0650）：本體在 SelfTest.SculptLamps0650.cs
         One(nameof(SculptLampProfileCleanRoom), "sculpture", SculptLampProfileCleanRoom),
         One(nameof(SculptLampSceneCleanRoom), "sculpture", SculptLampSceneCleanRoom),
