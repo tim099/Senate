@@ -194,6 +194,9 @@ public static partial class SelfTest
             Expect(c1.ExitCode == 0 && c1.Index == 1 && c1.Notices.Count == 1, $"create 沒拿到 1 號（{c1.Index}）或沒組通知");
             SCP_TaskOpResult bug = Run("create", "Template", ("title", "探針二"), ("type", "bug"), ("evidence", "讀數"));
             Expect(bug.Index == 2 && SCP_TaskStore.ReadCriteria(aRoot, 2).Contains("Fixes TASK-0002", StringComparison.Ordinal), "bug 骨架沒帶 Fixes TASK-0002");
+            // type=asset（美術素材）落盤後讀回還是 asset，不會被當成認不得的值退回 feature
+            SCP_TaskOpResult art = Run("create", "Template", ("title", "探針三"), ("type", "asset"), ("criteria", "- [ ] 圖"));
+            Expect(art.Index == 3 && SCP_TaskIO.Find(aRoot, 3)?.type == SCP_TaskType.asset, "type=asset 沒寫成 asset");
 
             // check：非參與者 ⇒ 擋、零位元組；開單人 dry-run ⇒ 零位元組；expect_text 對不上 ⇒ 零位元組
             string b0 = Bytes(1);
