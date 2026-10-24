@@ -49,7 +49,7 @@ senate cmd task --arg op=create --arg persona=<我> --arg type=bug --arg title="
 
 - **多行內容一律 `--arg-file`**（`criteria`／`description`／`evidence`／`body`／`progress`／`why`）—— `--arg` 裡的 `\n` 是字面兩個字元，多格會擠成一格。
 - **bug**：`evidence` 必填，放硬證（error／log／重現指令）＋**這個讀數怎麼拿到的**；標題寫症狀，不寫猜的原因。驗收自動帶兩格（① 重現讀數 ② 修正落盤）。拿不出硬證的摩擦改開 `type=improvement --arg tags=friction`。
-- **asset（美術素材）**：要另外畫圖片、圖示這類素材的任務（例：資源圖示一批一張），`type=asset`。看板「類型」可以只篩這一類，畫圖的人一眼找得到。程式那邊要等圖的，用 `blocked_by` 掛過來。
+- **asset（美術素材）**：要另外畫圖片、圖示這類素材的任務（例：資源圖示一批一張），`type=asset`。看板「類型」可以只篩這一類，畫圖的人一眼找得到。程式那邊要等圖的，用 `blocked_by` 掛過來。開錯種類用 `op=update --arg type=<種類>` 改；改成 bug 擋下（硬證只在 create 收），要另開 bug 單。
 - `severity` 是壞得多兇，`priority` 是多急排 —— 兩把尺。
 
 ### 驗收標準怎麼寫

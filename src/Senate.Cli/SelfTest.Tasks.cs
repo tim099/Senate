@@ -197,6 +197,10 @@ public static partial class SelfTest
             // type=asset（美術素材）落盤後讀回還是 asset，不會被當成認不得的值退回 feature
             SCP_TaskOpResult art = Run("create", "Template", ("title", "探針三"), ("type", "asset"), ("criteria", "- [ ] 圖"));
             Expect(art.Index == 3 && SCP_TaskIO.Find(aRoot, 3)?.type == SCP_TaskType.asset, "type=asset 沒寫成 asset");
+            // update 改種類：asset → spike 寫得進去；改成 bug ⇒ 擋、零位元組（bug 的硬證只在 create 收）
+            Expect(Run("update", "Template", ("index", "3"), ("type", "spike")).Wrote == 1 && SCP_TaskIO.Find(aRoot, 3)?.type == SCP_TaskType.spike, "update type=spike 沒寫");
+            string b3 = Bytes(3);
+            Expect(Run("update", "Template", ("index", "3"), ("type", "bug")).ExitCode == 1 && Bytes(3) == b3, "update 改成 bug 沒擋或寫了");
 
             // check：非參與者 ⇒ 擋、零位元組；開單人 dry-run ⇒ 零位元組；expect_text 對不上 ⇒ 零位元組
             string b0 = Bytes(1);

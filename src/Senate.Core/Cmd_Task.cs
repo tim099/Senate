@@ -49,7 +49,7 @@ public sealed class Cmd_Task : SCP_Cmd
     {
         ("index", "單號（收 TASK-0008 / 8 / 0008）"),
         ("title", "標題（create 必填；update 改寫）"),
-        ("type", "feature|improvement|refactor|spike|subtask|bug|epic|asset（create；預設 feature；asset ＝ 美術素材：要另外畫圖片、圖示的任務）"),
+        ("type", "feature|improvement|refactor|spike|subtask|bug|epic|asset（create；預設 feature；asset ＝ 美術素材：要另外畫圖片、圖示的任務；update 可以改，改成 bug 要另開 create）"),
         ("priority", "urgent|high|normal|low"),
         ("severity", "none|blocking|wrong|annoying（bug 預設 wrong）"),
         ("status", "create／update 設定值；resolve 用 done|cancelled"),
