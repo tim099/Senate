@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using SCP.Core.Cmd;
 using SCP.Core.Gui;
 using SCP.Core.Paths;
+using SCP.Core.Prefs;
 using SCP.Core.Tasks;
 
 namespace Senate.Cli.Pages;
@@ -39,6 +40,9 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     public const string ClosedId = "tasks/toggle/closed";
     public const string AuthorId = "tasks/author";
     public const string PendingId = "tasks/pending";
+    /// <summary>展開子任務（Tim 2026-10-25）：開 ⇒ 子任務不收進主單、每張自己一列（照單號找得到）。勾選是 session 欄位，跨重開記在 prefs。</summary>
+    public const string ExpandId = "tasks/toggle/expand-subtasks";
+    static readonly SCP_PrefKey<bool> ExpandPref = SCP_PrefKey.Bool("tasks", "expandSubtasks", false);
 
     readonly SenateModel m_Model;
     string m_DataRoot = "";
@@ -54,6 +58,13 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     (int counter, int disk) m_Stamp;
     DateTime m_NextPollUtc = DateTime.MinValue;
 
+    /// <summary>展開子任務的 prefs 值（null ＝ 還沒讀；存檔成功後清掉重讀 ⇒ 畫的是磁碟上的值）；讀壞了 ⇒ m_ExpandError 照印、當作關。</summary>
+    bool? m_Expand;
+    string? m_ExpandError;
+    /// <summary>「子單 → 主單」（照**全部**的單認，主單被篩掉也認得）：展開模式在標題上標 └TASK-xxxx，展開後還看得出掛在誰底下。</summary>
+    Dictionary<int, int> m_ParentOf = new();
+    bool m_ExpandNow;
+
     Task<string>? m_Job;
     string m_JobLabel = "";
     string? m_Message;
@@ -68,6 +79,16 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     {
         base.OnPush();
         m_Loaded = false;
+        m_Expand = null;
+    }
+
+    bool ExpandSaved()
+    {
+        if (m_Expand is bool b) return b;
+        SCP_PrefRead<bool> r = m_Model.Prefs.Read(ExpandPref);
+        m_ExpandError = r.State == SCP_PrefState.ReadError ? r.Error : null;
+        m_Expand = r.IsPresent ? r.Value : ExpandPref.Default;
+        return m_Expand.Value;
     }
 
     void Reload()
@@ -78,13 +99,18 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot))
         {
             m_Error = $"找不到 AgentCommands 資料根（{m_DataRoot}）—— 到「路徑管理」頁設定";
-            m_All = new(); m_Blockers = new(); m_Eff = new(); m_ProjectCounts = new(StringComparer.OrdinalIgnoreCase);
+            m_All = new(); m_Blockers = new(); m_Eff = new(); m_ParentOf = new(); m_ProjectCounts = new(StringComparer.OrdinalIgnoreCase);
             return;
         }
         var aRoot = new SCP_DataRoot(m_DataRoot);
         var aWarn = new List<string>();
         m_All = SCP_TaskIO.LoadAll(aRoot, aWarn.Add);
         m_Eff = SCP_TaskProjects.Effective(m_All);
+        // 主單認法跟收合同一套（Group），只是餵全部的單
+        var aAllKids = new Dictionary<int, List<SCP_TaskEntry>>();
+        Group(m_All, aAllKids);
+        m_ParentOf = new();
+        foreach (var kv in aAllKids) foreach (SCP_TaskEntry k in kv.Value) m_ParentOf[k.index] = kv.Key;
         m_ProjectCounts = SCP_TaskProjects.Counts(m_All, m_Eff);
         m_Blockers = new();
         foreach (SCP_TaskEntry e in m_All)
@@ -111,7 +137,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
 
     // ===========================================================
     // 區塊職責：工具列（兩排，TASK-0618；同 SculptureViewerPage TASK-0504 的做法）——
-    //          第一排：重新讀取／開資料夾／翻頁；第二排：篩選（專案、狀態、類型、參與者、含已關）。
+    //          第一排：重新讀取／開資料夾／翻頁；第二排：篩選（專案、狀態、類型、參與者、含已關）＋展開子任務。
     //          兩排都在 base 的 TopBar 範圍裡 ⇒ 不跟內容一起捲。
     // 🩸 以前一排塞全部，Tim 2026-10-15：「TopBar 會需要分兩排 目前太滿了」。
     // ===========================================================
@@ -158,6 +184,15 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         iUi.Dropdown("參與者", aPersonas, "全部", PersonaId);
         if (aStatus == "all" || aStatus == "open")
             iUi.Toggle("含已關（done／cancelled）", false, ClosedId);
+        // 展開子任務：勾了就存 prefs。存失敗 ⇒ 這一場照勾的走、話印出來（⛔ 不每一輪重存同一個失敗）
+        bool aSaved = ExpandSaved();
+        bool aPick = iUi.Toggle("展開子任務", aSaved, ExpandId);
+        if (aPick != aSaved)
+        {
+            var (aOk, aMsg) = m_Model.Prefs.Write(ExpandPref, aPick);
+            m_Expand = aOk ? null : aPick;
+            if (!aOk) m_Message = "展開子任務沒存進 prefs（這一場照勾的走、重開會回到舊值）：" + aMsg;
+        }
     }
 
     string Count(string iProject)
@@ -177,14 +212,25 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         g.Label($"總 {m_All.Count} 張｜未關 {m_Open}｜被阻塞 {m_Blocked}｜stale（in_progress ≥{SCP_TaskStore.STALE_DAYS} 天）{m_Stale}"
             + (m_Broken > 0 ? $"｜時戳壞掉 {m_Broken}（不算進 stale）" : ""));
 
+        if (m_ExpandError != null) g.Note("[注意] 展開子任務的 prefs 讀不出來（當作關）：" + m_ExpandError);
         List<SCP_TaskEntry> aList = Filtered(g);
         var aKids = new Dictionary<int, List<SCP_TaskEntry>>();
         List<SCP_TaskEntry> aRoots = Group(aList, aKids);
+        // 展開：每張自己一列、照篩選結果原本的順序；子單在標題上標 └TASK-xxxx（m_ParentOf）
+        m_ExpandNow = g.ToggleValue(ExpandId, ExpandSaved());
+        if (m_ExpandNow)
+        {
+            aRoots = aList;
+            aKids.Clear();
+        }
         int aPages = Math.Max(1, (aRoots.Count + PageSize - 1) / PageSize);
         if (m_Page >= aPages) m_Page = aPages - 1;
         if (m_Page < 0) m_Page = 0;
-        g.Label($"篩選結果 {aList.Count} 張（{aRoots.Count} 組：子任務收在主單底下）｜第 {m_Page + 1} / {aPages} 頁"
-            + $"（每頁 {PageSize} 組；stale 排最前，其餘依單號由舊到新）");
+        g.Label(m_ExpandNow
+            ? $"篩選結果 {aList.Count} 張（子任務展開：每張一列，其中掛在主單底下的 {aList.Count(e => m_ParentOf.ContainsKey(e.index))} 張）｜第 {m_Page + 1} / {aPages} 頁"
+              + $"（每頁 {PageSize} 張；stale 排最前，其餘依單號由舊到新）"
+            : $"篩選結果 {aList.Count} 張（{aRoots.Count} 組：子任務收在主單底下）｜第 {m_Page + 1} / {aPages} 頁"
+              + $"（每頁 {PageSize} 組；stale 排最前，其餘依單號由舊到新）");
         if (aList.Count == 0)
         {
             g.Note($"（沒有符合的單。這是「篩不到」不是「系統沒東西」—— 全部有 {m_All.Count} 張）");
@@ -292,7 +338,9 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         bool aStale = IsStale(e, DateTime.UtcNow);
         string aWho = e.participants.Count == 0 ? "（無參與者）" : string.Join("、", e.participants.Select(p => $"{p.persona}({p.role})"));
         string aTitle = $"{e.Id}　[{e.type}/{e.priority}" + (e.severity == SCP_TaskSeverity.none ? "" : "/" + e.severity) + $"]　{e.status}"
-            + (aBlkN > 0 ? $"　[被阻塞 {aBlkN}]" : "") + (aStale ? "　[stale]" : "") + ProjectTag(e) + $"　{aWho}　{e.title}";
+            + (aBlkN > 0 ? $"　[被阻塞 {aBlkN}]" : "") + (aStale ? "　[stale]" : "") + ProjectTag(e)
+            + (m_ExpandNow && m_ParentOf.TryGetValue(e.index, out int aUp) ?"　└TASK-" + aUp.ToString("0000", CultureInfo.InvariantCulture) : "")
+            + $"　{aWho}　{e.title}";
         using (var aFold = g.Fold(aTitle, "tasks/item/" + e.index.ToString(CultureInfo.InvariantCulture), iDefaultOpen: false))
         {
             if (!aFold.Open) return;

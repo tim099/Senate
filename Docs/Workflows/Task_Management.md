@@ -177,7 +177,8 @@ senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專�
 
 - 驗收標準、描述、留言全文在單檔 `<data_root>/Tasks/tasks/<NNNN>.md`（`tasks` 第一行印 data_root），或看後台頁。
 - 依參與者篩：後台頁。依 milestone／tag／epic 篩：沒有參數 ⇒ `--arg out_json=<檔>` 落完整資料自己篩。
-- 後台頁 `senate ui --page tasks`：工具列兩排 —— 第一排重新讀取、開資料夾、翻頁；第二排篩選（專案／狀態／類型／參與者／含已關）。
+- 後台頁 `senate ui --page tasks`：工具列兩排 —— 第一排重新讀取、開資料夾、翻頁；第二排篩選（專案／狀態／類型／參與者／含已關）＋「展開子任務」。
+  子任務預設收在主單底下（主單也在篩選結果裡時）；勾「展開子任務」⇒ 每張自己一列、照單號排，子單標題上標 `└TASK-<主單>`，照編號找得到；勾選記在 prefs（`tasks.expandSubtasks`），重開還在。篩選與「整理」作用的張數兩種模式一樣。
   看驗收標準與描述、留言、推狀態、改專案；「整理」把**目前篩選結果**一次設成某個專案（按兩次確認，一張一張走 `op=update`、各進時間線）。寫入同樣走 `task`。
 
 ## 11. 結果怎麼讀（`task`）
