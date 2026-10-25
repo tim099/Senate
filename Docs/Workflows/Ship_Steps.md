@@ -57,7 +57,7 @@ related:
 - [ ] 步驟 9 砲：外部模型、退到零碰撞、砲口在船殼外、meta gun= 在遊戲砲種表、固定點齊；要的話砲具與砲索；缺的砲種做成通用部件（讀：Ship_Guns）
 - [ ] 步驟 10 彈藥庫與甲板物件：彈藥庫裡一定放火藥桶、小艇、絞盤、羅經櫃、門與艙蓋、廚房或裝飾（讀：Ship_Magazine、Ship_Fittings §9.7／§9.13／§9.14）
 - [ ] 步驟 11 舵、舵輪、錨：舵是模型（kind=rudder＋stock-top＋spin）、舵輪＋座（kind=wheel＋spin）、錨用共用元件、錨鏈孔固定點（讀：Ship_Helm；錨看 Ship_Game §9 表的 anchor 那一列）
-- [ ] 步驟 12 砲門蓋板：封閉砲甲板每個砲門一片（kind=portlid、lid_of、P 舷 rotate 180）（讀：Ship_Portlids）
+- [ ] 步驟 12 砲門蓋板：封閉砲甲板每個砲門一片（kind=portlid、lid_of、P 舷 rotate 180）；⚠ lid_of 是砲的物件 id ⇒ 先做步驟 14 的匯入＋admin.py ids，回來做蓋板，再 reimport（讀：Ship_Portlids）
 - [ ] 步驟 13 動力與材質：（帆船沒有這一步就刪掉；槳讀 Ship_Oars、蒸汽讀 Ship_Steam、鐵甲與金屬部件讀 Ship_Materials、撞角讀 Ship_Fittings §9.11）
 - [ ] 步驟 14 給遊戲的 meta 與匯入：kind=ship waterline_z、ropecheck、匯出 vxk、匯進 Blockside（暫存副本或自己的 worktree）、admin.py ids、shipcheck ✗ 0、樓梯自檢 ✗ 0；新做的桶、槳、舵輪這類元件要不要標 render（讀：Ship_Game §9／§9.4／§12、Ship_Render）
 - [ ] 步驟 15 交船：換一艘船時的檢查表逐條看過、notes 寫下給遊戲那側填 geo 的高度、跟遊戲那側對 checksum（讀：Ship_Game §10）
