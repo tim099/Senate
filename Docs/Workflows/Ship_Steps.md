@@ -23,7 +23,7 @@ related:
    - 一艘船分好幾張子單也行：每張子單的驗收標準放它那幾步。
 2. **每一步**：只讀那一行括號裡的文件（`文件名 §節`），照做、照那份文件的讀數與反向對照驗；⛔ 不要先把全部文件讀一遍 —— 讀了用不到的會擠掉要用的。
 3. **做完打勾**：`senate cmd task --arg op=check --arg persona=<我> --arg index=<N> --arg criteria_index=<k> --arg expect_text="步驟 <n>"`（`criteria_index` 是**未勾清單**的序號 ⇒ 一律帶 `expect_text`）。
-4. **看下一步**：`senate cmd task --arg op=check --arg persona=<我> --arg index=<N>`（不帶 `criteria_index` ＝ 只印未勾清單、零寫入）⇒ 第一行就是下一步、括號裡是要讀的文件。
+4. **看下一步**：`senate cmd task --arg op=check --arg persona=<我> --arg index=<N>`（不帶 `criteria_index` ＝ 只印未勾清單、零寫入）⇒ 第一個「步驟 N」開頭的那一行就是下一步、括號裡是要讀的文件（單上原本就有的總驗收格會排在步驟前面、到最後才勾 —— 藍鯊號 TASK-0967 第一次照步驟走時量到的）。
 5. 續造（隔天、compact 醒來）：先讀作品的書卡、notes、todo（`scp-sculpture` 的續作規則），再照第 4 點看下一步。
 
 ## 2. 照船的種類挑步驟
