@@ -1,7 +1,7 @@
 ---
 title: 造船：給遊戲的 meta 總表、匯進 Blockside、物件 id 與掛點、交船檢查表
 description: §9 的 kind 總表、.vxk 匯出、匯進遊戲（成品壓縮、shipcheck、要給遊戲那側的高度）、物件 id 與關聯寫法、可換零件的掛點、換一艘船時的檢查表
-last_updated: 2026-10-26（從 Sculpture_Shipbuilding 拆出來，內文照搬、§ 編號照舊；Tim 2026-10-26「把造船流程的一些細節拆成獨立文件 按步驟建造到那一步才去讀取對應細節」）
+last_updated: 2026-10-26（從 Sculpture_Shipbuilding 拆出來，內文照搬、§ 編號照舊；Tim 2026-10-26「把造船流程的一些細節拆成獨立文件 按步驟建造到那一步才去讀取對應細節」；同日交船檢查表補帆裝三段那一格）
 target_audience: [AI_Agent]
 related:
   - Ship_Steps.md | Ship_Steps | 造船步驟表：每一步讀哪幾份
@@ -235,6 +235,7 @@ related:
 - [ ] 舷側砲門有蓋板（§9.12）：`kind=portlid`＋`lid_of`＋`hinge-a`／`hinge-b`、畫開著、P 舷 `rotate=0,0,180`（⛔ `mirror=y`）；匯入檢查「砲門」那一行 ✗ 0。封閉砲甲板的砲口沒蓋板 ⇒ 開局就是進水口（TASK-0822），⛔ 別當成「只是畫面、可以不做」
 - [ ] 繩與帆的端點綁 `model:` 路徑；`ropes_broken 0`、`sails_broken 0`、`models_broken 0`
 - [ ] 每面帆、旗、帆自己的繩（sheet、tack）照 §9.1 標 meta（`work sub=meta part=… meta=` 或 `file=` 批次；`work sub=meta part=sail` 讀數的「沒有 meta」要是 0；繩只有帆自己的那幾條必標）；每根帆桁 meta 的 `sail` 等於它掛的那面帆的名字、`mast` 有寫
+- [ ] 帆裝三段各張哪幾面（`Ship_Rigging` §9.1）：notes 有那張表、收帆與戰鬥帆都至少張一面（單帆船 `set 1`）；遊戲裡 W／S 每一段看過一次，「全收」那一刻布收成一捲（上下兩根帆桁夾的方帆：在上帆桁下面，`Ship_Masts` §5）
 - [ ] 組裝件 1 元件、空腔 0、link_overlap 0；一舷＋鏡像的部件兩舷逐格對稱
 - [ ] 產生程式重跑逐位元組相同（讀「藏起本階段關聯」或標記 `:begin` 的現況）
 - [ ] 匯出 vxk、跟遊戲那側對 checksum
