@@ -40,6 +40,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Ship_Setup](Workflows/Ship_Setup.md) | 造船 §0–§3：座標／比例／鏡像、作品怎麼拆、儘量用已有的元件、建議的建造順序（含「一開始就該這樣做」） |
 | [Ship_Decks](Workflows/Ship_Decks.md) | 造船 §9.2–§9.3：甲板 meta、梯子與繩梯（通道）、樓梯自檢、第一人稱爬得出來、空艙房 |
 | [Ship_Fittings](Workflows/Ship_Fittings.md) | 造船 §9.7、§9.9、§9.11、§9.13、§9.14：門與艙蓋、裝飾 deco、撞角、廚房、被打掉怎麼演 |
+| [Ship_Ends](Workflows/Ship_Ends.md) | 造船：大帆船的船頭船尾曲線與裝飾（舷頂曲線、船尾 counter 與往裡收、beakhead 艙壁＋整片平台、stern walk、head 寬帶、走得出去的門；改線形之後連帶重產哪些件、照什麼順序套；範例康塞普西翁號、給收穫號照抄） |
 | [Ship_Masts](Workflows/Ship_Masts.md) | 造船 §5：桅與帆桁（子作品＋外部模型、pivot、三角帆桁） |
 | [Ship_Rigging](Workflows/Ship_Rigging.md) | 造船 §6、§7、§9.1：繩、ratlines 橫繩組與繩梯、帆、帆繩旗的 meta |
 | [Ship_Guns](Workflows/Ship_Guns.md) | 造船 §2.2、§4.1–§4.4：砲（外部模型、退到零碰撞、後座、砲身砲座、固定點、砲索）；缺的砲種做成通用部件、加進砲種表 |

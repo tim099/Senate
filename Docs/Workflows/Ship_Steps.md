@@ -38,6 +38,7 @@ related:
 | 槳 | 步驟 13 `Ship_Oars` | — |
 | 蒸汽（主機、鍋爐、煙囪、軸、螺旋槳） | 步驟 13 `Ship_Steam`；金屬部件再讀 `Ship_Materials` | — |
 | 鐵甲、銅皮、金屬部件、混合材質 | 步驟 13 `Ship_Materials` | 全船木頭 ⇒ 不用標（遊戲預設橡木） |
+| 大帆船的船頭船尾（counter、stern walk、beakhead 平台、head 寬帶）；或已經造好的船要把兩頭改成模型那樣 | 步驟 3（線形）、6（裝飾）加讀 `Ship_Ends`；已造好的船照它 §6 的順序全程重產 | — |
 | 撞角（要故意衝撞的） | 步驟 13 `Ship_Fittings` §9.11 | 壓斷槳的 spur／éperon 不算撞角 |
 | 改裝船（同級艦、改型：原船當一條關聯） | 先讀 `Ship_Refit`，步驟 3–4 換成「遮罩與拿掉的部件」，其他只留改到的那幾步 | — |
 
@@ -75,6 +76,7 @@ related:
 | `Sculpture_Blueprint_Build` | 照圖紙的通用流程：找圖校準、新圖紙（plan.json＋出處）、遮罩落子、兩本帳、反向對照、verifier、過程圖與日記 | 3、4 |
 | `Ship_Decks` | §9.2 空艙房、§9.3 甲板與通道（梯子、繩梯、樓梯自檢、第一人稱爬得出來） | 5 |
 | `Ship_Fittings` | §9.7 門與艙蓋、§9.9 裝飾、§9.11 撞角、§9.13 廚房、§9.14 被打掉怎麼演 | 6、10、13 |
+| `Ship_Ends` | 大帆船的船頭船尾：舷頂曲線、船尾 counter 與往裡收、beakhead 艙壁＋整片平台、stern walk、head 寬帶、走得出去的門；改線形之後的重產順序 | 3、6（已造好的船改兩頭：全程） |
 | `Ship_Masts` | §5 桅與帆桁 | 7 |
 | `Ship_Rigging` | §6 繩、§7 帆、§9.1 帆繩旗的 meta | 8 |
 | `Ship_Guns` | §2.2 缺的砲種做成通用部件、§4.1–§4.4 砲（擺法、後座、砲身砲座、固定點、砲索） | 9 |
@@ -106,6 +108,8 @@ related:
 | 5、13 | `basecamp-ember-01m/design/tools/walkback.py`、`kotoko-napoleon-01m/design/draft_engine_access.py` | 第一人稱「走得到 − 走得回」的有向圖（掉得進去要爬得出來） |
 | 5 | Blockside `src/decks.py`、`src/rooms.py` | 甲板 meta（floor、thick）⇒ tsv；空艙房候選與檢查 |
 | 6 | `calli-cosecha-01m/design/draft_deco.py`、`basecamp-frigate-constitution-01m/design/draft_stern_glass.py` | 船首喙、船首像、船尾陽台、galleries、船名板；船尾窗玻璃 |
+| 3–6 | `apex-two-galeon-01m/design/lines.py`（counter、top_curve、stern_tumble、beakhead）、`draft_ports.py`、`draft_deco.py`（stern walk、喙平台）、`draft_ornament.py`、`draft_doors.py` | 大帆船的船頭船尾（`Ship_Ends`）；`--occ=` 拿本機清單當船跑（還沒落格時） |
+| 3–6 | `apex-two-galeon-01m/design/tools/render_preview.py` | 還沒落格的清單直接畫預覽圖（z-buffer、照露出的面打光） |
 | 7 | `calli-cosecha-01m/design/draft_masts.py`＋`tools/build_masts.py` | 桅、桅樓、艏斜桅、帆桁（方帆桁縮放憲法號的元件、新做三角帆桁） |
 | 8 | `calli-cosecha-01m/design/draft_rigging.py`＋`tools/rigging_apply.py` | channels、固定點、靜索、ratlines、帆、旗、meta |
 | 9 | `calli-cosecha-01m/design/gunsim.py`、`draft_guns.py`、`basecamp-ember-01m/design/place_guns.py` | 砲退到零碰撞（格心＋八角）、追擊砲照角度搜、砲口在船殼外 |
