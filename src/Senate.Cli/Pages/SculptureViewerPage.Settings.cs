@@ -242,27 +242,33 @@ public sealed partial class SculptureViewerPage
 
     /// <summary>
     /// 作品類型（純函數，淨室直接測）：⛔ 子作品（標 <c>sub</c>）一律不是船 —— 甲板、砲、帆桁那些是船的部件（Tim 2026-10-13）；
-    /// 主作品自己的關聯／模型 meta 帶 <see cref="ShipKinds"/> 任一個 ⇒ <see cref="SculptWorkType.ship"/>；
-    /// 不是船、標籤有 <see cref="TownTag"/> ⇒ 城鎮、有 <see cref="BuildingTag"/> ⇒ 房屋（子作品也算，TASK-0582）；其餘 <see cref="SculptWorkType.other"/>。
+    /// 主作品自己的關聯／模型 meta 帶 <see cref="ShipKinds"/> 任一個、而且沒標建築（<see cref="BuildingTags"/>）⇒ <see cref="SculptWorkType.ship"/>；
+    /// 不是船、標籤有 <see cref="TownTag"/> ⇒ 城鎮、有 <see cref="BuildingTags"/> 任一個 ⇒ 房屋（子作品也算，TASK-0582）；其餘 <see cref="SculptWorkType.other"/>。
+    /// 標了建築的不是船（Tim 2026-10-31「目前船的分類下好像有很多建築」）：堡壘、砲台、火藥坊的關聯帶 gun／magazine／powder，
+    /// 那是 Blocksail 把它們當戰鬥單位、生產建築用的 meta（不能拿掉）⇒ 以前十件建築掉進「船」。標了 town 的照舊船優先（城鎮沒有砲台那種 meta）。
     /// 只看自己這一層，⛔ 不往關聯進去的子作品找：砲的 meta 掛在甲板子作品上，而三艘船的組裝件自己的關聯就帶 kind
     /// （2026-10-13 量組裝件自己的 links.json：夜隼號 ship＋magazine、餘燼號 magazine、憲法號 magazine×2）—— 往下找只會多讀檔、不會多認出一艘。
     /// </summary>
     public static SculptWorkType WorkTypeOf(SCP_SculptWork iWork, IReadOnlyCollection<string>? iKinds)
     {
-        if (!iWork.IsSub && iKinds != null && iKinds.Any(ShipKinds.Contains)) return SculptWorkType.ship;
+        bool aBuilding = iWork.tags.Any(BuildingTags.Contains);
+        if (!iWork.IsSub && !aBuilding && iKinds != null && iKinds.Any(ShipKinds.Contains)) return SculptWorkType.ship;
         if (iWork.tags.Contains(TownTag)) return SculptWorkType.town;
-        if (iWork.tags.Contains(BuildingTag)) return SculptWorkType.building;
+        if (aBuilding) return SculptWorkType.building;
         return SculptWorkType.other;
     }
 
     /// <summary>
-    /// 房屋、城鎮照標籤認（Tim 2026-10-14「可以新增一下房屋 城鎮類型作品（我篩選查看）」，TASK-0582）：<c>house</c> ⇒ 房屋、<c>town</c> ⇒ 城鎮（兩個都有 ⇒ 城鎮）。
+    /// 房屋、城鎮照標籤認（Tim 2026-10-14「可以新增一下房屋 城鎮類型作品（我篩選查看）」，TASK-0582）：<c>house</c> 或 <c>building</c> ⇒ 房屋、<c>town</c> ⇒ 城鎮（都有 ⇒ 城鎮）。
+    /// <c>building</c>（2026-10-31）：Blocksail 城鎮建築的成品都標它（BUILDING_SPEC；產生程式 build.py 寫 tags building,&lt;風格&gt;）—— 主作品 295 件、標 house 的 0 件，
+    /// 以前只認 house ⇒ 建築全掉進「其他」。
     /// 跟船不同：⛔ 不排除子作品 —— 房屋本來就是城鎮的零件（岩堡港的 -house-* 都標 sub），篩房屋就是要看零件；
     /// 所以這兩類也不看「只列主作品」（<see cref="IgnoresMainOnly"/>）。標籤要一字不差（大小寫照 tags 規則，不放寬）。
     /// </summary>
-    public const string BuildingTag = "house", TownTag = "town";
+    public static readonly IReadOnlyCollection<string> BuildingTags = new HashSet<string>(StringComparer.Ordinal) { "house", "building" };
+    public const string TownTag = "town";
 
-    /// <summary>這個類型要不要略過 MainOnly：房屋、城鎮是 ⇒ 子作品照列（見 <see cref="BuildingTag"/>）。</summary>
+    /// <summary>這個類型要不要略過 MainOnly：房屋、城鎮是 ⇒ 子作品照列（見 <see cref="BuildingTags"/>）。</summary>
     public static bool IgnoresMainOnly(SculptWorkType iType) => iType is SculptWorkType.building or SculptWorkType.town;
 
     /// <summary>
