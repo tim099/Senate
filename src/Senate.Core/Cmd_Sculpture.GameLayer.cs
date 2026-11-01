@@ -5,6 +5,8 @@
 //          橫繩組（TASK-0678）：Tim 2026-10-17「遊戲meta相關可以調整」⇒ 橫繩組（ratlines 的間距、繩梯 climb／foot／head）也不限作者；一條一條的繩照舊只有作者。
 //          梯子的格子：Tim 2026-10-23「梯子格子只有作者能改 這個規定改掉 因為梯子跟遊戲有關(算是遊戲meta)」⇒ 梯子作品（被關聯照 meta kind=ladders
 //          引用的；每艘船的梯子都這樣掛進甲板，造船規格 §9.3）的落子、move、undo／redo、草稿 apply／discard 不限作者。換色（spray）、別的作品的格子照舊只有作者。
+//          砲具的格子：Tim 2026-11-01「炮具相關視為遊戲meta 不限定只有作者能修改」⇒ 砲具作品（被關聯照 meta kind=gunfittings 引用的：船牆的環、甲板環，
+//          Ship_Guns §4.4）跟梯子同一條門 —— 換砲之後環要跟著挪，換砲的人自己刻。
 // 留痕：不是作者改的、而且成功了 ⇒ 那件作品的 meta_log.jsonl 記一筆（誰、作者是誰、哪一種、哪一個名字、給了哪些參數）。
 //       作者自己改 ⇒ 不記（跟以前一樣，models.json／links.json 的 persona 欄照舊）。
 using System.Globalization;
@@ -22,27 +24,37 @@ public sealed partial class Cmd_Sculpture
 
     static readonly string[] s_GameLayerLogArgs = { "name", "source_work", "file", "at", "pivot", "rotate", "scale", "mirror", "turn", "axes", "color", "enabled", "note", "meta", "recolor", "link_hide", "link_carve", "overwrite",
                                                     "rope_a", "rope_b", "step", "start", "stop", "min_span", "thickness", "group", "climb", "foot", "head",   // 這排：橫繩組（TASK-0678）
-                                                    "voxels", "region", "delta", "expect_pixels", "draft" };   // 梯子的格子（落子、move）
+                                                    "voxels", "region", "delta", "expect_pixels", "draft" };   // 梯子、砲具的格子（落子、move）
 
-    const string LadderRule = "Tim 2026-10-23：梯子跟遊戲有關（算遊戲 meta）⇒ 梯子作品（被 kind=ladders 關聯引用的）的格子不限作者";
+    /// <summary>格子不限作者的作品種類（關聯的 meta kind ⇒ 規則出處）。</summary>
+    static readonly (string kind, string rule)[] s_VoxelGameKinds =
+    {
+        ("ladders", "Tim 2026-10-23：梯子跟遊戲有關（算遊戲 meta）⇒ 梯子作品（被 kind=ladders 關聯引用的）的格子不限作者"),
+        ("gunfittings", "Tim 2026-11-01：炮具相關視為遊戲 meta、不限定只有作者能修改 ⇒ 砲具作品（被 kind=gunfittings 關聯引用的）的格子不限作者"),
+    };
 
-    /// <summary>梯子作品：有任何一條關聯照 meta kind=ladders 引用它。讀不了的 links.json 不算（⛔ 不因此放行）。</summary>
-    static bool IsLadderWork(Ctx c, string iId)
+    /// <summary>格子不限作者的作品：有任何一條關聯照 s_VoxelGameKinds 的 kind 引用它 ⇒ 回傳那一列；沒有 ⇒ null。讀不了的 links.json 不算（⛔ 不因此放行）。</summary>
+    static (string kind, string rule)? VoxelGameKind(Ctx c, string iId)
     {
         foreach (SCP_SculptWork w in c.Works.List())
         {
-            try { foreach (var l in SCP_SculptLinks.Read(c.Works.SpacePaths(w.id)).links) if (l.work == iId && RopeMetaKind(l.meta) == "ladders") return true; }
+            try
+            {
+                foreach (var l in SCP_SculptLinks.Read(c.Works.SpacePaths(w.id)).links)
+                    if (l.work == iId) foreach (var k in s_VoxelGameKinds) if (RopeMetaKind(l.meta) == k.kind) return k;
+            }
             catch (Exception e) when (e is InvalidOperationException || e is IOException) { }
         }
-        return false;
+        return null;
     }
 
-    /// <summary>動格子的門：作者 ⇒ 照舊跑；不是作者而且是梯子作品 ⇒ 跑、成功就記 meta_log；其他 ⇒ 擋（iDeny 是擋下的說明）。</summary>
+    /// <summary>動格子的門：作者 ⇒ 照舊跑；不是作者而且是梯子／砲具作品 ⇒ 跑、成功就記 meta_log；其他 ⇒ 擋（iDeny 是擋下的說明）。</summary>
     static string? VoxelGate(Ctx c, SCP_SculptWork iCard, string iSub, string iDeny, System.Func<string?> iRun)
     {
         if (c.Persona.Length > 0 && c.Persona == iCard.owner) return iRun();
-        if (c.Persona.Length == 0 || !IsLadderWork(c, iCard.id)) return Blocked(c, 2, iDeny + "（例外：梯子作品 —— 被 kind=ladders 關聯引用的 —— 不限作者）");
-        return GameLayer(c, iCard, "ladders", iSub, iRun, LadderRule);
+        var aKind = c.Persona.Length == 0 ? null : VoxelGameKind(c, iCard.id);
+        if (aKind == null) return Blocked(c, 2, iDeny + "（例外：梯子、砲具作品 —— 被 kind=ladders／kind=gunfittings 關聯引用的 —— 不限作者）");
+        return GameLayer(c, iCard, aKind.Value.kind, iSub, iRun, aKind.Value.rule);
     }
 
     /// <summary>跑一支組裝層的 sub；成功、而且動手的不是作者 ⇒ 記一筆、回傳多一行說明。</summary>

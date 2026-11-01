@@ -3,6 +3,8 @@
 //   ② 作者自己改 ⇒ 不記 meta_log（跟以前一樣）
 //   ③ 反向對照：同一艘船上別的關聯（kind=rooms）、船本身、沒有 meta 的關聯 ⇒ q 照舊擋（exit 2、事件沒多）；
 //      作者把 kind=ladders 那條關聯拿掉 ⇒ 同一件作品 q 也擋（判準是關聯，不是名字）
+//   ④ 砲具（Tim 2026-11-01「炮具相關視為遊戲meta 不限定只有作者能修改」）：被 kind=gunfittings 關聯引用的作品同一條門 ——
+//      q 落子放行、meta_log 記 part gunfittings；拿掉那條關聯之後 q 擋
 using Senate.Core;
 using SCP.Core.Canvas;
 using SCP.Core.Cmd;
@@ -15,7 +17,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptLadderNotAuthorCleanRoom()
     {
-        const string name = "雕刻：梯子作品（kind=ladders 關聯引用的）的格子不限作者 —— 落子、move、undo 放行並記 meta_log；🔴 別的關聯、船本身、拿掉關聯之後照舊擋（淨室，Tim 2026-10-23）";
+        const string name = "雕刻：梯子、砲具作品（kind=ladders／kind=gunfittings 關聯引用的）的格子不限作者 —— 落子、move、undo 放行並記 meta_log；🔴 別的關聯、船本身、拿掉關聯之後照舊擋（淨室，Tim 2026-10-23、2026-11-01）";
         var failures = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
         var original = SenateSculptureRewards.Factory;
@@ -42,12 +44,14 @@ public static partial class SelfTest
             string Log(string id) { string f = store.SpacePaths(id).MetaLogFile; return File.Exists(f) ? File.ReadAllText(f) : ""; }
             int Lines(string id) => Log(id).Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
 
-            // 甲板 deck（16）：關聯「梯子」→ lad（kind=ladders）、「艙房」→ rm（kind=rooms）、「雜項」→ bare（沒有 meta）
-            Check(Create("deck", "16") && Create("lad", "8,4,4") && Create("rm", "8,4,4") && Create("bare", "8,4,4"), "四件作品建立");
-            Check(Box("p", "lad", 0, 10).ExitCode == 0 && Box("p", "rm", 0, 10).ExitCode == 0 && Box("p", "bare", 0, 10).ExitCode == 0, "作者在三件子作品各放一格");
+            // 甲板 deck（16）：關聯「梯子」→ lad（kind=ladders）、「艙房」→ rm（kind=rooms）、「雜項」→ bare（沒有 meta）、「砲具」→ gf（kind=gunfittings）
+            Check(Create("deck", "16") && Create("lad", "8,4,4") && Create("rm", "8,4,4") && Create("bare", "8,4,4") && Create("gf", "8,4,4"), "五件作品建立");
+            Check(Box("p", "lad", 0, 10).ExitCode == 0 && Box("p", "rm", 0, 10).ExitCode == 0 && Box("p", "bare", 0, 10).ExitCode == 0 && Box("p", "gf", 0, 10).ExitCode == 0,
+                "作者在四件子作品各放一格");
             Check(Sub("p", "deck", "link", ("name", "梯子"), ("source_work", "lad"), ("at", "0,0,0"), ("meta", "{\"kind\":\"ladders\"}")).ExitCode == 0
                   && Sub("p", "deck", "link", ("name", "艙房"), ("source_work", "rm"), ("at", "0,4,0"), ("meta", "{\"kind\":\"rooms\"}")).ExitCode == 0
-                  && Sub("p", "deck", "link", ("name", "雜項"), ("source_work", "bare"), ("at", "0,8,0")).ExitCode == 0, "作者掛三條關聯");
+                  && Sub("p", "deck", "link", ("name", "雜項"), ("source_work", "bare"), ("at", "0,8,0")).ExitCode == 0
+                  && Sub("p", "deck", "link", ("name", "砲具"), ("source_work", "gf"), ("at", "0,12,0"), ("meta", "{\"kind\":\"gunfittings\"}")).ExitCode == 0, "作者掛四條關聯");
 
             // ① q 在梯子作品上：落子、move、undo
             int ev = Events("lad");
@@ -77,7 +81,18 @@ public static partial class SelfTest
             var after = Box("q", "lad", 6, 14);
             Check(after.ExitCode == 2 && Events("lad") == e1, "🔴 拿掉 kind=ladders 關聯之後 q 落子應擋：exit " + after.ExitCode);
 
-            return new CheckRow(name, failures.Count == 0 ? "q 在梯子作品落子、move、undo 放行並記 meta_log；作者自己改不記；艙房、船本身、沒 meta 的關聯、拿掉關聯之後都擋" : string.Join("；", failures),
+            // ④ 砲具作品：q 落子放行、記 part gunfittings；拿掉關聯之後擋
+            int g0 = Events("gf");
+            var qg = Box("q", "gf", 1, 11);
+            Check(qg.ExitCode == 0 && Events("gf") == g0 + 1, "🔴 q 在砲具作品落子應放行（多一筆事件）：" + SculptRoom.All(qg));
+            Check(Log("gf").Contains("\"persona\":\"q\"") && Log("gf").Contains("\"part\":\"gunfittings\"") && Log("gf").Contains("2026-11-01"),
+                "q 落子應記進 gf 的 meta_log（persona q、part gunfittings、規則出處 2026-11-01）：" + Log("gf"));
+            Check(Sub("p", "deck", "unlink", ("name", "砲具")).ExitCode == 0, "作者拿掉砲具那條關聯");
+            int g1 = Events("gf");
+            var gAfter = Box("q", "gf", 6, 14);
+            Check(gAfter.ExitCode == 2 && Events("gf") == g1, "🔴 拿掉 kind=gunfittings 關聯之後 q 落子應擋：exit " + gAfter.ExitCode);
+
+            return new CheckRow(name, failures.Count == 0 ? "q 在梯子、砲具作品落子（梯子另驗 move、undo）放行並記 meta_log；作者自己改不記；艙房、船本身、沒 meta 的關聯、拿掉關聯之後都擋" : string.Join("；", failures),
                                 failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(name, "例外：" + e, CheckResult.Fail); }
