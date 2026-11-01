@@ -102,7 +102,9 @@ Tim 2026-10-18：「有缺的炮種或裝備 就加成新的通用部件吧」�
   - 作法：plan `guns_build.types.4l` 換 work／scale／pivot → 重跑 `draft_guns.py`（只有 4l 那幾列變才往下）→ 只重掛 4l 那幾門（`sub=model overwrite=1`，meta 要帶著 Blockside 配的 `id`）→ 有砲具的船重跑 `draft_gunfittings.py`（環的高度 ＝ eye 的高度，換砲常差一格）→ Blockside `admin.py reimport`。
   - 砲具也算遊戲 meta（Tim 2026-11-01：「炮具相關視為遊戲meta 不限定只有作者能修改」「改雕刻引擎 可以放行炮具相關」）⇒ 砲具子作品的關聯標 meta `kind=gunfittings`（全庫 16 條同日補上；Blockside meta_kinds 有這一列、遊戲當一般關聯），引擎放它的格子不限作者（跟梯子同一條門，非作者動手記 meta_log）⇒ 換砲後環要挪，換砲的人直接跑那艘船的 `draft_gunfittings.py` ⇒ `tools/delta_apply.py`（persona 換成自己）⇒ `build_gunfittings.py`。繩照舊只有作者能改 —— 繩照固定點名字接、跟著環走，`gun_ropes.json` 沒變就不用重掛。
   - 2026-11-01（Tim：「排查一下目前船有哪些炮是用其他炮暫代的 然後替換成對應的炮」）：8 磅換成 `ridge-two-centurion-01m-gun-8l`（牛津號、皇家號、康塞普西翁號、藍鯊號，原尺寸 0.5）；4 磅換成上面那件 —— 澤漢號 0.443（拉貝爾號同一個縮放）、飛魚號 0.4、燕子號 0.35（Tim「飛魚 燕子 如果縮四磅炮呢」：4 磅砲件砲架比較高，0.443 時燕子號第 2 門頂到砲門上楣、飛魚號退進船裡擋住走道 ⇒ 縮到放得下的最大值）。
-  - 還是拿別的口徑縮的：36 磅（皇家號）、9 吋／XI 吋 Dahlgren（維吉尼亞號、薩斯奎哈納號）、6.4 吋／7 吋 Brooke（維吉尼亞號）還沒有自己的模型、拿餘燼號 32 磅縮（TASK-1155）。
+  - TASK-1155（同日）：最後五種也做成通用部件、換上（`ridge-two-centurion-01m-gun-36l`／`-gun-dahlgren9`／`-gun-dahlgren11`／`-gun-brooke64`／`-gun-brooke7`；產生程式 `ridge-two-centurion-01m/design/draft_guns1155.py`）—— 皇家號 36 磅、維吉尼亞號、蘇士奎哈納號。樞軸砲（XI 吋、7 吋）坐在滑軌上，滑軌拆成砲座（§4.2.1）。⇒ 全庫沒有拿別的砲種暫代的砲了。
+  - 別人的船殼底下不能開子作品（`只有任務作品作者可以建立其子作品`）⇒ 替別人的船做的砲件掛在自己的船底下。
+  - 換模型時砲門不想動 ⇒ 新砲的耳軸高照舊砲的砲軸高做（scale 0.5 時 ＝ 舊砲軸高 × 2 格）；擺法「沿舊砲軸、新砲口對到舊砲口、撞到才往裡退」（`ridge-two-centurion-01m/design/place1155.py`），迴旋砲的轉軸中心照舊、重算 meta `pivot`，每個砲門角度＋換砲門那段都量。
 
 | 項目 | 規定 | 為什麼 |
 |---|---|---|
