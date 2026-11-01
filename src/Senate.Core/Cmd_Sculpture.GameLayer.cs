@@ -1,12 +1,14 @@
 // 區塊職責：給遊戲用的組裝層不限作者（TASK-0646）—— 外部模型（model／unmodel）、關聯（link／unlink）、固定點（anchor／unanchor）、橫繩組（ratlines／unratlines，TASK-0678）。
 // 物理意義：規則由 Tim 定（2026-10-16）：「不影響模型外觀的修改 ok」——「規則可以改」「因為是為了進遊戲做的調整（meta 層）」
 //          「可以在不調整模型外觀下 修改（meta 或拆件符合遊戲規格）」。之前只有 work sub=meta 不限作者（Tim 2026-10-13，TASK-0539）。
-//          ⇒ 這三種跟 meta 同一級；格子（stamp／carve／assemble／spray／草稿）、繩、帆、preset、海面、風照舊只有作者能改。
+//          ⇒ 這三種跟 meta 同一級；格子（stamp／carve／assemble／spray／草稿）、繩、帆（2026-11-01 起放寬，見下）、preset、海面、風照舊只有作者能改。
 //          橫繩組（TASK-0678）：Tim 2026-10-17「遊戲meta相關可以調整」⇒ 橫繩組（ratlines 的間距、繩梯 climb／foot／head）也不限作者；一條一條的繩照舊只有作者。
 //          梯子的格子：Tim 2026-10-23「梯子格子只有作者能改 這個規定改掉 因為梯子跟遊戲有關(算是遊戲meta)」⇒ 梯子作品（被關聯照 meta kind=ladders
 //          引用的；每艘船的梯子都這樣掛進甲板，造船規格 §9.3）的落子、move、undo／redo、草稿 apply／discard 不限作者。換色（spray）、別的作品的格子照舊只有作者。
 //          砲具的格子：Tim 2026-11-01「炮具相關視為遊戲meta 不限定只有作者能修改」⇒ 砲具作品（被關聯照 meta kind=gunfittings 引用的：船牆的環、甲板環，
 //          Ship_Guns §4.4）跟梯子同一條門 —— 換砲之後環要跟著挪，換砲的人自己刻。
+//          帆：Tim 2026-11-01「放寬帆的作者門」⇒ 帆（sail／unsail：角、綁法、free、顏色、貼圖）不限作者（起因：好旅號的船旗四角全綁、作者以外改不了）。
+//          一條一條的繩照舊只有作者。
 // 留痕：不是作者改的、而且成功了 ⇒ 那件作品的 meta_log.jsonl 記一筆（誰、作者是誰、哪一種、哪一個名字、給了哪些參數）。
 //       作者自己改 ⇒ 不記（跟以前一樣，models.json／links.json 的 persona 欄照舊）。
 using System.Globalization;
@@ -24,7 +26,11 @@ public sealed partial class Cmd_Sculpture
 
     static readonly string[] s_GameLayerLogArgs = { "name", "source_work", "file", "at", "pivot", "rotate", "scale", "mirror", "turn", "axes", "color", "enabled", "note", "meta", "recolor", "link_hide", "link_carve", "overwrite",
                                                     "rope_a", "rope_b", "step", "start", "stop", "min_span", "thickness", "group", "climb", "foot", "head",   // 這排：橫繩組（TASK-0678）
-                                                    "voxels", "region", "delta", "expect_pixels", "draft" };   // 梯子、砲具的格子（落子、move）
+                                                    "voxels", "region", "delta", "expect_pixels", "draft",   // 梯子、砲具的格子（落子、move）
+                                                    "corners", "corner_names", "free", "bind", "res", "fullness", "texture" };   // 帆（Tim 2026-11-01）
+
+    /// <summary>帆不限作者的規則出處（記進 meta_log）。</summary>
+    const string SailsRule = "Tim 2026-11-01：放寬帆的作者門 —— 帆（角、綁法、顏色、貼圖）不限作者";
 
     /// <summary>格子不限作者的作品種類（關聯的 meta kind ⇒ 規則出處）。</summary>
     static readonly (string kind, string rule)[] s_VoxelGameKinds =

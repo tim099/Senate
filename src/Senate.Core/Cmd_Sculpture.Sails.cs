@@ -177,7 +177,7 @@ public sealed partial class Cmd_Sculpture
     /// </summary>
     static string? WorkSail(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改帆");
+        if (GameLayerPersona(c, "帆") is string aNoPersona) return aNoPersona;   // 不限作者（SailsRule；不是作者 ⇒ GameLayer 記 meta_log）
         string aName = c.Args.Get("name");
         if (SCP_SculptRopes.ValidName(aName, "帆") is string aBadName) return Blocked(c, 2, aBadName);
         var aPaths = c.Works.SpacePaths(iCard.id);
@@ -343,7 +343,7 @@ public sealed partial class Cmd_Sculpture
     /// <summary>work sub=unsail name=：拿掉一面帆；綁在它角上的繩（全庫掃）⇒ 列出來（它們之後每次觀測都會是 broken）。</summary>
     static string? WorkUnsail(Ctx c, SCP_SculptWork iCard)
     {
-        if (c.Persona.Length == 0 || c.Persona != iCard.owner) return Blocked(c, 2, "只有作品作者 " + iCard.owner + " 可以改帆");
+        if (GameLayerPersona(c, "帆") is string aNoPersona) return aNoPersona;   // 不限作者（SailsRule）
         string aName = c.Args.Get("name").Trim();
         var aPaths = c.Works.SpacePaths(iCard.id);
         SCP_SculptSailFile aFile = SCP_SculptSails.ReadSails(aPaths);

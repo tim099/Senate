@@ -125,9 +125,9 @@ public sealed partial class Cmd_Sculpture
             if (sub == "ropegroup") return WorkRopeGroup(c, cardNow);   // TASK-0512
             if (sub == "ratlines") return GameLayer(c, cardNow, "ratlines", sub, () => WorkRatlines(c, cardNow), RatlinesRule);       // TASK-0678：不限作者（遊戲 meta）
             if (sub == "unratlines") return GameLayer(c, cardNow, "ratlines", sub, () => WorkUnratlines(c, cardNow), RatlinesRule);
-            // TASK-0503：帆（作品資料，不是 voxel；改的只有作者）
-            if (sub == "sail") return WorkSail(c, cardNow);
-            if (sub == "unsail") return WorkUnsail(c, cardNow);
+            // TASK-0503：帆（作品資料，不是 voxel）；Tim 2026-11-01 放寬作者門 ⇒ 不限作者（遊戲 meta；不是作者 ⇒ GameLayer 記 meta_log）
+            if (sub == "sail") return GameLayer(c, cardNow, "sail", sub, () => WorkSail(c, cardNow), SailsRule);
+            if (sub == "unsail") return GameLayer(c, cardNow, "sail", sub, () => WorkUnsail(c, cardNow), SailsRule);
             if (sub == "sails") return WorkSails(c, cardNow);
             if (sub == "wind") return WorkWind(c, cardNow);
             if (sub == "sea") return WorkSea(c, cardNow);       // TASK-0585：作品的海面預設（渲染用，不是 voxel）
