@@ -37,6 +37,7 @@ related:
 | `magazine` | 彈藥庫關聯 | `powder_lb`（＝ 桶數 × 100，⚠ 不是史料）| blast、door |
 | `powder` | 火藥桶模型 | `powder_lb=100`；可選 `render=lathe`（畫成車床式的低面數網格，§8；任何繞軸對稱的模型都能標）、`lathe_n`、`lathe_axis` | — |
 | `yard` | 帆桁模型 | 見 §5 | pivot、earing… |
+| `mast` | 下桅的關聯（每根桅一條；上桅不標） | `mast=fore｜main｜mizzen｜bonaventure｜bowsprit`（帆桁的 `mast` 一字不差對到它；匯入寫格子清單，遊戲照它認桅 —— 見 §5「桅的綁定」，TASK-1169） | — |
 | `ladders` | 梯子所在的關聯（一個關聯可放好幾座） | — | 每座 4 個：`<梯名>.foot`／`.lo`／`.hi`／`.head` |
 | `ratline`（繩梯） | 橫繩組展開的每一道（**引擎自己寫**，⛔ 不用 `sub=meta` 標；TASK-0678） | `ratlines`（組路徑）、`rung`、`rungs`；`climb=1` 那一組再加 `climb`、`foot`、`head`（組裝件座標 `x,y,z`） | —（foot／head 是橫繩組的參數 `climb=1 foot= head=`；lo／hi ＝ 最低／最高一道的中點，遊戲自己算） |
 | `wheel` | 舵輪模型 | 可選 `render=wheel`（畫成輪式的低面數網格，§8；四件舵輪已標在子作品預設 meta） | 來源作品有的照給（憲法號 -wheel：`hub-aft`、`hub-fore`、`drum-rope-a／b`）|

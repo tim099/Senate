@@ -32,6 +32,12 @@ related:
 ## 5. 桅與帆桁
 
 - 桅：每根一件子作品（fore／main／mizzen／bowsprit），軸照甲板已開的桅孔；top 的 trestletrees 要緊貼 masthead（`round(160 ± 4.56)` 會空一格 ⇒ 主桅 top 浮空，階段十三 v1.1）。
+- **桅的綁定（TASK-1169，Tim 2026-11-02：「在雕刻時就用meta綁定好…匯入時自動檢查 綁定 不應該在遊戲內再判斷」「參考帆跟繩的綁定」）**：
+  - 每根**下桅**的關聯標 meta **`kind=mast`、`mast=<fore｜main｜mizzen｜bonaventure｜bowsprit>`**（`sub=meta part=link`；meta 不限作者）。上桅、上上桅不標（同一個 `mast` 只能有一條）。
+  - 帆桁 meta 的 `mast` 要**一字不差**等於某一條 `kind=mast` 的 `mast` —— 跟繩的 `sail=` 對帆名同一套。帆桁模型放在它那根桅的子作品裡（下面「帆桁」），帆角才寫得成 `model:<桅的關聯>/yard-…`。
+  - 匯入（admin.py import／reimport／metasync）把那條關聯自己的格子寫進 `parts[].cellRuns`（跟動力件、梯子同一套）⇒ 遊戲照那份格子認桅：位置、桅身那一段（打斷就倒）、桅頂水手、敵艦瞄桅。⛔ 遊戲不再在船殼裡掃「中線上最粗的那一欄」（好旅號尾桅掃到後桅、幾內亞船後桅掃到船尾板）。
+  - 匯入檢查（shipcheck「桅」）：帆桁的 `mast` 找不到同名的 `kind=mast` ⇒ ✗；同名兩條 ⇒ ✗；沒有格子清單（關聯 turn 不是 0、mirror 不是空或 y 寫不出）⇒ ✗；那根桅自己的格子不在「最低那根帆桁的轉軸往下 10–40 格、中線 ±4」⇒ ✗；帆桁模型不在那根桅的關聯底下 ⇒ ⚠。
+  - 桅的名字（HUD、「…倒了」）：fore 前桅、main 主桅、mizzen 後桅、bonaventure 尾桅；bowsprit 不算桅（只綁、不認）。
 - **帆桁：每根一件子作品，模型放在它的桅子作品裡**（階段三十三）：
   - 子作品裡放**沒轉**的帆桁（沿 y），不扣跟桅重疊的格（獨立零件要完整）。
   - 固定點：`arm-P／S`（yardarm 兩端）、`earing-P／S`（帆上緣兩角）、`sling`、`jackstay-*`（每 8 格）；gaff `top*`；boom `jaws`／`end`；外加 **`pivot`**。

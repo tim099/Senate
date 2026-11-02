@@ -70,7 +70,7 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 | 鍵 | 值 | 遊戲拿來做什麼 |
 |---|---|---|
 | `kind` | `sail`／`flag` | 旗：不收、不算推力 |
-| `mast` | `fore`／`main`／`mizzen`／`bowsprit` | 掛在哪根桅（跟帆桁 meta 的 `mast` 同一套；三角帆掛艏斜桅 ⇒ `bowsprit`） |
+| `mast` | `fore`／`main`／`mizzen`／`bonaventure`／`bowsprit` | 掛在哪根桅（跟帆桁 meta 的 `mast`、桅關聯的 `kind=mast` 同一套；三角帆掛艏斜桅 ⇒ `bowsprit`） |
 | `sail`（帆） | `course`／`topsail`／`topgallant`／`royal`／`gaff`（縱主帆：spanker、夜隼號的 mainsail）／`staysail`／`jib` | 帆的種類 ⇒ 帆裝（W／S）的預設：收帆 ＝ topsail、jib；戰鬥帆再加 topgallant、gaff；滿帆 ＝ 全部 |
 | `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`；只有兩面帆的船要分得出段：持火號前帆 `3`、中帆 `1` ⇒ 收帆、戰鬥帆只張中帆，Tim 2026-10-18「沒有單帆狀態」） |
 | `flag`（旗；`kind=flag` 才寫） | `ensign`（國旗：船尾旗桿或後桅斜桁頂）／`pennant`（長旗：桅頂）／`jack`（艏旗：艏斜桅旗桿）／`signal`（信號旗） | 降旗時降 `ensign`；遊戲的陣營旗要換掉作品的哪一面，照這個種類找（下面「旗」） |
@@ -99,7 +99,7 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 | `sail` | 帆名 | 這條繩屬於哪面帆 ⇒ topsail 以上的 sheet 綁在哪根帆桁 ＝ 帆腳跟那根帆桁轉；帆掉了這幾條一起斷 |
 
 **關聯**：彈藥庫 `kind=magazine` 加 `pos=fore／mid／aft`（廣播「前／中／後彈藥庫」）。
-**桅**：帆桁 meta 的 `mast`（§5）—— 有幾根桅、各在哪、多高都從帆桁推（最低那根橫帆桁 course／crossjack 的 `pivot`）。
+**桅**：下桅的關聯標 `kind=mast, mast=<fore｜main｜mizzen｜bonaventure｜bowsprit>`，帆桁 meta 的 `mast` 一字不差對到它（§5「桅的綁定」，TASK-1169）—— 桅在哪、桅身那一段照那條關聯自己的格子；多高照最低那根橫帆桁 course／crossjack 的 `pivot`。
 **砲、舵輪、舵、甲板上的東西**：一律模型 meta（上面的 kind 表）。
 
 - 例（夜隼號）：`sail	mainsail	{"kind":"sail","mast":"main","sail":"gaff"}`、`rope	fore-topsail-sheet-S	{"kind":"sheet","sail":"fore-topsail"}`、`link	彈藥庫	{"pos":"aft"}`。
