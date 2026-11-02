@@ -29,6 +29,7 @@ related:
 - 雕刻的委託、收費、子作品、續作規則：`senate cmd skill --arg op=show --arg name=scp-sculpture`。
 - ⭐ **儘量用已有的元件**（Tim 2026-10-14）：砲、火藥桶、小艇、舵輪、羅經櫃、絞盤、燈、格柵、錨，別的船做過的就當外部模型引用（可以縮放），⛔ 不要重做；先跑 `senate cmd sculpture --arg op=work --arg sub=components`。船首像、船尾雕飾這種個性裝飾每艘自己做。查不到的砲種或裝備 ⇒ 做成新的通用部件（`Ship_Guns` §2.2）。
 - ⭐ 匯進遊戲之前跑 `work sub=ropecheck`；匯進之後看匯入檢查（`shipcheck`）與樓梯自檢 ✗ 0（`Ship_Game`、`Ship_Decks` §9.3）。
+- 船在遊戲裡只給人看的演出（點燈時刻、船窗夜裡亮、燈互照、冒煙、遠近分級、旗與帆的循環布、往來的船怎麼變成演出物件）跟城鎮建築同一份規格：Blockside `src/SHOW_SPEC.md`（TASK-1100）。船上要標的東西（窗的玻璃、灶的 `smoke`、燈、旗的綁法）照各份文件寫，遊戲那一側怎麼演看它。
 - 範例船：憲法號 `basecamp-frigate-constitution-01m`（從龍骨照圖紙造）、收穫號 `calli-cosecha-01m`（一套從線形到舵錨的產生程式，notes 每階段一節）；其他船的產生程式在各自作品的 `design/` 底下（共用工具表在 `Ship_Steps` §5）。
 - 現有的 op 不夠用時，照雕刻 skill 最後一條擴充引擎。
 
