@@ -1,7 +1,9 @@
 // 區塊職責：任務後台頁的**打勾**淨室（Tim 2026-11-02「TaskManagerPage 可以支援打勾功能嗎」）——
-//           ① 頁面預先判「這個署名勾不勾得掉」（TaskManagerPage.CheckBlocker）跟寫入端 `op=check` 的閘逐格一致；
+//           ① 頁面預先判「這個署名不代簽勾不勾得掉」（TaskManagerPage.CheckBlocker）跟寫入端 `op=check` 的閘逐格一致；
+//             帶 qa_note（代簽，Tim 2026-11-02「全部都能勾」）⇒ 每一格每一個人都落得了檔，簽名與時間線註明代簽；
 //           ② 錨（expect_text）切在 `|` 之前、不切半個代理對；
-//           ③ 真的畫頁面、真的按：按一次只是備妥（零寫入），再按一次才送 `op=check`，送出的參數交給寫入端落得了檔、簽名是署名的人。
+//           ③ 真的畫頁面、真的按：按一次只是備妥（零寫入），再按一次才送 `op=check`；勾得掉的是「勾」、勾不掉的是「代簽」（多帶 qa_note），
+//             送出的參數交給寫入端落得了檔、簽名是署名的人。
 // 物理意義：③ 換掉頁面的寫入那一步（TaskDispatch）—— 淨室不能真的跑 cmd task（會發酒館通知、sync.tasks 開著還會推遠端）；
 //           換上的那一步直接呼叫寫入端本體 SCP_TaskOps，閘與落檔都是真的。
 #nullable enable
@@ -56,6 +58,14 @@ public static partial class SelfTest
                         bool aActual = r.ExitCode == 0 && r.Wrote == 1;
                         Expect(aPredict == aActual, $"TASK-{i} 第 {n} 格 {who}：頁面判 {(aPredict ? "勾得掉" : "勾不掉")}、寫入端 exit {r.ExitCode} wrote {r.Wrote}");
                         Expect(aActual || Bytes(i) == b0, $"TASK-{i} 第 {n} 格 {who}：擋下了卻動了單檔");
+                        File.WriteAllText(SCP_TaskIO.TaskPath(aRoot, i), b0);
+                        // 代簽：同一格同一個人帶 qa_note ⇒ 一律落得了檔、簽名註明代簽
+                        SCP_TaskOpResult p = Op("check", who, ("index", i.ToString()), ("criteria_index", n.ToString()),
+                            ("expect_text", TaskManagerPage.CheckAnchor(aOpen[n - 1])), ("qa_note", TaskManagerPage.ProxyNote));
+                        Expect(p.ExitCode == 0 && p.Wrote == 1 && Bytes(i).Contains($"✅ {who} ", StringComparison.Ordinal)
+                            && Bytes(i).Contains("（代簽：後台頁）", StringComparison.Ordinal)
+                            && SCP_TaskStore.ReadTimeline(SCP_TaskIO.TaskPath(aRoot, i)).Any(l => l.Contains("（代簽：後台頁）", StringComparison.Ordinal)),
+                            $"TASK-{i} 第 {n} 格 {who} 代簽沒落檔或沒註明（exit {p.ExitCode}）");
                         File.WriteAllText(SCP_TaskIO.TaskPath(aRoot, i), b0);
                         aPairs++;
                     }
@@ -114,44 +124,61 @@ public static partial class SelfTest
             g = Draw();
             string aText = SCP_GuiTextRenderer.Render(g.Root, 400);
             List<SCP_GuiNode> aTicks = Ticks(g);
-            // 署名預設 Tim：只有 [signer:Tim] 那一格有按鈕；第一格寫出勾不掉的原因；散文與已勾那一格照印
-            Expect(aTicks.Count == 1 && aTicks[0].Id.EndsWith("/check/1/2", StringComparison.Ordinal), $"Tim 應只有第 2 格的按鈕：{string.Join(",", aTicks.Select(x => x.Id))}");
-            Expect(aText.Contains("Tim 勾不掉：只有參與者與開單人能勾", StringComparison.Ordinal), "第一格沒寫勾不掉的原因");
+            SCP_GuiNode? Tick(SCP_Ui u, int n) => Ticks(u).FirstOrDefault(x => x.Id.EndsWith($"/check/1/{n}", StringComparison.Ordinal));
+            // 署名預設 Tim：兩格都有按鈕 —— 第 1 格（不在名單）是「代簽」、第 2 格（[signer:Tim]）是「勾」；散文與已勾那一格照印
+            Expect(aTicks.Count == 2 && Tick(g, 1)?.Text == "代簽" && Tick(g, 2)?.Text == "勾", $"Tim 的按鈕不對：{string.Join(",", aTicks.Select(x => x.Id + "=" + x.Text))}");
+            Expect(aText.Contains("只有參與者與開單人能勾：erina ⇒ Tim 是代簽", StringComparison.Ordinal), "第一格沒寫代簽的原因");
             Expect(aText.Contains("說明的散文一行", StringComparison.Ordinal) && aText.Contains("- [x] 早就勾了", StringComparison.Ordinal), "散文或已勾的行沒印");
 
-            string b1 = Bytes(1);
-            if (aTicks.Count == 1)
+            // 按兩下：第一下零寫入、按鈕變「確定…？」；第二下送出
+            string? Press(int n, string iVerb)
             {
-                Draw(aTicks[0].Id);                                       // 第一下：備妥（按下那一輪按鈕已經畫完 ⇒ 下一輪才看得到「確定勾？」）
-                Expect(aSent.Count == 0 && Bytes(1) == b1, "按第一下就寫了");
+                SCP_GuiNode? b = Tick(g, n);
+                if (b == null) return $"第 {n} 格沒有按鈕";
+                int aSent0 = aSent.Count; string b1 = Bytes(1);
+                Draw(b.Id);                                               // 按下那一輪按鈕已經畫完 ⇒ 下一輪才看得到「確定…？」
+                if (aSent.Count != aSent0 || Bytes(1) != b1) return $"第 {n} 格按第一下就寫了";
                 g = Draw();
-                aTicks = Ticks(g);
-                Expect(aTicks.Count == 1 && aTicks[0].Text.StartsWith("確定勾", StringComparison.Ordinal), "按第一下之後按鈕沒變成「確定勾？」");
-                if (aTicks.Count == 1) g = Draw(aTicks[0].Id);            // 第二下：送出
+                b = Tick(g, n);
+                if (b == null || b.Text != $"確定{iVerb}？再按一次") return $"第 {n} 格按第一下之後按鈕是「{b?.Text}」";
+                Draw(b.Id);
+                g = Draw();
+                return aSent.Count == aSent0 + 1 ? null : $"第 {n} 格按第二下送出 {aSent.Count - aSent0} 次";
             }
-            Expect(aSent.Count == 1, $"送出次數 {aSent.Count}（應 1）");
-            if (aSent.Count == 1)
-            {
-                Dictionary<string, string> s = aSent[0];
-                Expect(s["op"] == "check" && s["index"] == "1" && s["criteria_index"] == "2" && s["persona"] == "Tim"
-                    && s.GetValueOrDefault("expect_text") == "[signer:Tim] Tim 看過", "送出的參數不對：" + string.Join(" ", s.Select(kv => kv.Key + "=" + kv.Value)));
-            }
-            string aCritNow = SCP_TaskStore.ReadCriteria(aRoot, 1);
-            Expect(aCritNow.Contains("- [x] [signer:Tim] Tim 看過　✅ Tim ", StringComparison.Ordinal), "單檔沒落「✅ Tim」");
-            Expect(SCP_TaskStore.ListUncheckedCriteria(aCritNow).SequenceEqual(new[] { "第一格 a|b 兩種寫法都要" }), "勾錯格或多勾");
-            g = Draw();
-            Expect(Ticks(g).Count == 0, "勾完重畫，Tim 還有按鈕");
+            string Args(Dictionary<string, string> s) => string.Join(" ", s.Where(kv => kv.Key != "data_root").OrderBy(kv => kv.Key).Select(kv => kv.Key + "=" + kv.Value));
 
-            // 換署名 erina（開單人）⇒ 第一格有按鈕
+            // [signer:Tim] 那一格：正常勾、不帶 qa_note
+            string? aErr = Press(2, "勾");
+            Expect(aErr == null, aErr ?? "");
+            if (aErr == null)
+                Expect(Args(aSent[^1]) == "criteria_index=2 expect_text=[signer:Tim] Tim 看過 index=1 op=check persona=Tim", "送出的參數不對：" + Args(aSent[^1]));
+            string aCritNow = SCP_TaskStore.ReadCriteria(aRoot, 1);
+            Expect(aCritNow.Contains("- [x] [signer:Tim] Tim 看過　✅ Tim ", StringComparison.Ordinal) && !aCritNow.Contains("代簽", StringComparison.Ordinal), "[signer:Tim] 那格沒落「✅ Tim」或被標成代簽");
+            Expect(SCP_TaskStore.ListUncheckedCriteria(aCritNow).SequenceEqual(new[] { "第一格 a|b 兩種寫法都要" }), "勾錯格或多勾");
+
+            // 換署名 erina（開單人）⇒ 第 1 格是「勾」；署名清空 ⇒ 沒有按鈕
             SCP_GuiNode? aAuthor = Nodes(g).FirstOrDefault(x => x.Kind == SCP_GuiNodeKind.TextField && x.Text.StartsWith("署名", StringComparison.Ordinal));
             Expect(aAuthor != null, "找不到署名欄");
-            if (aAuthor != null) aFields[aAuthor.Id] = "erina";
-            g = Draw();
-            aTicks = Ticks(g);
-            Expect(aTicks.Count == 1 && aTicks[0].Id.EndsWith("/check/1/1", StringComparison.Ordinal), $"erina 應只有第 1 格的按鈕：{string.Join(",", aTicks.Select(x => x.Id))}");
+            if (aAuthor != null)
+            {
+                aFields[aAuthor.Id] = "erina"; g = Draw();
+                Expect(Ticks(g).Count == 1 && Tick(g, 1)?.Text == "勾", $"erina 應只有第 1 格的「勾」：{string.Join(",", Ticks(g).Select(x => x.Id + "=" + x.Text))}");
+                aFields[aAuthor.Id] = ""; g = Draw();
+                Expect(Ticks(g).Count == 0 && SCP_GuiTextRenderer.Render(g.Root, 400).Contains("（先填署名）", StringComparison.Ordinal), "署名空的還有按鈕");
+                aFields[aAuthor.Id] = "Tim"; g = Draw();
+            }
+
+            // Tim 代簽第 1 格：帶 qa_note=後台頁、簽名註明
+            aErr = Press(1, "代簽");
+            Expect(aErr == null, aErr ?? "");
+            if (aErr == null)
+                Expect(Args(aSent[^1]) == "criteria_index=1 expect_text=第一格 a index=1 op=check persona=Tim qa_note=後台頁", "代簽送出的參數不對：" + Args(aSent[^1]));
+            aCritNow = SCP_TaskStore.ReadCriteria(aRoot, 1);
+            Expect(aCritNow.Contains("- [x] 第一格 a|b 兩種寫法都要　✅ Tim ", StringComparison.Ordinal) && aCritNow.Contains("（代簽：後台頁）", StringComparison.Ordinal), "代簽那格沒落「✅ Tim …（代簽：後台頁）」");
+            Expect(SCP_TaskStore.ListUncheckedCriteria(aCritNow).Count == 0 && Ticks(g).Count == 0, "全勾完還有未勾或按鈕");
 
             return new CheckRow(aName,
-                aFail.Count == 0 ? $"預判與閘一致（{aPairs} 組）／錨切 | 與代理對／按一下零寫入、按兩下送 op=check／Tim 簽 [signer:Tim] 落檔／換署名按鈕跟著換 全對"
+                aFail.Count == 0 ? $"預判與閘一致、帶 qa_note 一律代簽落檔（{aPairs} 組）／錨切 | 與代理對／按一下零寫入、按兩下送出／[signer:Tim] 正常勾／不在名單 ⇒ 代簽註明／換署名、清空署名按鈕跟著換 全對"
                     : string.Join("；", aFail),
                 aFail.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }

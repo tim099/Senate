@@ -10,7 +10,8 @@
 //     帶 `qa_note=後台頁代簽（<署名>）`（⛔ 不直接寫檔繞過 QA 閘）。
 //   · 推 in_progress／in_review 走 `op=update`（會進時間線；不發酒館通知 —— 與 agent 走 update 同一個規則）。
 //   · 二段確認：done／cancelled 要按兩次（誤點的後果是別人的單被關）；勾驗收格也是（打勾是簽名，沒有「取消勾」）。
-//   · 勾驗收格走 `op=check`（帶 expect_text）：`[signer:<persona>]` 那一格只有署名＝本人才勾得掉 —— 後台頁也不代簽。
+//   · 勾驗收格走 `op=check`（帶 expect_text）：署名本來勾不掉的（不在名單、`[signer:]` 不是本人）⇒ 按鈕叫「代簽」、
+//     多帶 `qa_note=後台頁` ⇒ 簽名註明「代簽：後台頁」（Tim 2026-11-02「全部都能勾」）。
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元，U+FFFF 以上畫成方框 —— TASK-0356）；單子內文裡的 emoji 是原文，照印。
 #nullable enable
 using System.Globalization;
@@ -404,7 +405,8 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     /// 驗收標準：每一行照印；沒勾的格子前面一顆「勾」（Tim 2026-11-02「TaskManagerPage 可以支援打勾功能嗎」）。
     /// 打勾是簽名、而且沒有「取消勾」的 op ⇒ 二段確認（同結單）。寫入走 `op=check`：`criteria_index` ＝ 未勾清單的序號、
     /// `expect_text` ＝ 那一行的開頭（序號位移 ⇒ 寫入端擋下、零寫入）。
-    /// 署名勾不掉的格子不給按鈕、寫出只有誰能勾（<see cref="CheckBlocker"/>）—— 那是預先看，判準仍是寫入端。
+    /// 署名本來勾不掉的格子（<see cref="CheckBlocker"/>）給「代簽」：送出多帶 `qa_note=後台頁`，寫入端放行、簽名註明代簽
+    /// （Tim 2026-11-02「全部都能勾」）。署名是空的 ⇒ 不給按鈕。
     /// </summary>
     void DrawCriteria(SCP_Ui g, SCP_TaskEntry e, string iCriteria, string iAuthor)
     {
@@ -422,13 +424,15 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
             int n = ++aN;
             string aBody = aLine.Substring(6).Trim();
             string? aWhy = CheckBlocker(e, aBody, iAuthor);
+            bool aProxy = aWhy != null;
             using (g.Row())
             {
-                if (aWhy == null)
+                if (iAuthor.Length > 0)
                 {
                     string aKey = $"check/{aIdx}/{n}";
                     bool aArmed = aPending == aKey;
-                    if (g.Button(aArmed ? "確定勾？再按一次" : "勾", "tasks/btn/" + aKey))
+                    string aVerb = aProxy ? "代簽" : "勾";
+                    if (g.Button(aArmed ? $"確定{aVerb}？再按一次" : aVerb, "tasks/btn/" + aKey))
                     {
                         if (!aArmed) g.SetField(PendingId, aKey);
                         else
@@ -437,18 +441,22 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                             var aArgs = new Dictionary<string, string> { ["op"] = "check", ["index"] = aIdx, ["criteria_index"] = n.ToString(CultureInfo.InvariantCulture) };
                             string aAnchor = CheckAnchor(aBody);
                             if (aAnchor.Length > 0) aArgs["expect_text"] = aAnchor;
-                            Run($"{e.Id} 勾第 {n} 格", aArgs, iAuthor);
+                            if (aProxy) aArgs["qa_note"] = ProxyNote;
+                            Run($"{e.Id} {aVerb}第 {n} 格", aArgs, iAuthor);
                         }
                     }
                 }
-                g.Paragraph(aLine + (aWhy != null ? $"　（{iAuthor} 勾不掉：{aWhy}）" : ""));
+                g.Paragraph(aLine + (!aProxy ? "" : iAuthor.Length == 0 ? "　（先填署名）" : $"　（{aWhy} ⇒ {iAuthor} 是代簽，簽名會註明）"));
             }
         }
         Flush();
     }
 
+    /// <summary>代簽送給寫入端的理由（`qa_note`）；簽名落成「✅ Tim 2026-11-02（代簽：後台頁）」。</summary>
+    public const string ProxyNote = "後台頁";
+
     /// <summary>
-    /// 署名 iAuthor 勾得掉這一格嗎？勾得掉回 null，否則回原因。
+    /// 署名 iAuthor 不代簽勾得掉這一格嗎？勾得掉回 null，否則回原因（⇒ 頁面改給「代簽」）。
     /// ⚠ 照抄寫入端 `SCP_TaskOps.OpCheck` 的閘（`[signer:]` 只認本人；有 QA ⇒ 只有 QA；沒有 ⇒ 參與者與開單人）——
     ///    兩邊對不上時自測 TaskTickCleanRoom 會叫；畫面跟寫入端說法不同時，以寫入端為準。
     /// </summary>

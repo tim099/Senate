@@ -75,7 +75,7 @@ public sealed class Cmd_Task : SCP_Cmd
         ("op_link", "link：blocked_by|blocks|subtask_of|has_subtask|related_to（預設 blocked_by）"),
         ("remove", "link：1 ＝ 解除該關聯"),
         ("note", "resolve 的結單說明"),
-        ("qa_note", "resolve：代 QA 結單時的驗收紀錄"),
+        ("qa_note", "resolve：代 QA 結單時的驗收紀錄；check：代簽的理由（名單與 [signer:] 放行、簽名註明代簽 —— 給人在後台頁用，⛔ agent 不帶）"),
         ("confirm", "resolve／sweep：1 才真的寫"),
         ("sha", "commit：commit SHA"),
         ("mode", "commit：fixes|refs（預設 fixes —— 會推狀態）"),
