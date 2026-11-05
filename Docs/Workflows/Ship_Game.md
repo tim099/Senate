@@ -39,6 +39,7 @@ related:
 | `yard` | 帆桁模型 | 見 §5 | pivot、earing… |
 | `mast` | 下桅的關聯（每根桅一條；上桅不標） | `mast=fore｜main｜mizzen｜bonaventure｜bowsprit`（帆桁的 `mast` 一字不差對到它；匯入寫格子清單，遊戲照它認桅 —— 見 §5「桅的綁定」，TASK-1169） | — |
 | `ladders` | 梯子所在的關聯（一個關聯可放好幾座） | — | 每座 4 個：`<梯名>.foot`／`.lo`／`.hi`／`.head` |
+| （站位，不是 kind） | 作品或任何關聯的固定點（TASK-1225；Blockside js/40_posts.js） | 不標 ⇒ 船照舊的規則站（舵輪往前、中線兩側、兩舷成對的砲）；堡壘、砲台站不滿 ⇒ 照甲板的走路格補（先用駐軍工作點 `work-*`）。也可以在 Blockside 船隻配置頁的甲板編輯器擺「站位」，不用重匯 | `post-<職位><號>`：職位 `officer`、`monkey`、`marine`（腳踩的那一格；標了 ⇒ 那個職位先站這幾點） |
 | `ratline`（繩梯） | 橫繩組展開的每一道（**引擎自己寫**，⛔ 不用 `sub=meta` 標；TASK-0678） | `ratlines`（組路徑）、`rung`、`rungs`；`climb=1` 那一組再加 `climb`、`foot`、`head`（組裝件座標 `x,y,z`） | —（foot／head 是橫繩組的參數 `climb=1 foot= head=`；lo／hi ＝ 最低／最高一道的中點，遊戲自己算） |
 | `wheel` | 舵輪模型 | 可選 `render=wheel`（畫成輪式的低面數網格，§8；四件舵輪已標在子作品預設 meta） | 來源作品有的照給（憲法號 -wheel：`hub-aft`、`hub-fore`、`drum-rope-a／b`）|
 | `binnacle` | 羅經櫃模型 | — | 沒有（用模型外框）|
