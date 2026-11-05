@@ -74,6 +74,7 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 | `sail`（帆） | `course`／`topsail`／`topgallant`／`royal`／`gaff`（縱主帆：spanker、夜隼號的 mainsail）／`staysail`／`jib` | 帆的種類 ⇒ 帆裝（W／S）的預設：收帆 ＝ topsail、jib；戰鬥帆再加 topgallant、gaff；滿帆 ＝ 全部 |
 | `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`；只有兩面帆的船要分得出段：持火號前帆 `3`、中帆 `1` ⇒ 收帆、戰鬥帆只張中帆，Tim 2026-10-18「沒有單帆狀態」） |
 | `flag`（旗；`kind=flag` 才寫） | `ensign`（國旗：船尾旗桿或後桅斜桁頂）／`pennant`（長旗：桅頂）／`jack`（艏旗：艏斜桅旗桿）／`signal`（信號旗） | 降旗時降 `ensign`；遊戲的陣營旗要換掉作品的哪一面，照這個種類找（下面「旗」） |
+| `nation`（旗；`kind=flag` 才寫） | 這面畫的是哪一國：Blockside 預設旗的 key（`gb-red`、`spain`、`france`、`dutch`、`portugal`、`ottoman`、`byzantine`…；沒有預設旗的國照寫 `usa`、`qing`、`japan`）／`none`（不是國旗：作者自己的旗、裝飾旗） | 船掛別國的旗時這面一起換（下面「旗」）；**`flag=ensign` 一定要寫**，沒寫 ⇒ 換旗時主控台喊 |
 
 **帆裝三段各張哪幾面 —— 標完帆的 meta 一定要排一次**（Tim 2026-10-26「蓬特號的帆好像打不到」）：
 - 每面帆（旗不算）算出它的段數：有 `set` ⇒ 照 `set`；沒有 ⇒ 照 `sail` 的預設（`topsail`、`jib` 1；`topgallant`、`gaff` 2；`course`、`royal`、`staysail` 和其他 3）。帆裝第 k 段張「段數 ≤ k」的那幾面（0 全收一面都不張）。
@@ -89,6 +90,12 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 **旗**：作品裡每一面旗都標 `kind=flag` ＋ `flag=<種類>`（Tim 2026-10-15：作品原本的旗標上 meta、遊戲照 meta 認是不是旗、是哪一種）。
 - 遊戲（Blockside `77_colours.js`）另外加**陣營旗**（藍方藍旗、紅方紅旗，仿英國艦隊旗）：每根桅頂往上加一根旗桿掛在上面 ⇒ ⛔ 不碰作品的旗、造船的人不用留位置。
 - 要把作品的某一面換成陣營旗（例：憲法號的國旗）⇒ 遊戲設定 `ships[].flags` 寫 `{"kind": "ensign", "replace": "ensign"}`：照 meta `flag` 的種類找那一面（沒有 meta 才照名字），布料照原本那面、只換貼圖 ⇒ **作品的旗要有貼圖（uv）** 才換得了。
+- **作品的國旗跟著船的國籍換**（TASK-1208；Tim 2026-11-04「船隻作品中如果是國旗的旗幟 可以標記meta 船隻加上國旗時同時替換掉這部分」）：
+  旗標 `nation=<那一國>` ⇒ 船掛了別國的旗（Blocksail 往來的船照船隊主人那一國）時，這面換成那一國的旗（布料、位置、被打照原本那面，只換貼圖）；掛的就是這一國 ⇒ 照留作品畫的那面。`nation=none` ⇒ 永遠照留。
+  - 換得了的條件跟上一條一樣：**作品的旗要有貼圖（uv）**。沒有 ⇒ 掛別國時 `shipNation` 回 false、主控台喊「換不了作品的 …（沒有貼圖 uv）」。
+  - `flag=ensign` 沒標 `nation` ⇒ 一樣喊「（沒標 nation）」—— 新船的 ensign 一律標，私旗標 `none`。
+  - 遊戲裡驗：`__game.nation(<船>, 'spain')` ⇒ `ok` true、`own`（作品國旗畫的國）、`miss`（換不了的）空。
+  - 已經在遊戲裡的船：meta 只寫進遊戲那份 `.vxk` 的檔頭，⛔ 不用 `metasync`（它把每條關聯、每個模型的 meta 都換成作品現在的，會帶進作者沒匯入的改動）。
 - 旗是布（跟帆同一套）：被打扣血、破洞、掛的地方斷了就掉；`flag=ensign` 降旗時降下來。
 
 **繩**（`part=rope`）—— 必標的只有「帆自己的繩」；其他繩可以不標
