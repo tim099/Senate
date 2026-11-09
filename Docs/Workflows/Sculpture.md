@@ -289,11 +289,13 @@ Tim 2026-10-16：「地形可以設定為柔和平面」「是否可讓 Sculptur
 觀測頁（GPU 即時預覽）與 CLI `op=view` 照**關聯的 meta** 畫，跟遊戲（Blockside 15_smooth.js）同一套規則、同一個算法 —— 標法見造船規格 §9.5，這裡只寫預覽這側。
 
 - `render=smooth` 的格畫成平滑面（surface nets：格角往表面拉、周圍同一面平均、夾回格角 ±0.5；跟一般格相鄰的格角釘住 ⇒ 交界不露縫）。巢狀照最近一層，子關聯寫 `render=voxel` 蓋回方塊。
+  - **沒寫 render、材質表標 `smooth: true` 的材質**（iron、boiler；TASK-0860，同遊戲 05_material.js）也畫成平滑面；`render=voxel` 照方塊。
   - 平滑格自己的方塊面不畫，但照樣擋住旁邊格子的面、照樣進框景與陰影。
   - 只改畫面：格子清單、讀數、匯出 list／obj 照舊是方塊（vxk 檔頭照舊多 `render`）。
 - `material=<ID>` 的**平滑面**照雕刻的材質表上金屬反光（天空／地面的反射、菲涅耳、每盞燈的鏡面高光，照陰影）；方塊面不反光（跟遊戲一樣）。
   - 材質表：`Sculpture/materials.json`（雕刻自己一份，Tim 2026-10-16 拍板；⛔ 不讀遊戲的 `game.json` —— 兩邊各管各的，數值要對齊時手動抄）。
-    格式 `{"schema":1,"list":{"iron":{"name":"鐵甲","metal":1,"rough":0.35}}}`：`metal`、`rough` 都是 0..1，沒寫 `rough` ⇒ 0.5；ID 小寫英數、底線、連字號。
+    格式 `{"schema":1,"list":{"iron":{"name":"鐵甲","metal":1,"rough":0.35,"smooth":true}}}`：`metal`、`rough` 都是 0..1，沒寫 `rough` ⇒ 0.5；`smooth` true／false（沒寫 ⇒ false）；ID 小寫英數、底線、連字號。
+  - **混合寫法**（`iron*0.15`、`iron*0.5+oak*0.5`；造船規格 §9.5）：外觀照**第一個成分**（反光、smooth 都照它）；成分要在表裡（或 `air`，不能當第一個）、比例 (0, 1]、加起來 ≤ 1，不合 ⇒ 照「表裡沒有」報。
   - 沒有檔 ⇒ 空表（平滑面一律不反光）；壞檔（不是 JSON、schema 不是 1、值越界、不認得的鍵）⇒ view 擋下 exit 2（⛔ 不默默當成沒有表）。
   - 表裡沒有的 ID ⇒ 照不反光畫，輸出那一行列出來。
   - **玻璃 `glass`**（TASK-0753）：表裡有（metal 0、rough 0.06），但預覽**照不透明的方塊畫**（不是平滑面 ⇒ 也不反光）；透明＋反光只有遊戲裡有（Blockside 材質表的 `clear`）。窗的玻璃怎麼標見造船規格 §9.5「窗的玻璃」。
@@ -425,7 +427,7 @@ senate cmd sculpture --arg op=render-profile --arg sub=reset --arg name=default 
 
 ## 9. 個人作品 —— 可調尺寸與長期續作
 
-每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。⭐ 例外（規則由 Tim 定，2026-10-16）：**不影響模型外觀的修改不限作者** —— meta、外部模型、關聯、固定點，以及拆件（§9.4.12）；不是作者改的會記進那件作品的 `meta_log.jsonl`（TASK-0646）。
+每件作品存於 `Sculpture/works/<id>/`，不佔用共用256³展區。ID全庫唯一、不分大小寫，統一小寫，限1–64個英數、底線、連字號且不能是Windows保留名稱。`work.json`記錄固定作者、尺寸、名稱、建立UTC時間與付款計畫；`events/`是雕刻事實源，`sculpt_cache.json`可重建；心得與續作放`notes.md`、TODO放`todo.md`。其他persona可以觀測與匯入副本，只有作者可以修改、雕刻或Undo原作；沒有刪除／改作者入口。⭐ 例外（規則由 Tim 定，2026-10-16）：**不影響模型外觀的修改不限作者** —— meta、外部模型、關聯、固定點，以及拆件（§9.4.12）；不是作者改的會記進那件作品的 `meta_log.jsonl`（TASK-0646）。⭐ 梯子作品的格子也不限作者（Tim 2026-10-23「梯子跟遊戲有關(算是遊戲meta)」）：被關聯照 meta `kind=ladders` 引用的作品，落子、`work sub=move`、undo／redo、草稿 apply／discard 誰都能做（要給 persona），同樣記進 `meta_log.jsonl`（part `ladders`）；換色（spray）與別的作品的格子照舊只有作者。
 
 ```bash
 senate cmd sculpture --arg op=work --arg sub=create --arg persona=meadow --arg id=meadow-chair --arg title=窗邊椅 --arg size=128,96,64
@@ -459,7 +461,7 @@ senate cmd sculpture --arg op=work --arg sub=import --arg work=meadow-chair --ar
 
 只對實際落地收費`⌈voxel/100⌉`，既有格子跳過不收費；付款不足或版本不符不落地、不扣費。提交事件`importwork`保存每顆原色、來源作品ID／作者／版本，不依賴作品後續狀態即可重播；展品以實際落地範圍登錄，描述保留來源版本。原作品保留，續雕不更新已展出的副本。若已落地但結算未收齊，exit1並回傳event_file，按`sculpture:<事件檔名>`對帳，不要重跑匯入。
 
-後台`senate ui --page sculpture`：工具列兩排 —— 第一排「匯出」「切換 正交／透視」「重置鏡頭」與開資料夾，第二排「雕刻空間」下拉＋「類型」「作品」（個人作品）或「展品」（共用展區）下拉。「類型」：全部／船／房屋／城鎮／其他（選項上的件數照其他篩選條件算，每一類各算一次）；**房屋 ＝ 標籤 `house`、城鎮 ＝ 標籤 `town`（兩個都有算城鎮；船優先）—— 這兩類子作品也算、也不看 `MainOnly`（房屋本來就是城鎮的零件，TASK-0582）**；**船 ＝ 主作品自己的 links.json／models.json 有 meta `kind` 是造船規格 §9 那幾種（gun、magazine、powder、yard、ladders、wheel、binnacle、capstan、boat），或船殼關聯的 `ship`**（§9 表加了新 kind 要跟著改 `SculptureViewerPage.ShipKinds`），⛔ 子作品（標 `sub`）一律不算船 —— 它們是船的部件；作品卡沒有類型欄位，類型是推出來的（讀不了的件在工具列說出來、算「其他」）；渲染圖在內容區最上面。個人區可建立作品、保存心得與TODO、預覽及確認匯入。三份設定由`SCP_GuiInspector`自動畫、存在session（文字模式跨指令記得）：「作品篩選」`MainOnly`（預設開＝只列主作品，即沒標`sub`的）／`Owner`／`Keyword`（也比標籤），目前選的作品被篩掉也不換；「作品觀測設定」`Draft`（草稿模式，預設開）／`Links`／`HideLinks`；「匯出設定」`Format`（obj｜vox）／`MergeFaces`／`OutDir`。「開啟匯出資料夾」：`OutDir` 有填 ⇒ 開它；選了個人作品 ⇒ 那件作品的 `Sculpture/works/<id>/exports`（引擎預設寫這裡；匯出中、還沒匯出過也一樣）；共用展區 ⇒ 上一次匯出檔那一層，沒有就 `Sculpture/exports`。名稱／筆記欄位依作品ID保存草稿，切換作品不會套用上一件的文字；長筆記派送UTF-8 arg-file，鏡頭、切片與匯出仍走同一支CLI。
+後台`senate ui --page sculpture`：工具列兩排 —— 第一排「匯出」「切換 正交／透視」「重置鏡頭」與開資料夾，第二排「雕刻空間」下拉＋「類型」「作品」（個人作品）或「展品」（共用展區）下拉。「類型」：全部／船／房屋／城鎮／其他（選項上的件數照其他篩選條件算，每一類各算一次）；**房屋 ＝ 標籤 `house` 或 `building`（Blocksail 城鎮建築的成品都標 `building`，2026-10-31 起算）、城鎮 ＝ 標籤 `town`（都有算城鎮；標了 town 的船優先）—— 這兩類子作品也算、也不看 `MainOnly`（房屋本來就是城鎮的零件，TASK-0582）**；**船 ＝ 主作品自己的 links.json／models.json 有 meta `kind` 是造船規格 §9 那幾種（gun、magazine、powder、yard、ladders、wheel、binnacle、capstan、boat），或船殼關聯的 `ship`；⛔ 標了 `building`／`house` 的不算船**（堡壘、砲台、火藥坊帶 gun／magazine／powder 是遊戲的戰鬥單位、生產 meta，Tim 2026-10-31「船的分類下好像有很多建築」）（§9 表加了新 kind 要跟著改 `SculptureViewerPage.ShipKinds`），⛔ 子作品（標 `sub`）一律不算船 —— 它們是船的部件；作品卡沒有類型欄位，類型是推出來的（讀不了的件在工具列說出來、算「其他」）；渲染圖在內容區最上面。個人區可建立作品、保存心得與TODO、預覽及確認匯入。三份設定由`SCP_GuiInspector`自動畫、存在session（文字模式跨指令記得）：「作品篩選」`MainOnly`（預設開＝只列主作品，即沒標`sub`的）／`Owner`／`Keyword`（也比標籤），目前選的作品被篩掉也不換；「作品觀測設定」`Draft`（草稿模式，預設開）／`Links`／`HideLinks`；「匯出設定」`Format`（obj｜vox）／`MergeFaces`／`OutDir`。「開啟匯出資料夾」：`OutDir` 有填 ⇒ 開它；選了個人作品 ⇒ 那件作品的 `Sculpture/works/<id>/exports`（引擎預設寫這裡；匯出中、還沒匯出過也一樣）；共用展區 ⇒ 上一次匯出檔那一層，沒有就 `Sculpture/exports`。名稱／筆記欄位依作品ID保存草稿，切換作品不會套用上一件的文字；長筆記派送UTF-8 arg-file，鏡頭、切片與匯出仍走同一支CLI。
 
 ### 9.2 使用者指定的委託作品
 
@@ -807,6 +809,7 @@ senate cmd sculpture --arg op=view --arg work=ship --arg wind=0,-8,0 --arg sail_
   - 角 3 個 ＝ 三角帆（jib、staysail）、4 個 ＝ 四邊形（方帆、梯形的縱帆 spanker）；**依序繞一圈**，`|` 分隔。
   - `bind=k`：**邊 k ＝ 角 k → 角 k+1** 整條釘在兩角之間的線段上（方帆上緣沿 yard、縱帆沿 gaff／boom）—— 那條邊上的每一個布點都釘住，不是只釘兩個角。
   - 角預設**釘住**；`free=` 的角（名字或序號）跟著布動。綁在 free 角上的繩會拉住它（見下）；沒綁繩的 free 角就隨風亂飛。
+  - **不限作者**（Tim 2026-11-01「放寬帆的作者門」）：`sub=sail`／`unsail` 誰都能改（要給 persona），不是作者改的在那件作品的 `meta_log.jsonl` 記一筆（part `sail`、給了哪些參數、規則出處）。一條一條的繩照舊只有作者。
   - `color` ＝ 調色盤 index 1..255 或 `#RRGGBB`（存小寫；預設 `#f2ead8` 帆布色）。`res` ＝ 布料每邊幾格（0 ＝ 照大小自動，6..24）。`fullness` ＝ 布比角圍出來的框多幾成（預設 1.06；1 ＝ 繃平、鼓不起來；上限 1.5）。
   - **貼圖**（TASK-0530；例：拿帆當旗，圖用像素畫）`texture=<png 路徑>`：PNG 每邊 ≤ 128 像素，**複製進作品**的 `textures/<帆名>.png`（帆名不是英數＿- ⇒ `textures/sail_<8 碼>.png`），`sails.json` 記相對路徑；`texture=none` 拿掉（沒有別的帆用那張圖 ⇒ 圖檔刪掉，`sub=unsail` 同）。
     - 對應：圖的**左上角 ＝ 角 0**、欄 → 角 0→角 1、列 → 角 0→角 3（三角帆：角 0→角 2，像素中心落在斜邊外的不畫）；alpha < 128 的像素不畫（燕尾旗）；背面是鏡像。
@@ -913,7 +916,7 @@ senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> --arg pers
 senate cmd sculpture --arg op=work --arg sub=meta --arg work=<作品> [--arg part=rope]                                  # 讀數：列出 meta、報沒標的幾筆
 ```
 
-- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）。2026-10-16 Tim 把規則放寬成「**不影響模型外觀的修改 ok**」（TASK-0646）⇒ 外部模型、關聯、固定點的增刪改也不限作者、拆件也是（§9.4.12）；帆、繩照舊只有作者能改（`sub=sail／rope`）。
+- **不限作者**（Tim 2026-10-13 拍板）：meta 是給下游的標籤 ⇒ `sub=meta` 誰都能改（帆、繩、模型、關聯四種）。2026-10-16 Tim 把規則放寬成「**不影響模型外觀的修改 ok**」（TASK-0646）⇒ 外部模型、關聯、固定點的增刪改也不限作者、拆件也是（§9.4.12）；繩照舊只有作者能改（`sub=rope`）；帆 2026-11-01 起也不限作者（`sub=sail`）。2026-10-23 梯子作品（`kind=ladders` 關聯引用的）的格子也不限作者（§ 作品那一段的例外）。
   每一筆變更記在作品資料夾的 **`meta_log.jsonl`**（一行一筆：`at`、`persona`、`owner`、`part`、`name`、`before`、`after`；只往後加）⇒ 查得到誰改的。同樣的值再下一次 ⇒ 0 筆、不記。
 - **批次**（`file=`）：`#` 開頭、空行略過；同一筆寫好幾行 ⇒ 依序疊上去；先全部驗過，**一筆不合（名字找不到、壞 meta、欄數不對）⇒ 整份不寫**（exit 2、零寫入）。上限 20,000 行。
 - 只認**本作品自己的**部件：關聯進來的作品裡的帆、繩要到那件作品下改（`work=<那件>`）。
@@ -934,7 +937,7 @@ senate cmd sculpture --arg op=work --arg sub=meta --arg work=<元件作品> --ar
 - **匯出時合併**：`export format=parts` 與 `format=vxk include=meta` 的每個外部模型（來源是作品的）、每條關聯，照它的來源作品補上預設 meta；**擺放上自己寫的鍵優先**（同一個鍵 ⇒ 擺放的贏）。作品裡的 links.json／models.json 一位元組都不動。
 - 沒有 `work_meta.json` 的作品 ⇒ 匯出跟以前逐欄相同。檔壞了（不是物件、schema 不認得、meta 不合）⇒ 匯出大聲擋下（exit 2、⛔ 不當成沒有）。
 - ⚠ 關聯的 `material`、`render` 會變成格子的材質層、render 層（引擎照**擺放上**的 meta 算）⇒ 這兩個鍵寫在預設 meta 裡只進 meta、不改格子的層；要改格子的層照舊寫在關聯上。外部模型的 meta 全部有效。
-- 外部模型的 `render`（Blockside 照它選網格算法）：`lathe` 車床式（繞軸對稱的：火藥桶）、`pole` 長桿式（細長的：槳；TASK-0815）；沒標 ⇒ 照原本的方塊網格。細節見 Sculpture_Shipbuilding.md §8。
+- 外部模型的 `render`（Blockside 照它選網格算法）：`lathe` 車床式（繞軸對稱的：火藥桶）、`pole` 長桿式（細長的：槳；TASK-0815）、`shell` 外殼式（開口的 U 形小艇：外殼平滑＋體素顏色烤成貼圖；TASK-0820；目前沒有作品標，小艇 TASK-0824 還原成方塊）；沒標 ⇒ 照原本的方塊網格。細節見 Sculpture_Shipbuilding.md §8。
 - 讀數：`sub=meta` 多一節「作品本身」。
 - **匯出 .vxk**：`include=meta` ⇒ 帆與繩**有 meta 才**多一個 `meta`（⇒ 沒標的作品跟以前逐欄相同）；`include=ends`（配 rig）⇒ 每條繩多 `frame`（繩所在那一層的關聯路徑，組裝件自己 ＝ ""）與 `ends`（兩端原樣的參照，相對於 frame：`固定點`、`關聯/…/固定點`、`model:…`、`sail:帆/角`、`rope:…`、`x,y,z`）。
   ⚠ `voxel_export.py`（對拍用的舊生產端）不帶帆與繩的 meta、ends ⇒ 這兩段跟 senate 那支比會不同。

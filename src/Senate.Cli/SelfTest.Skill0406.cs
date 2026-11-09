@@ -85,7 +85,33 @@ public static partial class SelfTest
             string aNone = SCP_SkillEntry.DeriveAntigravityTrigger("---\nname: x\ndescription: 沒有那一行\n---\n", "x");
             if (aNone != "\"always_on\"") aFails.Add("無觸發詞：得到 " + aNone);
 
-            return new CheckRow(aName, aFails.Count == 0 ? "七格逐格對上（temp 目錄、暫換文件根）" : string.Join("；", aFails),
+            // ⑦ 撞名只擋查那個名字的人（TASK-0999）：兩個根各一份 Dup.md
+            string aDocs2 = Path.Combine(aTmp, "Docs2");
+            Directory.CreateDirectory(aDocs2);
+            File.WriteAllText(Path.Combine(aDocs, "Dup.md"), "# 第一份 Dup\n\n一號的內容\n");
+            File.WriteAllText(Path.Combine(aDocs2, "Dup.md"), "# 第二份 Dup\n\n二號的內容\n");
+            SCP_DocStore.RootsProvider = () => new[] { new SCP_DocRoot("probe", aDocs), new SCP_DocRoot("probe2", aDocs2) };
+            void Skill(string iName, string iDocs) { Directory.CreateDirectory(Path.Combine(aSkillsRoot, iName)); File.WriteAllText(Path.Combine(aSkillsRoot, iName, "SKILL.md"), "---\nname: " + iName + "\ndescription: 探針\ndocs:\n" + iDocs + "---\n"); }
+            Skill("scp-probe-a", "  - ProbeA\n");
+            Skill("scp-probe-dup", "  - Dup\n");
+            Skill("scp-probe-full", "  - probe2/Dup\n");
+            //   ⑦a 沒用到撞名的那份 ⇒ 照樣組出來、撞名進警告（以前：整份失敗、一個字都不給）
+            bool aOk7 = SCP_SkillContent.TryCompose(aSkillsRoot, "scp-probe-a", out List<SCP_SkillPart> aP7, out List<string> aE7, out List<string> aW7);
+            if (!aOk7 || aP7.Count != 1 || !aW7.Any(w => w.Contains("Dup"))) aFails.Add($"撞名不相干：ok={aOk7} parts={aP7.Count} warn={string.Join("|", aW7)}（該是 true／1、警告提到 Dup）");
+            //   ⑦b 用到撞名的那份 ⇒ 整份失敗、列出兩份的全名
+            bool aOk8 = SCP_SkillContent.TryCompose(aSkillsRoot, "scp-probe-dup", out List<SCP_SkillPart> aP8, out List<string> aE8, out _);
+            string aE8s = string.Join("\n", aE8);
+            if (aOk8 || aP8.Count != 0 || !aE8s.Contains("probe/Dup") || !aE8s.Contains("probe2/Dup")) aFails.Add($"撞名相干：ok={aOk8} parts={aP8.Count}（該是 false／0、列出 probe/Dup 與 probe2/Dup）errs={aE8s}");
+            //   ⑦c docs: 寫全名 ⇒ 解得開、拿到第二份
+            bool aOk9 = SCP_SkillContent.TryCompose(aSkillsRoot, "scp-probe-full", out List<SCP_SkillPart> aP9, out List<string> aE9, out _);
+            if (!aOk9 || aP9.Count != 1 || !aP9[0].Body.Contains("二號的內容")) aFails.Add($"全名：ok={aOk9} errs={string.Join("|", aE9)}（該拿到 probe2 那一份）");
+            //   ⑦d 查名字：全名（含 .md、反斜線）只回一份；短名回兩份；FindCollisions 一組
+            SCP_DocStore.TryList(out List<SCP_DocEntry> aAll7, out List<SCP_DocProblem> aPr7, out _);
+            if (SCP_DocStore.FindByName(aAll7, "probe2\\Dup.md").Count != 1 || SCP_DocStore.FindByName(aAll7, "dup").Count != 2 || SCP_DocStore.FindCollisions(aAll7).Count != 1
+                || !aPr7.Any(p => p.Kind == SCP_DocProblem.ProblemKind.Collision && p.Name == "Dup"))
+                aFails.Add("查名字：全名／短名／撞名組數／問題種類不對");
+
+            return new CheckRow(aName, aFails.Count == 0 ? "十一格逐格對上（temp 目錄、暫換文件根；撞名只擋用到的、全名解得開）" : string.Join("；", aFails),
                 aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.GetType().Name + ": " + e.Message, CheckResult.Fail); }

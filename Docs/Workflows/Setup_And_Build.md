@@ -11,7 +11,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | 腳本 | 做什麼 |
 |---|---|
-| `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 掛使用者 PATH → 驗收。`--uninstall` 還原 |
+| `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 清掉別份 clone 的 PATH 註冊 → 掛使用者 PATH → 驗收（`senate` 要解析到**這一份**）。`--uninstall` 轉給 `uninstall.sh --artifacts` |
+| `uninstall.sh` | **解除註冊的唯一實作**：把使用者 PATH 上所有 Senate 的條目拿掉（預設只動 PATH）。`--artifacts` 再清 build 產物、`--purge` 再清 `SenateData/`、`--dry-run` 只印計畫 |
 | `build.sh` | `dotnet publish` **兩次**（self-contained）**到 `build/stage/`**：`senate.exe` ＋ `server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）。編譯期間 `publish/` 與在跑的 Server 都不動；編譯成功才 **落旗標 → 停舊 Server／收視窗 → 複製進 `publish/` → 收旗標 → 起回新 Server**，並印出停機秒數（TASK-0438）→ 在根層放雙擊用的 `senate.lnk`。編譯失敗 ⇒ 什麼都沒停。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
 | `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
 
@@ -255,7 +256,7 @@ powershell -NoProfile -Command "\$e=\$null; [void][System.Management.Automation.
 
 ⇒ 這一格是 §「先 build 再對 exe 跑」的機械版：**兩顆長得一樣的 exe，現在有一個地方會說出它們不一樣。**
 
-## 安裝與移除（install.sh）
+## 安裝與移除（install.sh／uninstall.sh）
 
 「像 python 一樣全域」＝ **PATH 找得到**，所以安裝工具只做一件事：把 repo 根
 （senate.exe 與原生 DLL 的所在）寫進**使用者 PATH**（HKCU，不碰系統 PATH、免管理員）。
@@ -265,9 +266,16 @@ PATH 上還是舊的，而兩顆 exe 印一樣的 usage）。
 - **寫入走 .NET `[Environment]::SetEnvironmentVariable(...,'User')`，不用 `setx`** ——
   setx 有 1024 字元截斷，超過的部分**靜默丟掉**（症狀是別的工具突然找不到了）；
   .NET 這條路無長度限制且會廣播 WM_SETTINGCHANGE。
-- 冪等（已在 PATH 不重複加）；`--uninstall` / `-Uninstall` 逐段比對移除
+- 冪等（已在 PATH 不重複加）；`uninstall.sh` 逐段比對移除
   （**逐段**不是子字串 —— 子字串會把 `D:\Unity\Senate2` 誤判成同一條）。
-- 出廠驗收：用「系統＋使用者 PATH 重組」模擬新視窗，從 `%TEMP%` 解析並跑一次
+- **一台機器只註冊一份**：掛 PATH 之前先跑 `uninstall.sh --keep <自己的 publish\>`，把別份 clone 的註冊清掉。
+  「Senate 的條目」＝這一份的 `publish\` 與 repo 根，或目錄裡有 `senate.exe`、有 `Senate.slnx`、
+  叫 `publish` 且上一層有 `Senate.slnx` 的那幾段；目錄已經不在的別份條目判不了，不碰。
+  🩸 2026-10-22：`D:\Senate` 照 install.sh 裝好、驗收也過了，PATH 前面卻還留著 `D:\Unity\Senate\publish`
+  ⇒ 打 `senate` 跑的是另一份、資料根是另一棵樹（喚醒寫進了另一棵樹）。
+- 系統 PATH 上有 Senate（要管理員）⇒ `uninstall.sh` 只列出來、不動，非零退出 —— 它排在使用者 PATH 前面。
+- 出廠驗收：用「系統＋使用者 PATH 重組」模擬新視窗，從 `%TEMP%` 解析並跑一次；
+  **解析到的目錄必須是這一份的 `publish\`** —— 只問「找不找得到」的話，前面有別份時照樣綠燈
 - **build 沒過就不掛 PATH** —— 裝一條指向壞產物的 PATH，之後每個錯都會被怪到 PATH 上。
 
 > ⛔ **刻意沒有 `--no-gui`**（Tim 2026-09-01 拍板）。開窗那格在遠端桌面／無 GPU 的機器上會失敗，
@@ -278,14 +286,14 @@ PATH 上還是舊的，而兩顆 exe 印一樣的 usage）。
 
 ### 移除做到哪一層（判準：**這個東西掉了，使用者要不要重做工？**）
 
-| 層 | `--uninstall` | `--uninstall --purge` |
-|---|---|---|
-| 使用者 PATH | ✅ 移除（可逆、零資料損失） | ✅ |
-| build 產物（`senate.exe` / 原生 DLL / `publish/` / `build/` / 各專案 `bin` `obj`） | ✅ 移除（可重建） | ✅ |
-| `SenateData/`（人編輯過的設定與偏好） | ⛔ **保留**，並印出怎麼刪 | ✅ 移除 |
-| 原始碼與 git 歷史 | ⛔ 一個字都不動 | ⛔ 一個字都不動 |
+| 層 | `uninstall.sh` | `--artifacts`（＝ `install.sh --uninstall`） | `--purge` |
+|---|---|---|---|
+| 使用者 PATH（所有 Senate 的條目） | ✅ 移除（可逆、零資料損失） | ✅ | ✅ |
+| build 產物（`senate.exe` / 原生 DLL / `publish/` / `build/` / 各專案 `bin` `obj`） | ⛔ 保留 | ✅ 移除（可重建） | ✅ |
+| `SenateData/`（人編輯過的設定與偏好） | ⛔ 保留 | ⛔ **保留**，並印出怎麼刪 | ✅ 移除 |
+| 原始碼與 git 歷史 | ⛔ 一個字都不動 | ⛔ 一個字都不動 | ⛔ 一個字都不動 |
 
-✅ 移除清單現在**只有一份**（`install.sh`）—— `install.ps1` 已於 2026-09-22 退場。
+✅ 移除清單現在**只有一份**（`uninstall.sh`；`install.sh --uninstall` 轉過去）—— `install.ps1` 已於 2026-09-22 退場。
 🩸 而它退場前的風險逐字留在這裡：兩份清單漂掉的症狀是「用 .sh 裝、用 .ps1 移除，
 結果少刪兩樣」，**而那不會有人喊**。⇒ 以後要再加第二個宿主實作，先想這一格。
   `senate --help` —— 寫進 registry 不算數，解析得到才算。

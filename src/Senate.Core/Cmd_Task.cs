@@ -49,7 +49,7 @@ public sealed class Cmd_Task : SCP_Cmd
     {
         ("index", "單號（收 TASK-0008 / 8 / 0008）"),
         ("title", "標題（create 必填；update 改寫）"),
-        ("type", "feature|improvement|refactor|spike|subtask|bug|epic（create；預設 feature）"),
+        ("type", "feature|improvement|refactor|spike|subtask|bug|epic|asset（create；預設 feature；asset ＝ 美術素材：要另外畫圖片、圖示的任務；update 可以改，改成 bug 要另開 create）"),
         ("priority", "urgent|high|normal|low"),
         ("severity", "none|blocking|wrong|annoying（bug 預設 wrong）"),
         ("status", "create／update 設定值；resolve 用 done|cancelled"),
@@ -75,7 +75,7 @@ public sealed class Cmd_Task : SCP_Cmd
         ("op_link", "link：blocked_by|blocks|subtask_of|has_subtask|related_to（預設 blocked_by）"),
         ("remove", "link：1 ＝ 解除該關聯"),
         ("note", "resolve 的結單說明"),
-        ("qa_note", "resolve：代 QA 結單時的驗收紀錄"),
+        ("qa_note", "resolve：代 QA 結單時的驗收紀錄；check：代簽的理由（名單與 [signer:] 放行、簽名註明代簽 —— 給人在後台頁用，⛔ agent 不帶）"),
         ("confirm", "resolve／sweep：1 才真的寫"),
         ("sha", "commit：commit SHA"),
         ("mode", "commit：fixes|refs（預設 fixes —— 會推狀態）"),
@@ -130,7 +130,12 @@ public sealed class Cmd_Task : SCP_Cmd
         if (!TryResolveRoots(iArgs, out string aDataRoot, out string aWhere, out SCP_CmdResult? aFail))
             return aFail!;
         var aResult = new SCP_CmdResult();
-        aResult.Lines.Add($"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單 @ {aWhere}");
+        // sync.tasks 開著 ⇒ 入口在本行程（CLI）自己寫＋git（⛔ 不交給 Server：經 WMI 起的 Server 跑 git 會被 Defender 砍，Repo_Sync §0）。
+        //   已經在 Server 裡（內部派發）⇒ 照舊交給 task-write，那一支只寫檔、不碰 git。
+        TaskRepoTarget? aSyncTarget = ServerContext.InServer ? null : TaskRepoTarget.From(SenateConfigSource.Provider?.Invoke().Config);
+        aResult.Lines.Add(aSyncTarget != null
+            ? $"⤷ 任務寫入：Senate 入口驗參數 → 本機寫單＋同步（sync.tasks：{aSyncTarget.Repo} {aSyncTarget.Branch}）@ {aWhere}"
+            : $"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單 @ {aWhere}");
         var aLetters = SCP_DataPaths.Letters(new SCP_DataRoot(aDataRoot));
         string aPayload = SCP_LettersPaths.CmdPayload(aLetters, aPersona, "task_" + aOp);
 
@@ -161,14 +166,16 @@ public sealed class Cmd_Task : SCP_Cmd
 
         // ── ④ 交給寫入端 ─────────────────────────────────────────────
         string aTimeout = iArgs.Get("timeout").Trim();
-        SCP_CmdResult aWrite = SCP_CmdRegistry.Dispatch("task-write", new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["data_root"] = aDataRoot,
-            ["op"] = aOp,
-            ["persona"] = aPersona,
-            ["args_json"] = JsonSerializer.Serialize(aOpArgs),
-            ["timeout"] = aTimeout.Length > 0 ? aTimeout : "60",
-        });
+        SCP_CmdResult aWrite = aSyncTarget != null
+            ? WriteHere(aDataRoot, aSyncTarget, aOp, aPersona, aOpArgs)
+            : SCP_CmdRegistry.Dispatch("task-write", new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["data_root"] = aDataRoot,
+                ["op"] = aOp,
+                ["persona"] = aPersona,
+                ["args_json"] = JsonSerializer.Serialize(aOpArgs),
+                ["timeout"] = aTimeout.Length > 0 ? aTimeout : "60",
+            });
         string aWrote = Value(aWrite, "wrote");
         string aFailure = Value(aWrite, "delegate_failure");
         if (aWrote.Length == 0)
@@ -200,7 +207,7 @@ public sealed class Cmd_Task : SCP_Cmd
         if (aWrite.ExitCode != 0 && aStartedSession) { string rb = RollbackCodingSession(aDataRoot, aPersona); aReport.AppendLine(rb); aResult.Lines.Add(rb); }
         aResult.Lines.Add(Value(aWrite, "headline"));
         foreach (var kv in aWrite.Values)
-            if (kv.Key is "wrote" or "index" or "comment_id" or "status" or "from_status" or "heal_attempts")
+            if (kv.Key is "wrote" or "index" or "comment_id" or "status" or "from_status" or "heal_attempts" or "sync" or "sync_conflict_file")
                 aResult.AddValue(kv.Key, kv.Value);
 
         // ── ⑤ 寫完之後：通知、記憶（失敗只是警告）──────────────────
@@ -209,10 +216,43 @@ public sealed class Cmd_Task : SCP_Cmd
             PostNotices(aDataRoot, aPersona, Value(aWrite, "notices_json"), aReport, aResult);
             RunMemory(aDataRoot, Value(aWrite, "memory_json"), aReport, aResult);
         }
+        else
+            // 同步衝突（這一筆沒套上共用板）也是「失敗」，可是要人處理 ⇒ 只有 sync_ 那幾則照發（Tim：「不能自動解的要抱錯通知手動處理」）
+            PostNotices(aDataRoot, aPersona, Value(aWrite, "notices_json"), aReport, aResult, iSyncOnly: true);
+        string aSyncState = Value(aWrite, "sync");
+        if (aSyncState is "pending" or "conflict" or "mismatch" or "failed")
+            aResult.Lines.Add(aSyncState switch
+            {
+                "pending" => "⚠ 任務同步：已在本機提交、還沒推上遠端（之後會再推；推上去之前新單的號碼可能還會變）",
+                "conflict" => "✗ 任務同步衝突，要手動處理 —— 報告：" + Value(aWrite, "sync_conflict_file"),
+                "mismatch" => "⚠ 任務同步：本機的 Tasks 跟設定（sync.tasks）對不上 ⇒ 這一筆只寫在本機",
+                _ => "⚠ 任務同步失敗 —— 細節在回傳檔的「同步遠端」",
+            });
         try { SCP_CmdPayload.Write(aPayload, aReport.ToString()); aResult.AddOutput(aPayload); }
         catch (Exception e) { aResult.Lines.Add($"⚠ 回傳檔沒寫成（{e.Message}）—— 單子的寫入不受影響"); }
-        if (aWrite.ExitCode != 0) aResult.Lines.Add("  ⇒ 原因在回傳檔的 `## ❌ 失敗`／`## blocked`（零寫入）");
+        if (aWrite.ExitCode != 0) aResult.Lines.Add("  ⇒ 原因在回傳檔的 `## ❌ 失敗`／`## blocked`／`## ❌ 同步衝突`");
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：sync.tasks 開著 ⇒ 在本行程（CLI）寫＋同步（拉 → 寫 → commit → push → 重放，全在任務板的跨行程鎖裡）。
+    // 物理意義：回的形狀跟 Server `task-write` 一模一樣（同一支 BuildResult）⇒ 入口後面的通知、記憶、回傳檔不分兩條。
+    //           半路炸掉 ⇒ 不知道寫了沒（可能寫了、可能已提交）⇒ 照「結果不明」回（不帶 wrote ＋ delegate_failure=unknown ⇒ exit 7）。
+    // ===========================================================
+    static SCP_CmdResult WriteHere(string iDataRoot, TaskRepoTarget iTarget, string iOp, string iPersona, Dictionary<string, string> iArgs)
+    {
+        try
+        {
+            (SCP_TaskOpResult r, TaskSyncReport s) = SenateTaskRepoSync.RunWrite(iDataRoot, iTarget, iOp, iPersona, iArgs);
+            return Cmd_TaskWrite.BuildResult(r, s, iTarget, "⤷ 任務單寫入端：本機 CLI（sync.tasks 開著 ⇒ 寫單與 git 都在這一邊，任務板的跨行程鎖裡）");
+        }
+        catch (Exception e)
+        {
+            var aR = new SCP_CmdResult { ExitCode = 70 };
+            aR.Lines.Add($"✗ 本機寫單＋同步炸了：{e.GetType().Name}: {e.Message}");
+            aR.AddValue("delegate_failure", "unknown");
+            return aR;
+        }
     }
 
     // ===========================================================
@@ -303,11 +343,13 @@ public sealed class Cmd_Task : SCP_Cmd
     // 區塊職責：寫完之後發酒館通知（寫入端組好的本體 ＋ meta tag=task）。
     // ⚠ 失敗**只是警告**：單子已經寫好了。但一定要印 ——「我以為他知道了」是最貴的那種靜默失敗。
     // ===========================================================
-    static void PostNotices(string iDataRoot, string iPersona, string iJson, StringBuilder ioReport, SCP_CmdResult ioResult)
+    static void PostNotices(string iDataRoot, string iPersona, string iJson, StringBuilder ioReport, SCP_CmdResult ioResult, bool iSyncOnly = false)
     {
         List<Dictionary<string, string>>? aNotices = null;
         try { if (iJson.Length > 0) aNotices = JsonSerializer.Deserialize<List<Dictionary<string, string>>>(iJson); }
         catch (Exception e) { ioResult.Lines.Add("⚠ 寫入端交回的通知清單解析不了（" + e.Message + "）—— **沒有發通知**"); return; }
+        if (iSyncOnly && aNotices != null)
+            aNotices = aNotices.Where(n => n.TryGetValue("kind", out string? k) && k.StartsWith("sync_", StringComparison.Ordinal)).ToList();
         if (aNotices == null || aNotices.Count == 0) return;
         SCP_ITavernPostGateway? aGate = SCP_TavernPostGatewayHost.Create(iDataRoot);
         if (aGate == null)

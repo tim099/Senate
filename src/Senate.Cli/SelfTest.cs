@@ -244,6 +244,7 @@ public static partial class SelfTest
         One(nameof(SculptureWorkMetaCleanRoom), "sculpture", SculptureWorkMetaCleanRoom),
         // 不影響外觀的修改不限作者＋拆件（TASK-0646）：本體在 SelfTest.SculptSplit0646.cs
         One(nameof(SculptSplitCleanRoom), "sculpture", SculptSplitCleanRoom),
+        One(nameof(SculptLadderNotAuthorCleanRoom), "sculpture", SculptLadderNotAuthorCleanRoom),
         // 雕刻關聯材質 → .vxk 檔頭 materials（TASK-0616）：本體在 SelfTest.SculptureMaterial0616.cs
         One(nameof(SculptureMaterialCleanRoom), "sculpture", SculptureMaterialCleanRoom),
         // 雕刻 .vxk 封裝（TASK-0518）：本體在 SelfTest.SculptureVxk0518.cs
@@ -262,6 +263,7 @@ public static partial class SelfTest
         // 雕刻平滑渲染＋材質反光（TASK-0645）：本體在 SelfTest.SculptSmooth0645.cs
         One(nameof(SculptSmoothMeshCleanRoom), "sculpture", SculptSmoothMeshCleanRoom),
         One(nameof(SculptSmoothGpuCleanRoom), "sculpture", SculptSmoothGpuCleanRoom),
+        One(nameof(SculptMixMatCleanRoom), "sculpture", SculptMixMatCleanRoom),             // TASK-0860：混合材質、smooth 旗標（SelfTest.SculptMixMat0860.cs）
         // 雕刻觀測的點光源（TASK-0650）：本體在 SelfTest.SculptLamps0650.cs
         One(nameof(SculptLampProfileCleanRoom), "sculpture", SculptLampProfileCleanRoom),
         One(nameof(SculptLampSceneCleanRoom), "sculpture", SculptLampSceneCleanRoom),
@@ -357,6 +359,10 @@ public static partial class SelfTest
         One(nameof(TaskStoreCleanRoom), "tasks", TaskStoreCleanRoom),
         One(nameof(TaskOpsGatesCleanRoom), "tasks", TaskOpsGatesCleanRoom),
         One(nameof(TaskProjectCleanRoom), "tasks", TaskProjectCleanRoom),   // 專案（TASK-0618）：本體在 SelfTest.TaskProject0618.cs
+        One(nameof(TaskTickCleanRoom), "tasks", TaskTickCleanRoom),         // 後台頁打勾（Tim 2026-11-02）：本體在 SelfTest.TaskTick.cs
+        One(nameof(TaskRepoSyncCleanRoom), "tasks", TaskRepoSyncCleanRoom), // 同步到遠端 repo（sync.tasks）：本體在 SelfTest.TaskRepoSync.cs
+        One(nameof(BookNotesSyncCleanRoom), "library", BookNotesSyncCleanRoom), // 閱讀筆記同步到遠端 repo（sync.bookNotes）：本體在 SelfTest.FolderSync.cs
+        One(nameof(WorkMemorySyncCleanRoom), "core", WorkMemorySyncCleanRoom), // 工作記憶同步到遠端 repo（sync.workMemory）：同一個檔
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
              () => RealTavernSerializerMatchesEditor(iTargets)),
 

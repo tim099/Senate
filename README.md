@@ -48,20 +48,26 @@ senate doctor
 ```
 
 ⚠ 已經開著的終端機不會自動生效（PATH 是視窗開起來那一刻複製的）—— 開新的。
+
+一台機器上 `senate` 只會指向一份：電腦裡有兩份 Senate（例如另 clone 了一份）時，
+在哪一份跑 `./install.sh`，它就會先把**別份**在 PATH 上的註冊拿掉，再掛自己 —— 最後驗收也會確認打 `senate` 跑的是這一份。
+
 ### 要移除
 
 ```bash
-./install.sh --uninstall
+./uninstall.sh
 ```
 
-拿掉 PATH，並清掉編譯產生的東西（`senate.exe`、原生 DLL、`publish/`、`build/`、各專案的 `bin` `obj`）。
+把 PATH 上**所有** Senate 的註冊拿掉（這一份的、別份 clone 的都算），`senate` 就打不到了。編譯產生的東西留著。
+先看它會拿掉哪幾條：`./uninstall.sh --dry-run`。
+
+連編譯產生的東西一起清（`senate.exe`、原生 DLL、`publish/`、`build/`、各專案的 `bin` `obj`）：
+`./uninstall.sh --artifacts`（舊的 `./install.sh --uninstall` 照舊能用，等於這一個）。
 
 **你設定過的東西會留著**（`SenateData/` —— 專案清單、頁面偏好），因為那些掉了要重設。
-真的要一併清掉：`./install.sh --uninstall --purge`。
+真的要一併清掉：`./uninstall.sh --purge`。
 
-⚠ 兩種都**不會動原始碼**。要徹底移除，自己把 Senate 這個資料夾刪掉就好。
-
-> Git Bash：`./install.sh --uninstall`（`--purge` 同理）。
+⚠ 幾種都**不會動原始碼**。要徹底移除，自己把 Senate 這個資料夾刪掉就好。
 
 ---
 

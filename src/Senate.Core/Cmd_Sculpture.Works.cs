@@ -125,9 +125,9 @@ public sealed partial class Cmd_Sculpture
             if (sub == "ropegroup") return WorkRopeGroup(c, cardNow);   // TASK-0512
             if (sub == "ratlines") return GameLayer(c, cardNow, "ratlines", sub, () => WorkRatlines(c, cardNow), RatlinesRule);       // TASK-0678：不限作者（遊戲 meta）
             if (sub == "unratlines") return GameLayer(c, cardNow, "ratlines", sub, () => WorkUnratlines(c, cardNow), RatlinesRule);
-            // TASK-0503：帆（作品資料，不是 voxel；改的只有作者）
-            if (sub == "sail") return WorkSail(c, cardNow);
-            if (sub == "unsail") return WorkUnsail(c, cardNow);
+            // TASK-0503：帆（作品資料，不是 voxel）；Tim 2026-11-01 放寬作者門 ⇒ 不限作者（遊戲 meta；不是作者 ⇒ GameLayer 記 meta_log）
+            if (sub == "sail") return GameLayer(c, cardNow, "sail", sub, () => WorkSail(c, cardNow), SailsRule);
+            if (sub == "unsail") return GameLayer(c, cardNow, "sail", sub, () => WorkUnsail(c, cardNow), SailsRule);
             if (sub == "sails") return WorkSails(c, cardNow);
             if (sub == "wind") return WorkWind(c, cardNow);
             if (sub == "sea") return WorkSea(c, cardNow);       // TASK-0585：作品的海面預設（渲染用，不是 voxel）
@@ -136,16 +136,16 @@ public sealed partial class Cmd_Sculpture
             if (sub == "meta") return WorkMeta(c, cardNow);
             if (sub == "apply" || sub == "discard")
             {
-                if (c.Persona.Length == 0 || c.Persona != cardNow.owner) return Blocked(c, 2, "只有作品作者 " + cardNow.owner + " 可以" + (sub == "apply" ? "把草稿套進作品" : "丟掉草稿"));
-                return sub == "apply" ? WorkApplyDraft(c, cardNow) : WorkDiscardDraft(c, cardNow);
+                return VoxelGate(c, cardNow, sub, "只有作品作者 " + cardNow.owner + " 可以" + (sub == "apply" ? "把草稿套進作品" : "丟掉草稿"),
+                    () => sub == "apply" ? WorkApplyDraft(c, cardNow) : WorkDiscardDraft(c, cardNow));
             }
             if (sub == "import")
             {
                 if (c.Persona.Length == 0 || !Directory.Exists(SCP_LettersPaths.ProfileDir(c.Letters, c.Persona))) return Blocked(c, 2, "匯入展區需要已存在的persona支付落地費");
                 return ImportWork(c, cardNow, tree ?? new List<SCP_SculptLinkNode>()); // 允許他人作品副本；作者Credit保留，費用由匯入者支付；關聯照 enabled 攤平（TASK-0494）
             }
+            if (sub == "move" || sub == "undo" || sub == "redo") return VoxelGate(c, cardNow, sub, "只有作品作者 " + cardNow.owner + " 可以修改原作", () => EditWork(c, cardNow, sub));
             if (c.Persona.Length == 0 || c.Persona != cardNow.owner) return Blocked(c, 2, "只有作品作者 " + cardNow.owner + " 可以修改原作");
-            if (sub == "move" || sub == "undo" || sub == "redo") return EditWork(c, cardNow, sub);
             if (sub == "split-events") return WorkSplitEvents(c, cardNow);   // TASK-0521：舊的大事件就地拆檔
             string title = c.Args.Get("title");
             if (c.Args.IsExplicit("title") && string.IsNullOrWhiteSpace(title)) return Blocked(c, 2, "作品名稱不可空白");
@@ -345,10 +345,11 @@ public sealed partial class Cmd_Sculpture
         Take(plan.Token, "token", () => gate.DebitTokens(account, plan.Token, SpendKind, reference, description));
     }
 
-    static string? OpPlaceWork(Ctx c)
+    static string? OpPlaceWork(Ctx c) => VoxelGate(c, c.Work!, c.Op, "只有作品作者 " + c.Work!.owner + " 可以雕刻", () => OpPlaceWorkRun(c));
+
+    static string? OpPlaceWorkRun(Ctx c)
     {
         var work = c.Work!;
-        if (c.Persona.Length == 0 || c.Persona != work.owner) return Blocked(c, 2, "只有作品作者 " + work.owner + " 可以雕刻");
         if (!TryBuildPlace(c, out var run, out long worst, out string where, out string error)) return Blocked(c, 2, error);
         if (worst <= 0 || worst > MaxVolume) return Blocked(c, 2, "體積不合法或超出單刀上限");
         try

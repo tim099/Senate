@@ -12,6 +12,8 @@
 //   ⇒ 判準：**能被推導的路徑不准被儲存。** 存了就是給漂移一個住的地方。
 //
 // ⚠ 與「設定」頁寫同一份檔、同一支 Save，改完互相看得到（都在 OnPush 重讀）。
+// ⚠ 版面（Tim 2026-10-22）：可設定的路徑 → 同步遠端（sync.tasks）→ 唯讀路徑（推導／宿主，預設折起來）→ 寫回。
+//   同步遠端那一格**不是路徑**（repo 網址＋branch），所以不進描述表；本機目錄照樣由資料根推導、不儲存。
 using SCP.Core.Gui;
 using SCP.Core.Paths;
 using Senate.Core;
@@ -72,6 +74,7 @@ public sealed class PathsPage : SCP_GuiToolPage
         {
             m_Draft = SenateConfig.Load(m_ConfigPath);
             if (m_Draft == null) m_LoadError = $"還沒有 {Path.GetFileName(m_ConfigPath)} —— 先跑 `senate init`";
+            LoadSyncStatus();
         }
         catch (InvalidDataException e)
         {
@@ -110,41 +113,17 @@ public sealed class PathsPage : SCP_GuiToolPage
                + "**加一條路徑＝加一個 enum 成員 ＋ 一筆 descriptor，本頁不用改**。"
                + $"寫的是 `{Path.GetFileName(m_ConfigPath)}`（與「設定」頁同一份檔），按「儲存」才寫回。");
 
-        // ── 描述表逐條 ─────────────────────────────────────────────
+        // ── 描述表逐條：可設定的在上面；推導／宿主（唯讀）收在最下面、預設折起來（Tim 2026-10-22：「把無法設定的欄位放到下方 且預設折疊」）──
         foreach (SCP_PathDescriptor aD in SCP_PathRegistry.All)
+            if (aD.Kind == SCP_PathKind.Stored) DrawDescriptor(g, aD);
+
+        DrawSync(g);
+
+        var aReadOnly = SCP_PathRegistry.All.Where(d => d.Kind != SCP_PathKind.Stored).ToList();
+        using (var aFold = g.Fold($"唯讀路徑（推導／宿主，共 {aReadOnly.Count} 條）—— 不儲存、看就好", "paths/readonly", iDefaultOpen: false))
         {
-            string aId = "paths/" + aD.Id;
-            SCP_PathResolution aRes = SCP_PathRegistry.Resolve(aD.Id, StoredOf);
-            string aScope = aD.Scope == SCP_PathScope.Global ? "全域" : "專案";
-            string aKind = aD.Kind == SCP_PathKind.Stored ? "可設定" : aD.Kind == SCP_PathKind.Host ? "宿主（唯讀）" : "推導（唯讀）";
-
-            using (g.Box($"{aD.Label}　[{aScope}／{aKind}]"))
-            {
-                if (aD.Kind == SCP_PathKind.Stored)
-                {
-                    string aRaw = StoredOf(aD.Id).Raw;
-                    string aNew = g.TextField(
-                        aD.SupportsAuto ? $"值（`{SCP_PathRegistry.AutoLiteral}` ＝ 交給上游推導）" : "值",
-                        aRaw, aId + "/value");
-                    if (aNew != aRaw) SetStored(aD.Id, aNew.Replace('\\', '/').Trim());
-                    if (aD.SupportsAuto
-                        && !string.Equals(aRaw.Trim(), SCP_PathRegistry.AutoLiteral, StringComparison.OrdinalIgnoreCase)
-                        && g.Button($"改用 {SCP_PathRegistry.AutoLiteral}", aId + "/auto"))
-                        SetStored(aD.Id, SCP_PathRegistry.AutoLiteral);
-                    g.Note($"儲存鍵 `{aD.JsonKey}`　｜　算式：{SCP_PathRegistry.Formula(aD.Id)}");
-                }
-                else
-                {
-                    g.Note($"算式：{SCP_PathRegistry.Formula(aD.Id)}　—— **不儲存**，所以不會跟上游脫鉤。");
-                }
-
-                // 值與「誰決定的」一起印 —— 看不出來源的路徑沒辦法被質疑。
-                // 空白在這一格是合法的預設（TASK-0375）⇒ 說它代表什麼，⛔ 不印成「⚠ 解不出來」（那句在這裡是假的）。
-                if (aD.IsBlankDefault(aRes)) g.Note($"⇒ 空白＝{aD.BlankMeans}");
-                else if (aRes.Error != null) g.Note($"⚠ 解不出來（{aRes.Origin}）：{aRes.Error}");
-                else g.Note($"⇒ `{aRes.Value}`　（{aRes.Origin}）{Existence(aRes.Value)}");
-                g.Note(aD.Note);
-            }
+            if (aFold.Open)
+                foreach (SCP_PathDescriptor aD in aReadOnly) DrawDescriptor(g, aD);
         }
 
         using (g.Box("寫回"))
@@ -163,6 +142,112 @@ public sealed class PathsPage : SCP_GuiToolPage
             }
             if (g.Button("↩ 放棄改動並重新讀取", "paths/discard")) Load();
             if (m_Message != null) g.Note(m_Message);
+        }
+    }
+
+    void DrawDescriptor(SCP_Ui g, SCP_PathDescriptor iD)
+    {
+        string aId = "paths/" + iD.Id;
+        SCP_PathResolution aRes = SCP_PathRegistry.Resolve(iD.Id, StoredOf);
+        string aScope = iD.Scope == SCP_PathScope.Global ? "全域" : "專案";
+        string aKind = iD.Kind == SCP_PathKind.Stored ? "可設定" : iD.Kind == SCP_PathKind.Host ? "宿主（唯讀）" : "推導（唯讀）";
+
+        using (g.Box($"{iD.Label}　[{aScope}／{aKind}]"))
+        {
+            if (iD.Kind == SCP_PathKind.Stored)
+            {
+                string aRaw = StoredOf(iD.Id).Raw;
+                string aNew = g.TextField(
+                    iD.SupportsAuto ? $"值（`{SCP_PathRegistry.AutoLiteral}` ＝ 交給上游推導）" : "值",
+                    aRaw, aId + "/value");
+                if (aNew != aRaw) SetStored(iD.Id, aNew.Replace('\\', '/').Trim());
+                if (iD.SupportsAuto
+                    && !string.Equals(aRaw.Trim(), SCP_PathRegistry.AutoLiteral, StringComparison.OrdinalIgnoreCase)
+                    && g.Button($"改用 {SCP_PathRegistry.AutoLiteral}", aId + "/auto"))
+                    SetStored(iD.Id, SCP_PathRegistry.AutoLiteral);
+                g.Note($"儲存鍵 `{iD.JsonKey}`　｜　算式：{SCP_PathRegistry.Formula(iD.Id)}");
+            }
+            else
+            {
+                g.Note($"算式：{SCP_PathRegistry.Formula(iD.Id)}　—— **不儲存**，所以不會跟上游脫鉤。");
+            }
+
+            // 值與「誰決定的」一起印 —— 看不出來源的路徑沒辦法被質疑。
+            // 空白在這一格是合法的預設（TASK-0375）⇒ 說它代表什麼，⛔ 不印成「⚠ 解不出來」（那句在這裡是假的）。
+            if (iD.IsBlankDefault(aRes)) g.Note($"⇒ 空白＝{iD.BlankMeans}");
+            else if (aRes.Error != null) g.Note($"⚠ 解不出來（{aRes.Origin}）：{aRes.Error}");
+            else g.Note($"⇒ `{aRes.Value}`　（{aRes.Origin}）{Existence(aRes.Value)}");
+            g.Note(iD.Note);
+        }
+    }
+
+    /// <summary>
+    /// 同步遠端（`sync.tasks`、`sync.bookNotes`）—— repo 網址不是路徑，所以不進描述表，在這裡另開格子（同一份檔、同一顆「儲存」）。
+    /// <para>狀態讀數在 <see cref="Load"/> 算一次（只讀本機 git，不走網路）：⛔ 不在每一幀跑 git。</para>
+    /// </summary>
+    void DrawSync(SCP_Ui g)
+    {
+        if (m_Draft == null) return;
+        DrawSyncTarget(g, "任務單（sync.tasks）", "tasks", m_Draft.Sync.Tasks,
+            "兩格都填了 ⇒ 每次開單／改單自動 commit＋push；`<資料根>/Tasks` 不存在時第一次用到會自動 clone；"
+            + "兩邊同時開單撞號會自動改號，解不了的衝突擋下並發酒館通知。",
+            m_SyncStatus,
+            "手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推，撞了會重放）");
+        foreach (FolderSyncSpec aSpec in FolderSyncSpec.All)
+            DrawSyncTarget(g, $"{aSpec.Label}（sync.{aSpec.Key}）", aSpec.Slug, aSpec.SettingsOf(m_Draft),
+                $"兩格都填了 ⇒ {string.Join("／", aSpec.HookCmds)} 跑之前先拉（每分鐘最多一次）、跑完自動 commit＋push；`<資料根>/{aSpec.DirName}` 不存在 ⇒ 自動 clone，"
+                + "已經有、但還不是 git repo ⇒ 第一次用到時就地接上（兩邊內容不同的以遠端為準、本機那份備份）；rebase 接不上的衝突擋下並發酒館通知。",
+                m_FolderStatus.TryGetValue(aSpec.Key, out string? aSt) ? aSt : null,
+                $"手動：`senate cmd {aSpec.CmdName} --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推）");
+    }
+
+    void DrawSyncTarget(SCP_Ui g, string iTitle, string iKey, SyncTargetSettings t, string iOnNote, string? iStatus, string iManual)
+    {
+        using (g.Box("同步遠端：" + iTitle))
+        {
+            string aRepo = g.TextField("repo（clone 用的網址或路徑）", t.Repo, $"paths/sync/{iKey}/repo");
+            if (aRepo != t.Repo) { t.Repo = aRepo.Trim(); m_Dirty = true; }
+            string aBranch = g.TextField("branch", t.Branch, $"paths/sync/{iKey}/branch");
+            if (aBranch != t.Branch) { t.Branch = aBranch.Trim(); m_Dirty = true; }
+            g.Note(t.IsSet ? iOnNote
+                : (t.Repo.Length > 0 || t.Branch.Length > 0) ? "⚠ 只填了一格 ⇒ **不同步**（兩格都填才算）" : "空白 ＝ 不同步（只寫本機）");
+            if (iStatus != null) g.Note("⇒ " + iStatus);
+            g.Note(iManual);
+        }
+    }
+
+    string? m_SyncStatus;
+    readonly Dictionary<string, string> m_FolderStatus = new(StringComparer.Ordinal);
+
+    void LoadSyncStatus()
+    {
+        m_SyncStatus = null;
+        m_FolderStatus.Clear();
+        if (m_Draft == null) return;
+        string? aRoot = SenatePathBinding.ResolveDataRoot(m_Draft, out string? aErr);
+        if (aRoot == null)
+        {
+            m_SyncStatus = "資料根解不出來（" + aErr + "）";
+            foreach (FolderSyncSpec aSpec in FolderSyncSpec.All) m_FolderStatus[aSpec.Key] = m_SyncStatus;
+            return;
+        }
+        try
+        {
+            TaskRepoStatus s = SenateTaskRepoSync.Status(aRoot, TaskRepoTarget.From(m_Draft), iFetch: false);
+            m_SyncStatus = (s.IsRepo ? $"本機 `{SenateTaskRepoSync.TasksDir(aRoot)}`：origin `{s.Origin}`／`{s.Branch}`，領先 {s.Ahead}／落後 {s.Behind}（上次抓遠端時）。" : "")
+                         + s.Note;
+        }
+        catch (Exception e) { m_SyncStatus = "狀態讀不到（" + e.Message + "）"; }
+        foreach (FolderSyncSpec aSpec in FolderSyncSpec.All)
+        {
+            try
+            {
+                var aSync = new SenateFolderSync(aSpec);
+                FolderRepoStatus b = aSync.Status(aRoot, aSpec.TargetOf(m_Draft), iFetch: false);
+                m_FolderStatus[aSpec.Key] = (b.IsRepo ? $"本機 `{aSync.Dir(aRoot)}`：origin `{b.Origin}`／`{b.Branch}`，領先 {b.Ahead}／落後 {b.Behind}（上次抓遠端時）。" : "")
+                                            + b.Note;
+            }
+            catch (Exception e) { m_FolderStatus[aSpec.Key] = "狀態讀不到（" + e.Message + "）"; }
         }
     }
 

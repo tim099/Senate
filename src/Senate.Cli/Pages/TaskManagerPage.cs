@@ -1,4 +1,4 @@
-// 區塊職責：**任務與專案管理頁**（TASK-0349）—— 篩選、看單、留言、推狀態。
+// 區塊職責：**任務與專案管理頁**（TASK-0349）—— 篩選、看單、留言、推狀態、勾驗收格。
 // 物理意義：**讀**走 `SCP_TaskIO`（純讀，磁碟即事實）；**寫**一律走 `cmd task`（入口 → Server `task-write`）——
 //           ⛔ 本頁不直接呼叫 `SCP_TaskStore`：那等於**安靜地**多一個寫入端（同 BankAdminPage 的界線）。
 //           ⇒ 本頁按下去的每一個動作，跟 agent 打 `senate cmd task` 走的是同一條路（閘、時間線、酒館通知都一樣）。
@@ -9,7 +9,9 @@
 //   · 結單（done）**走 `op=resolve` 的閘**：有未解 blocker 時按鈕不出現、寫入端也會擋；單上有 QA 而署名的人不是他 ⇒
 //     帶 `qa_note=後台頁代簽（<署名>）`（⛔ 不直接寫檔繞過 QA 閘）。
 //   · 推 in_progress／in_review 走 `op=update`（會進時間線；不發酒館通知 —— 與 agent 走 update 同一個規則）。
-//   · 二段確認：done／cancelled 要按兩次（誤點的後果是別人的單被關）。
+//   · 二段確認：done／cancelled 要按兩次（誤點的後果是別人的單被關）；勾驗收格也是（打勾是簽名，沒有「取消勾」）。
+//   · 勾驗收格走 `op=check`（帶 expect_text）：署名本來勾不掉的（不在名單、`[signer:]` 不是本人）⇒ 按鈕叫「代簽」、
+//     多帶 `qa_note=後台頁` ⇒ 簽名註明「代簽：後台頁」（Tim 2026-11-02「全部都能勾」）。
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元，U+FFFF 以上畫成方框 —— TASK-0356）；單子內文裡的 emoji 是原文，照印。
 #nullable enable
 using System.Globalization;
@@ -17,6 +19,7 @@ using System.Threading.Tasks;
 using SCP.Core.Cmd;
 using SCP.Core.Gui;
 using SCP.Core.Paths;
+using SCP.Core.Prefs;
 using SCP.Core.Tasks;
 
 namespace Senate.Cli.Pages;
@@ -39,6 +42,9 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     public const string ClosedId = "tasks/toggle/closed";
     public const string AuthorId = "tasks/author";
     public const string PendingId = "tasks/pending";
+    /// <summary>展開子任務（Tim 2026-10-25）：開 ⇒ 子任務不收進主單、每張自己一列（照單號找得到）。勾選是 session 欄位，跨重開記在 prefs。</summary>
+    public const string ExpandId = "tasks/toggle/expand-subtasks";
+    static readonly SCP_PrefKey<bool> ExpandPref = SCP_PrefKey.Bool("tasks", "expandSubtasks", false);
 
     readonly SenateModel m_Model;
     string m_DataRoot = "";
@@ -54,9 +60,19 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     (int counter, int disk) m_Stamp;
     DateTime m_NextPollUtc = DateTime.MinValue;
 
+    /// <summary>展開子任務的 prefs 值（null ＝ 還沒讀；存檔成功後清掉重讀 ⇒ 畫的是磁碟上的值）；讀壞了 ⇒ m_ExpandError 照印、當作關。</summary>
+    bool? m_Expand;
+    string? m_ExpandError;
+    /// <summary>「子單 → 主單」（照**全部**的單認，主單被篩掉也認得）：展開模式在標題上標 └TASK-xxxx，展開後還看得出掛在誰底下。</summary>
+    Dictionary<int, int> m_ParentOf = new();
+    bool m_ExpandNow;
+
     Task<string>? m_Job;
     string m_JobLabel = "";
     string? m_Message;
+
+    /// <summary>寫入那一步（預設 ＝ `cmd task`）。⚠ 只給自測換：淨室不能真的跑 cmd task（會發酒館通知，sync.tasks 開著還會推遠端）。</summary>
+    internal Func<Dictionary<string, string>, SCP_CmdResult> TaskDispatch = a => SCP_CmdRegistry.Dispatch("task", a);
 
     public TaskManagerPage(SenateModel iModel) : base() { m_Model = iModel; }
 
@@ -68,6 +84,16 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
     {
         base.OnPush();
         m_Loaded = false;
+        m_Expand = null;
+    }
+
+    bool ExpandSaved()
+    {
+        if (m_Expand is bool b) return b;
+        SCP_PrefRead<bool> r = m_Model.Prefs.Read(ExpandPref);
+        m_ExpandError = r.State == SCP_PrefState.ReadError ? r.Error : null;
+        m_Expand = r.IsPresent ? r.Value : ExpandPref.Default;
+        return m_Expand.Value;
     }
 
     void Reload()
@@ -78,13 +104,18 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         if (string.IsNullOrEmpty(m_DataRoot) || !Directory.Exists(m_DataRoot))
         {
             m_Error = $"找不到 AgentCommands 資料根（{m_DataRoot}）—— 到「路徑管理」頁設定";
-            m_All = new(); m_Blockers = new(); m_Eff = new(); m_ProjectCounts = new(StringComparer.OrdinalIgnoreCase);
+            m_All = new(); m_Blockers = new(); m_Eff = new(); m_ParentOf = new(); m_ProjectCounts = new(StringComparer.OrdinalIgnoreCase);
             return;
         }
         var aRoot = new SCP_DataRoot(m_DataRoot);
         var aWarn = new List<string>();
         m_All = SCP_TaskIO.LoadAll(aRoot, aWarn.Add);
         m_Eff = SCP_TaskProjects.Effective(m_All);
+        // 主單認法跟收合同一套（Group），只是餵全部的單
+        var aAllKids = new Dictionary<int, List<SCP_TaskEntry>>();
+        Group(m_All, aAllKids);
+        m_ParentOf = new();
+        foreach (var kv in aAllKids) foreach (SCP_TaskEntry k in kv.Value) m_ParentOf[k.index] = kv.Key;
         m_ProjectCounts = SCP_TaskProjects.Counts(m_All, m_Eff);
         m_Blockers = new();
         foreach (SCP_TaskEntry e in m_All)
@@ -111,7 +142,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
 
     // ===========================================================
     // 區塊職責：工具列（兩排，TASK-0618；同 SculptureViewerPage TASK-0504 的做法）——
-    //          第一排：重新讀取／開資料夾／翻頁；第二排：篩選（專案、狀態、類型、參與者、含已關）。
+    //          第一排：重新讀取／開資料夾／翻頁；第二排：篩選（專案、狀態、類型、參與者、含已關）＋展開子任務。
     //          兩排都在 base 的 TopBar 範圍裡 ⇒ 不跟內容一起捲。
     // 🩸 以前一排塞全部，Tim 2026-10-15：「TopBar 會需要分兩排 目前太滿了」。
     // ===========================================================
@@ -158,6 +189,15 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         iUi.Dropdown("參與者", aPersonas, "全部", PersonaId);
         if (aStatus == "all" || aStatus == "open")
             iUi.Toggle("含已關（done／cancelled）", false, ClosedId);
+        // 展開子任務：勾了就存 prefs。存失敗 ⇒ 這一場照勾的走、話印出來（⛔ 不每一輪重存同一個失敗）
+        bool aSaved = ExpandSaved();
+        bool aPick = iUi.Toggle("展開子任務", aSaved, ExpandId);
+        if (aPick != aSaved)
+        {
+            var (aOk, aMsg) = m_Model.Prefs.Write(ExpandPref, aPick);
+            m_Expand = aOk ? null : aPick;
+            if (!aOk) m_Message = "展開子任務沒存進 prefs（這一場照勾的走、重開會回到舊值）：" + aMsg;
+        }
     }
 
     string Count(string iProject)
@@ -177,14 +217,25 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         g.Label($"總 {m_All.Count} 張｜未關 {m_Open}｜被阻塞 {m_Blocked}｜stale（in_progress ≥{SCP_TaskStore.STALE_DAYS} 天）{m_Stale}"
             + (m_Broken > 0 ? $"｜時戳壞掉 {m_Broken}（不算進 stale）" : ""));
 
+        if (m_ExpandError != null) g.Note("[注意] 展開子任務的 prefs 讀不出來（當作關）：" + m_ExpandError);
         List<SCP_TaskEntry> aList = Filtered(g);
         var aKids = new Dictionary<int, List<SCP_TaskEntry>>();
         List<SCP_TaskEntry> aRoots = Group(aList, aKids);
+        // 展開：每張自己一列、照篩選結果原本的順序；子單在標題上標 └TASK-xxxx（m_ParentOf）
+        m_ExpandNow = g.ToggleValue(ExpandId, ExpandSaved());
+        if (m_ExpandNow)
+        {
+            aRoots = aList;
+            aKids.Clear();
+        }
         int aPages = Math.Max(1, (aRoots.Count + PageSize - 1) / PageSize);
         if (m_Page >= aPages) m_Page = aPages - 1;
         if (m_Page < 0) m_Page = 0;
-        g.Label($"篩選結果 {aList.Count} 張（{aRoots.Count} 組：子任務收在主單底下）｜第 {m_Page + 1} / {aPages} 頁"
-            + $"（每頁 {PageSize} 組；stale 排最前，其餘依單號由舊到新）");
+        g.Label(m_ExpandNow
+            ? $"篩選結果 {aList.Count} 張（子任務展開：每張一列，其中掛在主單底下的 {aList.Count(e => m_ParentOf.ContainsKey(e.index))} 張）｜第 {m_Page + 1} / {aPages} 頁"
+              + $"（每頁 {PageSize} 張；stale 排最前，其餘依單號由舊到新）"
+            : $"篩選結果 {aList.Count} 張（{aRoots.Count} 組：子任務收在主單底下）｜第 {m_Page + 1} / {aPages} 頁"
+              + $"（每頁 {PageSize} 組；stale 排最前，其餘依單號由舊到新）");
         if (aList.Count == 0)
         {
             g.Note($"（沒有符合的單。這是「篩不到」不是「系統沒東西」—— 全部有 {m_All.Count} 張）");
@@ -292,7 +343,9 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         bool aStale = IsStale(e, DateTime.UtcNow);
         string aWho = e.participants.Count == 0 ? "（無參與者）" : string.Join("、", e.participants.Select(p => $"{p.persona}({p.role})"));
         string aTitle = $"{e.Id}　[{e.type}/{e.priority}" + (e.severity == SCP_TaskSeverity.none ? "" : "/" + e.severity) + $"]　{e.status}"
-            + (aBlkN > 0 ? $"　[被阻塞 {aBlkN}]" : "") + (aStale ? "　[stale]" : "") + ProjectTag(e) + $"　{aWho}　{e.title}";
+            + (aBlkN > 0 ? $"　[被阻塞 {aBlkN}]" : "") + (aStale ? "　[stale]" : "") + ProjectTag(e)
+            + (m_ExpandNow && m_ParentOf.TryGetValue(e.index, out int aUp) ?"　└TASK-" + aUp.ToString("0000", CultureInfo.InvariantCulture) : "")
+            + $"　{aWho}　{e.title}";
         using (var aFold = g.Fold(aTitle, "tasks/item/" + e.index.ToString(CultureInfo.InvariantCulture), iDefaultOpen: false))
         {
             if (!aFold.Open) return;
@@ -318,7 +371,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                 string aCriteria = SCP_TaskStore.ReadSection(aPath, "## 驗收標準");
                 int aDone = SCP_TaskStore.ListCheckedCriteria(aCriteria).Count, aOpenBox = SCP_TaskStore.ListUncheckedCriteria(aCriteria).Count;
                 using (var aC = g.Fold($"驗收標準（已勾 {aDone}／未勾 {aOpenBox}）", "tasks/crit/" + e.index, iDefaultOpen: false))
-                    if (aC.Open) g.Paragraph(aCriteria.Length == 0 ? "（未填）" : aCriteria);
+                    if (aC.Open) DrawCriteria(g, e, aCriteria, iAuthor);
                 using (var aD = g.Fold("任務描述", "tasks/desc/" + e.index, iDefaultOpen: false))
                     if (aD.Open)
                     {
@@ -346,6 +399,91 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// 驗收標準：每一行照印；沒勾的格子前面一顆「勾」（Tim 2026-11-02「TaskManagerPage 可以支援打勾功能嗎」）。
+    /// 打勾是簽名、而且沒有「取消勾」的 op ⇒ 二段確認（同結單）。寫入走 `op=check`：`criteria_index` ＝ 未勾清單的序號、
+    /// `expect_text` ＝ 那一行的開頭（序號位移 ⇒ 寫入端擋下、零寫入）。
+    /// 署名本來勾不掉的格子（<see cref="CheckBlocker"/>）給「代簽」：送出多帶 `qa_note=後台頁`，寫入端放行、簽名註明代簽
+    /// （Tim 2026-11-02「全部都能勾」）。署名是空的 ⇒ 不給按鈕。
+    /// </summary>
+    void DrawCriteria(SCP_Ui g, SCP_TaskEntry e, string iCriteria, string iAuthor)
+    {
+        if (iCriteria.Length == 0) { g.Paragraph("（未填）"); return; }
+        string aIdx = e.index.ToString(CultureInfo.InvariantCulture);
+        string aPending = g.FieldValue(PendingId, "");
+        var aProse = new List<string>();
+        void Flush() { if (aProse.Count > 0) g.Paragraph(string.Join("\n", aProse)); aProse.Clear(); }
+        int aN = 0;
+        foreach (string aLine in iCriteria.Replace("\r", "").Split('\n'))
+        {
+            // 未勾格的認法同 SCP_TaskStore.ListUncheckedCriteria（行首 `- [ ] `）⇒ aN 跟寫入端的序號是同一把尺
+            if (!aLine.StartsWith("- [ ] ", StringComparison.Ordinal)) { aProse.Add(aLine); continue; }
+            Flush();
+            int n = ++aN;
+            string aBody = aLine.Substring(6).Trim();
+            string? aWhy = CheckBlocker(e, aBody, iAuthor);
+            bool aProxy = aWhy != null;
+            using (g.Row())
+            {
+                if (iAuthor.Length > 0)
+                {
+                    string aKey = $"check/{aIdx}/{n}";
+                    bool aArmed = aPending == aKey;
+                    string aVerb = aProxy ? "代簽" : "勾";
+                    if (g.Button(aArmed ? $"確定{aVerb}？再按一次" : aVerb, "tasks/btn/" + aKey))
+                    {
+                        if (!aArmed) g.SetField(PendingId, aKey);
+                        else
+                        {
+                            g.SetField(PendingId, "");
+                            var aArgs = new Dictionary<string, string> { ["op"] = "check", ["index"] = aIdx, ["criteria_index"] = n.ToString(CultureInfo.InvariantCulture) };
+                            string aAnchor = CheckAnchor(aBody);
+                            if (aAnchor.Length > 0) aArgs["expect_text"] = aAnchor;
+                            if (aProxy) aArgs["qa_note"] = ProxyNote;
+                            Run($"{e.Id} {aVerb}第 {n} 格", aArgs, iAuthor);
+                        }
+                    }
+                }
+                g.Paragraph(aLine + (!aProxy ? "" : iAuthor.Length == 0 ? "　（先填署名）" : $"　（{aWhy} ⇒ {iAuthor} 是代簽，簽名會註明）"));
+            }
+        }
+        Flush();
+    }
+
+    /// <summary>代簽送給寫入端的理由（`qa_note`）；簽名落成「✅ Tim 2026-11-02（代簽：後台頁）」。</summary>
+    public const string ProxyNote = "後台頁";
+
+    /// <summary>
+    /// 署名 iAuthor 不代簽勾得掉這一格嗎？勾得掉回 null，否則回原因（⇒ 頁面改給「代簽」）。
+    /// ⚠ 照抄寫入端 `SCP_TaskOps.OpCheck` 的閘（`[signer:]` 只認本人；有 QA ⇒ 只有 QA；沒有 ⇒ 參與者與開單人）——
+    ///    兩邊對不上時自測 TaskTickCleanRoom 會叫；畫面跟寫入端說法不同時，以寫入端為準。
+    /// </summary>
+    public static string? CheckBlocker(SCP_TaskEntry e, string iBody, string iAuthor)
+    {
+        if (iAuthor.Length == 0) return "署名是空的";
+        string? aSigner = SCP_TaskStore.CriteriaSigner(iBody);
+        if (aSigner != null) return string.Equals(aSigner, iAuthor, StringComparison.OrdinalIgnoreCase) ? null : $"只有 {aSigner} 本人能勾";
+        List<string> aQa = e.QaPersonas();
+        if (aQa.Count > 0)
+            return aQa.Any(q => string.Equals(q, iAuthor, StringComparison.OrdinalIgnoreCase)) ? null : "本單指名 QA，只有 " + string.Join("、", aQa) + " 能勾";
+        if (e.RolesOfAnyCase(iAuthor).Count > 0 || string.Equals(e.reporter, iAuthor, StringComparison.OrdinalIgnoreCase)) return null;
+        var aNames = e.participants.Select(p => p.persona).Concat(new[] { e.reporter })
+            .Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase);
+        return "只有參與者與開單人能勾：" + string.Join("、", aNames);
+    }
+
+    /// <summary>
+    /// `expect_text` 用的錨：那一格的開頭 40 個字元。寫入端把 expect_text 照 `|` 拆成多筆 ⇒ 切在第一個 `|` 之前；
+    /// 不切半個代理對。空的（那一行以 `|` 開頭）⇒ 呼叫端不帶 expect_text（寫入端鎖內仍比對整行）。
+    /// </summary>
+    public static string CheckAnchor(string iBody)
+    {
+        string a = iBody.Split('|')[0].Trim();
+        if (a.Length <= 40) return a;
+        int n = char.IsHighSurrogate(a[39]) ? 39 : 40;
+        return a.Substring(0, n).TrimEnd();
     }
 
     /// <summary>
@@ -398,7 +536,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
                 int aOk = 0; var aFail = new List<string>();
                 foreach (int i in aIdx)
                 {
-                    SCP_CmdResult r = SCP_CmdRegistry.Dispatch("task", new Dictionary<string, string>
+                    SCP_CmdResult r = TaskDispatch(new Dictionary<string, string>
                     {
                         ["op"] = "update", ["index"] = i.ToString(CultureInfo.InvariantCulture), ["project"] = aName,
                         ["persona"] = iAuthor, ["data_root"] = m_DataRoot,
@@ -464,7 +602,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         iArgs["data_root"] = m_DataRoot;
         Start(iLabel, () =>
         {
-            SCP_CmdResult r = SCP_CmdRegistry.Dispatch("task", iArgs);
+            SCP_CmdResult r = TaskDispatch(iArgs);
             string aHead = r.Lines.LastOrDefault(l => l.StartsWith("✓", StringComparison.Ordinal) || l.StartsWith("·", StringComparison.Ordinal)
                                                       || l.StartsWith("✗", StringComparison.Ordinal) || l.StartsWith("⛔", StringComparison.Ordinal)) ?? "";
             string aTail = r.ExitCode switch

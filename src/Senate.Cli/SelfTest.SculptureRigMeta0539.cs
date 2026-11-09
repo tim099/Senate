@@ -2,7 +2,7 @@
 // ① 非作者 q 改帆的 meta ⇒ 寫得進去、sails.json schema 3、meta_log.jsonl 一行（persona q、owner p、改之前 {}、改之後）。
 // ② 批次檔（# 註解、空行略過；同一面帆兩行依序疊上去）⇒ 繩 meta 進 ropes.json（schema 3）、帆 meta 合併。
 // ③ 🔴 批次裡一筆不合（名字找不到／壞 meta／欄數不對）⇒ exit 2、ropes.json／sails.json／meta_log 逐位元組不變（整份不寫）。
-// ④ 作者改繩、帆的屬性（color）⇒ meta 還在（⛔ 以前「新建物件再抄欄位」會默默清掉）。⑤ 🔴 非作者改形狀照舊被擋。
+// ④ 作者改繩、帆的屬性（color）⇒ meta 還在（⛔ 以前「新建物件再抄欄位」會默默清掉）。⑤ 🔴 非作者改繩照舊被擋；帆 2026-11-01 起不限作者（寫得進去、記 meta_log、作者改不記）。
 // ⑥ 讀數：sub=ropes／sails 印 meta；sub=meta 列出、報沒標的幾筆；同樣的 meta 再下一次 ⇒ 0 筆改了、log 不多一行。
 // ⑦ export vxk：include=rig,meta ⇒ 繩、帆帶 meta（數字原樣）；🔴 只 include=rig ⇒ 沒有 meta 鍵；include=rig,ends ⇒ 繩帶 frame 與兩端原樣；🔴 ends 不配 rig ⇒ 擋。
 // ⑧ 🔴 反向對照：meta=none ⇒ ropes.json／sails.json 逐位元組回到加 meta 之前（schema 回 1、沒有 meta 鍵）。
@@ -20,7 +20,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureRigMetaCleanRoom()
     {
-        const string name = "雕刻帆與繩的 meta：非作者寫 meta（schema 3、meta_log 一行）／批次合併／🔴 一筆不合整份不寫／作者改屬性不清 meta／🔴 非作者改形狀照擋／讀數與重下 0 筆／vxk 帶 meta、🔴 不帶 include 沒有鍵、ends＝原樣／🔴 清掉逐位元組回原樣／🔴 手改 schema 1 帶 meta 讀不了（淨室，TASK-0539）";
+        const string name = "雕刻帆與繩的 meta：非作者寫 meta（schema 3、meta_log 一行）／批次合併／🔴 一筆不合整份不寫／作者改屬性不清 meta／🔴 非作者改繩照擋、帆放行記 log／讀數與重下 0 筆／vxk 帶 meta、🔴 不帶 include 沒有鍵、ends＝原樣／🔴 清掉逐位元組回原樣／🔴 手改 schema 1 帶 meta 讀不了（淨室，TASK-0539）";
         var failures = new List<string>();
         var readings = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
@@ -103,8 +103,21 @@ public static partial class SelfTest
             Check(Json(RopesF)["ropes"][0]["meta"]["kind"].AsString() == "sheet" && Json(SailsF)["sails"][0]["meta"]["set"].AsLong() == 2, "④ 作者改屬性之後 meta 還在");
             Check(Sub("p", "rope", ("name", "r1"), ("color", "#8b6a3e")).ExitCode == 0 && Sub("p", "sail", ("name", "s1"), ("color", SCP_SculptSails.DefaultColor)).ExitCode == 0, "④ 顏色改回來");
 
-            // ── ⑤ 🔴 非作者改形狀照舊擋 ───────────────────────────────────────
-            Check(Sub("q", "rope", ("name", "r1"), ("color", "#00ff00")).ExitCode == 2 && Sub("q", "sail", ("name", "s1"), ("color", "#00ff00")).ExitCode == 2, "⑤ 🔴 非作者 q 改繩、帆的屬性 ⇒ exit 2");
+            // ── ⑤ 非作者：繩照舊擋；帆不限作者（Tim 2026-11-01「放寬帆的作者門」）⇒ 寫得進去、meta 與建立者不動、meta_log 一行 ──
+            Check(Sub("q", "rope", ("name", "r1"), ("color", "#00ff00")).ExitCode == 2, "⑤ 🔴 非作者 q 改繩的屬性 ⇒ exit 2");
+            int l5 = LogLines();
+            var q5 = Sub("q", "sail", ("name", "s1"), ("color", "#00ff00"));
+            SCP_JsonData s5 = Json(SailsF)["sails"][0];
+            Check(q5.ExitCode == 0 && s5["color"].AsString() == "#00ff00" && s5["meta"]["set"].AsLong() == 2 && s5["persona"].AsString() == "p",
+                  "⑤ 非作者 q 改帆的顏色 ⇒ 寫得進去、meta 還在、建立者照舊 p：" + SculptRoom.All(q5));
+            Check(LogLines() == l5 + 1, "⑤ meta_log 多一行（got " + (LogLines() - l5) + "）");
+            if (LogLines() == l5 + 1)
+            {
+                SCP_JsonData lg = SCP_JsonParser.Parse(File.ReadAllLines(LogF).Last(l => l.Trim().Length > 0), false);
+                Check(lg["persona"].AsString() == "q" && lg["owner"].AsString() == "p" && lg["part"].AsString() == "sail" && lg["op"].AsString() == "sail"
+                      && lg["args"]["color"].AsString() == "#00ff00" && lg["rule"].AsString().Contains("2026-11-01"), "⑤ log：誰 q、作者 p、part sail、給了 color、規則出處：" + lg.ToJson(false));
+            }
+            Check(Sub("p", "sail", ("name", "s1"), ("color", SCP_SculptSails.DefaultColor)).ExitCode == 0 && LogLines() == l5 + 1, "⑤ 作者改回來 ⇒ 不記 log");
 
             // ── ⑥ 讀數、重下 0 筆 ─────────────────────────────────────────────
             Check(Sub("p", "ropes").ExitCode == 0 && File.ReadAllText(room.Letters + "/p/cmd/sculpture_work.md").Contains("meta kind=sheet, sail=s1"), "⑥ sub=ropes 印 meta");

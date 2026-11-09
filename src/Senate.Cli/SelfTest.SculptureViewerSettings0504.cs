@@ -12,7 +12,7 @@ public static partial class SelfTest
 {
     static CheckRow SculptureViewerSettingsCleanRoom()
     {
-        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／類型（船看 meta kind、🔴 子作品不算船）／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取與預覽設定（淨室，TASK-0504）";
+        const string name = "觀測頁設定：預設只列主作品／關掉列全部／作者不分大小寫／關鍵字比 ID 與名稱／類型（船看 meta kind、🔴 子作品不算船、🔴 標了 building 的堡壘不算船）／Inspector 寫進物件／🔴 清空字串欄位不炸／session JSON 一圈不變、沒存過＝預設／草稿預設開、這一輪的輸入在渲染前先套進物件／切換投影重置鏡頭／顯示大小可調／記住上次選取與預覽設定（淨室，TASK-0504）";
         var failures = new List<string>();
         void Check(bool value, string why) { if (!value) failures.Add(why); }
         try
@@ -71,6 +71,13 @@ public static partial class SelfTest
             Check(IdsT2(new SculptWorkFilter { Owner = "basecamp" }, SculptWorkType.building) == "", "作者篩選照樣套在房屋上");
             var shipTown = new SCP_SculptWork { id = "x", title = "x", owner = "a", status = "ready", tags = new() { "town" } };
             Check(SculptureViewerPage.WorkTypeOf(shipTown, new[] { "magazine" }) == SculptWorkType.ship, "船優先：帶 magazine 的主作品標了 town 也是船");
+            // ①d 建築（Tim 2026-10-31「目前船的分類下好像有很多建築」）：Blocksail 城鎮建築標 building ⇒ 房屋；🔴 堡壘、砲台帶 gun／magazine（遊戲的戰鬥單位 meta）也不是船；
+            //     反向對照：標籤拼錯（buildings）⇒ 照舊是船
+            var fort = new SCP_SculptWork { id = "fort", title = "堡壘", owner = "a", status = "ready", tags = new() { "building", "carib" } };
+            Check(SculptureViewerPage.WorkTypeOf(fort, new[] { "gun", "magazine" }) == SculptWorkType.building, "🔴 標了 building 的堡壘帶 gun／magazine 也是房屋、不是船");
+            Check(SculptureViewerPage.WorkTypeOf(fort, null) == SculptWorkType.building, "標了 building、沒有 kind ⇒ 房屋（以前只認 house ⇒ 其他）");
+            var fortTypo = new SCP_SculptWork { id = "fort2", title = "堡壘", owner = "a", status = "ready", tags = new() { "buildings" } };
+            Check(SculptureViewerPage.WorkTypeOf(fortTypo, new[] { "magazine" }) == SculptWorkType.ship, "反向對照：標籤拼錯（buildings）照舊是船");
 
             // ② Inspector 真的改到物件（點 enum 鈕／取消勾／填欄位）
             var cfg = new SculptExportSettings();
@@ -191,7 +198,7 @@ public static partial class SelfTest
             finally { try { Directory.Delete(tmpRepo, true); } catch { } }
         }
         catch (Exception e) { failures.Add(e.GetType().Name + ": " + e.Message); }
-        return new(name, failures.Count == 0 ? "篩選 5 格＋類型 6 格＋房屋城鎮 7 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
+        return new(name, failures.Count == 0 ? "篩選 5 格＋類型 6 格＋房屋城鎮 7 格＋建築 3 格／Inspector 寫入／清空不炸／JSON 一圈與預設／草稿預設與先套輸入／投影重置／顯示大小／記住選取與預覽設定 全過" : string.Join("；", failures),
                    failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }
 }

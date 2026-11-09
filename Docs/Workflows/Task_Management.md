@@ -49,6 +49,7 @@ senate cmd task --arg op=create --arg persona=<我> --arg type=bug --arg title="
 
 - **多行內容一律 `--arg-file`**（`criteria`／`description`／`evidence`／`body`／`progress`／`why`）—— `--arg` 裡的 `\n` 是字面兩個字元，多格會擠成一格。
 - **bug**：`evidence` 必填，放硬證（error／log／重現指令）＋**這個讀數怎麼拿到的**；標題寫症狀，不寫猜的原因。驗收自動帶兩格（① 重現讀數 ② 修正落盤）。拿不出硬證的摩擦改開 `type=improvement --arg tags=friction`。
+- **asset（美術素材）**：要另外畫圖片、圖示這類素材的任務（例：資源圖示一批一張），`type=asset`。看板「類型」可以只篩這一類，畫圖的人一眼找得到。程式那邊要等圖的，用 `blocked_by` 掛過來。開錯種類用 `op=update --arg type=<種類>` 改；改成 bug 擋下（硬證只在 create 收），要另開 bug 單。
 - `severity` 是壞得多兇，`priority` 是多急排 —— 兩把尺。
 
 ### 驗收標準怎麼寫
@@ -114,6 +115,9 @@ senate cmd task --arg op=check --arg persona=<我> --arg index=<N> --arg criteri
 ```
 
 - **打勾是簽名**：行尾接上署名與日期。誰能勾：有 QA ⇒ 只有 QA；沒有 QA ⇒ 參與者＋開單人；`[signer:]` 那格只有本人。
+  人在後台頁勾：任務頁 → 那張單 → 驗收標準，每一格前面有「勾」，按兩次（§10）。署名本來勾不掉的格子（不在名單、`[signer:]` 不是本人）按鈕叫「代簽」：
+  帶 `qa_note=後台頁` ⇒ 寫入端放行，簽名落成「✅ Tim 2026-11-02（代簽：後台頁）」、時間線同樣註明（Tim 2026-11-02「全部都能勾」）。
+  ⛔ agent 不帶 `qa_note` 代簽 —— 那是給人在後台頁用的出口；agent 照上面的名單與 `[signer:]` 走。
 - `criteria_index` 是**未勾清單**的序號，別人勾掉任何一格就會位移 ⇒ 跨過一次 dry-run 才決定的，**一律帶 `expect_text`**。
 - ⛔ 同一個人不要交付／驗收兩行都勾；真的只有一個人，就在 `resolve` 的 `note` 寫「我兼驗收，沒有第二人」。
 - 勾不推狀態。
@@ -176,8 +180,9 @@ senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專�
 
 - 驗收標準、描述、留言全文在單檔 `<data_root>/Tasks/tasks/<NNNN>.md`（`tasks` 第一行印 data_root），或看後台頁。
 - 依參與者篩：後台頁。依 milestone／tag／epic 篩：沒有參數 ⇒ `--arg out_json=<檔>` 落完整資料自己篩。
-- 後台頁 `senate ui --page tasks`：工具列兩排 —— 第一排重新讀取、開資料夾、翻頁；第二排篩選（專案／狀態／類型／參與者／含已關）。
-  看驗收標準與描述、留言、推狀態、改專案；「整理」把**目前篩選結果**一次設成某個專案（按兩次確認，一張一張走 `op=update`、各進時間線）。寫入同樣走 `task`。
+- 後台頁 `senate ui --page tasks`：工具列兩排 —— 第一排重新讀取、開資料夾、翻頁；第二排篩選（專案／狀態／類型／參與者／含已關）＋「展開子任務」。
+  子任務預設收在主單底下（主單也在篩選結果裡時）；勾「展開子任務」⇒ 每張自己一列、照單號排，子單標題上標 `└TASK-<主單>`，照編號找得到；勾選記在 prefs（`tasks.expandSubtasks`），重開還在。篩選與「整理」作用的張數兩種模式一樣。
+  看驗收標準與描述、留言、推狀態、改專案、**勾驗收格**（Tim 2026-11-02：沒勾的格子前面一顆「勾」，按兩次確認 —— 打勾是簽名、沒有取消；走 `op=check` 帶 `expect_text`；照「署名」那一格的人判：本來勾得掉的是「勾」，勾不掉的是「代簽」（多帶 `qa_note=後台頁`，簽名註明代簽，§7）；署名空的不給按鈕；已結的單也勾得了）；「整理」把**目前篩選結果**一次設成某個專案（按兩次確認，一張一張走 `op=update`、各進時間線）。寫入同樣走 `task`。
 
 ## 11. 結果怎麼讀（`task`）
 
@@ -190,3 +195,23 @@ senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專�
 | 7 | **不知道**（送出了但等不到回執） | ⛔ 先 `senate cmd tasks --arg index=<N>` 回讀，別直接重打 |
 
 寫完之後的酒館通知失敗只是警告 —— 單子已寫好，⛔ 別因此重打（留言會多一則、勾會多一格）；通知顯示「已排隊」也不要補發。
+
+## 12. 跨機器同步（`sync.tasks`）
+
+Tim 2026-10-22：「支援填寫git repo與branch 自動同步到遠端的git repo」「讓task有新增 或改動時自動commit」「同時push」。
+在「路徑管理」頁的「同步遠端」填 repo ＋ branch（`senate.local.json` 的 `sync.tasks`，兩格都填才同步；空 ＝ 只寫本機）。
+
+- **本機的 `<資料根>/Tasks` 就是那條 branch 的工作副本** —— 讀單照舊讀本機；`tasks` 讀單之前 CLI 每分鐘最多拉一次（順便推還沒推上去的），別台開的單才看得到。
+- **缺目錄 ⇒ 第一次用到時自動 clone**（寫單、讀單、`task-sync`）。⛔ 設了遠端就不建空目錄：clone 不下來時寫單擋下（空板接上遠端會從 0001 整排撞號）。
+- **每次寫單（`task` 寫入成功）⇒ 自動 commit＋push**：sync.tasks 開著時，寫單**整套在入口（CLI）這一邊**做 —— 拉 → 寫 → commit → push → 重放，全在任務板的跨行程鎖（Global 具名 mutex）裡，⛔ 不交給 Server（Server 不跑 git，見下面 ⚠）。回傳檔多一段「🔄 同步遠端」，`🔢 sync` = `pushed`／`pending`（斷網、沒權限：已在本機提交，之後再推）／`conflict`／`mismatch`。
+- **push 被拒 ⇒ rebase；rebase 撞了 ⇒ 重放**：把還沒推上去的操作（op／persona／參數，記在 Tasks 的 `.git/senate-task-journal/`）在遠端最新版上重跑。
+  - **兩邊同時開單撞號 ⇒ 自動改號**（重跑 create 會配到下一號）。這一筆還沒公告 ⇒ 酒館公告的就是新號；之前已經公告過舊號的 ⇒ 多發一則 `sync_renumber`。
+  - 留言、指派、關聯、認領、commit、收工、帶 `expect_text` 的 check ⇒ 一律可以重放（兩邊的都在）。
+  - ⛔ **自動解不了的**：整段覆寫的 op（update／resolve／sweep、不帶 `expect_text` 的 check）而遠端也改了同一張、或重跑被閘擋下 ⇒
+    這一筆**不套上共用板**（`task` 回 exit 1、`wrote=0`），發 `sync_conflict` 酒館通知；我的版本留在備份 ref `refs/senate/task-sync/backup-*`，
+    衝突報告（沒套上的操作＋可以直接重跑的 `task-write` 指令）在 `Tasks/.git/senate-task-sync/`。看過共用板的現況再決定要不要重跑。
+- **推上去之前，新單的號碼都可能還會變**（`pending` 時尤其）—— 號碼以推上去之後為準。
+- 手動：`senate cmd task-sync --arg op=status --arg fetch=1`（看差多少）／`--arg op=sync`（拉推；讀單前的同步撞了不重放，交給這一支）。**本地跑。**
+- Tasks 的 origin 或 branch 跟設定不同、或不是 git repo ⇒ **不同步**（⛔ 不替人改 origin、不切 branch），寫照舊落本機並說出來。
+- ⚠ **Server 不跑 git**：經 WMI 起的 Server 一跑 git 同步就會被 Microsoft Defender 的行為偵測砍掉（2026-10-22 實測，exit 0、從行程裡看不到任何訊號；細節在 [Repo_Sync §0](Repo_Sync.md#0--server-經-wmi-起--跑-git-同步會被-defender-砍)）⇒ Tim 選「git 搬到 CLI」：原本的 Server 背景工作拿掉，`task-sync` 改本地跑。
+  還是走到 Server `task-write` 的寫入（舊入口、Server 內部派發）⇒ **只寫檔、不提交**（`🔢 sync = pending`），下一次 CLI 用到 task／tasks 時收成一筆推上去（那一筆沒有操作紀錄 ⇒ 撞了只能交給人）。
