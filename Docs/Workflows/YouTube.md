@@ -11,6 +11,8 @@ target_audience: [AI_Agent, Tim, Tools_Maintainer]
 > 一句話：**寫一張交付單 → `upload`；檢查沒過就不送，公開度一定要寫明。**
 > 參數表看 `senate cmd help youtube`。方案、平台事實（API 規定、額度、AI 揭露）與還沒做的部分看 [YouTube_Proposal](YouTube_Proposal.md)。
 > Tim 2026-11-09：「不需要太複雜的紀律 主要當成運營&遊戲宣傳」⇒ 沒有確認關卡，persona 自己決定公開度。
+> 🎬 **要自己做影片**（HTML 動畫錄成影片、日語配音、混音；ffmpeg／VOICEVOX 怎麼裝）⇒ **那時才讀** [YouTube_Video_Tools](YouTube_Video_Tools.md)
+> （`senate cmd doc --arg op=show --arg name=YouTube_Video_Tools`）。只上傳現成影片檔不用讀。
 
 ## 1. 配置環境
 
@@ -92,7 +94,7 @@ senate cmd youtube --arg op=whoami
 5. **用戶端**：建立 → 類型「**電腦版應用程式**」→ **建好的當下就下載 JSON**（密鑰只顯示一次）。
 6. 接 §1.1 B 的第 2、3 步。
 
-可以省的：頻道手機驗證（只有自訂縮圖、超過 15 分鐘的影片才要）、YouTube Studio 上傳預設值（工具每次都顯式送公開度、兒童內容、類別）、ffmpeg（上傳現成影片檔用不到）。
+可以省的：頻道手機驗證（只有自訂縮圖、超過 15 分鐘的影片才要）、YouTube Studio 上傳預設值（工具每次都顯式送公開度、兒童內容、類別）、ffmpeg 與 VOICEVOX（上傳現成影片檔用不到；自己做影片才裝，見 [YouTube_Video_Tools](YouTube_Video_Tools.md)）。
 
 ## 2. 平常（persona 做）
 
@@ -104,7 +106,9 @@ senate cmd youtube --arg op=update --arg video_id=<id> --arg slip_file=<只寫�
 senate cmd youtube --arg op=list [--arg max=20]                              # 頻道最新影片、公開度、觀看／讚／留言
 ```
 
-- 上傳成功印 `https://youtu.be/<id>`，然後回讀一次公開度與處理狀態（剛傳完通常是 `uploaded`，YouTube 還在轉檔）。
+- 上傳成功印 `https://youtu.be/<id>`，然後回讀公開度與處理狀態（剛傳完通常是 `uploaded`，YouTube 還在轉檔）。
+- 回讀對不上交付單的公開度 ⇒ 每 2.5 秒重讀、最多 6 次，讀到了就註明「第幾次讀、等了幾秒」。
+  🩸 API 讀取端有延遲：2026-11-09 改成 public 後立刻讀還是 unlisted、10 秒後才對。等完還對不上才報 ⚠（那才是真的沒改成）。
 - `notify=0` ⇒ 不通知訂閱者（測試片用）。
 
 ## 3. 交付單
@@ -171,4 +175,5 @@ senate cmd youtube --arg op=list [--arg max=20]                              # �
 
 ## 6. 還沒做
 
-讀留言／回留言、數據進 wake brief、上傳公告到酒館領薪、ffmpeg 素材產線（Blocksail 錄影、船隻轉台）—— 見 [YouTube_Proposal](YouTube_Proposal.md) §5.2、§5.4。
+讀留言／回留言、數據進 wake brief、上傳公告到酒館領薪、Blocksail 錄影與船隻轉台的素材產線 —— 見 [YouTube_Proposal](YouTube_Proposal.md) §5.2、§5.4。
+（HTML 動畫 → 影片、VOICEVOX 配音、ffmpeg 混音這條已經走通一次，做法在 [YouTube_Video_Tools](YouTube_Video_Tools.md)。）

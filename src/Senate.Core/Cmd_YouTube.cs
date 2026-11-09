@@ -421,16 +421,37 @@ public sealed class Cmd_YouTube : SCP_Cmd
             r.Lines.Add(YouTubeClient.TryAddToPlaylist(iAccess, s.PlaylistId, iId, out string? aPlErr) ? $"- 播放清單：✓ 已加入 `{s.PlaylistId}`" : "- ⚠ 沒加進播放清單：" + aPlErr);
     }
 
-    /// <summary>回讀：照 id 再抓一次，印公開度與處理狀態（上傳完通常還在 processing）。</summary>
+    public const int ReadbackTries = 6;
+    public const int ReadbackWaitMs = 2500;
+
+    /// <summary>
+    /// 回讀：照 id 再抓一次，印公開度與處理狀態（上傳完通常還在 processing）。
+    /// 🩸 2026-11-09：update 把公開度改成 public 後立刻回讀，API 還回舊的 unlisted；10 秒後才讀到 public
+    ///   ⇒ 首版當場印「⚠ 跟交付單不一樣」，其實改成功了。讀取端有延遲 ⇒ 對不上（或還查不到這支）就等一下再讀，
+    ///   最多 <see cref="ReadbackTries"/> 次；等完還是對不上才報 ⚠（那時才算真的不一樣）。
+    /// </summary>
     static void Readback(SCP_CmdResult r, string iAccess, string iId, string iExpectPrivacy)
     {
-        if (!YouTubeClient.TryGetJson(iAccess, "/videos?part=status,snippet&id=" + Uri.EscapeDataString(iId), out SCP_JsonData j, out string? aErr))
-        { r.Lines.Add("- ⚠ 回讀失敗：" + aErr); return; }
-        if (j["items"].Count == 0) { r.Lines.Add("- ⚠ 回讀查不到這支（剛上傳可能要等一下）"); return; }
-        SCP_JsonData st = j["items"][0]["status"];
-        string aPriv = st.GetString("privacyStatus", "?");
-        r.Lines.Add($"- 回讀：公開度 **{aPriv}**　處理狀態 {st.GetString("uploadStatus", "?")}　標題「{j["items"][0]["snippet"].GetString("title", "")}」");
-        if (iExpectPrivacy.Length > 0 && aPriv != iExpectPrivacy) r.Lines.Add($"  ⚠ 跟交付單寫的 `{iExpectPrivacy}` 不一樣");
+        SCP_JsonData? aItem = null;
+        string aPriv = "?";
+        int aTry = 0;
+        while (true)
+        {
+            aTry++;
+            if (!YouTubeClient.TryGetJson(iAccess, "/videos?part=status,snippet&id=" + Uri.EscapeDataString(iId), out SCP_JsonData j, out string? aErr))
+            { r.Lines.Add("- ⚠ 回讀失敗：" + aErr); return; }
+            aItem = j["items"].Count > 0 ? j["items"][0] : null;
+            aPriv = aItem == null ? "" : aItem["status"].GetString("privacyStatus", "?");
+            bool aSettled = aItem != null && (iExpectPrivacy.Length == 0 || aPriv == iExpectPrivacy);
+            if (aSettled || aTry >= ReadbackTries) break;
+            Thread.Sleep(ReadbackWaitMs);
+        }
+        string aWaited = aTry > 1 ? $"（第 {aTry} 次讀，等了 {(aTry - 1) * ReadbackWaitMs / 1000.0:0.#} 秒）" : "";
+        if (aItem == null) { r.Lines.Add($"- ⚠ 回讀查不到這支{aWaited} —— 剛上傳可能要再等一下，晚點用 `op=list` 看"); return; }
+        SCP_JsonData st = aItem["status"];
+        r.Lines.Add($"- 回讀：公開度 **{aPriv}**　處理狀態 {st.GetString("uploadStatus", "?")}　標題「{aItem["snippet"].GetString("title", "")}」{aWaited}");
+        if (iExpectPrivacy.Length > 0 && aPriv != iExpectPrivacy)
+            r.Lines.Add($"  ⚠ 等了 {(aTry - 1) * ReadbackWaitMs / 1000.0:0.#} 秒還是 `{aPriv}`，跟交付單寫的 `{iExpectPrivacy}` 不一樣 —— 晚點用 `op=list` 再看一次；還是不一樣就是沒改成");
         string aReject = st.GetString("rejectionReason", "");
         if (aReject.Length > 0) r.Lines.Add($"  ⚠ 被拒：{aReject}");
     }

@@ -36,6 +36,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Task_Management](Workflows/Task_Management.md) | **任務管理**（`senate cmd task`／`tasks`）：開單、動工、交付、驗收、收工（3~5 人輕流程，驗收標準與 claim／commit 閉環） |
 | [Glossary](Workflows/Glossary.md) | **新詞詞典**（`senate cmd glossary`）：自造詞登記與酒館自動附註 |
 | [YouTube](Workflows/YouTube.md) | **YouTube 頻道運營**（`senate cmd youtube`）：配置環境（先量這台、換一台電腦、從零設定 Google 端）、交付單 → 檢查 → 上傳、改資料只限本工具上傳的、憑證與上傳帳本住哪 |
+| [YouTube_Video_Tools](Workflows/YouTube_Video_Tools.md) | **自己做影片才讀**：ffmpeg／VOICEVOX 安裝（GitHub 504 時走 API asset、對 SHA256）、VOICEVOX 引擎與念法、無頭 Chrome 把 HTML 動畫錄成影片、ffmpeg 疊語音輸出 MP4、驗收清單 |
 | [YouTube_Proposal](Workflows/YouTube_Proposal.md) | YouTube 串接方案：2026-11 查到的平台事實與可信度、Tim 要親手做的 Google 端步驟、指令住 Senate 的理由、還沒做的部分 |
 | [Kb](Workflows/Kb.md) | **知識庫**（`senate cmd kb`）：語意檢索、常駐嵌入程序、索引與評估 |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
