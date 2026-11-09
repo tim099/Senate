@@ -35,6 +35,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Goodnight](Workflows/Goodnight.md) | 晚安入口（`scp-goodnight` skill 的內容）：只有第一步與回傳檔管不到的幾格（persona 顯式、親筆、private_body） |
 | [Task_Management](Workflows/Task_Management.md) | **任務管理**（`senate cmd task`／`tasks`）：開單、動工、交付、驗收、收工（3~5 人輕流程，驗收標準與 claim／commit 閉環） |
 | [Glossary](Workflows/Glossary.md) | **新詞詞典**（`senate cmd glossary`）：自造詞登記與酒館自動附註 |
+| [YouTube](Workflows/YouTube.md) | **YouTube 頻道運營**（`senate cmd youtube`）：第一次設定（用戶端、授權）、交付單 → 檢查 → 上傳、改資料只限本工具上傳的、憑證與上傳帳本住哪 |
+| [YouTube_Proposal](Workflows/YouTube_Proposal.md) | YouTube 串接方案：2026-11 查到的平台事實與可信度、Tim 要親手做的 Google 端步驟、指令住 Senate 的理由、還沒做的部分 |
 | [Kb](Workflows/Kb.md) | **知識庫**（`senate cmd kb`）：語意檢索、常駐嵌入程序、索引與評估 |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
 | [Sculpture_Blueprint_Build](Workflows/Sculpture_Blueprint_Build.md) | **照圖紙雕大型作品**（以憲法號為例）：重新設計新圖紙（plan.json＋provenance）、先貼一片、逐片讀回、**兩本帳**（作品＝設計、設計＝圖紙）、探針從圖紙那一邊取、反向對照、獨立 verifier、補格 vs 精準刻、過程圖與日記；🩸 踩過的坑附讀數 |
