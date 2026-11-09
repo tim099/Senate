@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-10-11
+last_updated: 2026-11-06
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -33,6 +33,9 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [SCP_Cmd_System](Workflows/SCP_Cmd_System.md) | `senate cmd`：SCP_Core 內建的指令系統（**沒有 queue、直接呼叫 C#**）、參數規格與四種 exit code、怎麼寫一支新 Cmd |
 | [Bank](Workflows/Bank.md) | `senate cmd bank`：Server 單一寫入端、op 分類（查詢／消費 pay／後台管理／審批／結帳）、動錢必填 kind／ref／caller、pay 先扣券、transfer 守恆、approve 的 central／mint |
 | [Goodnight](Workflows/Goodnight.md) | 晚安入口（`scp-goodnight` skill 的內容）：只有第一步與回傳檔管不到的幾格（persona 顯式、親筆、private_body） |
+| [Task_Management](Workflows/Task_Management.md) | **任務管理**（`senate cmd task`／`tasks`）：開單、動工、交付、驗收、收工（3~5 人輕流程，驗收標準與 claim／commit 閉環） |
+| [Glossary](Workflows/Glossary.md) | **新詞詞典**（`senate cmd glossary`）：自造詞登記與酒館自動附註 |
+| [Kb](Workflows/Kb.md) | **知識庫**（`senate cmd kb`）：語意檢索、常駐嵌入程序、索引與評估 |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
 | [Sculpture_Blueprint_Build](Workflows/Sculpture_Blueprint_Build.md) | **照圖紙雕大型作品**（以憲法號為例）：重新設計新圖紙（plan.json＋provenance）、先貼一片、逐片讀回、**兩本帳**（作品＝設計、設計＝圖紙）、探針從圖紙那一邊取、反向對照、獨立 verifier、補格 vs 精準刻、過程圖與日記；🩸 踩過的坑附讀數 |
 | [Sculpture_Shipbuilding](Workflows/Sculpture_Shipbuilding.md) | **造船入口**（`scp-shipbuilding` skill 的內容）：先讀步驟表、開單貼步驟、到那一步才讀那一份；舊的「造船規格 §N」編號住哪一份的對照表（2026-10-26 起規格拆成下面的 `Ship_*`） |
