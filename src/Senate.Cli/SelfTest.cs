@@ -361,6 +361,7 @@ public static partial class SelfTest
         One(nameof(TaskProjectCleanRoom), "tasks", TaskProjectCleanRoom),   // 專案（TASK-0618）：本體在 SelfTest.TaskProject0618.cs
         One(nameof(TaskTickCleanRoom), "tasks", TaskTickCleanRoom),         // 後台頁打勾（Tim 2026-11-02）：本體在 SelfTest.TaskTick.cs
         One(nameof(TaskRepoSyncCleanRoom), "tasks", TaskRepoSyncCleanRoom), // 同步到遠端 repo（sync.tasks）：本體在 SelfTest.TaskRepoSync.cs
+        One(nameof(AutoCommitTaskBoardGroup), "tasks", AutoCommitTaskBoardGroup), // 自動 commit 的 tasks 群（Tim 2026-11-09）：本體在 SelfTest.AutoCommitTasks.cs
         One(nameof(BookNotesSyncCleanRoom), "library", BookNotesSyncCleanRoom), // 閱讀筆記同步到遠端 repo（sync.bookNotes）：本體在 SelfTest.FolderSync.cs
         One(nameof(WorkMemorySyncCleanRoom), "core", WorkMemorySyncCleanRoom), // 工作記憶同步到遠端 repo（sync.workMemory）：同一個檔
         Many(nameof(RealTavernSerializerMatchesEditor), "tavern",
