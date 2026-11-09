@@ -1,6 +1,6 @@
 ---
 title: YouTube —— senate cmd youtube（persona 運營頻道、宣傳 Blocksail）
-description: senate cmd youtube 的使用說明：第一次設定（Tim：用戶端 JSON、密碼檔、瀏覽器授權）、persona 平常怎麼上傳（交付單 → dry_run → upload）、改資料只限本工具上傳的影片、交付單欄位與檢查規則、exit code、憑證與上傳帳本住哪、會咬人的幾格。
+description: senate cmd youtube 的使用說明：配置環境（先量這台、換一台電腦搬 .enc 或重新授權、從零設定 Google 端的每一格）、persona 平常怎麼上傳（交付單 → dry_run → upload）、改資料只限本工具上傳的影片、交付單欄位與檢查規則、exit code、憑證與上傳帳本住哪、會咬人的幾格。
 cmds: [youtube]
 last_updated: 2026-11-09
 target_audience: [AI_Agent, Tim, Tools_Maintainer]
@@ -12,23 +12,87 @@ target_audience: [AI_Agent, Tim, Tools_Maintainer]
 > 參數表看 `senate cmd help youtube`。方案、平台事實（API 規定、額度、AI 揭露）與還沒做的部分看 [YouTube_Proposal](YouTube_Proposal.md)。
 > Tim 2026-11-09：「不需要太複雜的紀律 主要當成運營&遊戲宣傳」⇒ 沒有確認關卡，persona 自己決定公開度。
 
-## 1. 第一次設定（Tim 做）
+## 1. 配置環境
 
-Google 那邊（Cloud 專案、啟用 API、scope、電腦版用戶端、同意畫面切正式版）照 [YouTube_Proposal](YouTube_Proposal.md) §5.1。之後：
+先量這台：
 
 ```bash
-# ① 用戶端：下載的 JSON ＋ 一個放密碼的純文字檔（加密用；⛔ 只給路徑，不要把內容貼進對話）
+senate cmd youtube            # 不連網：用戶端、登入兩格、授權的頻道、憑證資料夾在哪
+```
+
+| 讀數 | 走哪條 |
+|---|---|
+| `senate: command not found` | 先裝 Senate：SCP_Core 入口「先配置環境」（`<Senate>/install.sh`） |
+| `認不得的指令 'youtube'` | 這台的 Senate 太舊 ⇒ pull 含 `youtube` 的版本（2026-11-09 `08547bf` 起）後 `./build.sh` |
+| 用戶端、登入都「可用」 | 好了；`op=whoami` 回讀頻道名就收工，直接看 §2 |
+| 用戶端、登入都「**沒有**」，別台已經設好 | §1.1 換一台電腦 |
+| 用戶端可用、登入沒有，或指令回 exit 3 | 只缺授權 ⇒ §1.1 B 的第 3 步 |
+| 連 Google 端都沒設過 | §1.2 從零開始 |
+
+現況（2026-11-09 設好的那一套，換電腦時對得上用）：
+
+| 項目 | 值 |
+|---|---|
+| Google Cloud 專案 | `FirebaseDemo`（project id `fir-demo-412cc`） |
+| OAuth 用戶端 | 電腦版應用程式，client_id `972318882660-5ul4c297f44jh4t3gir81qsourt372t8.apps.googleusercontent.com` |
+| 同意畫面 | 外部、**實際運作中**（正式版）；品牌名 `Farstar-studio YouTube`、授權網域 `farstar-studio.com` |
+| 授權的頻道 | **Yeh Tim**（`UCp0kzj4Sr5NM3JEVggLlmfQ`，`@yehtim171`）—— Tim 原本的頻道，舊影片 `update` 改不了 |
+
+⚠ 密碼檔與用戶端 JSON **只給路徑**（打字貼路徑）。⛔ 不要貼內容，也不要用 `@` 指它們 —— `@` 會把整份內容讀進對話。
+
+### 1.1 換一台電腦（Google 端已經設好）
+
+Google 那邊（專案、用戶端、正式版）是帳號層級的，**不用重做**。這台只缺 `<資料根>/Secret/` 裡的檔。二選一：
+
+**A. 搬加密檔過來（不用重新登入）**
+
+1. 從設好的那台拿 `<資料根>/Secret/` 的 `youtube_client.enc`、`youtube_token.enc`。
+   要在這台改 Senate 傳過的影片，連 `youtube_uploads.json`（上傳帳本）一起拿。
+   - Secret 若是獨立的 private repo（`.gitignore` 只放行 `*.enc`，Bar 的做法）：那台 commit＋push `.enc`、這台 pull。
+   - ⛔ `.txt` 是明文，不搬、不進任何 git、不丟雲端或聊天軟體。
+2. 放進這台的 `<資料根>/Secret/`（`senate cmd youtube` 印的「憑證資料夾」就是它；不存在就建）。
+3. 解密安裝：`senate ui --page secrets`（加密檔管理）→「一鍵解密全部」→ 輸入當初加密用的密碼（明文已在的跳過，⛔ 不覆寫）。
+   ⚠ 這一步要在視窗裡打密碼 ⇒ **Tim 做**，agent 做不了。
+4. `senate cmd youtube --arg op=whoami` 讀到頻道名 ⇒ 好了。
+
+**B. 重新授權（手上沒有 `.enc`，或忘了密碼）**
+
+1. 用戶端 JSON：Google **只在建立當下給一次** client secret。原檔不見了 ⇒ Google Auth Platform →「用戶端」→ 點那個用戶端 → 新增一組密鑰，當下存下來。
+2. 密碼檔：記事本打一行自己取的密碼（⛔ 不是 Google 密碼），存在 repo 以外。它只用來加密 `.enc` 備份；平常上傳讀的是本機明文，用不到它。
+3. 寫入並授權：
+
+```bash
 senate cmd youtube --arg op=set-credentials --arg client_path=<用戶端.json> --arg passphrase_path=<密碼檔>
-
-# ② 授權：開瀏覽器 → 登入 → 選要運營的頻道 → 「尚未驗證」按「進階 → 前往」→ 允許
-senate cmd youtube --arg op=login --arg passphrase_path=<密碼檔>
-
-# ③ 驗收：回讀頻道名
+senate cmd youtube --arg op=login --arg passphrase_path=<密碼檔>     # 瀏覽器：選帳號 → 選頻道 →「尚未驗證」按「進階 → 前往」→ 勾 YouTube 權限 → 允許
 senate cmd youtube --arg op=whoami
 ```
 
-- `login` 會在終端機即時印出授權網址（瀏覽器沒自己開就手動開），預設等 300 秒（`--arg timeout=<秒>`）。
+- `login` 在終端機即時印出授權網址（瀏覽器沒自己開就手動開），預設等 300 秒（`--arg timeout=<秒>`）。
+  agent 代跑時放背景跑，Tim 在瀏覽器按完它就會收到結果。
+- 每台各自 `login` 會各拿一顆 refresh token，互不影響。
 - 換頻道 ＝ 再跑一次 `login` 選另一個；換用戶端 ＝ `set-credentials --arg overwrite=1` 再 `login`。
+
+### 1.2 從零開始（Google 端也沒設過）
+
+🩸 下面幾格是 2026-11-09 第一次設定時一格一格撞出來的。
+
+1. **啟用 API**：[console.cloud.google.com](https://console.cloud.google.com) 選專案 →「API 和服務 → 程式庫」→ **YouTube Data API v3** → 啟用。
+   ⚠ Google Auth Platform 自己的側欄**沒有**這個入口 ⇒ 用頂端搜尋列直接搜，或左上 ☰。
+2. **Google Auth Platform → 品牌**：
+   - 應用程式名稱、使用者支援電子郵件、開發人員聯絡信箱；
+   - **應用程式首頁**與**隱私權政策連結** —— ⚠ 缺這兩格，「發布應用程式」會是灰的；
+   - 授權網域加上那兩個網址的網域（只填網域：不加 `https://`、不加路徑）；
+   - ⛔ **不上傳標誌**（一放就要求品牌驗證）。
+3. **目標對象**：使用者類型「外部」→「**發布應用程式**」→ 狀態變「**實際運作中**」。
+   留在「測試」⇒ refresh token **7 天過期**，而且只有測試使用者名單上的帳號登得進來。
+   旁邊「使用者人數上限 100」「未經驗證的應用程式」不用理 —— 只有自己的帳號在用，不送驗證。
+4. **資料存取權**：加 `https://www.googleapis.com/auth/youtube.force-ssl`，一個就夠（上傳、改資料、縮圖、播放清單、留言）。
+   ⚠ 篩選條件比對**完整字串**：搜 `.../auth/youtube` 只撈得到 `youtube` 那一個 ⇒ 把全名貼進「手動新增範圍」→「新增至資料表」→ 勾起來 →「更新」→「儲存」。
+   它會落在「**機密範圍**」（sensitive；不是「受限範圍」）⇒ 不用安全評估。
+5. **用戶端**：建立 → 類型「**電腦版應用程式**」→ **建好的當下就下載 JSON**（密鑰只顯示一次）。
+6. 接 §1.1 B 的第 2、3 步。
+
+可以省的：頻道手機驗證（只有自訂縮圖、超過 15 分鐘的影片才要）、YouTube Studio 上傳預設值（工具每次都顯式送公開度、兒童內容、類別）、ffmpeg（上傳現成影片檔用不到）。
 
 ## 2. 平常（persona 做）
 

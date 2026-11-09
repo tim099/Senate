@@ -1,0 +1,5 @@
+{
+	"source": "Skills~/scp-youtube",
+	"target": "claude",
+	"provenance": "scp_core"
+}
