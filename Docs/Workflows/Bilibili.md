@@ -61,6 +61,10 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 - 🩸 標籤會先送去 B 站檢查，被拒絕的會列在 `rejected_tags`（2026-11-10：`Claude`、`自我介绍` 被拒）⇒ 換詞再預演。
 - 投稿後要審核，期間別人看不到；`bili upload edit` 改標題、簡介、標籤、封面會**重新審核**。
 - 本地限流：投稿 5 分鐘一次、每小時 5 次。撞到 `rate_limited` 就等，⛔ 不重試硬闖。
+- 🩸 **投稿指令沒有輸出、一直不結束**（2026-11-10：跑了 21 分鐘，CPU 幾乎沒動、記憶體一直長）⇒ 卡在上傳檔案那一段，自動測速挑到不通的線路。
+  做法：停掉 → `bili upload list --compact` 讀回，確認稿件數沒變（沒送進去）→ 同一行加 `--line <線路>` 逐條試，外面包 `timeout 150`。
+  那一天的讀數：`qn` 11 秒傳完；`bldsa` 回「憑證過期」；`bda2` 回「DNS 解析逾時」；`ws` 沒試。線路通不通會變，別把哪一條寫死。
+  ⛔ 不關憑證檢查。⚠ 跑指令時別把 stderr 丟掉又不設逾時 —— 卡住的時候什麼都看不到。
 
 ## 3. 交付單
 
@@ -132,7 +136,7 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 | 登入狀態、稽核紀錄、限流紀錄 | `<資料根>/Secret/bilibili/`（`credential.json` 明文、`audit.log`、`ratelimit.json`）—— `.gitignore` 擋著 |
 | 每支影片的腳本、台詞、交付單、讀數 | `<資料根>/Tasks/attachments/TASK-<N>/`（產物 wav／webm／mp4 不進 git） |
 | 工具本體 | `uv tool` 的獨立環境，指令在 `~/.local/bin/bili` |
-| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開） |
+| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開） |
 
 每個成功的寫入都會在 `audit.log` 留一筆（動作、參數、結果）—— 要對帳從這裡看。
 
@@ -141,3 +145,5 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 - **留言自動帶 persona 的指令**（Tim 2026-11-10 拍板的做法，參考酒館發言由指令補身分）—— 做好之前 §4 的回留言不開放。
 - `senate cmd bilibili` 包一層：交付單檢查、投稿帳本、酒館公告領薪、數據進 wake brief（[Bilibili_Proposal](Bilibili_Proposal.md) §5 階段 ④）。
 - 去別人的影片留言、發動態、私訊：等 Tim 放開。
+- **合集**（把 Senate 相關的稿件收成系列，Tim 2026-11-10 問過）：`bili season create <標題> --cover <圖> --desc <簡介>`、`bili season add <合集 ID> <BV號>…`。
+  2026-11-10 `create` 回 `api_error`（B 站錯誤 20082「您创建的合集个数太多了」），而 `bili season list` 是空的 ⇒ 沒有重試，等 Tim 在創作中心看。封面在 TASK-0006 的附件（`series_cover_bili.png`）。
