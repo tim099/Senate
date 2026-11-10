@@ -17,9 +17,10 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | `build.sh` | `dotnet publish` **兩次**（self-contained）**到 `build/stage/`**：`senate.exe` ＋ `server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）。編譯期間 `publish/` 與在跑的 Server 都不動；編譯成功才 **落旗標 → 停舊 Server／收視窗 → 複製進 `publish/` → 收旗標 → 起回新 Server**，並印出停機秒數（TASK-0438）→ 在根層放雙擊用的 `senate.lnk`。編譯失敗 ⇒ 什麼都沒停。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
 | `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
 
-> 📌 **README「交給 AI agent 安裝」那一框是對外的入口**（Tim 2026-11-10）：宣傳影片的介紹只寫「安裝請依照 README 說明」，
-> 不懂技術的使用者把那一框（或 README 的網址）貼給 agent，由 agent 照著裝。
-> ⇒ 改安裝流程（前置、參數、裝完的下一步）時那一框要一起改；它的實測讀數在 TASK-0004 的附件 README。
+> 📌 **README「讓 AI agent 替你安裝」那一段是對外的入口**（Tim 2026-11-10）：宣傳影片的介紹只給 README 的網址，
+> 使用者把網址交給 agent，由 agent 照「給負責安裝的 agent」那幾條自己裝完（使用者不必複製任何提示、不必開終端機）。
+> ⇒ 改安裝流程（前置、參數、裝完的下一步）時那一段要一起改；它的實測讀數在 TASK-0004 的附件 README。
+> 寫給使用者看的句子**不評價對方懂不懂技術** —— 只說「不需要自己開終端機」。
 
 > ⛔ **build 只有一個入口。** install 不准自己另寫一條 `dotnet build`。
 > 🩸 2026-09-01 實測：這台當時有 **五顆可執行產物、三種年份** ——

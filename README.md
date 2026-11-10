@@ -10,35 +10,53 @@ Senate 讓它們有一個**跨 session 延續的身分**：自己的名字與個
 
 ## 快速開始（Windows）
 
-### 交給 AI agent 安裝（不用自己打指令）
+### 讓 AI agent 替你安裝
 
-把下面框裡的整段文字複製起來（框的右上角有複製按鈕），貼給你的 AI agent，它會替你裝完。
-要能在你電腦上執行指令的那一種（Claude Code、Codex、Antigravity、Gemini CLI……），只能聊天的網頁版不行。
-
-> 你是被使用者叫來安裝 Senate 的 agent？照框裡的步驟做，講話的對象是那位不懂技術的使用者。
+把這份 README 的網址交給你的 AI agent，請它照著安裝就可以了，不需要自己開終端機：
 
 ```text
-請幫我在這台 Windows 電腦上安裝 Senate（https://github.com/tim099/Senate）。
-我不懂技術，請你自己動手把下面的步驟做完，不要叫我開終端機打指令。如果這台不是 Windows，直接告訴我目前只支援 Windows 就好。
+https://github.com/tim099/Senate/blob/master/README.md
+```
 
-1. 檢查有沒有 Git（2.25 以上）和 .NET 10 SDK（dotnet --list-sdks 要有 10 開頭的那一行）。缺的用 winget 裝：
+- 需要的是能在你電腦上執行指令的 agent（Claude Code、Codex、Antigravity、Gemini CLI……）；只能對話的網頁版做不到。
+- 這台如果還沒有 Git 或 .NET，agent 會替你裝；過程中 Windows 會跳出視窗詢問是否允許變更，按「是」即可。
+- 裝好之後怎麼開始，看下面的[裝好之後](#裝好之後)。
+
+#### 給負責安裝的 agent：流程與要注意的細節
+
+使用者把安裝交給你了。請自己把下面的步驟做完，不要請對方開終端機或輸入指令；需要對方動手的只有 Windows 的允許視窗，跳出來之前先說一聲。回報用日常的話，不必貼指令輸出。
+
+1. **只支援 Windows。** 其他系統請直接告知目前不支援。
+2. **前置：Git 2.25 以上、.NET 10 SDK。** `dotnet --list-sdks` 要有 10 開頭的一行（只有 runtime 不夠）。缺的用 winget 裝：
+
+   ```text
    winget install --id Git.Git -e
    winget install --id Microsoft.DotNet.SDK.10 -e
-   安裝時 Windows 可能會跳出視窗問要不要允許變更，先跟我說一聲，我會按「是」。
-   剛裝好的程式，你現在這個終端機可能還找不到：請用完整路徑呼叫，或把它們的安裝資料夾暫時加進這次指令的 PATH。
-2. 把 Senate 下載到我的使用者資料夾底下。那裡如果已經有 Senate 資料夾，先停下來問我。
+   ```
+
+   - 安裝會觸發 Windows 的允許視窗，先告訴使用者它會跳出來。裝完再量一次版本，確認真的裝上了。
+   - 剛裝好的程式，你現在這個 shell 的 PATH 還看不到：用完整路徑呼叫（`C:\Program Files\Git\cmd\git.exe`、`C:\Program Files\dotnet\dotnet.exe`），或只在這一次指令裡把安裝資料夾加進 PATH。
+3. **下載：一定用 `git clone`，不要下載 ZIP**（ZIP 沒有子模組，安裝腳本會擋下）。
+
+   ```text
    git clone --recurse-submodules https://github.com/tim099/Senate.git
-   一定要用 git clone，不要下載 ZIP。
-   如果出現「Filename too long」，是資料夾的路徑太長：把剛才沒下載完的那個 Senate 資料夾刪掉，改下載到短一點的位置（例如 C:\Senate）再做一次。
-3. 用 Git 附的 bash 執行安裝腳本（bash 通常在 C:\Program Files\Git\bin\bash.exe）。下面的「Senate資料夾」換成第 2 步下載到的完整路徑，用正斜線寫（例如 C:/Users/名字/Senate）：
-   bash.exe -lc "cd 'Senate資料夾' && ./install.sh"
-   第一次要編譯，會跑幾分鐘，請等它跑完。
-4. 看腳本最後印出來的結果。失敗時它會印一行 ✗ 說明原因，請照那一行處理後重跑；處理不了就停下來，用白話告訴我卡在哪裡，不要自己想辦法繞過去。
-5. 成功之後，執行 Senate 資料夾裡的 publish\senate.exe doctor 確認環境正常，然後用白話告訴我兩件事：
-   ・Senate 裝在哪個資料夾
-   ・接下來怎麼開始用：重新開一個 agent 視窗，把工作資料夾選成 Senate 那個資料夾，對它說「早安大小姐」
-   安裝時自動啟動的背景程式是 Senate 自己要用的，不用關掉。
-```
+   ```
+
+   - 位置：使用者資料夾底下（例如 `C:\Users\名字\Senate`）。那裡已經有 `Senate` 資料夾就先問，不要覆蓋。
+   - 路徑要短：子模組有好幾層，路徑太深會出現 `Filename too long`。遇到就刪掉沒下載完的那一份，改放短一點的位置（例如 `C:\Senate`）重來。
+4. **安裝：用 Git 附的 bash 跑 `install.sh`。** `-l` 要帶，資料夾路徑用正斜線：
+
+   ```text
+   "C:\Program Files\Git\bin\bash.exe" -lc "cd 'C:/Users/名字/Senate' && ./install.sh"
+   ```
+
+   - 第一次要編譯，需要幾分鐘。等它跑完，不要中途打斷。
+   - 它會依序做：前置檢查 → 補子模組 → 編譯 → 建本機設定 → 環境檢查 → 把 `publish\` 加進使用者的 PATH。
+   - 失敗時會印一行 `✗` 說明原因：照那一行處理後重跑。處理不了就停下來說明卡在哪裡，不要改用別的方式繞過。
+5. **確認：** 執行 Senate 資料夾裡的 `publish\senate.exe doctor`，最後一行要是「⇒ 通過」。
+   - 用完整路徑呼叫。PATH 是剛加的，你現在的 session 讀不到 `senate`，這不代表安裝失敗。
+   - 安裝時啟動的背景程式（Senate 的 Server）是它自己要用的，不要關掉。
+6. **交代：** 告訴使用者 Senate 裝在哪個資料夾，以及下一步 —— 重新開一個 agent 視窗，把工作資料夾設成 Senate 那個資料夾，對它說「早安大小姐」。
 
 ### 自己動手裝
 
