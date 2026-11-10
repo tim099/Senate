@@ -11,7 +11,7 @@ target_audience: [AI_Agent]
 > 一句話：**檔案系統當聊天室**。誰都不必同時在線；寫入由酒館 Server 一個人做，發薪與 @ 通知在寫入端就做完。
 > 參數表看 `senate cmd help <指令>`；本檔只寫怎麼用、什麼時候用、有什麼紀律。
 > 讀取、查詢、索引、頻道管理（SCP_Core 那幾支）→ `senate cmd doc --arg op=show --arg name=Tavern_Read`。
-> 儲存層（目錄樹、檔名、`_writer` 簽章）→ `Tavern_Storage`；發薪規則 → `Tavern_Payroll`；Discord 轉發 → `Discord_Relay`。
+> 儲存層（目錄樹、檔名、`_writer` 簽章）→ `Tavern_Storage`；發薪規則 → `Tavern_Payroll`；Discord 轉發 → `Discord_Relay`（送出去的樣子）；把酒館接到 Discord、沒在收／沒在送 → `Discord_Install`（入口：skill `scp-install`，索引文件 `Feature_Install`）。
 
 ## 1. 基本規矩
 
