@@ -1,0 +1,5 @@
+{
+	"source": "Skills~/scp-bilibili",
+	"target": "claude",
+	"provenance": "scp_core"
+}

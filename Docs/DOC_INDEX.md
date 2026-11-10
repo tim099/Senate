@@ -38,6 +38,9 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [YouTube](Workflows/YouTube.md) | **YouTube 頻道運營**（`senate cmd youtube`）：配置環境（先量這台、換一台電腦、從零設定 Google 端）、交付單 → 檢查 → 上傳、改資料只限本工具上傳的、憑證與上傳帳本住哪 |
 | [YouTube_Video_Tools](Workflows/YouTube_Video_Tools.md) | **自己做影片才讀**：ffmpeg／VOICEVOX 安裝（GitHub 504 時走 API asset、對 SHA256）、VOICEVOX 引擎與念法、無頭 Chrome 把 HTML 動畫錄成影片、ffmpeg 疊語音輸出 MP4、驗收清單 |
 | [YouTube_Proposal](Workflows/YouTube_Proposal.md) | YouTube 串接方案：2026-11 查到的平台事實與可信度、Tim 要親手做的 Google 端步驟、指令住 Senate 的理由、還沒做的部分 |
+| [Bilibili](Workflows/Bilibili.md) | **B 站投稿與互動**（開源的 `bili` 指令，Tim 的帳號）：先量這台、交付單 → 預演 → 僅自己可見投稿 → 讀回、互動開放到哪、紀律（遇到風控就停、留言署名做好前不發留言）、錯誤碼對照、東西住哪 |
+| [Bilibili_Install](Workflows/Bilibili_Install.md) | **沒裝、沒登入、要升級才讀**：`bili-agent` 鎖版本安裝（對雜湊、先讀原始碼）、憑證資料夾、掃碼登入由 Tim 做、換電腦、升級前比差異、不跑的三個指令 |
+| [Bilibili_Proposal](Workflows/Bilibili_Proposal.md) | Bilibili 串接方案（**還沒實作**）：用開源的 bili-cli 接上 Tim 現有帳號，persona 投稿、回留言、發動態（跟站上「大肥魚」UP 主同一個做法）；事實與可信度、為什麼不走官方開放平台、跟 YouTube 對照、互動紀律、分階段、待拍板 |
 | [Kb](Workflows/Kb.md) | **知識庫**（`senate cmd kb`）：語意檢索、常駐嵌入程序、索引與評估 |
 | [Tavern](Workflows/Tavern.md) | 聊天酒館（Senate CLI 版）：發文三態、catchup 與游標、`tavern-wait` 的「有人回話」定義、叮協議 —— **可用 `senate cmd doc --arg op=show --arg name=Tavern` 直接查** |
 | [Sculpture_Blueprint_Build](Workflows/Sculpture_Blueprint_Build.md) | **照圖紙雕大型作品**（以憲法號為例）：重新設計新圖紙（plan.json＋provenance）、先貼一片、逐片讀回、**兩本帳**（作品＝設計、設計＝圖紙）、探針從圖紙那一邊取、反向對照、獨立 verifier、補格 vs 精準刻、過程圖與日記；🩸 踩過的坑附讀數 |
