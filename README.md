@@ -10,6 +10,38 @@ Senate 讓它們有一個**跨 session 延續的身分**：自己的名字與個
 
 ## 快速開始（Windows）
 
+### 交給 AI agent 安裝（不用自己打指令）
+
+把下面框裡的整段文字複製起來（框的右上角有複製按鈕），貼給你的 AI agent，它會替你裝完。
+要能在你電腦上執行指令的那一種（Claude Code、Codex、Antigravity、Gemini CLI……），只能聊天的網頁版不行。
+
+> 你是被使用者叫來安裝 Senate 的 agent？照框裡的步驟做，講話的對象是那位不懂技術的使用者。
+
+```text
+請幫我在這台 Windows 電腦上安裝 Senate（https://github.com/tim099/Senate）。
+我不懂技術，請你自己動手把下面的步驟做完，不要叫我開終端機打指令。如果這台不是 Windows，直接告訴我目前只支援 Windows 就好。
+
+1. 檢查有沒有 Git（2.25 以上）和 .NET 10 SDK（dotnet --list-sdks 要有 10 開頭的那一行）。缺的用 winget 裝：
+   winget install --id Git.Git -e
+   winget install --id Microsoft.DotNet.SDK.10 -e
+   安裝時 Windows 可能會跳出視窗問要不要允許變更，先跟我說一聲，我會按「是」。
+   剛裝好的程式，你現在這個終端機可能還找不到：請用完整路徑呼叫，或把它們的安裝資料夾暫時加進這次指令的 PATH。
+2. 把 Senate 下載到我的使用者資料夾底下。那裡如果已經有 Senate 資料夾，先停下來問我。
+   git clone --recurse-submodules https://github.com/tim099/Senate.git
+   一定要用 git clone，不要下載 ZIP。
+   如果出現「Filename too long」，是資料夾的路徑太長：把剛才沒下載完的那個 Senate 資料夾刪掉，改下載到短一點的位置（例如 C:\Senate）再做一次。
+3. 用 Git 附的 bash 執行安裝腳本（bash 通常在 C:\Program Files\Git\bin\bash.exe）。下面的「Senate資料夾」換成第 2 步下載到的完整路徑，用正斜線寫（例如 C:/Users/名字/Senate）：
+   bash.exe -lc "cd 'Senate資料夾' && ./install.sh"
+   第一次要編譯，會跑幾分鐘，請等它跑完。
+4. 看腳本最後印出來的結果。失敗時它會印一行 ✗ 說明原因，請照那一行處理後重跑；處理不了就停下來，用白話告訴我卡在哪裡，不要自己想辦法繞過去。
+5. 成功之後，執行 Senate 資料夾裡的 publish\senate.exe doctor 確認環境正常，然後用白話告訴我兩件事：
+   ・Senate 裝在哪個資料夾
+   ・接下來怎麼開始用：重新開一個 agent 視窗，把工作資料夾選成 Senate 那個資料夾，對它說「早安大小姐」
+   安裝時自動啟動的背景程式是 Senate 自己要用的，不用關掉。
+```
+
+### 自己動手裝
+
 先裝好 [Git](https://git-scm.com/download/win) 和 [.NET 10 SDK](https://dotnet.microsoft.com/download)，然後三步：
 
 ```bash
@@ -26,7 +58,10 @@ cd Senate
 
 （不在 Git Bash 裡？在 CMD、PowerShell 打 `install.cmd`，或在檔案總管雙擊它，是同一件事。）
 
-裝完**開一個新的終端機**，在 `Senate` 資料夾裡開你的 agent，對它說「**早安大小姐**」。
+### 裝好之後
+
+**重新開一個 agent 視窗（或終端機）**，把工作資料夾選成 `Senate` 那個資料夾，對它說「**早安大小姐**」。
+它會列出可以叫醒的 persona；想要一位自己的，就說「建一位新的」，它會一題一題問你。
 細節與常見狀況看下面的[安裝](#安裝第一次才需要)。
 
 ---
