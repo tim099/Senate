@@ -18,12 +18,12 @@ using SCP.Core.Json;
 
 namespace Senate.Core;
 
-public sealed class Cmd_YouTube : SCP_Cmd
+public sealed partial class Cmd_YouTube : SCP_Cmd
 {
     public override string Name => "youtube";
     public override string Category => SCP_CmdCategory.Reading;
 
-    public override string Summary => "YouTube 頻道運營：憑證（一步加密）、登入授權、上傳影片（交付單先檢查）、改標題／說明／公開度／縮圖、列頻道影片";
+    public override string Summary => "YouTube 頻道運營：憑證（一步加密）、登入授權、上傳影片（交付單先檢查）、改標題／說明／公開度／縮圖、列頻道影片、播放清單（列出／建立／加影片）";
 
     public override string Details =>
         "· `op=status`（預設）：憑證與登入狀態、授權到的頻道、帳本筆數（不連網）。\n"
@@ -33,6 +33,10 @@ public sealed class Cmd_YouTube : SCP_Cmd
         + "· `op=upload --arg slip_file=<交付單.json> [--arg dry_run=1] [--arg allow_duplicate=1] [--arg notify=0]`：先檢查，沒過不送。\n"
         + "· `op=update --arg video_id=<id> --arg slip_file=<只寫要改的欄位.json> [--arg dry_run=1]`：只准改本工具上傳過的影片。\n"
         + "· `op=list [--arg max=20]`：頻道最新影片＋公開度＋觀看數，標出哪些是 Senate 上傳的。\n"
+        + "· `op=playlists`：頻道的播放清單＋公開度＋支數，標出哪些是 Senate 建的。\n"
+        + "· `op=playlist-create --arg slip_file=<清單交付單.json> [--arg dry_run=1] [--arg allow_duplicate=1]`：建播放清單；同名的已經有了就擋。"
+        + "交付單欄位：persona、title、privacy（必填）、description、videos（建好之後依序加進去的影片 id，只收本工具上傳的）。\n"
+        + "· `op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg dry_run=1]`：把本工具上傳的影片加進**本工具建的**清單；已經在裡面的跳過。\n"
         + "交付單欄位：persona、video、title、description、privacy（private／unlisted／public，必填）、tags、category_id（預設 20 遊戲）、"
         + "made_for_kids（預設 false）、synthetic_media（預設 false）、language、thumbnail、playlist_id。欄位表與限制看 `Docs/Workflows/YouTube.md`。";
 
@@ -40,20 +44,22 @@ public sealed class Cmd_YouTube : SCP_Cmd
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
-        new SCP_CmdArgSpec("op", "做什麼", iDefault: "status", iChoices: new[] { "status", "set-credentials", "login", "whoami", "upload", "update", "list" }),
+        new SCP_CmdArgSpec("op", "做什麼", iDefault: "status", iChoices: new[] { "status", "set-credentials", "login", "whoami", "upload", "update", "list", "playlists", "playlist-create", "playlist-add" }),
         new SCP_CmdArgSpec("client_path", "set-credentials：Google Cloud 下載的用戶端 JSON（電腦版應用程式）", iDefault: ""),
         new SCP_CmdArgSpec("passphrase_path", "set-credentials／login：放加密密碼的檔（⛔ 不收密碼本身）", iDefault: ""),
         new SCP_CmdArgSpec("hint", "set-credentials／login：密碼提示（不參與加密）", iDefault: ""),
         new SCP_CmdArgSpec("overwrite", "set-credentials：1＝允許覆寫既有的用戶端 .enc", iDefault: "0", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("timeout", "login：等瀏覽器回來的秒數", iDefault: "300"),
         new SCP_CmdArgSpec("open_browser", "login：1＝自動開瀏覽器；0＝只印網址", iDefault: "1", iChoices: new[] { "0", "1" }),
-        new SCP_CmdArgSpec("slip_file", "upload／update：交付單（JSON，絕對路徑）", iDefault: ""),
+        new SCP_CmdArgSpec("slip_file", "upload／update／playlist-create：交付單（JSON，絕對路徑）", iDefault: ""),
         new SCP_CmdArgSpec("video_id", "update：要改的影片 id（必須是本工具上傳過的）", iDefault: ""),
-        new SCP_CmdArgSpec("dry_run", "upload／update：1＝只檢查並印出要送的內容，不送", iDefault: "0", iChoices: new[] { "0", "1" }),
-        new SCP_CmdArgSpec("allow_duplicate", "upload：1＝同一支檔案已上傳過也照傳", iDefault: "0", iChoices: new[] { "0", "1" }),
+        new SCP_CmdArgSpec("dry_run", "upload／update／playlist-create／playlist-add：1＝只檢查並印出要送的內容，不送", iDefault: "0", iChoices: new[] { "0", "1" }),
+        new SCP_CmdArgSpec("allow_duplicate", "upload：1＝同一支檔案已上傳過也照傳；playlist-create：1＝頻道上已經有同名清單也照建", iDefault: "0", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("notify", "upload：1＝通知訂閱者（預設 1）", iDefault: "1", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("upload_timeout", "upload：上傳檔案的逾時秒數", iDefault: "3600"),
         new SCP_CmdArgSpec("max", "list：最多列幾支（1–50）", iDefault: "20"),
+        new SCP_CmdArgSpec("playlist_id", "playlist-add：要加進去的播放清單 id（必須是本工具建的）", iDefault: ""),
+        new SCP_CmdArgSpec("video_ids", "playlist-add：影片 id，逗號分隔（必須是本工具上傳的）", iDefault: ""),
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（憑證住 <資料根>/Secret/）", iRequired: true),
         new SCP_CmdArgSpec("letters_root", "信件庫根（驗 persona 存在）", iDefault: ""),
     };
@@ -77,6 +83,9 @@ public sealed class Cmd_YouTube : SCP_Cmd
             "upload" => Upload(aRoot, iArgs),
             "update" => Update(aRoot, iArgs),
             "list" => List(aRoot, iArgs),
+            "playlists" => Playlists(aRoot),
+            "playlist-create" => PlaylistCreate(aRoot, iArgs),
+            "playlist-add" => PlaylistAdd(aRoot, iArgs),
             _ => Status(aRoot),
         };
     }

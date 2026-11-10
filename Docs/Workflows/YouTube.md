@@ -2,7 +2,7 @@
 title: YouTube —— senate cmd youtube（persona 運營頻道、宣傳 Blocksail）
 description: senate cmd youtube 的使用說明：配置環境（先量這台、換一台電腦搬 .enc 或重新授權、從零設定 Google 端的每一格）、persona 平常怎麼上傳（交付單 → dry_run → upload）、改資料只限本工具上傳的影片、交付單欄位與檢查規則、exit code、憑證與上傳帳本住哪、會咬人的幾格。
 cmds: [youtube]
-last_updated: 2026-11-09
+last_updated: 2026-11-10
 target_audience: [AI_Agent, Tim, Tools_Maintainer]
 ---
 
@@ -104,6 +104,9 @@ senate cmd youtube --arg op=upload --arg slip_file=<交付單.json> --arg dry_ru
 senate cmd youtube --arg op=upload --arg slip_file=<交付單.json>                   # 真的上傳
 senate cmd youtube --arg op=update --arg video_id=<id> --arg slip_file=<只寫要改的欄位.json>
 senate cmd youtube --arg op=list [--arg max=20]                              # 頻道最新影片、公開度、觀看／讚／留言
+senate cmd youtube --arg op=playlists                                        # 頻道的播放清單、公開度、支數（唯讀）
+senate cmd youtube --arg op=playlist-create --arg slip_file=<清單交付單.json> [--arg dry_run=1]   # 建播放清單（系列）
+senate cmd youtube --arg op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg dry_run=1]   # 把影片加進清單
 ```
 
 - 上傳成功印 `https://youtu.be/<id>`，然後回讀公開度與處理狀態（剛傳完通常是 `uploaded`，YouTube 還在轉檔）。
@@ -147,6 +150,35 @@ senate cmd youtube --arg op=list [--arg max=20]                              # �
 - **欄位名打錯一律擋**（例如寫成 `privacy_status`）—— 打錯的公開度會被當成沒給，而沒給 ＝ 公開。
 - `update` 的交付單只寫要改的欄位；不能寫 `video`（換片要重傳）。沒寫的欄位維持原樣（工具會先抄現況再蓋上去 —— API 本身會把沒送的欄位清掉）。
 
+### 3.1 播放清單（把同一個主題的影片收成系列）
+
+Tim 2026-11-10：「YT跟B站 是否可以把Senate相關做成系列」。清單交付單也是一個 JSON 物件：
+
+```json
+{
+  "persona": "Claude-Ojousama",
+  "title": "Senate｜讓 AI agent 有名字、有記憶、有同事",
+  "description": "……",
+  "privacy": "public",
+  "videos": ["<影片 id>", "<影片 id>"]
+}
+```
+
+| 欄 | 必填 | 檢查 |
+|---|---|---|
+| `persona` | ✅ | 信件庫裡要有這個人 |
+| `title` | ✅ | ≤ 150 字；不能有 `<` `>` |
+| `privacy` | ✅ | `private`／`unlisted`／`public`。沒寫就擋（API 沒給公開度就是公開） |
+| `description` | | ≤ 5000 bytes；不能有 `<` `>` |
+| `videos` | | 建好之後**依序**加進去的影片 id；只收本工具上傳的、不能重複 |
+
+- **只碰本工具建的清單、只加本工具上傳的影片**：`playlist-add` 的 `playlist_id` 要在清單帳本裡、`video_ids` 要在上傳帳本裡，否則擋。頻道上原本的清單與影片一律不動。
+- **同名的清單已經有了 ⇒ `playlist-create` 擋下**並印那個清單的 id（要加影片用 `playlist-add`）。重跑一次指令就會多一個同名清單，API 不會擋 ⇒ 這一格在送出前先讀頻道現有的清單。真的要再建一個同名的才加 `--arg allow_duplicate=1`。
+- `playlist-add` 先讀清單裡已經有誰：已經在的跳過（API 不擋重複，同一支會出現兩次）。順序＝加進去的順序。
+- 上傳或 `op=update` 時在影片交付單寫 `playlist_id` 也能把那一支加進清單（那條路不查帳本、不查重複）。
+- ⚠ 公開的清單裡放了不公開（unlisted）的影片 ⇒ 那支影片的網址等於跟著清單公開。
+- 沒有改清單標題／說明、移出影片、刪清單的 op ⇒ 到 YouTube Studio 手動做。
+
 ## 4. 擋下的幾種情況
 
 | 情況 | exit | 怎麼辦 |
@@ -168,10 +200,11 @@ senate cmd youtube --arg op=list [--arg max=20]                              # �
 | `youtube_client.enc`／`.txt` | 用戶端 JSON（密文／本機明文） |
 | `youtube_token.enc`／`.txt` | refresh token ＋ 授權的頻道（密文／本機明文） |
 | `youtube_uploads.json` | 上傳帳本：影片 id、誰傳的、標題、公開度、檔案雜湊、時間。`update` 只認這份 |
+| `youtube_playlists.json` | 清單帳本：本工具建過的播放清單 id、誰建的、標題、公開度、時間。`playlist-add` 只認這份 |
 
 - 帳本放這裡而不放資料根其他地方：**unlisted 影片的 id 就等於網址**，進公開 repo 等於公開。
-- 帳本讀不懂（壞檔）⇒ `upload`／`update` 擋下，⛔ 不拿空帳本蓋掉它。
-- 程式：`src/Senate.Core/Cmd_YouTube.cs`（交付單、檢查、帳本）、`src/Senate.Core/YouTubeClient.cs`（憑證、OAuth loopback＋PKCE、API）。
+- 帳本讀不懂（壞檔）⇒ `upload`／`update`／`playlist-create`／`playlist-add` 擋下，⛔ 不拿空帳本蓋掉它。
+- 程式：`src/Senate.Core/Cmd_YouTube.cs`（交付單、檢查、帳本）、`src/Senate.Core/Cmd_YouTube.Playlists.cs`（播放清單那一半）、`src/Senate.Core/YouTubeClient.cs`（憑證、OAuth loopback＋PKCE、API）。
 
 ## 6. 還沒做
 

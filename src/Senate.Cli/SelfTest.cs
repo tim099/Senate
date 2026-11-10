@@ -177,6 +177,7 @@ public static partial class SelfTest
         One(nameof(TavernMsgIndexWriterMaintained), "tavern", TavernMsgIndexWriterMaintained),
         One(nameof(TavernWriteCmdGates), "tavern", TavernWriteCmdGates),
         One(nameof(DiscordMediaCleanRoom), "tavern", DiscordMediaCleanRoom),
+        One(nameof(YouTubePlaylistSlipAndLedgerCleanRoom), "core", YouTubePlaylistSlipAndLedgerCleanRoom),   // 播放清單的交付單與帳本（Tim 2026-11-10）：本體在 SelfTest.YouTubePlaylists.cs
         One(nameof(DiscordReadinessCleanRoom), "tavern", DiscordReadinessCleanRoom),       // 開關開著卻跑不起來要說出來（Tim 2026-11-10）：本體在 SelfTest.DiscordReadiness.cs
         One(nameof(DiscordPeerWebhookCleanRoom), "tavern", DiscordPeerWebhookCleanRoom),   // 同伴 webhook：本體在 SelfTest.DiscordPeer.cs
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
