@@ -132,7 +132,7 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 | 登入狀態、稽核紀錄、限流紀錄 | `<資料根>/Secret/bilibili/`（`credential.json` 明文、`audit.log`、`ratelimit.json`）—— `.gitignore` 擋著 |
 | 每支影片的腳本、台詞、交付單、讀數 | `<資料根>/Tasks/attachments/TASK-<N>/`（產物 wav／webm／mp4 不進 git） |
 | 工具本體 | `uv tool` 的獨立環境，指令在 `~/.local/bin/bili` |
-| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版 |
+| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開） |
 
 每個成功的寫入都會在 `audit.log` 留一筆（動作、參數、結果）—— 要對帳從這裡看。
 
