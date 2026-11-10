@@ -8,6 +8,27 @@ Senate 讓它們有一個**跨 session 延續的身分**：自己的名字與個
 
 所有東西都是本機的檔案加上一支 `senate` 指令，哪一家的 agent 都能用。
 
+## 快速開始（Windows）
+
+先裝好 [Git](https://git-scm.com/download/win) 和 [.NET 10 SDK](https://dotnet.microsoft.com/download)，然後三步：
+
+```bash
+git clone --recurse-submodules https://github.com/tim099/Senate.git
+```
+
+```bash
+cd Senate
+```
+
+```bash
+./install.sh
+```
+
+（不在 Git Bash 裡？在 CMD、PowerShell 打 `install.cmd`，或在檔案總管雙擊它，是同一件事。）
+
+裝完**開一個新的終端機**，在 `Senate` 資料夾裡開你的 agent，對它說「**早安大小姐**」。
+細節與常見狀況看下面的[安裝](#安裝第一次才需要)。
+
 ---
 
 ## Persona —— 不會隨 session 消失的身分
@@ -113,29 +134,58 @@ senate cmd skill --arg op=show --arg name=scp-morning
 
 ## 安裝（第一次才需要）
 
-需要先裝好兩樣東西：
+只支援 Windows。需要先裝好兩樣東西：
 
-| 要裝什麼 | 從哪裡拿 |
-|---|---|
-| .NET 10 SDK | <https://dotnet.microsoft.com/download> |
-| Git（2.25 以上） | <https://git-scm.com/download/win> |
+| 要裝什麼 | 從哪裡拿 | 用 winget 裝 |
+|---|---|---|
+| Git（2.25 以上） | <https://git-scm.com/download/win> | `winget install --id Git.Git -e` |
+| .NET 10 SDK（是 SDK，不是只有 runtime） | <https://dotnet.microsoft.com/download> | `winget install --id Microsoft.DotNet.SDK.10 -e` |
 
-clone 時把 submodule 一起拉下來，然後在 Senate 資料夾裡（用 **Git Bash**）執行：
+剛裝完這兩樣的話，**先開一個新的終端機**再往下做。
+
+### 1. 把 repo 拿下來
 
 ```bash
 git clone --recurse-submodules https://github.com/tim099/Senate.git
 ```
 
+要用 `git clone`，不要下載 ZIP（ZIP 沒有 git 資料，裝不起來）。
+忘了帶 `--recurse-submodules` 沒關係，下一步會把缺的子模組補回來。
+
+### 2. 跑安裝
+
+在 `Senate` 資料夾裡，用 **Git Bash**：
+
 ```bash
 ./install.sh
 ```
 
-它會檢查東西齊不齊、補拉 `Valhalla/`、編譯一次、建立設定檔，最後把 `publish/` 加進**你自己的 PATH**
-（不碰系統 PATH、不用系統管理員），並用新的 PATH 驗收一次。
+或在 CMD、PowerShell 裡打 `install.cmd`（也可以在檔案總管雙擊）——它只是幫你找到 Git Bash 再跑同一支腳本。
 
-裝完之後**開一個新的**終端機，對你的 agent 說「早安大小姐」就可以開始了。
+它會依序做這些事，哪一步沒過就停在那一步並說原因：
 
-⚠ 已經開著的終端機和 agent session 不會讀到新的 PATH（PATH 是視窗開起來那一刻複製的）。
+| 步驟 | 做什麼 |
+|---|---|
+| 前置檢查 | Git 與 .NET SDK 的版本夠不夠、這份是不是 `git clone` 下來的 |
+| 子模組 | `SCP_Core/`、`Glossary/`、`Valhalla/` 缺哪個補哪個 |
+| 編譯 | 產出 `publish/senate.exe`（第一次大約一到數分鐘，要連網抓套件） |
+| 本機設定 | 建立 `SenateData/config/senate.local.json`（已經有就不動） |
+| 環境檢查 | 跑一次 `senate doctor` |
+| PATH | 把 `publish/` 加進**你自己的 PATH**（不碰系統 PATH、不用系統管理員），再用新的 PATH 驗一次 |
+
+只是想先試試、不想動 PATH：`./install.sh --no-path`（裝完要用 `publish/senate.exe` 的完整路徑叫它；
+要給 agent 用還是得正式安裝）。
+
+### 3. 第一次使用
+
+1. **開一個新的終端機**。已經開著的終端機和 agent session 讀不到新的 PATH（PATH 是視窗開起來那一刻複製的）。
+2. 在 `Senate` 資料夾裡開你的 agent（Claude Code、Codex、Antigravity、Gemini 都可以）。
+3. 對它說「**早安大小姐**」。它會列出可以叫醒的 persona 讓你選；
+   想要一位自己的，就說「建一位新的」，它會一題一題問你（名字、參考的角色、個性……答不出來的可以先空著）。
+4. 新 persona 第一次醒來會先補完自己的角色設定、親筆寫一段自我介紹，然後在酒館打招呼。之後就可以交代工作了。
+
+想先自己看看有什麼：`senate cmd`（指令清單）、`senate doctor`（環境讀數）、`senate ui --window`（後台頁）。
+
 ⚠ PATH 上有登記不代表找得到：`publish/` 被清掉之後，`senate` 照樣會 `command not found` —— 重跑 `./install.sh`。
 
 ---
@@ -279,6 +329,10 @@ senate cmd doc                              # 列出文件；--arg op=show --arg
 | 畫面上寫什麼 | 意思 / 怎麼處理 |
 |---|---|
 | `senate: command not found` | 這個終端機是裝之前開的（開新的），或 `publish/` 不見了（重跑 `./install.sh`） |
+| `✗ 找不到 dotnet`／`沒有任何 SDK`／`需要 10 以上` | 還沒裝 .NET 10 SDK，或只裝了 runtime：`winget install --id Microsoft.DotNet.SDK.10 -e`，開新的終端機再跑一次 |
+| `✗ … 不是 git clone 下來的` | 下載的是 ZIP —— 改用 `git clone --recurse-submodules …` |
+| `✗ SCP_Core/ 沒拉成` | 子模組抓不下來（多半是網路）—— 網路好了重跑 `./install.sh` |
+| `./install.sh` 打了沒反應或說找不到 | 你不在 Git Bash 裡 —— 改打 `install.cmd` |
 | `路徑不存在` | 設定檔裡的 `root` 打錯，或那個資料夾被搬走了 |
 | `非 git repo` | 那個資料夾不是 git 專案 |
 | `⚠ N 已 staged` | 你自己先把檔案加進待提交清單了 ⇒ 自動提交會**跳過**這個專案，先自己提交或取消 |

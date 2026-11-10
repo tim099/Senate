@@ -11,7 +11,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 
 | 腳本 | 做什麼 |
 |---|---|
-| `install.sh` | **一台機器的唯一入口**：檢查前置 → 呼叫 `build.*` → `senate init`（建本機設定，已存在則不覆寫）→ 清掉別份 clone 的 PATH 註冊 → 掛使用者 PATH → 驗收（`senate` 要解析到**這一份**）。`--uninstall` 轉給 `uninstall.sh --artifacts` |
+| `install.sh` | **一台機器的唯一入口**：檢查前置（git 版本、.NET SDK 主版號、是不是 git clone 下來的）→ 補缺的子模組 → 呼叫 `build.sh --no-window` → `senate init`（建本機設定，已存在則不覆寫）→ `senate doctor` → 清掉別份 clone 的 PATH 註冊 → 掛使用者 PATH → 驗收（`senate` 要解析到**這一份**）→ 印「第一次使用」的下一步。`--no-path` ＝ 試裝（不動 PATH）；`--uninstall` 轉給 `uninstall.sh --artifacts` |
+| `install.cmd` | 給檔案總管雙擊、CMD、PowerShell 用的入口：**只**找 Git Bash，把參數原樣交給 `install.sh`。⛔ 裡面沒有任何安裝邏輯 |
 | `uninstall.sh` | **解除註冊的唯一實作**：把使用者 PATH 上所有 Senate 的條目拿掉（預設只動 PATH）。`--artifacts` 再清 build 產物、`--purge` 再清 `SenateData/`、`--dry-run` 只印計畫 |
 | `build.sh` | `dotnet publish` **兩次**（self-contained）**到 `build/stage/`**：`senate.exe` ＋ `server/senate-server.exe`（常駐 Server，零 GUI 原生層；**同一個 build_id**）。編譯期間 `publish/` 與在跑的 Server 都不動；編譯成功才 **落旗標 → 停舊 Server／收視窗 → 複製進 `publish/` → 收旗標 → 起回新 Server**，並印出停機秒數（TASK-0438）→ 在根層放雙擊用的 `senate.lnk`。編譯失敗 ⇒ 什麼都沒停。⛔ **不做驗收**（2026-09-07 起分離）—— 但收尾會明講「本次沒有驗收」並印出指令 |
 | `check.sh` | **出廠驗收四關**（doctor／selftest／開窗／Server round-trip），對 `publish/` 那顆 exe 跑。`--gates` 挑關、`--only` 挑 selftest 項目 |
@@ -24,6 +25,8 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 > 第二條 build 路徑不是備援，是分岔。
 
 **規矩**：腳本只做編排，**所有判斷都在 C# 裡**（`senate doctor`）。
+例外只有一段：`install.sh` 開頭的前置檢查（git、.NET SDK 主版號、有沒有 `.git`、子模組在不在）——
+`doctor` 住在 exe 裡，而 exe 要靠這幾樣才 build 得出來。exe 生出來之後的判定照舊交給 `doctor`。
 🩸 理由：檢查邏輯寫進腳本 = PowerShell 版與 sh 版兩份會漂的實作，
 而漂掉的症狀是「兩台機器都說 OK，但檢查的東西不一樣」。
 
@@ -276,7 +279,18 @@ PATH 上還是舊的，而兩顆 exe 印一樣的 usage）。
 - 系統 PATH 上有 Senate（要管理員）⇒ `uninstall.sh` 只列出來、不動，非零退出 —— 它排在使用者 PATH 前面。
 - 出廠驗收：用「系統＋使用者 PATH 重組」模擬新視窗，從 `%TEMP%` 解析並跑一次；
   **解析到的目錄必須是這一份的 `publish\`** —— 只問「找不找得到」的話，前面有別份時照樣綠燈
-- **build 沒過就不掛 PATH** —— 裝一條指向壞產物的 PATH，之後每個錯都會被怪到 PATH 上。
+- **build 沒過就不掛 PATH** —— 裝一條指向壞產物的 PATH，之後每個錯都會被怪到 PATH 上。`doctor` 沒過也一樣。
+- **前置檢查量的是 SDK，不是 `dotnet` 在不在**：取 `dotnet --list-sdks` 裡最大的主版號，要 10 以上。
+  🩸 2026-11-10：舊版只問 `dotnet` 找不找得到 —— 只有 runtime、或只有舊 SDK 時照樣放行，然後在 build 裡撞一個指向編譯的錯。
+- **子模組缺哪個補哪個**（`SCP_Core`／`Glossary`／`Valhalla`）：`SCP_Core` 補不成就停（沒有它編不出來），另外兩個補不成只警告。已經在的不動。
+  🩸 2026-11-10：舊版只補 `Valhalla`；沒帶 `--recurse-submodules` 的 clone 會一路跑到 build 才失敗。
+- **`--no-path` 試裝**：前面每一步照做，但**不寫 PATH、不清別份的註冊**，結尾印完整路徑。
+  用在「先看看」與「在已經裝了一份的機器上測另一份」——測安裝流程本身也走這條，⛔ 不要為了測而把正在用的那一份換掉。
+- **安裝時 build 不開後台視窗**（`build.sh --no-window`）：那一刻本機設定還沒建，新來的人也不知道那顆視窗是什麼；怎麼開寫在結尾的下一步裡。
+- **結尾的「下一步」只印跑得動的東西**。🩸 2026-11-10：舊版印的 `senate cmd status`、`senate cmd run Task …` 兩支早就不存在，
+  新來的人照著打的第一行就是錯誤。改這一段之後，把印出來的每一行各跑一次。
+- **改完安裝流程要在乾淨的 clone 上跑一遍**（不帶登入憑證、不帶 `--recurse-submodules`、`./install.sh --no-path`），
+  再用那一份走到「新 persona 在酒館發出第一則自介」。讀數寫在任務單上（第一次：TASK-0003）。
 
 > ⛔ **刻意沒有 `--no-gui`**（Tim 2026-09-01 拍板）。開窗那格在遠端桌面／無 GPU 的機器上會失敗，
 > 而出口已經有一個：`./install.sh --skip-build`（`-SkipBuild`）。
