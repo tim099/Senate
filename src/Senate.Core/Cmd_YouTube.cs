@@ -36,7 +36,7 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
         + "· `op=playlists`：頻道的播放清單＋公開度＋支數，標出哪些是 Senate 建的。\n"
         + "· `op=playlist-create --arg slip_file=<清單交付單.json> [--arg dry_run=1] [--arg allow_duplicate=1]`：建播放清單；同名的已經有了就擋。"
         + "交付單欄位：persona、title、privacy（必填）、description、videos（建好之後依序加進去的影片 id，只收本工具上傳的）。\n"
-        + "· `op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg dry_run=1]`：把本工具上傳的影片加進**本工具建的**清單；已經在裡面的跳過。\n"
+        + "· `op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg position=<第幾個，0 起算>] [--arg dry_run=1]`：把本工具上傳的影片加進**本工具建的**清單；已經在裡面的跳過；沒給 position 就加在最後。\n"
         + "交付單欄位：persona、video、title、description、privacy（private／unlisted／public，必填）、tags、category_id（預設 20 遊戲）、"
         + "made_for_kids（預設 false）、synthetic_media（預設 false）、language、thumbnail、playlist_id。欄位表與限制看 `Docs/Workflows/YouTube.md`。";
 
@@ -60,6 +60,7 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
         new SCP_CmdArgSpec("max", "list：最多列幾支（1–50）", iDefault: "20"),
         new SCP_CmdArgSpec("playlist_id", "playlist-add：要加進去的播放清單 id（必須是本工具建的）", iDefault: ""),
         new SCP_CmdArgSpec("video_ids", "playlist-add：影片 id，逗號分隔（必須是本工具上傳的）", iDefault: ""),
+        new SCP_CmdArgSpec("position", "playlist-add：從第幾個位置開始插入（0 ＝ 最前面）；空＝加在最後", iDefault: ""),
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（憑證住 <資料根>/Secret/）", iRequired: true),
         new SCP_CmdArgSpec("letters_root", "信件庫根（驗 persona 存在）", iDefault: ""),
     };

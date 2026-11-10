@@ -46,6 +46,12 @@ public static partial class SelfTest
             if (Cmd_YouTube.LintPlaylist(Slip("T", "private"), "", null).Count != 0) aFails.Add("沒寫 videos 時，帳本讀不了不該擋");
             if (!Cmd_YouTube.LintPlaylist(Slip("T", "private"), aData, aUploaded).Any(x => x.Contains("persona"))) aFails.Add("信件庫裡沒有這個 persona 應該擋");
 
+            // ── 哪種錯誤要重試：只有 409（🩸 清單剛建好就加影片會回它）；其他的照實報 ──
+            if (!Cmd_YouTube.IsRetryableAddError("POST /playlistItems 失敗：HTTP 409 SERVICE_UNAVAILABLE：The operation was aborted.")) aFails.Add("409 應該重試");
+            if (Cmd_YouTube.IsRetryableAddError("POST /playlistItems 失敗：HTTP 403 forbidden")) aFails.Add("403 不該重試");
+            if (Cmd_YouTube.IsRetryableAddError("POST /playlistItems 失敗：HTTP 404 videoNotFound")) aFails.Add("404 不該重試");
+            if (Cmd_YouTube.IsRetryableAddError(null)) aFails.Add("沒有錯誤訊息不該重試");
+
             // ── 清單帳本：沒有檔 ⇒ 空；存 ⇒ 讀回一樣；壞檔 ⇒ null（⛔ 不能當成空的） ──
             Directory.CreateDirectory(aData);
             List<Cmd_YouTube.PlaylistEntry>? aEmpty = Cmd_YouTube.LoadPlaylistLedger(aData, out string? aLErr);
@@ -59,7 +65,7 @@ public static partial class SelfTest
             if (Cmd_YouTube.LoadPlaylistLedger(aData, out aLErr) != null || string.IsNullOrEmpty(aLErr)) aFails.Add("壞掉的帳本應該回 null ＋ 原因（不能當成空的蓋掉）");
 
             return aFails.Count == 0
-                ? new CheckRow(aName, "解析 4 格、檢查 11 格、帳本 4 格都過（連網的建立與加入這裡不量）", CheckResult.Pass)
+                ? new CheckRow(aName, "解析 4 格、檢查 11 格、重試判定 4 格、帳本 4 格都過（連網的建立與加入這裡不量）", CheckResult.Pass)
                 : new CheckRow(aName, string.Join("；", aFails), CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(aName, "例外：" + e.Message, CheckResult.Fail); }

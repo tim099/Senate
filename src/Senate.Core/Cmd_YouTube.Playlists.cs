@@ -7,6 +7,9 @@
 //   · 建立前先讀頻道現有的清單：同名的已經有了 ⇒ 擋下（`allow_duplicate=1` 才照建）。🩸 重跑一次指令就多一個同名清單，而 API 不會擋。
 //   · 加影片前先讀清單裡已經有誰：已經在的跳過（playlistItems.insert 不會擋重複，同一支會出現兩次）。
 //   · `dry_run=1` ⇒ 只檢查、只印要送的內容；⛔ 不連網寫入（列清單那一步是唯讀的，照做，才知道會不會撞名）。
+//   · 🩸 2026-11-10 第一次實跑：清單剛建好就加影片，三支裡第一支回 `HTTP 409 SERVICE_UNAVAILABLE：The operation was aborted`，後兩支成功
+//     ⇒ 加影片遇到 409 等 2 秒重試（最多 3 次）。補加的那一支會排到最後 ⇒ `playlist-add` 多一個 `position`（插在第幾個）。
+//   · 回讀印**清單裡實際的順序**（讀 playlistItems）—— 清單本身的 itemCount 會慢半拍（那次建完立刻讀是 1，實際已經 2 支）。
 #nullable enable
 using System.Globalization;
 using System.Text;
@@ -195,15 +198,33 @@ public sealed partial class Cmd_YouTube
         return true;
     }
 
-    /// <summary>把影片依序加進清單；已經在裡面的跳過。回傳（加了幾支，跳過幾支，失敗幾支）。</summary>
-    static (int Added, int Skipped, int Failed) AddVideos(SCP_CmdResult r, string iAccess, string iPlaylistId, List<string> iVideoIds, HashSet<string> iAlready)
+    public const int AddRetryMax = 3;
+    public const int AddRetryDelayMs = 2000;
+
+    /// <summary>這個錯誤值不值得重試：YouTube 在清單剛建好／連續寫入時會回 409「The operation was aborted」。</summary>
+    public static bool IsRetryableAddError(string? iError) => iError != null && iError.Contains("HTTP 409", StringComparison.Ordinal);
+
+    /// <summary>把影片依序加進清單；已經在裡面的跳過。`iPosition` ≥ 0 ⇒ 從那個位置開始依序插入；負的 ⇒ 加在最後。
+    /// 回傳（加了幾支，跳過幾支，失敗幾支）。</summary>
+    static (int Added, int Skipped, int Failed) AddVideos(SCP_CmdResult r, string iAccess, string iPlaylistId, List<string> iVideoIds, HashSet<string> iAlready, int iPosition = -1)
     {
         int aAdded = 0, aSkipped = 0, aFailed = 0;
         foreach (string id in iVideoIds)
         {
             if (iAlready.Contains(id)) { aSkipped++; r.Lines.Add($"- `{id}`：已經在清單裡，跳過"); continue; }
-            if (YouTubeClient.TryAddToPlaylist(iAccess, iPlaylistId, id, out string? aErr)) { aAdded++; iAlready.Add(id); r.Lines.Add($"- `{id}`：✓ 已加入"); }
-            else { aFailed++; r.Lines.Add($"- `{id}`：✗ {aErr}"); }
+            int aPos = iPosition >= 0 ? iPosition + aAdded : -1;
+            string? aErr = null;
+            bool aOk = false;
+            int aTry = 0;
+            for (aTry = 1; aTry <= AddRetryMax; aTry++)
+            {
+                aOk = YouTubeClient.TryAddToPlaylist(iAccess, iPlaylistId, id, out aErr, aPos);
+                if (aOk || !IsRetryableAddError(aErr) || aTry == AddRetryMax) break;
+                Thread.Sleep(AddRetryDelayMs);
+            }
+            string aNote = (aPos >= 0 ? $"（位置 {aPos}）" : "") + (aTry > 1 ? $"（第 {aTry} 次才成；前面回 409）" : "");
+            if (aOk) { aAdded++; iAlready.Add(id); r.Lines.Add($"- `{id}`：✓ 已加入{aNote}"); }
+            else { aFailed++; r.Lines.Add($"- `{id}`：✗ {aErr}{(aTry > 1 ? $"（試了 {aTry} 次）" : "")}"); }
         }
         return (aAdded, aSkipped, aFailed);
     }
@@ -214,10 +235,15 @@ public sealed partial class Cmd_YouTube
         { r.Lines.Add("- ⚠ 回讀失敗：" + aErr); return; }
         if (j["items"].Count == 0) { r.Lines.Add("- ⚠ 回讀：查不到這個清單"); return; }
         SCP_JsonData it = j["items"][0];
-        int aCount = it["contentDetails"].GetInt("itemCount", 0);
+        // 支數與順序讀 playlistItems（清單本身的 itemCount 會慢半拍）
+        bool aGotItems = TryListPlaylistVideoIds(iAccess, iPlaylistId, out List<string> aIds, out string? aItemsErr);
+        int aCount = aGotItems ? aIds.Count : it["contentDetails"].GetInt("itemCount", 0);
         r.Lines.Add($"- 回讀：公開度 **{it["status"].GetString("privacyStatus", "?")}**　{aCount} 支　標題「{it["snippet"].GetString("title", "")}」");
+        if (aGotItems) r.Lines.Add("- 清單裡的順序：" + (aIds.Count == 0 ? "（空的）" : string.Join(" → ", aIds.Select(x => "`" + x + "`"))));
+        else r.Lines.Add("- ⚠ 清單內容讀不到（支數是清單自己報的，可能慢半拍）：" + aItemsErr);
         r.AddValue("privacy", it["status"].GetString("privacyStatus", ""));
         r.AddValue("item_count", aCount.ToString(CultureInfo.InvariantCulture));
+        if (aGotItems) r.AddValue("items", string.Join(",", aIds));
     }
 
     // ── op=playlists ────────────────────────────────────────────
@@ -319,6 +345,10 @@ public sealed partial class Cmd_YouTube
         List<string> aIds = iArgs.Get("video_ids").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
         if (aPl.Length == 0) return SCP_CmdResult.Fail(2, "✗ op=playlist-add 要給 --arg playlist_id=<id>");
         if (aIds.Count == 0) return SCP_CmdResult.Fail(2, "✗ op=playlist-add 要給 --arg video_ids=<id,id,…>");
+        int aPosition = -1;
+        string aPosArg = iArgs.Get("position").Trim();
+        if (aPosArg.Length > 0 && (!int.TryParse(aPosArg, NumberStyles.None, CultureInfo.InvariantCulture, out aPosition) || aPosition < 0))
+            return SCP_CmdResult.Fail(2, $"✗ `position` 要是 0 以上的整數（0 ＝ 最前面；收到 '{aPosArg}'）");
         List<PlaylistEntry>? aLedger = LoadPlaylistLedger(iRoot, out string? aLedgerErr);
         if (aLedger == null) return SCP_CmdResult.Fail(2, "✗ 清單帳本讀不了：" + aLedgerErr);
         PlaylistEntry? aMine = aLedger.FirstOrDefault(x => x.PlaylistId == aPl);
@@ -336,10 +366,12 @@ public sealed partial class Cmd_YouTube
         if (iArgs.Get("dry_run") == "1")
         {
             r.Lines.Add("## 將做的事（dry_run ⇒ 沒送）");
-            foreach (string id in aIds) r.Lines.Add(aAlready.Contains(id) ? $"- `{id}`：已經在清單裡，會跳過" : $"- `{id}`：會加入");
+            int aN = 0;
+            foreach (string id in aIds)
+                r.Lines.Add(aAlready.Contains(id) ? $"- `{id}`：已經在清單裡，會跳過" : $"- `{id}`：會加入{(aPosition >= 0 ? $"（位置 {aPosition + aN++}）" : "（最後）")}");
             return r;
         }
-        var (aAdded, aSkipped, aFailed) = AddVideos(r, aAccess, aPl, aIds, aAlready);
+        var (aAdded, aSkipped, aFailed) = AddVideos(r, aAccess, aPl, aIds, aAlready, aPosition);
         r.AddValue("playlist_id", aPl);
         r.AddValue("added", aAdded.ToString(CultureInfo.InvariantCulture));
         r.AddValue("skipped", aSkipped.ToString(CultureInfo.InvariantCulture));

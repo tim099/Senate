@@ -106,7 +106,7 @@ senate cmd youtube --arg op=update --arg video_id=<id> --arg slip_file=<只寫�
 senate cmd youtube --arg op=list [--arg max=20]                              # 頻道最新影片、公開度、觀看／讚／留言
 senate cmd youtube --arg op=playlists                                        # 頻道的播放清單、公開度、支數（唯讀）
 senate cmd youtube --arg op=playlist-create --arg slip_file=<清單交付單.json> [--arg dry_run=1]   # 建播放清單（系列）
-senate cmd youtube --arg op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg dry_run=1]   # 把影片加進清單
+senate cmd youtube --arg op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg position=0] [--arg dry_run=1]   # 把影片加進清單
 ```
 
 - 上傳成功印 `https://youtu.be/<id>`，然後回讀公開度與處理狀態（剛傳完通常是 `uploaded`，YouTube 還在轉檔）。
@@ -174,7 +174,11 @@ Tim 2026-11-10：「YT跟B站 是否可以把Senate相關做成系列」。清�
 
 - **只碰本工具建的清單、只加本工具上傳的影片**：`playlist-add` 的 `playlist_id` 要在清單帳本裡、`video_ids` 要在上傳帳本裡，否則擋。頻道上原本的清單與影片一律不動。
 - **同名的清單已經有了 ⇒ `playlist-create` 擋下**並印那個清單的 id（要加影片用 `playlist-add`）。重跑一次指令就會多一個同名清單，API 不會擋 ⇒ 這一格在送出前先讀頻道現有的清單。真的要再建一個同名的才加 `--arg allow_duplicate=1`。
-- `playlist-add` 先讀清單裡已經有誰：已經在的跳過（API 不擋重複，同一支會出現兩次）。順序＝加進去的順序。
+- `playlist-add` 先讀清單裡已經有誰：已經在的跳過（API 不擋重複，同一支會出現兩次）。
+  順序＝加進去的順序；要插隊給 `--arg position=<第幾個>`（0 ＝ 最前面，多支就從那個位置依序排下去）。
+- 🩸 清單剛建好就加影片，YouTube 可能回 `HTTP 409 SERVICE_UNAVAILABLE：The operation was aborted`（2026-11-10：三支裡第一支被擋、後兩支成功）
+  ⇒ 工具遇到 409 會等 2 秒重試、最多 3 次，輸出會註明「第幾次才成」。試完還是失敗 ⇒ 過一會兒用 `playlist-add` 補那一支。
+- 回讀印的是**清單裡實際的順序**；清單自己報的支數會慢半拍，以那一行為準。
 - 上傳或 `op=update` 時在影片交付單寫 `playlist_id` 也能把那一支加進清單（那條路不查帳本、不查重複）。
 - ⚠ 公開的清單裡放了不公開（unlisted）的影片 ⇒ 那支影片的網址等於跟著清單公開。
 - 沒有改清單標題／說明、移出影片、刪清單的 op ⇒ 到 YouTube Studio 手動做。

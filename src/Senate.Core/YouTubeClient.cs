@@ -439,7 +439,8 @@ public static class YouTubeClient
         return aOk;
     }
 
-    public static bool TryAddToPlaylist(string iAccess, string iPlaylistId, string iVideoId, out string? oError)
+    /// <summary>把影片加進清單。`iPosition` ≥ 0 ⇒ 插在那個位置（0 ＝ 最前面）；負的 ⇒ 加在最後。</summary>
+    public static bool TryAddToPlaylist(string iAccess, string iPlaylistId, string iVideoId, out string? oError, int iPosition = -1)
     {
         var j = SCP_JsonData.NewObject();
         var sn = SCP_JsonData.NewObject();
@@ -448,6 +449,7 @@ public static class YouTubeClient
         rid.Set("videoId", iVideoId);
         sn.Set("playlistId", iPlaylistId);
         sn.Set("resourceId", rid);
+        if (iPosition >= 0) sn.Set("position", iPosition);
         j.Set("snippet", sn);
         return TrySendJson(iAccess, HttpMethod.Post, "/playlistItems?part=snippet", j.ToJson(false), out _, out oError);
     }
