@@ -1,13 +1,13 @@
 ---
 title: Bilibili —— persona 在 B 站投稿、跟人互動（bili-cli）
-description: persona 用 bili 指令在 Tim 的 B 站帳號投稿影片、看留言的使用說明：先量這台（沒裝、沒登入就去讀 Bilibili_Install）、投稿流程（交付單 → 預演 → 僅自己可見 → 讀回 → 公開）、交付單欄位、互動的範圍與紀律（留言署名還沒做成指令前不發留言；讀新消息會標已讀，Tim 說沒關係）、擋下的幾種情況、東西住哪、還沒做的。
-last_updated: 2026-11-10
+description: persona 用 bili 指令在 Tim 的 B 站帳號投稿影片、留言互動的使用說明：先量這台（沒裝、沒登入就去讀 Bilibili_Install）、投稿流程（交付單 → 預演 → 僅自己可見 → 讀回 → 公開）、交付單欄位、互動的範圍與紀律（留言一律走 `senate cmd bilibili`，署名由指令補；每個 persona 可以配 1～N 組署名；讀新消息會標已讀，Tim 說沒關係）、擋下的幾種情況、東西住哪、還沒做的。
+last_updated: 2026-11-11
 target_audience: [AI_Agent, Tim, Tools_Maintainer]
 ---
 
 # 📺 Bilibili
 
-> 一句話：**寫交付單 → `--dry-run` 預演 → 用「僅自己可見」投稿 → 讀回狀態；留言署名的指令做好之前，不發任何留言。**
+> 一句話：**寫交付單 → `--dry-run` 預演 → 用「僅自己可見」投稿 → 讀回狀態；留言一律走 `senate cmd bilibili`（署名由指令補），⛔ 不直接打 `bili comment post`。**
 > 工具是開源、非官方的 `bili`（bili-agent）。參數看 `PYTHONUTF8=1 bili <指令> --help`，全部指令的機器可讀描述是 `bili schema`。
 > 方案的來由、平台事實、風險看 [Bilibili_Proposal](Bilibili_Proposal.md)。
 > 🎬 要自己做影片（HTML 動畫、日語配音、混音）⇒ 那時才讀 [YouTube_Video_Tools](YouTube_Video_Tools.md)，產線是同一條。
@@ -87,15 +87,43 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 
 ## 4. 互動
 
-**現在開放到哪**（Tim 2026-11-10）：
+**現在開放到哪**（Tim 2026-11-10；去別人的影片留言是 2026-11-11 放開的）：
 
 | 事 | 狀態 |
 |---|---|
 | 讀自己稿件的留言 | ✅ `bili comment list <BV號> --unreplied`（只列 UP 主還沒回的） |
 | 看稿件數據 | ✅ `bili upload stats <BV號>`、`bili upload list` |
 | 看未讀數量、新消息 | ✅ `bili feed notifications`（只給數字，不會標已讀）、`bili feed inbox`（回覆、@、讚、系統通知一次看；會標已讀） |
-| 回自己稿件底下的留言 | ⛔ **還不行** —— Tim：「留言自動帶上當前persona(參考酒館發言)」，這支指令還沒做（§8）；做好之前不發任何留言 |
-| 去別人的影片留言、發動態、私訊、點讚、投幣、關注 | ⛔ 還沒開放（Tim：「可以先只回自己影片留言」） |
+| 回自己稿件底下的留言 | ✅ `senate cmd bilibili --arg op=reply --arg persona=<P> --arg target=<BV號> --arg rpid=<那則留言> --arg-file body=<內文檔>`（回樓中樓多帶 `--arg root=<根留言>`）。署名由指令補（§4.1） |
+| 去別人的影片留言 | ✅ Tim 2026-11-11：「接著嘗試到其他影片下跟人互動吸引流量吧」。`senate cmd bilibili --arg op=comment --arg persona=<P> --arg target=<BV號> --arg-file body=<內文檔>`；先帶 `--arg dry_run=1` 看全文。不放連結、只說對得回讀數的事、一支影片一則、一次少量 —— 細節與理由在工作記憶 `bilibili-ops` |
+| 發動態、私訊、點讚、投幣、關注 | ⛔ 還沒開放 |
+
+### 4.1 留言與署名：`senate cmd bilibili`
+
+帳號暱稱是 Tim 的；留言不署名，讀的人會以為是他本人說的 ⇒ **內文由 persona 寫，署名由指令補在末行**
+（Tim 2026-11-10：「留言自動帶上當前persona(參考酒館發言)」）。參數表看 `senate cmd help bilibili`。
+
+```bash
+senate cmd bilibili --arg op=status --arg persona=<P>                    # bili 在不在、登入了沒、帳本幾筆、配了幾組署名
+senate cmd bilibili --arg op=signatures --arg persona=<P>                # 列出署名
+senate cmd bilibili --arg op=signature-add --arg persona=<P> --arg text="——<名字>（AI，借 Tim 的账号发言）"
+senate cmd bilibili --arg op=signature-remove --arg persona=<P> --arg index=<第幾組>
+senate cmd bilibili --arg op=comment --arg persona=<P> --arg target=<BV號> --arg-file body=<內文檔> --arg dry_run=1
+senate cmd bilibili --arg op=comment --arg persona=<P> --arg target=<BV號> --arg-file body=<內文檔>
+senate cmd bilibili --arg op=log                                         # 本指令發過的留言
+```
+
+- **署名**（Tim 2026-11-11：「可以自由配置屬名(每個persona可以配置1~N組 有多組可以隨機)」「沒有配置屬名時 要有一組預設(根據persona 例如 ——Claude-Ojousama)」）：
+  每個 persona 自己配，住 `<信件庫>/<persona>/profile/bilibili_signatures.md`（一行一組）。
+  沒配置 ⇒ 用預設 `——<persona>（<登入時的模型>）`（例：`——Claude-Ojousama（claude-fable-5-2）`；讀不到模型就只有名字）；配一組 ⇒ 用那一組；配多組 ⇒ **每則隨機挑一組**，要指定帶 `--arg index=<第幾組>`。輸出會說這一則用了哪一組。
+- **模型自動帶**（Tim 2026-11-11：「簽名可以直接自動顯示登入時的模型(例如 claude-fable-5-2)」）：模型讀早安寫進 `profile/model.md` 的那一行。
+  自訂的署名裡寫 `{model}` 會換成它、`{persona}` 換成名字（例：`——{persona}（{model}，借 Tim 的账号发言）`）；用了 `{model}` 卻讀不到模型 ⇒ 擋下，不發一個空括號。
+- **內文不要自己寫署名**：末行已經是署名（等於任何一組配置的、等於預設的、或「——」開頭又帶著 persona 的名字）⇒ 擋下，不署兩次。
+- **同一個地方只說一次**：同一支影片已經用本指令留過根留言、同一則留言已經回過 ⇒ 擋下；真的要再說帶 `--arg allow_duplicate=1`。
+  ⚠ 這道閘只看本指令的帳本 —— 2026-11-11 指令做好之前親手發的 3 則（BV1H4x56GETJ、BV1Jfnu6jEe6、BV1gVHA6mEbS）不在帳本裡，那三支不要再留。
+- **結果三態**：exit 0 已發（順便印 `bili comment check` 的讀回：找得到／看得到／折疊／隱藏）；exit 1 **確定沒發**（`bili` 回 `ok=false`）；
+  exit 7 **不知道**（逾時、輸出讀不懂）⇒ 先 `bili comment list <BV號>` 讀回，⛔ 別直接重送。exit 2 是送出前就擋下。
+- 連署名一共不超過 1000 字。本指令不代你 @ 人、不帶圖。
 
 - 「自己的稿件」＝ persona 用這套流程投的（任務單與附件裡有 BV 號的）。Tim 原本的稿件不碰：不回它們的留言、不改它們的資料。
 - **`bili feed inbox`、`feed replies`、`feed mentions`、`feed likes`、`feed system` 可以跑**。⚠ 讀了之後 B 站會把那些訊息標成已讀、未讀數歸零 ——
@@ -135,15 +163,16 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 |---|---|
 | 登入狀態、稽核紀錄、限流紀錄 | `<資料根>/Secret/bilibili/`（`credential.json` 明文、`audit.log`、`ratelimit.json`）—— `.gitignore` 擋著 |
 | 每支影片的腳本、台詞、交付單、讀數 | `<資料根>/Tasks/attachments/TASK-<N>/`（產物 wav／webm／mp4 不進 git） |
-| 工具本體 | `uv tool` 的獨立環境，指令在 `~/.local/bin/bili` |
-| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開） |
+| 工具本體 | `uv tool` 的獨立環境，指令在 `~/.local/bin/bili`；留言那一層是 `senate cmd bilibili`（`src/Senate.Core/Cmd_Bilibili.cs`） |
+| 留言的署名 | `<信件庫>/<persona>/profile/bilibili_signatures.md`（一行一組；用 `op=signature-add／signature-remove` 改） |
+| 留言帳本 | `<資料根>/Secret/bilibili/senate_comments.json`（BV、rpid、persona、用了哪一組署名、全文、時間）—— 跟登入狀態同一個資料夾，不進 git |
+| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開）；TASK-0008：`BV11yWj6SEU3`（運營檢討會 #1，中文語音，僅自己可見，等 Tim 看） |
 
 每個成功的寫入都會在 `audit.log` 留一筆（動作、參數、結果）—— 要對帳從這裡看。
 
 ## 8. 還沒做
 
-- **留言自動帶 persona 的指令**（Tim 2026-11-10 拍板的做法，參考酒館發言由指令補身分）—— 做好之前 §4 的回留言不開放。
-- `senate cmd bilibili` 包一層：交付單檢查、投稿帳本、酒館公告領薪、數據進 wake brief（[Bilibili_Proposal](Bilibili_Proposal.md) §5 階段 ④）。
-- 去別人的影片留言、發動態、私訊：等 Tim 放開。
+- `senate cmd bilibili` 目前只管留言。還沒包進去的：交付單檢查、投稿帳本、酒館公告領薪、數據進 wake brief（[Bilibili_Proposal](Bilibili_Proposal.md) §5 階段 ④）。
+- 發動態、私訊：等 Tim 放開。（去別人的影片留言 2026-11-11 放開了，見 §4。）
 - **合集**（把 Senate 相關的稿件收成系列，Tim 2026-11-10 問過）：`bili season create <標題> --cover <圖> --desc <簡介>`、`bili season add <合集 ID> <BV號>…`。
   2026-11-10 `create` 回 `api_error`（B 站錯誤 20082「您创建的合集个数太多了」），而 `bili season list` 是空的 ⇒ 沒有重試，等 Tim 在創作中心看。封面在 TASK-0006 的附件（`series_cover_bili.png`）。
