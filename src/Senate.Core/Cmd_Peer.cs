@@ -9,6 +9,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using SCP.Core.Cmd;
+using SCP.Core.Discord;
 using SCP.Core.Json;
 using SCP.Core.Paths;
 using SCP.Core.Tavern;
@@ -216,7 +217,9 @@ public sealed class Cmd_Peer : SCP_Cmd
 
         SCP_JsonData? s = ReadStatusFile(iData, out double aAge);
         bool aFresh = s != null && aAge <= 15;
-        if (s == null) l.Add("· 執行狀態：**沒有讀數** —— 酒館 Server 還沒跑過這個工作（`senate server status --id tavern`）");
+        if (s == null) l.Add(c.Mode == "off"
+            ? "· 執行狀態：關著（沒有在收連線，也沒有連出去）"
+            : "· 執行狀態：**沒有讀數** —— 酒館 Server 還沒跑到這個工作，或沒在跑（`senate server status --id tavern`）");
         else if (!aFresh) l.Add($"· 執行狀態：**{aAge:0} 秒前的舊讀數** —— 酒館 Server 現在沒有在跑這個工作（下面是它最後一次寫的）");
         if (s != null)
         {
@@ -505,6 +508,59 @@ public sealed class Cmd_Peer : SCP_Cmd
             Check("通道網址讀得出來", SenatePeerTunnel.ToWs(SenatePeerTunnel.ParseUrl("2026-11-11T05:00:00Z INF |  https://quiet-river-1234.trycloudflare.com  |")) == "wss://quiet-river-1234.trycloudflare.com/peer"
                                       && SenatePeerTunnel.ParseUrl("INF Starting tunnel") == "",
                 SenatePeerTunnel.ToWs(SenatePeerTunnel.ParseUrl("INF |  https://quiet-river-1234.trycloudflare.com  |")));
+
+            // ⑪ Discord 那一側與常駐工作（⛔ 不連 Discord：暫存資料根沒有 webhook，公告一定貼不出去 —— 驗的就是它會說出來、而且代碼照樣產生）
+            string aDisc = Path.Combine(aBase, "disc").Replace('\\', '/');
+            Directory.CreateDirectory(Path.Combine(aDisc, "ChatTavern", "discord"));
+            File.WriteAllText(Path.Combine(aDisc, "ChatTavern", "discord", SCP_DiscordPaths.ConfigFileName), "{\"webhooks\":[{\"id\":\"111\",\"enabled\":true}]}");
+            var aRoute = new SCP_DiscordRoute { ChannelId = "9", TavernRoom = aRoom, Label = "probe" };
+            SCP_JsonData aHookMsg = SCP_JsonParser.Parse("{\"id\":\"1554045138668486738\",\"content\":\"午安\",\"webhook_id\":\"222\",\"author\":{\"id\":\"222\",\"username\":\"gura\",\"bot\":true}}");
+            string aFree = SCP_DiscordInbound.Convert(aDisc, aDisc, aRoute, new SCP_DiscordWhitelist(), aHookMsg, out SCP_DiscordInboundItem? aFreeItem, false);
+            HashSet<string> aKeep = SCP_DiscordInbound.LinkedWebhookIds;
+            SCP_DiscordInbound.LinkedWebhookIds = new HashSet<string>(StringComparer.Ordinal) { "222" };
+            string aLinkedWhy = SCP_DiscordInbound.Convert(aDisc, aDisc, aRoute, new SCP_DiscordWhitelist(), aHookMsg, out SCP_DiscordInboundItem? aLinkedItem, false);
+            SCP_DiscordInbound.LinkedWebhookIds = aKeep;
+            Check("已經接上的節點，它在 Discord 上的訊息不再收一次（沒接上的照收）", aFreeItem != null && aLinkedItem == null && aLinkedWhy.StartsWith("linked-peer-webhook", StringComparison.Ordinal),
+                $"沒接上：收={aFreeItem != null}（{aFree}）　接上：收={aLinkedItem != null}（{aLinkedWhy}）");
+
+            int aPortH = FreePort();
+            string aRootH = Path.Combine(aBase, "hostJob").Replace('\\', '/');
+            Directory.CreateDirectory(aRootH);
+            SenatePeerStore.SaveConfig(aRootH, new PeerConfig { Mode = "host", Name = "hostJob", Port = aPortH, Bind = "127.0.0.1", Tunnel = "auto", CloudflaredPath = Path.Combine(aBase, "no-such-cloudflared.exe") });
+            var aJobLog = new List<string>();
+            Action<string> aJobOut = s => { lock (aJobLog) aJobLog.Add(s); };
+            Node J = MakeNode(aBase, "nodeJ", "client", 0);
+            aNodes.Add(J);
+            try
+            {
+                DateTime aEnd = DateTime.UtcNow.AddSeconds(20);
+                while (DateTime.UtcNow < aEnd && SenatePeerStore.HostGet(aRootH, "code").Length == 0) { SenatePeerJob.Tick(aRootH, aJobOut, aJobOut); Thread.Sleep(200); }
+                string aCode = SenatePeerStore.HostGet(aRootH, "code");
+                PeerAnnounce? aJobAnn = PeerAnnounce.FromText(aCode);
+                Check("常駐工作：主機模式產生公告代碼", aJobAnn != null && aJobAnn.Addrs.Count == 1 && aJobAnn.Addrs[0] == $"ws://127.0.0.1:{aPortH}{SenatePeerLink.WsPath}",
+                    "addrs=" + (aJobAnn == null ? "（沒有代碼）" : string.Join(",", aJobAnn.Addrs)));
+                aEnd = DateTime.UtcNow.AddSeconds(10);
+                bool aSaidTunnel = false, aSaidPost = false;
+                while (DateTime.UtcNow < aEnd && !(aSaidTunnel && aSaidPost))
+                {
+                    SenatePeerJob.Tick(aRootH, aJobOut, aJobOut);
+                    Thread.Sleep(200);
+                    lock (aJobLog) { aSaidTunnel = aJobLog.Any(x => x.Contains("找不到 cloudflared")); aSaidPost = aJobLog.Any(x => x.Contains("主機公告沒有貼出去") && x.Contains("op=code")); }
+                }
+                Check("反向：沒裝 cloudflared 會說出來（不是靜默不開通道）", aSaidTunnel, "有說=" + aSaidTunnel);
+                Check("反向：公告貼不出去會說出來，並指到手動的路", aSaidPost, "有說=" + aSaidPost);
+
+                string aPosted = "📡 **Senate 主機開放連線** · hostJob\n`" + aCode + "`";
+                SenatePeerJob.OnDiscordSignals(aRootH, new[] { aPosted }, aJobOut, aJobOut);
+                SenatePeerJob.OnDiscordSignals(J.Root, new[] { aPosted, "SENATE-HOST1 這不是代碼這不是代碼這不是代碼" }, aJobOut, aJobOut);
+                PeerAnnounce? aAtJ = SenatePeerStore.LoadAnnounce(J.Root);
+                Check("Discord 上的公告：另一端收下、主機自己不收自己的", aAtJ != null && aJobAnn != null && aAtJ.Id == aJobAnn.Id && SenatePeerStore.LoadAnnounce(aRootH) == null,
+                    $"另一端手上的主機 id={aAtJ?.Id}　主機自己手上有公告={SenatePeerStore.LoadAnnounce(aRootH) != null}");
+                aEnd = DateTime.UtcNow.AddSeconds(20);
+                while (DateTime.UtcNow < aEnd && J.Link.SessionCount == 0) { SenatePeerJob.Tick(aRootH, aJobOut, aJobOut); J.Link.Step(); Thread.Sleep(200); }
+                Check("另一端照公告連上常駐工作開的主機", J.Link.SessionCount == 1, "另一端的連線=" + J.Link.SessionCount);
+            }
+            finally { SenatePeerJob.Stop(); }
         }
         catch (Exception e)
         {
