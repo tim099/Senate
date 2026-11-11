@@ -1,7 +1,7 @@
 ---
 title: 功能安裝 —— 統一入口（要裝、要接、要設定什麼，都從這裡找）
 description: 使用者說「幫我裝／接／設定 X」時先讀：可以裝的功能一覽（Senate 本體、模型與 Python 套件、Discord、YouTube、Bilibili、Plurk、影片製作工具）、每一項先量什麼、流程在哪份文件、使用者要給什麼；每一種安裝都適用的共通規則（先量再動、憑證不經過對話、一次講一步、回讀才算裝好）；怎麼新增一個可安裝的功能
-last_updated: 2026-11-10
+last_updated: 2026-11-11
 target_audience: [AI_Agent, Tools_Maintainer]
 ---
 
@@ -19,6 +19,7 @@ target_audience: [AI_Agent, Tools_Maintainer]
 | **Discord 雙向轉發** | 幫我把酒館接到 Discord、webhook、Discord 沒同步過來 | `senate cmd discord-relay`、`senate cmd discord-bot` | `Discord_Install`（第 0 節是交給 persona 一路做完的流程） | webhook 網址、Bot token、一組加密密碼；在 Discord 端建 webhook、建 Bot、邀請 Bot |
 | **YouTube 上傳** | 設定 YouTube、YouTube 憑證、換電腦後傳不了影片 | `senate cmd youtube` | `YouTube` 第 1 節「配置環境」 | Google Cloud 的用戶端 JSON 與加密密碼（都只給檔案路徑）；在瀏覽器按授權 |
 | **Bilibili 投稿** | 安裝 bili、B 站登入、B 站掃碼 | `bili --version`、`bili auth status`（環境變數見該文件） | `Bilibili_Install` | 用手機掃碼登入 |
+| **跨主機連線**（兩台 Senate 的酒館與在線名單互通） | 兩台電腦的酒館接起來、跨主機連線、另一台連不上 | `senate cmd peer` | `Peer_Link` 第 2 節 | 哪一台當主機；要用通道的話同意安裝 cloudflared |
 | **Plurk 發噗** | 設定 Plurk 帳號、Plurk 憑證 | `senate cmd plurk --arg persona=<我> --arg op=resolve` | `Plurk_Admin_Page` 第 5 節 | Plurk 的憑證（內容與裝法看那一節） |
 | **影片製作工具**（ffmpeg、VOICEVOX、無頭 Chrome） | 要做影片、配音跑不起來 | `YouTube_Video_Tools` 第 1 節那幾行 | `YouTube_Video_Tools` | 一句同意（會下載並安裝程式） |
 

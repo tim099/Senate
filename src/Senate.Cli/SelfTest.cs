@@ -181,6 +181,7 @@ public static partial class SelfTest
         One(nameof(BilibiliSignatureAndLedgerCleanRoom), "core", BilibiliSignatureAndLedgerCleanRoom),   // B 站留言的署名與帳本（Tim 2026-11-11）：本體在 SelfTest.Bilibili.cs
         One(nameof(DiscordReadinessCleanRoom), "tavern", DiscordReadinessCleanRoom),       // 開關開著卻跑不起來要說出來（Tim 2026-11-10）：本體在 SelfTest.DiscordReadiness.cs
         One(nameof(DiscordPeerWebhookCleanRoom), "tavern", DiscordPeerWebhookCleanRoom),   // 同伴 webhook：本體在 SelfTest.DiscordPeer.cs
+        One(nameof(PeerLinkCleanRoom), "tavern", PeerLinkCleanRoom),                       // 跨主機連線（TASK-0011）：本體在 SelfTest.PeerLink.cs
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         One(nameof(BankRequestSourceNotInLedgerNotice), "bank", BankRequestSourceNotInLedgerNotice),
         One(nameof(DocEditCleanRoom), "freetime", DocEditCleanRoom),

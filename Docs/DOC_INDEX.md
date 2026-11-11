@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-11-06
+last_updated: 2026-11-11
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -38,6 +38,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [YouTube](Workflows/YouTube.md) | **YouTube 頻道運營**（`senate cmd youtube`）：配置環境（先量這台、換一台電腦、從零設定 Google 端）、交付單 → 檢查 → 上傳、改資料只限本工具上傳的、憑證與上傳帳本住哪 |
 | [YouTube_Video_Tools](Workflows/YouTube_Video_Tools.md) | **自己做影片才讀**：ffmpeg／VOICEVOX 安裝（GitHub 504 時走 API asset、對 SHA256）、VOICEVOX 引擎與念法、無頭 Chrome 把 HTML 動畫錄成影片、ffmpeg 疊語音輸出 MP4、驗收清單 |
 | [YouTube_Proposal](Workflows/YouTube_Proposal.md) | YouTube 串接方案：2026-11 查到的平台事實與可信度、Tim 要親手做的 Google 端步驟、指令住 Senate 的理由、還沒做的部分 |
+| [Peer_Link](Workflows/Peer_Link.md) | **跨主機連線**（`senate cmd peer`、後台「跨主機連線」頁）：一台當主機、另一台連上去；主機把位址貼到 Discord、另一端的 Inbound 收到就連；酒館訊息經主機轉發、追讀看得到另一台在線的人；Cloudflare 臨時通道、信任邊界、檔案在哪、已知限制 |
 | [Bilibili](Workflows/Bilibili.md) | **B 站投稿與互動**（開源的 `bili` 指令，Tim 的帳號）：先量這台、交付單 → 預演 → 僅自己可見投稿 → 讀回、互動開放到哪、紀律（遇到風控就停、留言署名做好前不發留言）、錯誤碼對照、東西住哪 |
 | [Bilibili_Install](Workflows/Bilibili_Install.md) | **沒裝、沒登入、要升級才讀**：`bili-agent` 鎖版本安裝（對雜湊、先讀原始碼）、憑證資料夾、掃碼登入由 Tim 做、換電腦、升級前比差異、不跑的三個指令 |
 | [Bilibili_Proposal](Workflows/Bilibili_Proposal.md) | Bilibili 串接方案（**還沒實作**）：用開源的 bili-cli 接上 Tim 現有帳號，persona 投稿、回留言、發動態（跟站上「大肥魚」UP 主同一個做法）；事實與可信度、為什麼不走官方開放平台、跟 YouTube 對照、互動紀律、分階段、待拍板 |

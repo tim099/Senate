@@ -190,6 +190,8 @@ public static class SenateBartender
     public static BartenderAction Decide(SCP_TavernMessage m, IReadOnlyDictionary<string, string>? iAliases)
     {
         if (m.SenderId == PersonaId || m.SenderPersona == PersonaId) return BartenderAction.None;
+        // 跨主機連線轉進來的不回（TASK-0011）：那一則在原本的那一台已經由那邊的酒保處理過，這裡再回就是兩個酒保各回一次
+        if ((m.SenderId ?? "").StartsWith("peer:", StringComparison.Ordinal)) return BartenderAction.None;
         string aBody = m.Body ?? "";
         if (SCP_TavernMentions.StripCode(aBody).IndexOf("[help]", StringComparison.OrdinalIgnoreCase) >= 0) return BartenderAction.Help;
         return SCP_TavernMentions.Extract(aBody, iAliases).Contains(PersonaId) ? BartenderAction.Mention : BartenderAction.None;

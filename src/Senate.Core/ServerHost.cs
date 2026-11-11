@@ -514,6 +514,8 @@ public static class ServerHost
                     CheckCardOwner(aEndpointDataRoot!, aCard, aOwner, iOut, iErr);
                     // 失去名片那一刻主動斷 Gateway —— 不斷的話它會一直連著、照樣收訊息（Inbound 不再 Tick 也擋不住已經開著的連線）
                     if (aWasOwner && !aOwner.IsOwner && aRunDiscordIn) { try { SenateDiscordGateway.Stop("名片上不是本顆（TASK-0468）"); } catch { } }
+                    // 跨主機連線同理：埠與連線不收掉的話，失去名片的這顆會繼續收對面的訊息
+                    if (aWasOwner && !aOwner.IsOwner && aRunDiscordIn) { try { SenatePeerJob.Stop(); } catch { } }
                 }
                 if (File.Exists(aStopReq))
                 {
@@ -553,6 +555,9 @@ public static class ServerHost
                     // 酒保（TASK-0365）同一顆：被 @／[help] 時回一句；LLM 生成在背景執行緒，⛔ 不擋心跳。開關在酒保設定檔，每一輪讀。
                     try { SenateBartenderJob.Tick(aEndpointDataRoot!, iOut, iErr); }
                     catch (Exception e) { iErr("⚠ 酒保這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
+                    // 跨主機連線（TASK-0011）同一顆：對面的訊息要寫進酒館，而酒館的寫入端就在這裡。開關在 peer_config.json，每一輪讀。
+                    try { SenatePeerJob.Tick(aEndpointDataRoot!, iOut, iErr); }
+                    catch (Exception e) { iErr("⚠ 跨主機連線這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }
                 aExecutor.Tick();
                 Thread.Sleep(HeartbeatIntervalMs);
@@ -563,6 +568,7 @@ public static class ServerHost
             Console.CancelKeyPress -= aOnCancel;
             // Bot 轉離線要**主動**斷 Gateway —— 不斷的話 Discord 要等心跳逾時，綠點會殘留幾十秒
             if (aRunDiscordIn) { try { SenateDiscordGateway.Stop("Server 收工"); } catch { } }
+            if (aRunDiscordIn) { try { SenatePeerJob.Stop(); } catch { } }   // 跨主機連線：線收掉、通道子行程關掉
             if (SenateOvernightJob.IsRunning)
                 iErr("⚠ 每日結算正跑到一半就收工 —— 扣繳還沒成功的話狀態沒推進，下一顆 Server 起來會重跑那一天（冪等）；"
                      + "已經扣完的話狀態已落盤（推進在貼公告**之前**），⚠ 那一則公告可能沒貼出去 —— 看 `overnight_job_last.md`");

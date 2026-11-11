@@ -77,6 +77,8 @@ public static class SenateDiscordInboundJob
                 return;
             }
             if (r.CursorNote.Length > 0) iOut($"· Discord Inbound：{iRoute.Label} {r.CursorNote}");
+            // 跨主機連線的主機公告（TASK-0011）：⛔ 不寫進酒館，交給連線工作
+            if (r.PeerSignals.Count > 0) SenatePeerJob.OnDiscordSignals(iDataRoot, r.PeerSignals, iOut, iErr);
 
             int aRelayed = 0;
             string aLastOk = "";
