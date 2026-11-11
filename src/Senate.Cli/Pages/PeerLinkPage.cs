@@ -69,6 +69,7 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
         if (aName.Length > 0) a["name"] = aName;
         if (aPort.Length > 0) a["port"] = aPort;
         a["tunnel"] = g.ToggleValue(Id("tunnel"), m_Saved.Tunnel == "auto") ? "auto" : "off";
+        a["port_map"] = g.ToggleValue(Id("portmap"), m_Saved.PortMap == "auto") ? "auto" : "off";
         return a;
     }
 
@@ -89,9 +90,10 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
         {
             g.TextField("節點名（英數與 -_.；空白 = 電腦名稱）", m_Saved.Name, Id("name"));
             g.TextField("主機收連線的埠", m_Saved.Port.ToString(), Id("port"));
+            g.Toggle("當主機時請路由器開對外的埠（UPnP；公網位址會寫進公告，關主機時收回）", m_Saved.PortMap == "auto", Id("portmap"));
             g.Toggle("主機連不進來時用 Cloudflare 臨時通道（要先裝 cloudflared）", m_Saved.Tunnel == "auto", Id("tunnel"));
             if (SenatePeerTunnel.Find(m_Saved.CloudflaredPath).Length == 0)
-                g.Note("這台找不到 cloudflared：當主機時只會公告區網位址，不在同一個區網的另一台連不進來。");
+                g.Note("這台找不到 cloudflared：路由器的對外埠也開不成的話，不在同一個區網的另一台連不進來。");
             using (g.Row())
             {
                 if (g.Button(m_Saved.Mode == "host" ? "重新啟動主機（換一場新的公告）" : "啟動主機", "peer-link/btn/host")) Run(Fields(g, "host"));

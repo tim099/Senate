@@ -22,6 +22,7 @@ senate cmd peer --arg op=host            # 這台當主機（換一場新的 tok
 senate cmd peer --arg op=client          # 這台當另一端（等主機的公告，收到就連）
 senate cmd peer --arg op=off             # 關掉
 senate cmd peer --arg op=online          # 另一邊現在在線的人
+senate cmd peer --arg op=probe           # 量這台的對外網路：適不適合當主機（唯讀，不開埠）
 ```
 
 後台頁：`senate ui --window` → 酒館 →「跨主機連線」。按鈕做的是同一組事。
@@ -35,7 +36,9 @@ senate cmd peer --arg op=online          # 另一邊現在在線的人
 |---|---|---|
 | 開 | 後台頁按「啟動主機」，或 `op=host` | 後台頁按「當另一端」，或 `op=client` |
 | Discord | 主頻道（`tavern`）的分類要綁一條啟用中的 webhook —— 公告貼到那裡 | Discord Inbound 要開著、而且收得到主機貼公告的那個頻道 |
-| 網路 | 另一端要連得到主機：同一個區網、或主機有對外位址（`public_url`）、或裝了 cloudflared | 只要能連出去 |
+| 網路 | 另一端要連得到主機：同一個區網、或路由器開得了對外的埠（§3，預設會試）、或手動設對外位址（`public_url`）、或裝了 cloudflared | 只要能連出去 |
+
+不確定哪一台適合當主機 ⇒ 兩台各跑一次 `senate cmd peer --arg op=probe`，看最後一行的判語。
 
 主機啟動後幾秒，Discord 那個頻道會出現一則「Senate 主機開放連線」。另一端的 Inbound 輪到那個頻道就會收下它並連上
 （那一則**不會**轉進酒館）。兩邊的 `senate cmd peer` 都會列出那條連線。
@@ -49,10 +52,34 @@ senate cmd peer --arg op=join --arg-file code=<檔>      # 另一端：收下代
 
 代碼要自己想辦法交到另一台（後台頁有貼上的欄位）。⚠ 拿到代碼的人就連得上主機。
 
-## 3. 連不進來時：Cloudflare 臨時通道
+## 3. 不在同一個區網時
 
-主機在 NAT 後面、另一端又不在同一個區網時，直接連不進來。`tunnel=auto`（預設）而且這台**找得到 cloudflared** 時，
-主機會起一條臨時通道，把 `wss://….trycloudflare.com/peer` 一起寫進公告；另一端照公告裡的順序試（區網位址 → 對外位址 → 通道）。
+公告裡可以有四種位址，另一端照這個順序試：區網位址 → 手動設的對外位址 → 路由器開的對外埠 → 通道。
+
+### 3.1 路由器開對外的埠（UPnP，預設會試）
+
+Tim 2026-11-11：「需要不限制區網的連線」「做自動開埠」。
+
+`port_map=auto`（預設）時，主機啟動後會在區網裡找支援 UPnP 的路由器，請它把對外的同一個埠（TCP）轉到這台，
+再把 `ws://<公網 IP>:<埠>/peer` 寫進公告。另一端只要能連出去，從哪個網路都連得進來；不用裝東西，流量不經過第三方。
+
+- 成立的條件：路由器開著 UPnP，而且**路由器回報的對外 IP 是公網位址**。不是（外面還有一層 NAT、電信商多層 NAT）⇒ 不開、不公告，並說出來。
+- 租期 1 小時、每 20 分鐘續一次；路由器只收永久的才給永久。關主機、切成另一端、Server 正常收工時會刪掉。
+  ⚠ Server 被硬砍時那一筆會留到租期到（永久的就一直留著，要到路由器上刪；名稱是 `Senate peer link`）。
+- 那個埠已經轉給別台 ⇒ 不搶，回報是哪一台。只刪「轉給這台」的那一筆。
+- 只聽本機位址（`bind=127.0.0.1`）時不開。不要這個功能 ⇒ `--arg op=set --arg port_map=off`（後台頁有開關）。
+- ⚠ **那個埠是對整個網際網路開的**。沒有公告的人過不了握手，但埠本身任何人都碰得到。
+- ⚠ **公網 IP 會寫在 Discord 的公告裡**，看得到那個頻道的人都看得到。
+- ⚠ Windows 防火牆要允許這個埠進來，第一次會跳視窗。
+- 路由器不給自動開 ⇒ 手動在路由器做通訊埠轉發，再 `--arg op=set --arg public_url=ws://<對外 IP>:<埠>/peer`。
+
+`op=probe` 量的東西（唯讀）：路由器找不找得到、它回報的對外 IP 是不是公網位址、那個埠現在轉給誰、
+用 STUN 看外面看到的位址是不是每一台都一樣。STUN 會對公用伺服器（Google、Cloudflare）各送一個 UDP 封包；連線本身不靠它。
+
+### 3.2 Cloudflare 臨時通道
+
+主機開不了對外的埠時的退路。`tunnel=auto`（預設）而且這台**找得到 cloudflared** 時，
+主機會起一條臨時通道，把 `wss://….trycloudflare.com/peer` 一起寫進公告。
 
 - ⛔ Senate 不下載、不安裝 cloudflared。沒裝 ⇒ 主機只公告區網位址，並在 Server 的輸出與 `senate cmd peer` 裡說出來。
   裝好之後不必重啟，下一輪就會開。路徑不在 PATH 上 ⇒ `--arg op=set --arg cloudflared_path=<路徑>`。
@@ -126,6 +153,8 @@ senate selftest --only PeerLinkCleanRoom     # 暫存資料夾裡起一台主機
 - 另一端模式開著、手上有主機的公告時，主機在 Discord 上的 webhook 訊息**一律不從 Discord 收**（等連線補）。
   主機長期不會回來 ⇒ 把這台關掉（`op=off`）或忘掉公告（`op=forget`），不然主機那邊的訊息兩條路都進不來。
 - 主機聽全部網卡（`0.0.0.0`）時，Windows 防火牆第一次會跳出「允許存取」的視窗，要人按。只走通道 ⇒ `--arg op=set --arg bind=127.0.0.1` 就不會跳。
+- **路由器開埠（UPnP）沒有在真的路由器上開過**：自我測試只驗了解析（路由器描述、錯誤碼、公網位址判定、STUN 回應）。
+  唯讀的那一半（找路由器、問對外 IP、查那個埠轉給誰）用 `op=probe` 在一台 Synology 路由器底下跑過。
 - 沒有做真正的打洞（STUN）：兩邊都在 NAT 後面、又沒有通道時連不上。
 - Server 被硬砍時 cloudflared 子行程會留下來，下次啟動前看一眼工作管理員。
 - 附件不傳；回覆關係（`reply_to`）不帶過去。

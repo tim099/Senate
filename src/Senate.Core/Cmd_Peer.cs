@@ -33,12 +33,13 @@ public sealed class Cmd_Peer : SCP_Cmd
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
-        new SCP_CmdArgSpec("op", "status（預設）｜host（當主機，換一場新的 token）｜client（當另一端）｜off｜set（只改設定）｜code（主機：印公告代碼）｜join（另一端：收下公告代碼）｜forget（忘掉手上的公告）｜online（另一邊在線的人）｜selftest",
-            iDefault: "status", iChoices: new[] { "status", "host", "client", "off", "set", "code", "join", "forget", "online", "selftest" }),
+        new SCP_CmdArgSpec("op", "status（預設）｜host（當主機，換一場新的 token）｜client（當另一端）｜off｜set（只改設定）｜code（主機：印公告代碼）｜join（另一端：收下公告代碼）｜forget（忘掉手上的公告）｜online（另一邊在線的人）｜probe（量這台的對外網路：路由器能不能開埠、有沒有公網 IP、NAT 的行為；唯讀）｜selftest",
+            iDefault: "status", iChoices: new[] { "status", "host", "client", "off", "set", "code", "join", "forget", "online", "probe", "selftest" }),
         new SCP_CmdArgSpec("name", "host／client／set：這台的節點名（英數與 -_.，最多 24 字；空 ⇒ 電腦名稱）"),
         new SCP_CmdArgSpec("port", "host／set：主機收連線的埠（預設 47800）"),
         new SCP_CmdArgSpec("bind", "host／set：主機聽哪個位址（預設 0.0.0.0＝全部網卡；127.0.0.1＝只給通道用）"),
         new SCP_CmdArgSpec("tunnel", "host／set：auto（找得到 cloudflared 就開臨時通道）｜off", iChoices: new[] { "auto", "off" }),
+        new SCP_CmdArgSpec("port_map", "host／set：auto（主機啟動時請路由器開對外的埠，UPnP；關主機時收回）｜off", iChoices: new[] { "auto", "off" }),
         new SCP_CmdArgSpec("cloudflared_path", "set：cloudflared 執行檔的路徑（空 ⇒ 從 PATH 找）"),
         new SCP_CmdArgSpec("public_url", "set：自己開了通訊埠轉發時的對外位址（例：ws://203.0.113.5:47800/peer）；`-` ⇒ 清掉"),
         new SCP_CmdArgSpec("announce_webhook_id", "set：公告貼到哪一條 webhook（空 ⇒ 主頻道的分類綁的那幾條）；`-` ⇒ 清掉"),
@@ -63,6 +64,7 @@ public sealed class Cmd_Peer : SCP_Cmd
                 "join" => Join(aData, iArgs.Get("code")),
                 "forget" => Forget(aData),
                 "online" => Online(aData),
+                "probe" => Probe(aData),
                 _ => Status(aData),
             };
         }
@@ -89,6 +91,7 @@ public sealed class Cmd_Peer : SCP_Cmd
             c.Bind = iArgs.Get("bind");
         }
         if (iArgs.Get("tunnel").Length > 0) c.Tunnel = iArgs.Get("tunnel");
+        if (iArgs.Get("port_map").Length > 0) c.PortMap = iArgs.Get("port_map");
         if (iArgs.Get("cloudflared_path").Length > 0) c.CloudflaredPath = Dash(iArgs.Get("cloudflared_path"));
         if (iArgs.Get("public_url").Length > 0)
         {
@@ -115,10 +118,12 @@ public sealed class Cmd_Peer : SCP_Cmd
         PeerConfig aBack = SenatePeerStore.LoadConfig(iData);   // 讀回：畫面上的要是磁碟上的
 
         var r2 = SCP_CmdResult.Success($"✓ 已寫入 {SenatePeerStore.ConfigPath(iData)}（讀回 mode={aBack.Mode}，原本 {aOld}）");
-        r2.Lines.Add($"· 這台：{aBack.NodeName}（id {aMe.Id}）　埠 {aBack.Port}　聽 {aBack.Bind}　通道 {aBack.Tunnel}　頻道 {string.Join("、", aBack.Rooms)}");
+        r2.Lines.Add($"· 這台：{aBack.NodeName}（id {aMe.Id}）　埠 {aBack.Port}　聽 {aBack.Bind}　對外埠 {aBack.PortMap}　通道 {aBack.Tunnel}　頻道 {string.Join("、", aBack.Rooms)}");
         if (aBack.Mode == "host")
         {
             r2.Lines.Add("· 主機：酒館 Server 下一輪就會開埠，並把連線位址貼到 Discord（主頻道的分類綁的 webhook）。");
+            if (aBack.PortMap == "auto" && !aBack.Bind.StartsWith("127.", StringComparison.Ordinal))
+                r2.Lines.Add("· 對外埠：會請路由器把對外的 " + aBack.Port + " 埠轉到這台（UPnP），公網位址會寫進公告；關主機時收回。不要 ⇒ `--arg port_map=off`。");
             if (aBack.Tunnel == "auto" && SenatePeerTunnel.Find(aBack.CloudflaredPath).Length == 0)
                 r2.Lines.Add("⚠ 這台找不到 cloudflared ⇒ **不會開通道**，只公告區網位址；不在同一個區網的另一端連不進來。");
             r2.Lines.Add("· 幾秒後看 `senate cmd peer`（status）。沒有 Discord 的話：`senate cmd peer --arg op=code` 把代碼手動交給另一端。");
@@ -212,7 +217,7 @@ public sealed class Cmd_Peer : SCP_Cmd
         if (c.Error.Length > 0) { l.Add("⚠ " + c.Error); oExit = 4; }
         string aId = File.Exists(SenatePeerStore.IdentityPath(iData)) ? SenatePeerStore.LoadOrCreateIdentity(iData).Id : "（還沒產生）";
         l.Add($"· 模式：{ModeText(c.Mode)}　這台：{c.NodeName}（id {aId}）");
-        l.Add($"· 設定：埠 {c.Port}　聽 {c.Bind}　通道 {c.Tunnel}　頻道 {string.Join("、", c.Rooms)}"
+        l.Add($"· 設定：埠 {c.Port}　聽 {c.Bind}　對外埠 {c.PortMap}　通道 {c.Tunnel}　頻道 {string.Join("、", c.Rooms)}"
               + (c.PublicUrl.Length > 0 ? "　對外位址 " + c.PublicUrl : "") + (c.ForwardExternal ? "　Discord 轉進來的也送" : ""));
 
         SCP_JsonData? s = ReadStatusFile(iData, out double aAge);
@@ -226,6 +231,7 @@ public sealed class Cmd_Peer : SCP_Cmd
             if (s.GetString("mode", "") != c.Mode) l.Add($"  ⚠ Server 上次跑的模式是 {s.GetString("mode", "")}，設定檔已經是 {c.Mode}（還沒輪到）");
             if (s.GetString("listening", "").Length > 0) l.Add("· 收連線：" + s.GetString("listening", ""));
             if (s.GetString("addrs", "").Length > 0) l.Add("· 公告的位址：" + s.GetString("addrs", "").Replace(",", "　"));
+            if (s.GetString("port_map", "").Length > 0) l.Add("· 對外埠（路由器）：" + s.GetString("port_map", ""));
             if (s.GetString("tunnel", "").Length > 0) l.Add("· 通道：" + s.GetString("tunnel", ""));
             if (s.GetString("announce", "").Length > 0) l.Add("· 公告：" + s.GetString("announce", ""));
             int n = s["sessions"].IsArray ? s["sessions"].Count : 0;
@@ -272,6 +278,54 @@ public sealed class Cmd_Peer : SCP_Cmd
         return r;
     }
 
+    // ── 量這台的對外網路（唯讀：不開埠、不改路由器）──────────────────────
+
+    static string MaskIp(string iIp)
+    {
+        string[] a = iIp.Split('.');
+        return a.Length == 4 ? a[0] + "." + a[1] + ".x.x" : iIp;
+    }
+
+    static SCP_CmdResult Probe(string iData)
+    {
+        PeerConfig c = SenatePeerStore.LoadConfig(iData);
+        var r = SCP_CmdResult.Success("# 這台的對外網路（唯讀：不開埠、不改路由器；IP 只印前兩段）");
+        PeerGateway? g = SenatePeerNat.Discover(out string aFindErr);
+        string aExt = "";
+        bool aExtPublic = false;
+        if (g == null) r.Lines.Add("· 路由器（UPnP）：找不到 —— " + aFindErr);
+        else
+        {
+            r.Lines.Add($"· 路由器（UPnP）：{g.RouterIp}　{g.Server}　這台在它底下是 {g.LocalIp}");
+            aExt = SenatePeerNat.ExternalIp(g, out string aIpErr);
+            aExtPublic = aExt.Length > 0 && SenatePeerNat.IsPublicIPv4(aExt);
+            r.Lines.Add(aExt.Length == 0 ? "· 路由器回報的對外 IP：拿不到 —— " + aIpErr
+                : $"· 路由器回報的對外 IP：{MaskIp(aExt)}（{(aExtPublic ? "公網位址" : "**不是公網位址** ⇒ 路由器外面還有一層 NAT")}）");
+            PeerPortMapping? m = SenatePeerNat.GetMapping(g, c.Port);
+            r.Lines.Add(m == null || m.Client.Length == 0 ? $"· 對外的 {c.Port} 埠（TCP）：現在沒有轉給任何一台"
+                : $"· 對外的 {c.Port} 埠（TCP）：現在轉給 {m.Client}:{m.InternalPort}（{m.Description}）{(m.Client == g.LocalIp ? "　← 這台" : "　← **別台**")}");
+        }
+        PeerStunResult s = SenatePeerNat.StunProbe();
+        if (s.Error.Length > 0) r.Lines.Add("· STUN：" + s.Error);
+        else
+        {
+            r.Lines.Add($"· STUN（{s.Replies} 台回應）：外面看到 {MaskIp(s.PublicIp)}，本機埠 {s.LocalPort} → 對外埠 {string.Join("／", s.MappedPorts)}");
+            r.Lines.Add("  " + (s.EndpointIndependent ? "每一台看到的都是同一個位址（好打洞的那一種）" : "每一台看到的不一樣，或只有一台回應（對稱型或量不準 ⇒ 打洞多半不成）")
+                        + (s.PortPreserved ? "；對外埠跟本機埠同號" : ""));
+            if (aExt.Length > 0) r.Lines.Add("  路由器回報的對外 IP 跟 STUN 看到的" + (aExt == s.PublicIp ? "**相同** ⇒ 只有一層 NAT" : "**不同** ⇒ 中間還有一層"));
+        }
+        string aVerdict = g != null && aExtPublic ? "這台當主機：可以自動開埠（port_map=auto），另一端從別的網路連得進來"
+            : s.Error.Length == 0 && SenatePeerNat.IsPublicIPv4(s.PublicIp) && g == null ? "這台當主機：路由器不給自動開埠 ⇒ 要手動在路由器做通訊埠轉發，再設 public_url；或用通道"
+            : "這台當主機：別的網路連不進來 ⇒ 讓另一台當主機，或用通道";
+        r.Lines.Add("⇒ " + aVerdict);
+        r.AddValue("upnp", g != null ? "1" : "0");
+        r.AddValue("router_public", aExtPublic ? "1" : "0");
+        r.AddValue("stun_replies", s.Replies.ToString());
+        r.AddValue("endpoint_independent", s.Error.Length > 0 ? "unknown" : s.EndpointIndependent ? "1" : "0");
+        r.AddValue("can_auto_map", g != null && aExtPublic ? "1" : "0");
+        return r;
+    }
+
     // ── 自我測試（暫存資料夾裡起三個節點，走本機迴路）────────────────────
 
     sealed class Node : IDisposable
@@ -295,7 +349,7 @@ public sealed class Cmd_Peer : SCP_Cmd
     {
         var n = new Node { Root = Path.Combine(iBase, iName).Replace('\\', '/'), Name = iName };
         Directory.CreateDirectory(n.Root);
-        SenatePeerStore.SaveConfig(n.Root, new PeerConfig { Mode = iMode, Name = iName, Port = iPort > 0 ? iPort : 47800, Bind = "127.0.0.1", Tunnel = "off" });
+        SenatePeerStore.SaveConfig(n.Root, new PeerConfig { Mode = iMode, Name = iName, Port = iPort > 0 ? iPort : 47800, Bind = "127.0.0.1", Tunnel = "off", PortMap = "off" });
         n.Link = new SenatePeerLink(n.Root, new SenatePeerLink.Hooks
         {
             Out = s => { lock (n.Log) n.Log.Add(s); },
@@ -509,6 +563,31 @@ public sealed class Cmd_Peer : SCP_Cmd
                                       && SenatePeerTunnel.ParseUrl("INF Starting tunnel") == "",
                 SenatePeerTunnel.ToWs(SenatePeerTunnel.ParseUrl("INF |  https://quiet-river-1234.trycloudflare.com  |")));
 
+            // ⑩之二 對外位址那一層的純函式（⛔ 不碰路由器、不送 STUN）
+            Check("公網位址判定", SenatePeerNat.IsPublicIPv4("60.248.1.2") && !SenatePeerNat.IsPublicIPv4("192.168.14.1") && !SenatePeerNat.IsPublicIPv4("10.0.0.5")
+                                  && !SenatePeerNat.IsPublicIPv4("172.20.1.1") && !SenatePeerNat.IsPublicIPv4("100.72.0.9") && !SenatePeerNat.IsPublicIPv4("abc"),
+                $"60.248.1.2={SenatePeerNat.IsPublicIPv4("60.248.1.2")} 192.168.14.1={SenatePeerNat.IsPublicIPv4("192.168.14.1")} 100.72.0.9（電信商多層 NAT）={SenatePeerNat.IsPublicIPv4("100.72.0.9")}");
+            const string aDesc = "<root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType><controlURL>/ctl/L3F</controlURL></service></serviceList>"
+                                 + "<deviceList><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><serviceId>x</serviceId><controlURL>/ctl/IPConn</controlURL></service></serviceList></device></deviceList></device></root>";
+            bool aDescOk = SenatePeerNat.TryParseDescription(aDesc, "http://192.168.14.1:5000/rootDesc.xml", out string aSvcT, out string aCtlU);
+            Check("路由器描述：找出對外連線的服務與控制網址", aDescOk && aSvcT.EndsWith("WANIPConnection:1", StringComparison.Ordinal) && aCtlU == "http://192.168.14.1:5000/ctl/IPConn"
+                                                              && !SenatePeerNat.TryParseDescription("<root/>", "http://x/", out _, out _),
+                $"service={aSvcT} control={aCtlU}");
+            Check("路由器的錯誤讀得出來", SenatePeerNat.SoapError("<s:Fault><detail><UPnPError><errorCode>718</errorCode><errorDescription>ConflictInMappingEntry</errorDescription></UPnPError></detail></s:Fault>") == "718 ConflictInMappingEntry"
+                                          && SenatePeerNat.SoapError("<u:GetExternalIPAddressResponse><NewExternalIPAddress>1.2.3.4</NewExternalIPAddress></u:GetExternalIPAddressResponse>") == ""
+                                          && SenatePeerNat.XmlValue("<a><NewExternalIPAddress>1.2.3.4</NewExternalIPAddress></a>", "NewExternalIPAddress") == "1.2.3.4",
+                SenatePeerNat.SoapError("<errorCode>718</errorCode><errorDescription>ConflictInMappingEntry</errorDescription>"));
+            byte[] aTxnT = new byte[12];
+            byte[] aStunT = new byte[32];
+            aStunT[1] = 1; aStunT[3] = 12; aStunT[4] = 0x21; aStunT[5] = 0x12; aStunT[6] = 0xA4; aStunT[7] = 0x42;
+            aStunT[21] = 0x20; aStunT[23] = 8; aStunT[25] = 1;
+            aStunT[26] = (byte)((58207 >> 8) ^ 0x21); aStunT[27] = (byte)((58207 & 0xFF) ^ 0x12);
+            aStunT[28] = 60 ^ 0x21; aStunT[29] = 248 ^ 0x12; aStunT[30] = 1 ^ 0xA4; aStunT[31] = 2 ^ 0x42;
+            (string Ip, int Port)? aStunBack = SenatePeerNat.ParseStunReply(aStunT, 32, aTxnT);
+            Check("STUN 回應解得出對外位址", aStunBack != null && aStunBack.Value.Ip == "60.248.1.2" && aStunBack.Value.Port == 58207
+                                             && SenatePeerNat.ParseStunReply(aStunT, 32, new byte[] { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) == null,
+                aStunBack == null ? "（解不出來）" : aStunBack.Value.Ip + ":" + aStunBack.Value.Port);
+
             // ⑪ Discord 那一側與常駐工作（⛔ 不連 Discord：暫存資料根沒有 webhook，公告一定貼不出去 —— 驗的就是它會說出來、而且代碼照樣產生）
             string aDisc = Path.Combine(aBase, "disc").Replace('\\', '/');
             Directory.CreateDirectory(Path.Combine(aDisc, "ChatTavern", "discord"));
@@ -526,7 +605,7 @@ public sealed class Cmd_Peer : SCP_Cmd
             int aPortH = FreePort();
             string aRootH = Path.Combine(aBase, "hostJob").Replace('\\', '/');
             Directory.CreateDirectory(aRootH);
-            SenatePeerStore.SaveConfig(aRootH, new PeerConfig { Mode = "host", Name = "hostJob", Port = aPortH, Bind = "127.0.0.1", Tunnel = "auto", CloudflaredPath = Path.Combine(aBase, "no-such-cloudflared.exe") });
+            SenatePeerStore.SaveConfig(aRootH, new PeerConfig { Mode = "host", Name = "hostJob", Port = aPortH, Bind = "127.0.0.1", Tunnel = "auto", PortMap = "off", CloudflaredPath = Path.Combine(aBase, "no-such-cloudflared.exe") });
             var aJobLog = new List<string>();
             Action<string> aJobOut = s => { lock (aJobLog) aJobLog.Add(s); };
             Node J = MakeNode(aBase, "nodeJ", "client", 0);

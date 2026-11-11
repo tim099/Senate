@@ -23,6 +23,7 @@ public sealed class PeerConfig
     public int Port = 47800;
     public string Bind = "0.0.0.0";
     public string Tunnel = "auto";         // auto｜off
+    public string PortMap = "auto";        // auto（主機啟動時請路由器開對外的埠，UPnP）｜off
     public string CloudflaredPath = "";    // 空 ⇒ 從 PATH 找
     public string PublicUrl = "";          // 自己開了通訊埠轉發時填（例：ws://203.0.113.5:47800/peer）
     public string AnnounceWebhookId = "";  // 空 ⇒ 主頻道的分類綁的 webhook
@@ -173,6 +174,7 @@ public static class SenatePeerStore
         c.Port = j.GetInt("port", c.Port);
         c.Bind = j.GetString("bind", c.Bind);
         c.Tunnel = j.GetString("tunnel", "auto") == "off" ? "off" : "auto";
+        c.PortMap = j.GetString("port_map", "auto") == "off" ? "off" : "auto";
         c.CloudflaredPath = j.GetString("cloudflared_path", "");
         c.PublicUrl = j.GetString("public_url", "");
         c.AnnounceWebhookId = j.GetString("announce_webhook_id", "");
@@ -186,7 +188,7 @@ public static class SenatePeerStore
     public static void SaveConfig(string iDataRoot, PeerConfig c)
     {
         var j = SCP_JsonData.NewObject();
-        j.Set("mode", c.Mode); j.Set("name", c.Name); j.Set("port", c.Port); j.Set("bind", c.Bind); j.Set("tunnel", c.Tunnel);
+        j.Set("mode", c.Mode); j.Set("name", c.Name); j.Set("port", c.Port); j.Set("bind", c.Bind); j.Set("tunnel", c.Tunnel); j.Set("port_map", c.PortMap);
         j.Set("cloudflared_path", c.CloudflaredPath); j.Set("public_url", c.PublicUrl); j.Set("announce_webhook_id", c.AnnounceWebhookId);
         j.Set("forward_external", c.ForwardExternal); j.Set("rooms", Arr(c.Rooms));
         lock (s_Lock) WriteJson(ConfigPath(iDataRoot), j);

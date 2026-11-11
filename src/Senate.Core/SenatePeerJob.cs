@@ -32,6 +32,15 @@ public static class SenatePeerJob
     static DateTime s_NextAnnounce = DateTime.MinValue;
     static DateTime s_NextTunnelStart = DateTime.MinValue;
     static bool s_WasHost;
+
+    // 路由器開埠（UPnP）的狀態：只有主機模式會動
+    const int MapRenewSec = 1200;
+    const int MapRetrySec = 60;
+    static PeerGateway? s_Gateway;
+    static int s_MappedPort;
+    static bool s_MapMine;                 // 這一顆 Server 請路由器開成過（收的時候才去刪）
+    static string s_MapAddr = "";
+    static DateTime s_MapNext = DateTime.MinValue;
     static string s_LastWarn = "";
 
     public static void Tick(string iDataRoot, Action<string> iOut, Action<string> iErr)
@@ -74,6 +83,7 @@ public static class SenatePeerJob
         try { s_Link?.Dispose(); } catch { }
         s_Link = null;
         try { s_Tunnel.Stop(); } catch { }
+        try { DropPortMap(null); } catch { }
         SCP_DiscordInbound.LinkedWebhookIds = new HashSet<string>(StringComparer.Ordinal);
     }
 
@@ -106,7 +116,9 @@ public static class SenatePeerJob
         if (c.Mode != "host")
         {
             if (s_Tunnel.Running) { s_Tunnel.Stop(); iOut("· 跨主機連線：通道已關"); }
-            SetExtra(iLink, "tunnel", "");
+            DropPortMap(iOut);
+            // 主機時期的欄位清掉：不清的話切成另一端之後 status 還印著舊的公告位址
+            SetExtra(iLink, "tunnel", ""); SetExtra(iLink, "addrs", ""); SetExtra(iLink, "announce", ""); SetExtra(iLink, "port_map", "");
             if (s_WasHost)
             {
                 s_WasHost = false;
@@ -125,6 +137,19 @@ public static class SenatePeerJob
 
         List<string> aAddrs = SenatePeerLink.LanAddresses(c);
         if (c.PublicUrl.Length > 0) aAddrs.Add(c.PublicUrl);
+
+        // 對外的埠（UPnP）：只聽本機位址時開了也沒有用 ⇒ 不開
+        bool aLoopback = c.Bind.StartsWith("127.", StringComparison.Ordinal);
+        if (c.PortMap == "auto" && !aLoopback)
+        {
+            string aPub = EnsurePortMap(c, iLink, iOut, iErr);
+            if (aPub.Length > 0 && !aAddrs.Contains(aPub)) aAddrs.Add(aPub);
+        }
+        else
+        {
+            DropPortMap(iOut);
+            SetExtra(iLink, "port_map", c.PortMap == "off" ? "（關）" : "（只聽本機位址 ⇒ 不開）");
+        }
 
         if (c.Tunnel == "auto")
         {
@@ -185,6 +210,63 @@ public static class SenatePeerJob
                            + "。另一端可以改用手動：這台跑 `senate cmd peer --arg op=code`，把印出來的代碼交給另一端的 `op=join`");
             SetExtra(iLink, "announce", "沒貼出去：" + aPostErr);
         }
+    }
+
+    /// <summary>
+    /// 請路由器開對外的埠並續租。回要公告的位址（`ws://公網 IP:埠/peer`）；開不成 ⇒ 空字串並說出原因。
+    /// 成功後每 <see cref="MapRenewSec"/> 秒續一次；失敗每 <see cref="MapRetrySec"/> 秒再試。
+    /// </summary>
+    static string EnsurePortMap(PeerConfig c, SenatePeerLink iLink, Action<string> iOut, Action<string> iErr)
+    {
+        if (DateTime.UtcNow < s_MapNext && s_MappedPort == c.Port) return s_MapAddr;
+        if (s_MappedPort != 0 && s_MappedPort != c.Port) DropPortMap(iOut);   // 埠改了 ⇒ 舊的那一筆收掉
+
+        string Fail(string iWhy)
+        {
+            s_MapNext = DateTime.UtcNow.AddSeconds(MapRetrySec);
+            s_MappedPort = c.Port;   // 記住試過的埠（下面 s_MapAddr 是空的 ⇒ 不會被當成開成了）
+            s_MapAddr = "";
+            WarnOnce(iErr, "跨主機連線：路由器的對外埠沒有開成 —— " + iWhy + " ⇒ 公告裡沒有公網位址（不在同一個區網的另一端要靠通道或手動設 public_url）");
+            SetExtra(iLink, "port_map", "沒開成：" + iWhy);
+            return "";
+        }
+
+        if (s_Gateway == null)
+        {
+            s_Gateway = SenatePeerNat.Discover(out string aFindErr);
+            if (s_Gateway == null) return Fail(aFindErr);
+        }
+        string aExt = SenatePeerNat.ExternalIp(s_Gateway, out string aIpErr);
+        if (aExt.Length == 0) { s_Gateway = null; return Fail("路由器不回報對外 IP（" + aIpErr + "）"); }   // 下一次重新找路由器
+        if (!SenatePeerNat.IsPublicIPv4(aExt))
+            return Fail("路由器回報的對外 IP 不是公網位址 ⇒ 路由器外面還有一層 NAT，開了也連不進來");
+        string? aErr = SenatePeerNat.AddMapping(s_Gateway, c.Port, out int aLease);
+        if (aErr != null) return Fail(aErr);
+
+        bool aFirst = !s_MapMine;
+        s_MapMine = true;
+        s_MappedPort = c.Port;
+        s_MapAddr = "ws://" + aExt + ":" + c.Port + SenatePeerLink.WsPath;
+        s_MapNext = DateTime.UtcNow.AddSeconds(MapRenewSec);
+        string aLeaseText = aLease == 0 ? "永久（這台路由器只收永久的；關主機時會刪）" : "租期 " + aLease + " 秒，定時續租";
+        if (aFirst) iOut($"· 跨主機連線：路由器已開對外的 {c.Port} 埠（TCP）→ {s_Gateway.LocalIp}:{c.Port}；{aLeaseText}");
+        SetExtra(iLink, "port_map", $"已開：對外 {c.Port} → {s_Gateway.LocalIp}:{c.Port}（{(aLease == 0 ? "永久" : "租期 " + aLease + " 秒")}）");
+        return s_MapAddr;
+    }
+
+    /// <summary>
+    /// 把請路由器開的那一筆收回來（只刪轉給這台的）。這一顆 Server 沒開成過 ⇒ 什麼都不做。
+    /// ⚠ 續租失敗之後 <see cref="s_MapMine"/> 還是 true：那一筆可能還在路由器上，收的時候照樣去刪。
+    /// </summary>
+    static void DropPortMap(Action<string>? iOut)
+    {
+        if (s_MapMine && s_Gateway != null && s_MappedPort != 0)
+        {
+            int aPort = s_MappedPort;
+            string? aErr = SenatePeerNat.DeleteMapping(s_Gateway, aPort);
+            iOut?.Invoke(aErr == null ? $"· 跨主機連線：路由器對外的 {aPort} 埠已收回" : $"⚠ 跨主機連線：路由器對外的 {aPort} 埠沒有收回 —— {aErr}（到路由器上看一眼）");
+        }
+        s_MapMine = false; s_MappedPort = 0; s_MapAddr = ""; s_MapNext = DateTime.MinValue;
     }
 
     static PeerAnnounce BuildAnnounce(string iDataRoot, PeerConfig c, List<string> iAddrs, bool iClosed)
