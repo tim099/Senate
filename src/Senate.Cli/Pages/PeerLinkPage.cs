@@ -19,6 +19,9 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
     PeerConfig m_Saved = new();
     string? m_Message;
     string? m_Code;
+    Task<SCP_CmdResult>? m_ProbeJob;     // 量網路要幾秒（等路由器與 STUN 回應）⇒ 視窗模式放背景，不卡畫面
+    List<string>? m_Probe;               // 最近一次量到的（null ＝ 這次開頁還沒量）
+    string m_ProbeAt = "";
 
     public PeerLinkPage(SenateModel iModel) : base() { m_Model = iModel; }
 
@@ -30,7 +33,38 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
     bool HasRoot => DataRoot.Length > 0 && Directory.Exists(DataRoot);
     string Id(string iKey) => $"peer-link/{m_Gen}/{iKey}";
 
-    public override void OnPush() { base.OnPush(); Reload(); }
+    public override void OnPush()
+    {
+        base.OnPush();
+        Reload();
+        // 開頁就自動量一次（Tim 2026-11-11：不要叫人去打指令）。文字模式每一次呼叫都是新行程 ⇒ 不自動量，留按鈕。
+        if (HasRoot && SCP_GuiHost.RedrawsContinuously) StartProbe();
+    }
+
+    /// <summary>量這台的對外網路（`senate cmd peer --arg op=probe`，唯讀：不開埠、不改路由器）。</summary>
+    void StartProbe()
+    {
+        if (m_ProbeJob != null) return;
+        var aArgs = new Dictionary<string, string> { ["op"] = "probe", ["data_root"] = DataRoot };
+        if (SCP_GuiHost.RedrawsContinuously) { m_ProbeJob = Task.Run(() => SCP_CmdRegistry.Dispatch("peer", aArgs)); return; }
+        try { HarvestProbe(SCP_CmdRegistry.Dispatch("peer", aArgs)); }
+        catch (Exception e) { m_Probe = new List<string> { "量的時候出錯了：" + e.GetType().Name + ": " + e.Message }; }
+    }
+
+    void PumpProbe()
+    {
+        if (m_ProbeJob == null || !m_ProbeJob.IsCompleted) return;
+        Task<SCP_CmdResult> j = m_ProbeJob;
+        m_ProbeJob = null;
+        try { HarvestProbe(j.Result); }
+        catch (Exception e) { m_Probe = new List<string> { "量的時候出錯了：" + (e.InnerException ?? e).GetType().Name + ": " + (e.InnerException ?? e).Message }; }
+    }
+
+    void HarvestProbe(SCP_CmdResult r)
+    {
+        m_Probe = r.Lines.Where(l => l.Length > 0 && !l.StartsWith("#", StringComparison.Ordinal)).Select(Plain).ToList();
+        m_ProbeAt = DateTime.Now.ToString("HH:mm:ss");
+    }
 
     void Reload()
     {
@@ -86,6 +120,19 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
             foreach (string l in Cmd_Peer.StatusLines(DataRoot, out _).Skip(1)) g.Label(Plain(l));
         }
 
+        PumpProbe();
+        using (g.Box("這台的網路（適不適合當主機）", "peer-link/box/probe"))
+        {
+            if (m_ProbeJob != null) g.Note("量測中…（等路由器與 STUN 回應，約 5 秒；只讀，不開埠）");
+            else if (m_Probe == null) g.Note("還沒量。按下面的按鈕量一次（只讀：不開埠、不改路由器）。");
+            else
+            {
+                foreach (string l in m_Probe) g.Label(l);
+                g.Note("量的時間：" + m_ProbeAt + "。最後一行是判語；不適合當主機的那一台就按「當另一端」。");
+            }
+            if (m_ProbeJob == null && g.Button(m_Probe == null ? "量這台的網路" : "重新量", "peer-link/btn/probe")) StartProbe();
+        }
+
         using (g.Box("這一台", "peer-link/box/config"))
         {
             g.TextField("節點名（英數與 -_.；空白 = 電腦名稱）", m_Saved.Name, Id("name"));
@@ -96,7 +143,11 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
                 g.Note("這台找不到 cloudflared：路由器的對外埠也開不成的話，不在同一個區網的另一台連不進來。");
             using (g.Row())
             {
-                if (g.Button(m_Saved.Mode == "host" ? "重新啟動主機（換一場新的公告）" : "啟動主機", "peer-link/btn/host")) Run(Fields(g, "host"));
+                if (g.Button(m_Saved.Mode == "host" ? "重新啟動主機（換一場新的公告）" : "啟動主機", "peer-link/btn/host"))
+                {
+                    Run(Fields(g, "host"));
+                    StartProbe();   // 啟動主機時順便再量一次：判語就在上面那一格
+                }
                 if (g.Button("當另一端（等主機的公告）", "peer-link/btn/client")) Run(Fields(g, "client"));
                 if (m_Saved.Mode != "off" && g.Button("關閉", "peer-link/btn/off")) Run(new Dictionary<string, string> { ["op"] = "off" });
             }

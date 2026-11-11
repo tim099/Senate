@@ -556,6 +556,7 @@ public static class ServerHost
                     try { SenateBartenderJob.Tick(aEndpointDataRoot!, iOut, iErr); }
                     catch (Exception e) { iErr("⚠ 酒保這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                     // 跨主機連線（TASK-0011）同一顆：對面的訊息要寫進酒館，而酒館的寫入端就在這裡。開關在 peer_config.json，每一輪讀。
+                    SenatePeerJob.NoteInServer = true;   // 這裡是酒館 Server ⇒ 收到公告／接上時可以在酒館留一則系統訊息
                     try { SenatePeerJob.Tick(aEndpointDataRoot!, iOut, iErr); }
                     catch (Exception e) { iErr("⚠ 跨主機連線這一圈沒看成（" + e.GetType().Name + "：" + e.Message + "）—— 下一圈再試"); }
                 }

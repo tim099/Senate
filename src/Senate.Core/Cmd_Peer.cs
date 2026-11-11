@@ -505,8 +505,13 @@ public sealed class Cmd_Peer : SCP_Cmd
             // ⑥ 斷線期間的訊息，重連後補；不重複
             SenatePeerConfigSet(C.Root, "off");
             Until(() => A.Link.SessionCount == 1, 10, A, B, C);
-            Post(A, "Alice", "C 不在的時候 1");
+            int aSeqGone = Post(A, "Alice", "C 不在的時候 1");
             Post(B, "Bob", "C 不在的時候 2");
+            // 線斷著的時候，主機的那一則已經從 Discord 進到 C（模擬 Discord Inbound 寫下的同伴訊息）
+            var aViaDiscord = new SCP_TavernMessage { SenderId = "discord:222", SenderName = "Alice", Kind = "chat", Body = "C 不在的時候 1" };
+            aViaDiscord.Meta["source"] = "discord"; aViaDiscord.Meta["discord_peer"] = "true"; aViaDiscord.Meta["discord_webhook_id"] = "222";
+            aViaDiscord.Meta["peer_room"] = aRoom; aViaDiscord.Meta["peer_seq"] = aSeqGone.ToString();
+            SCP_TavernWriter.WriteMessage(C.Root, aRoom, aViaDiscord);
             Settle(10, A, B, C);
             int aBefore = All(C).Count;
             SCP_PeerPresenceView aOffView = SCP_PeerPresence.Read(C.Root);
@@ -514,7 +519,9 @@ public sealed class Cmd_Peer : SCP_Cmd
             SenatePeerConfigSet(C.Root, "client");
             bool aCatch = Until(() => All(C).Any(m => m.Body == "C 不在的時候 1") && All(C).Any(m => m.Body == "C 不在的時候 2"), 20, A, B, C);
             Settle(10, A, B, C);
-            Check("重連後補上斷線期間的訊息", aCatch && All(C).Count == aBefore + 2, $"C 原本 {aBefore} 則、現在 {All(C).Count} 則（應該多 2）");
+            Check("重連後補上斷線期間的訊息；已經從 Discord 進來的那一則不再寫第二次",
+                aCatch && All(C).Count == aBefore + 1 && All(C).Count(m => m.Body == "C 不在的時候 1") == 1 && C.Link.DiscordDupSkipped == 1,
+                $"C 原本 {aBefore} 則（含 Discord 進來的 1 則）、現在 {All(C).Count} 則（應該只多 1）；「C 不在的時候 1」有 {All(C).Count(m => m.Body == "C 不在的時候 1")} 則；對重略過 {C.Link.DiscordDupSkipped} 則");
 
             // ⑦ 同一則重送 ⇒ 只落一則（把 C 手上的游標往回撥是做不到的 ⇒ 直接讓主機重送：收掉連線、把主機記的起點留著）
             int aCountC = All(C).Count;
@@ -609,6 +616,9 @@ public sealed class Cmd_Peer : SCP_Cmd
             var aJobLog = new List<string>();
             Action<string> aJobOut = s => { lock (aJobLog) aJobLog.Add(s); };
             Node J = MakeNode(aBase, "nodeJ", "client", 0);
+            // J 自己有一條 Discord webhook（id 777）⇒ 連上主機時會報給主機
+            Directory.CreateDirectory(Path.Combine(J.Root, "ChatTavern", "discord"));
+            File.WriteAllText(Path.Combine(J.Root, "ChatTavern", "discord", SCP_DiscordPaths.ConfigFileName), "{\"webhooks\":[{\"id\":\"777\",\"enabled\":true}]}");
             aNodes.Add(J);
             try
             {
@@ -638,6 +648,30 @@ public sealed class Cmd_Peer : SCP_Cmd
                 aEnd = DateTime.UtcNow.AddSeconds(20);
                 while (DateTime.UtcNow < aEnd && J.Link.SessionCount == 0) { SenatePeerJob.Tick(aRootH, aJobOut, aJobOut); J.Link.Step(); Thread.Sleep(200); }
                 Check("另一端照公告連上常駐工作開的主機", J.Link.SessionCount == 1, "另一端的連線=" + J.Link.SessionCount);
+
+                // Discord 那一路收不收，看的是線有沒有**接著**
+                aEnd = DateTime.UtcNow.AddSeconds(15);
+                while (DateTime.UtcNow < aEnd && !SCP_DiscordInbound.LinkedWebhookIds.Contains("777")) { SenatePeerJob.Tick(aRootH, aJobOut, aJobOut); J.Link.Step(); Thread.Sleep(200); }
+                bool aSkipUp = SCP_DiscordInbound.LinkedWebhookIds.Contains("777");
+                SenatePeerConfigSet(J.Root, "off");
+                aEnd = DateTime.UtcNow.AddSeconds(15);
+                while (DateTime.UtcNow < aEnd && SCP_DiscordInbound.LinkedWebhookIds.Contains("777")) { SenatePeerJob.Tick(aRootH, aJobOut, aJobOut); J.Link.Step(); Thread.Sleep(200); }
+                bool aSkipDown = SCP_DiscordInbound.LinkedWebhookIds.Contains("777");
+                Check("線接著 ⇒ 那個節點在 Discord 上的訊息略過；線斷了 ⇒ 照收（主機這一側）", aSkipUp && !aSkipDown, $"接著時略過={aSkipUp}　斷了之後還略過={aSkipDown}");
+                SenatePeerJob.Stop();
+
+                // 另一端這一側：手上有主機的公告、但連不上 ⇒ ⛔ 不可以略過主機在 Discord 上的訊息（2026-11-11 實地咬到的）
+                string aRootK = Path.Combine(aBase, "clientJob").Replace('\\', '/');
+                Directory.CreateDirectory(aRootK);
+                SenatePeerStore.SaveConfig(aRootK, new PeerConfig { Mode = "client", Name = "clientJob", Bind = "127.0.0.1", Tunnel = "off", PortMap = "off" });
+                (string _, string aPubK) = SenatePeerCrypto.NewKeyPair();
+                SenatePeerStore.AcceptAnnounce(aRootK, new PeerAnnounce
+                {
+                    Id = SenatePeerCrypto.IdOf(aPubK), Name = "farHost", Sign = aPubK, Token = "t", Ts = SenatePeerStore.NowIso(),
+                    Addrs = new List<string> { "ws://127.0.0.1:1" + SenatePeerLink.WsPath }, Webhooks = new List<string> { "888" },
+                });
+                for (int i = 0; i < 20; i++) { SenatePeerJob.Tick(aRootK, aJobOut, aJobOut); Thread.Sleep(200); }
+                Check("反向：手上有公告但沒連上 ⇒ 主機在 Discord 上的訊息照收", !SCP_DiscordInbound.LinkedWebhookIds.Contains("888"), "略過名單裡有主機的 webhook=" + SCP_DiscordInbound.LinkedWebhookIds.Contains("888"));
             }
             finally { SenatePeerJob.Stop(); }
         }

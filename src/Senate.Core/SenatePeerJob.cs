@@ -43,15 +43,38 @@ public static class SenatePeerJob
     static DateTime s_MapNext = DateTime.MinValue;
     static string s_LastWarn = "";
 
+    /// <summary>
+    /// 在本機酒館留一則系統訊息（收到公告、接上了）。只有酒館 Server 裡會接上；其他行程（自我測試）是 null ⇒ 不留。
+    /// 參數：資料根、內文。⛔ 內文不放 token 與位址。
+    /// </summary>
+    public static Action<string, string>? Note;
+
+    /// <summary>酒館 Server 啟動時設成 true（ServerHost）；自我測試直接叫 <see cref="Tick"/> 時是 false ⇒ ⛔ 不往酒館寫。</summary>
+    public static bool NoteInServer;
+
+    static void WriteNote(string iDataRoot, string iBody)
+    {
+        var aMeta = SCP_JsonData.NewObject();
+        aMeta.Set("tag", "peer-link");
+        var m = SCP_JsonData.NewObject();
+        m.Set("sender_id", "system"); m.Set("sender_name", "跨主機連線"); m.Set("kind", "system"); m.Set("body", iBody); m.Set("meta", aMeta);
+        SCP_CmdRegistry.Dispatch("tavern-write", new Dictionary<string, string>
+        {
+            ["data_root"] = iDataRoot, ["room"] = SCP_TavernChannels.MainChannelId, ["msg_json"] = SCP_JsonWriter.Write(m),
+        });
+    }
+
     public static void Tick(string iDataRoot, Action<string> iOut, Action<string> iErr)
     {
         if (s_Link == null || s_Root != iDataRoot)
         {
+            if (NoteInServer) Note ??= WriteNote;
             s_Link?.Dispose();
             s_Root = iDataRoot;
             s_Link = new SenatePeerLink(iDataRoot, new SenatePeerLink.Hooks
             {
                 Out = iOut, Err = iErr,
+                Note = aBody => Note?.Invoke(iDataRoot, aBody),
                 // 酒館這顆本來就是唯一寫入端；@ 通知、封存閘都在 tavern-write 那條路上
                 WriteTavern = (aRoom, aMsg) =>
                 {
@@ -103,13 +126,19 @@ public static class SenatePeerJob
     {
         PeerConfig c = SenatePeerStore.LoadConfig(iDataRoot);
 
-        // 已經用連線接上的節點 ⇒ 它們的 Discord webhook 訊息不再重收
+        // **現在連著**的節點 ⇒ 它們的 Discord webhook 訊息不再重收。
+        // 🩸 2026-11-11 實地：原本是「手上有主機的公告就略過」（主機那一側是「認識過的節點就略過」），
+        //    而線沒接上（兩台不在同一個區網）⇒ 主機的訊息 Discord 那一路被略過、連線那一路又沒有，兩條路都進不來。
+        //    ⇒ 判準改成線真的接著。線斷掉的那段時間 Discord 照收；重連補送時由連線本體跟 Discord 進來的那一份對重。
         var aLinked = new HashSet<string>(StringComparer.Ordinal);
-        if (c.Mode == "host") aLinked = SenatePeerStore.KnownNodeWebhooks(iDataRoot);
-        else if (c.Mode == "client")
+        if (c.Mode != "off")
         {
-            PeerAnnounce? a = SenatePeerStore.LoadAnnounce(iDataRoot);
-            if (a != null && !a.Closed) foreach (string w in a.Webhooks) aLinked.Add(w);
+            PeerAnnounce? aHostAnn = c.Mode == "client" ? SenatePeerStore.LoadAnnounce(iDataRoot) : null;
+            foreach (string aNode in iLink.ConnectedNodeIds())
+            {
+                foreach (string w in SenatePeerStore.NodeWebhooks(iDataRoot, aNode)) aLinked.Add(w);
+                if (aHostAnn != null && aHostAnn.Id == aNode) foreach (string w in aHostAnn.Webhooks) aLinked.Add(w);
+            }
         }
         SCP_DiscordInbound.LinkedWebhookIds = aLinked;
 
@@ -336,6 +365,15 @@ public static class SenatePeerJob
                 if (a.Id == SenatePeerStore.LoadOrCreateIdentity(iDataRoot).Id) continue;   // 自己的
                 if (!SenatePeerStore.AcceptAnnounce(iDataRoot, a)) continue;                  // 比手上的舊
                 string aMode = SenatePeerStore.LoadConfig(iDataRoot).Mode;
+                // 酒館裡留一則：公告本身不轉進酒館（有 token），但「收到了」要看得到
+                try
+                {
+                    Note?.Invoke(iDataRoot, a.Closed
+                        ? $"📴 跨主機連線：主機 **{a.Name}** 公告關閉連線。"
+                        : $"📡 跨主機連線：收到主機 **{a.Name}** 的公告（{a.Addrs.Count} 個位址）。"
+                          + (aMode == "client" ? "這台是另一端，正在連過去；連不連得上看 `senate cmd peer`。" : $"這台的模式是 {aMode}，沒有連過去。"));
+                }
+                catch (Exception) { }
                 iOut(a.Closed
                     ? $"· 📴 跨主機連線：主機 {a.Name} 公告關閉"
                     : $"· 📡 跨主機連線：收到主機 {a.Name} 的公告（{a.Addrs.Count} 個位址）"

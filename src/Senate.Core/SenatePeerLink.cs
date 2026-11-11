@@ -48,6 +48,8 @@ public sealed class SenatePeerLink : IDisposable
         public Func<string, SCP_JsonData, (bool Ok, int Seq, string Error)> WriteTavern = (_, _) => (false, 0, "沒有接寫入端");
         public Action<string> Out = _ => { };
         public Action<string> Err = _ => { };
+        /// <summary>在本機酒館留一則系統訊息（接上了）。沒接 ⇒ 不留。⛔ 內容不放 token、位址。</summary>
+        public Action<string>? Note;
     }
 
     sealed class Session
@@ -66,6 +68,8 @@ public sealed class SenatePeerLink : IDisposable
         public DateTime PresenceAt = DateTime.MinValue;
         public DateTime Since = DateTime.UtcNow;
         public int MsgIn, MsgOut;
+        // 這個節點「從 Discord 進來過的訊息」的索引（頻道 → 對方的 seq → 內文開頭）；只在補送時用，20 秒重建一次
+        public readonly Dictionary<string, (DateTime At, Dictionary<string, List<string>> Map)> DiscordCopies = new(StringComparer.Ordinal);
     }
 
     readonly string m_DataRoot;
@@ -100,6 +104,15 @@ public sealed class SenatePeerLink : IDisposable
     public string MyId => m_Me?.Id ?? "";
     public bool Listening => m_Listener != null;
     public int SessionCount { get { lock (m_Gate) return m_Sessions.Count; } }
+
+    /// <summary>現在真的連著的節點 id。</summary>
+    public List<string> ConnectedNodeIds() => Snapshot().Where(s => !s.Closed).Select(s => s.NodeId).ToList();
+
+    int m_DiscordDupSkipped;
+    /// <summary>補送時因為「同一則已經從 Discord 進來過」而沒有再寫一次的訊息數。</summary>
+    public int DiscordDupSkipped => m_DiscordDupSkipped;
+
+    readonly Dictionary<string, DateTime> m_NotedAt = new(StringComparer.Ordinal);
 
     int m_DupDropped;
     /// <summary>因為「這個號碼已經收過」而丟掉的訊息數。</summary>
@@ -486,6 +499,18 @@ public sealed class SenatePeerLink : IDisposable
         if (aOld != null) Close(aOld, "同一個節點重新連上，舊的那條收掉", iRemove: false);
         m_LastWarn = "";
         m_Hooks.Out($"· 🌐 跨主機連線：{(s.ServerSide ? "另一端" : "主機")} {s.NodeName}（{s.NodeId}）連上了" + (s.Via.Length > 0 ? "　經 " + s.Via : ""));
+        // 酒館裡留一則（同一個節點 5 分鐘內只留一次：線不穩的時候不洗版）
+        bool aNote;
+        lock (m_NotedAt)
+        {
+            aNote = !m_NotedAt.TryGetValue(s.NodeId, out DateTime aLast) || (DateTime.UtcNow - aLast).TotalMinutes >= 5;
+            if (aNote) m_NotedAt[s.NodeId] = DateTime.UtcNow;
+        }
+        if (aNote)
+        {
+            try { m_Hooks.Note?.Invoke($"🌐 跨主機連線：跟{(s.ServerSide ? "另一端" : "主機")} **{s.NodeName}** 接上了 —— 酒館訊息與在線名單開始互通。"); }
+            catch (Exception) { }
+        }
 
         // 告訴對方：我要哪些頻道、每個頻道我收到第幾號、我的 Discord webhook 是哪幾條
         SCP_JsonData j = Obj("sync");
@@ -652,6 +677,14 @@ public sealed class SenatePeerLink : IDisposable
             SenatePeerStore.SetCursor(m_DataRoot, s.NodeId, aRoom, aSeq);   // 我自己的訊息繞回來了：不寫，但游標照推
             return null;
         }
+        // 線沒接著的那段時間，這一則可能已經從 Discord 進來過 ⇒ 不再寫一次，但游標照推
+        int aOriginSeq = aOriginId == s.NodeId ? aSeq : j.GetInt("oseq", -1);
+        if (aOriginSeq >= 0 && CameViaDiscord(s, aRoom, aOriginSeq, j.GetString("body", ""), j.GetString("ts", "")))
+        {
+            SenatePeerStore.SetCursor(m_DataRoot, s.NodeId, aRoom, aSeq);
+            Interlocked.Increment(ref m_DiscordDupSkipped);
+            return null;
+        }
 
         string aBody = j.GetString("body", "");
         int aRefs = j.GetInt("refs", 0);
@@ -692,6 +725,50 @@ public sealed class SenatePeerLink : IDisposable
         string aPreview = aBody.Replace('\n', ' ');
         m_Hooks.Out($"· 📥 {aOriginName} → {aRoom} seq {aLocalSeq}：{(aPreview.Length > 40 ? aPreview.Substring(0, 40) + "…" : aPreview)}");
         return null;
+    }
+
+    static string Head(string iBody)
+    {
+        string t = (iBody ?? "").Trim();
+        return t.Length <= 24 ? t : t.Substring(0, 24);
+    }
+
+    /// <summary>
+    /// 這一則是不是已經從 Discord 進來過。判準：本機最近的訊息裡有一則「Discord 同伴」訊息，
+    /// 它記的對方頻道與對方 seq 跟這一則相同、內文開頭也相同（Discord 那一份可能被拆段，所以只比開頭）。
+    /// ⚠ 只對「這條線接上之前發的」訊息查：接上之後 Discord 那一路就不收這個節點的了，不會有第二份。
+    /// </summary>
+    bool CameViaDiscord(Session s, string iRoom, int iOriginSeq, string iBody, string iTs)
+    {
+        if (DateTime.TryParse(iTs, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime t)
+            && t > s.Since.AddSeconds(15)) return false;
+        Dictionary<string, List<string>> aMap;
+        lock (s.DiscordCopies)
+        {
+            if (!s.DiscordCopies.TryGetValue(iRoom, out var aHave) || (DateTime.UtcNow - aHave.At).TotalSeconds > 20)
+            {
+                var aNew = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                try
+                {
+                    foreach (SCP_TavernMessage m in SCP_TavernRead.Tail(m_DataRoot, iRoom, 400))
+                    {
+                        if (!m.Meta.TryGetValue("discord_peer", out string? aPeer) || aPeer != "true") continue;
+                        if (!m.Meta.TryGetValue("peer_room", out string? aPr) || aPr != iRoom) continue;
+                        if (!m.Meta.TryGetValue("peer_seq", out string? aPs) || string.IsNullOrEmpty(aPs)) continue;
+                        if (!aNew.TryGetValue(aPs, out List<string>? l)) aNew[aPs] = l = new List<string>();
+                        l.Add(Head(m.Body));
+                    }
+                }
+                catch (Exception) { }   // 讀不到 ⇒ 當成沒有（寧可多一則，不要漏一則）
+                aHave = (DateTime.UtcNow, aNew);
+                s.DiscordCopies[iRoom] = aHave;
+            }
+            aMap = aHave.Map;
+        }
+        if (!aMap.TryGetValue(iOriginSeq.ToString(), out List<string>? aHeads)) return false;
+        string aMine = (iBody ?? "").Trim();
+        return aHeads.Any(h => h.Length > 0 && aMine.StartsWith(h, StringComparison.Ordinal));
     }
 
     void OnPresence(Session s, SCP_JsonData j)
@@ -774,6 +851,8 @@ public sealed class SenatePeerLink : IDisposable
             var o = SCP_JsonData.NewObject();
             o.Set("id", aOriginId!); o.Set("name", aOriginName ?? "");
             f.Set("origin", o);
+            // 原節點那邊的 seq：收的一方拿它跟「從 Discord 進來的那一份」對重
+            if (m.Meta.TryGetValue("peer_seq", out string? aOSeq) && int.TryParse(aOSeq, out int aOSeqN)) f.Set("oseq", aOSeqN);
         }
         else if (SCP_TavernMentions.IsExternalRelay(m.Meta, m.SenderId))
         {

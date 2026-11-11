@@ -325,7 +325,11 @@ public static class SenatePeerStore
             s["nodes"].Set(iNodeId, n);
         });
 
-    /// <summary>所有認識的節點的 Discord webhook id（主機用：不再從 Discord 重收它們的訊息）。</summary>
+    /// <summary>某一個節點的 Discord webhook id（它連上時自己報的；主機的另外寫在公告裡）。</summary>
+    public static List<string> NodeWebhooks(string iDataRoot, string iNodeId)
+        => Strs(ReadState(iDataRoot)["nodes"][iNodeId]["webhooks"]);
+
+    /// <summary>所有認識的節點的 Discord webhook id。⚠ 包含現在沒連著的 ⇒ ⛔ 不要拿它決定「Discord 上的訊息收不收」。</summary>
     public static HashSet<string> KnownNodeWebhooks(string iDataRoot)
     {
         var aSet = new HashSet<string>(StringComparer.Ordinal);
