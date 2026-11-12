@@ -89,7 +89,7 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 
 ## 4. 互動
 
-**現在開放到哪**（Tim 2026-11-10；去別人的影片留言是 2026-11-11 放開的）：
+**現在開放到哪**（Tim 2026-11-10；去別人的影片留言是 2026-11-11、發動態是 2026-11-12 放開的）：
 
 | 事 | 狀態 |
 |---|---|
@@ -98,7 +98,8 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 | 看未讀數量、新消息 | ✅ `bili feed notifications`（只給數字，不會標已讀）、`bili feed inbox`（回覆、@、讚、系統通知一次看；會標已讀） |
 | 回自己稿件底下的留言 | ✅ `senate cmd bilibili --arg op=reply --arg persona=<P> --arg target=<BV號> --arg rpid=<那則留言> --arg-file body=<內文檔>`（回樓中樓多帶 `--arg root=<根留言>`）。署名由指令補（§4.1） |
 | 去別人的影片留言 | ✅ Tim 2026-11-11：「接著嘗試到其他影片下跟人互動吸引流量吧」。`senate cmd bilibili --arg op=comment --arg persona=<P> --arg target=<BV號> --arg-file body=<內文檔>`；先帶 `--arg dry_run=1` 看全文。不放連結、只說對得回讀數的事、一支影片一則、一次少量 —— 細節與理由在工作記憶 `bilibili-ops` |
-| 發動態、私訊、點讚、投幣、關注 | ⛔ 還沒開放 |
+| 發動態（文字、圖文） | ✅ Tim 2026-11-12：「開放發動態」。`bili --dry-run dynamic post --file <內文檔> [--image <圖>…] [--topic <話題 ID>]` 先預演，拿掉 `--dry-run` 才真的發；發完 `bili dynamic list` 讀回。⚠ `senate cmd bilibili` 還沒包動態 ⇒ **署名親手寫在內文末行**（照自己 `bilibili_signatures.md` 其中一組，帶名字、模型、帳號是 Tim 的）。不 `--at` 人；投票（`--vote`）沒問過，先不用。限流：動態 60 秒一次 |
+| 私訊、點讚、投幣、關注 | ⛔ 還沒開放 |
 
 ### 4.1 留言與署名：`senate cmd bilibili`
 
@@ -175,6 +176,7 @@ senate cmd bilibili --arg op=log                                         # 本�
 ## 8. 還沒做
 
 - `senate cmd bilibili` 目前只管留言。還沒包進去的：交付單檢查、投稿帳本、酒館公告領薪、數據進 wake brief（[Bilibili_Proposal](Bilibili_Proposal.md) §5 階段 ④）。
-- 發動態、私訊：等 Tim 放開。（去別人的影片留言 2026-11-11 放開了，見 §4。）
+- 私訊：等 Tim 放開。（去別人的影片留言 2026-11-11、發動態 2026-11-12 放開了，見 §4。）
+- 動態的自動署名：`senate cmd bilibili` 還沒有 `op=dynamic`，現在是親手署名、沒有帳本（`bili` 自己的 `audit.log` 有記）。有標題的專欄長文 `bili` 1.3.0 發不了。
 - **合集**（把 Senate 相關的稿件收成系列，Tim 2026-11-10 問過）：`bili season create <標題> --cover <圖> --desc <簡介>`、`bili season add <合集 ID> <BV號>…`。
   2026-11-10 `create` 回 `api_error`（B 站錯誤 20082「您创建的合集个数太多了」），而 `bili season list` 是空的 ⇒ 沒有重試，等 Tim 在創作中心看。封面在 TASK-0006 的附件（`series_cover_bili.png`）。
