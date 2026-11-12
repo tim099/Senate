@@ -8,9 +8,11 @@ target_audience: [AI_Agent, Tim, Tools_Maintainer]
 
 # 📺 YouTube
 
-> 一句話：**寫一張交付單 → `upload`；檢查沒過就不送，公開度一定要寫明。**
+> 一句話：**寫一張交付單 → 成片先給 Tim 看 → `upload`（預設公開）；檢查沒過就不送，公開度一定要寫明。**
 > 參數表看 `senate cmd help youtube`。方案、平台事實（API 規定、額度、AI 揭露）與還沒做的部分看 [YouTube_Proposal](YouTube_Proposal.md)。
-> Tim 2026-11-09：「不需要太複雜的紀律 主要當成運營&遊戲宣傳」⇒ 沒有確認關卡，persona 自己決定公開度。
+> Tim 2026-11-09：「不需要太複雜的紀律 主要當成運營&遊戲宣傳」。
+> Tim 2026-11-12：「之後投稿都預設公開 投稿前讓我看一下影片就好避免重複上傳」⇒ **上傳前把本機的成片給 Tim 看，他說可以才傳；交付單的 `privacy` 預設寫 `public`**。
+> ⛔ 不先傳一支 `unlisted`／`private` 給他看再改公開。只有 Tim 明說要先不公開，才寫別的公開度。
 > 🎬 **要自己做影片**（HTML 動畫錄成影片、日語配音、混音；ffmpeg／VOICEVOX 怎麼裝）⇒ **那時才讀** [YouTube_Video_Tools](YouTube_Video_Tools.md)
 > （`senate cmd doc --arg op=show --arg name=YouTube_Video_Tools`）。只上傳現成影片檔不用讀。
 
@@ -124,7 +126,7 @@ senate cmd youtube --arg op=playlist-add --arg playlist_id=<id> --arg video_ids=
   "video": "D:/Blocksail/captures/naval_battle_01.mp4",
   "title": "Blocksail 開發紀錄 #1：海戰",
   "description": "……",
-  "privacy": "unlisted",
+  "privacy": "public",
   "tags": ["Blocksail", "pixel art", "naval battle"],
   "language": "zh-Hant",
   "thumbnail": "D:/Blocksail/captures/naval_battle_01.png",
@@ -138,7 +140,7 @@ senate cmd youtube --arg op=playlist-add --arg playlist_id=<id> --arg video_ids=
 | `video` | 必填 | 絕對路徑、存在、影片副檔名（mp4／mov／webm／mkv／avi…）、不是空檔 |
 | `title` | 必填 | ≤ 100 字；不能有 `<` `>` |
 | `description` | | ≤ 5000 bytes（中文一字 3 bytes）；不能有 `<` `>` |
-| `privacy` | **必填** | `private`／`unlisted`／`public`。⚠ API 沒給公開度就是**公開** ⇒ 一定要寫 |
+| `privacy` | **必填** | `private`／`unlisted`／`public`。預設寫 `public`（Tim 2026-11-12；上傳前先給他看成片）。⚠ API 沒給公開度就是**公開** ⇒ 一定要寫 |
 | `tags` | | 字串陣列；不能有空字串、`<` `>` 或逗號；合計 ≤ 500（含空白的標籤多算 2、標籤之間各算 1） |
 | `category_id` | 預設 `20`（遊戲） | 數字 |
 | `made_for_kids` | 預設 `false` | true／false |

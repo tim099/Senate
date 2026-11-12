@@ -1,13 +1,13 @@
 ---
 title: Bilibili —— persona 在 B 站投稿、跟人互動（bili-cli）
-description: persona 用 bili 指令在 Tim 的 B 站帳號投稿影片、留言互動的使用說明：先量這台（沒裝、沒登入就去讀 Bilibili_Install）、投稿流程（交付單 → 預演 → 僅自己可見 → 讀回 → 公開）、交付單欄位、互動的範圍與紀律（留言一律走 `senate cmd bilibili`，署名由指令補；每個 persona 可以配 1～N 組署名；讀新消息會標已讀，Tim 說沒關係）、擋下的幾種情況、東西住哪、還沒做的。
+description: persona 用 bili 指令在 Tim 的 B 站帳號投稿影片、留言互動的使用說明：先量這台（沒裝、沒登入就去讀 Bilibili_Install）、投稿流程（交付單 → 成片先給 Tim 看 → 預演 → 直接公開投稿 → 讀回）、交付單欄位、互動的範圍與紀律（留言一律走 `senate cmd bilibili`，署名由指令補；每個 persona 可以配 1～N 組署名；讀新消息會標已讀，Tim 說沒關係）、擋下的幾種情況、東西住哪、還沒做的。
 last_updated: 2026-11-11
 target_audience: [AI_Agent, Tim, Tools_Maintainer]
 ---
 
 # 📺 Bilibili
 
-> 一句話：**寫交付單 → `--dry-run` 預演 → 用「僅自己可見」投稿 → 讀回狀態；留言一律走 `senate cmd bilibili`（署名由指令補），⛔ 不直接打 `bili comment post`。**
+> 一句話：**寫交付單 → 成片先給 Tim 看 → `--dry-run` 預演 → 直接公開投稿 → 讀回狀態；留言一律走 `senate cmd bilibili`（署名由指令補），⛔ 不直接打 `bili comment post`。**
 > 工具是開源、非官方的 `bili`（bili-agent）。參數看 `PYTHONUTF8=1 bili <指令> --help`，全部指令的機器可讀描述是 `bili schema`。
 > 方案的來由、平台事實、風險看 [Bilibili_Proposal](Bilibili_Proposal.md)。
 > 🎬 要自己做影片（HTML 動畫、日語配音、混音）⇒ 那時才讀 [YouTube_Video_Tools](YouTube_Video_Tools.md)，產線是同一條。
@@ -41,19 +41,21 @@ bili auth status        # 現況：logged_in=true，帳號 tim099999
 
 1. **開單**（`senate cmd task`）：一支影片一張單，腳本、台詞、交付單放 `Tasks/attachments/TASK-<N>/`（做法看 TASK-0002 的附件 README）。
 2. **寫交付單**（§3）與簡介檔，標題、簡介、標籤用**簡體**。
-3. **預演**：
+3. **投稿前先給 Tim 看成片**：把本機的 mp4（與封面）交給 Tim 看，他說可以才往下走。⛔ 不先投一支「僅自己可見」給他看。
+   Tim 2026-11-12：「之後投稿都預設公開 投稿前讓我看一下影片就好避免重複上傳」。
+   為什麼：`bili upload edit` **改不了公開度**，「僅自己可見 → 看過 → 公開」等於同一支成片投兩次、帳號裡留兩份稿件（2026-11-10～12 的每一支都是這樣多出一份）。
+4. **預演**：
 
 ```bash
 bili upload list --compact            # 先記下 counts（已發布／審核中／退回各幾支）
 bili upload video <成片.mp4> --title "<標題>" --tag <標籤> --tag <標籤> … \
-  --desc-file desc.txt --cover <封面.png> --zone <分區ID> --private --no-reprint --dry-run --pretty
+  --desc-file desc.txt --cover <封面.png> --zone <分區ID> --no-reprint --dry-run --pretty
 bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 ```
 
-4. **投稿**：同一行拿掉 `--dry-run`。成功會印 `bvid`。
-5. **讀回**：`bili upload status <BV號>` —— 看 `state_desc`（审核中／复核中／开放浏览／稿件仅自己可见／退回）、`private`、`creation_statement`（要是「含AI生成内容」）。
-6. **公開**：第一次用新流程或新題材，先「僅自己可見」讓 Tim 看過。
-   🩸 `bili upload edit` **改不了公開度** ⇒ 要公開：Tim 在創作中心網頁上改，或重新投一次（不帶 `--private`）。
+5. **投稿（預設公開）**：同一行拿掉 `--dry-run`。成功會印 `bvid`。
+   只有 Tim 明說要先不公開的時候才加 `--private`；那種稿件之後要公開，只能由 Tim 在創作中心網頁上改，或重新投一次。
+6. **讀回**：`bili upload status <BV號>` —— 看 `state_desc`（审核中／复核中／开放浏览／稿件仅自己可见／退回）、`private`（要是 `false`）、`creation_statement`（要是「含AI生成内容」）。
 7. 把 BV 號、成片的 SHA-256、讀數寫回附件與任務單。
 
 - `--zone` 用新版分區 ID，`bili upload zones` 現查（分區會調整）；1011 是「人工智能」、1008 是「游戏」。不給會照標題自動猜，不一定準。
@@ -81,7 +83,7 @@ bili upload list --compact            # counts 沒變 ⇒ 預演沒有送出
 | `cover` | 建議 | png／jpg，≥ 960x600；不給會用 ffmpeg 截第 3 秒那一格 |
 | `copyright` | ✅ | `original`；轉載要給來源連結（`--repost`） |
 | `ai_declare` | ✅ | `true` |
-| `private` | ✅ | `true` ＝ 僅自己可見 |
+| `private` | ✅ | 預設 `false`（公開）。`true` ＝ 僅自己可見，只有 Tim 明說才用 |
 | `no_reprint` | | `true` ＝ 聲明禁止轉載 |
 | `result` | 投稿後補 | `bvid`、投稿時間、成片 SHA-256、當下的審核狀態 |
 
@@ -166,7 +168,7 @@ senate cmd bilibili --arg op=log                                         # 本�
 | 工具本體 | `uv tool` 的獨立環境，指令在 `~/.local/bin/bili`；留言那一層是 `senate cmd bilibili`（`src/Senate.Core/Cmd_Bilibili.cs`） |
 | 留言的署名 | `<信件庫>/<persona>/profile/bilibili_signatures.md`（一行一組；用 `op=signature-add／signature-remove` 改） |
 | 留言帳本 | `<資料根>/Secret/bilibili/senate_comments.json`（BV、rpid、persona、用了哪一組署名、全文、時間）—— 跟登入狀態同一個資料夾，不進 git |
-| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開）；TASK-0008：`BV11yWj6SEU3`（運營檢討會 #1，中文語音，僅自己可見，等 Tim 看） |
+| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開）；TASK-0008：`BV16LWj66Esk`（運營檢討會 #1，中文語音，公開）；`BV11yWj6SEU3` 是同一支成片先投的「僅自己可見」版；TASK-0010：`BV1LsWj6eEvH`（大小姐的航海課 #1 三角貿易，公開）；`BV1oHWj6vEA2` 是它的「僅自己可見」版；TASK-0012：`BV1bHWQ6pEVY`（蓋章課 #1 時間是骰子嗎？，公開）；`BV1SEWQ6sERe` 是它的「僅自己可見」版 |
 
 每個成功的寫入都會在 `audit.log` 留一筆（動作、參數、結果）—— 要對帳從這裡看。
 
