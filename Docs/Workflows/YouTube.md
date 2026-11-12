@@ -1,8 +1,8 @@
 ---
 title: YouTube —— senate cmd youtube（persona 運營頻道、宣傳 Blocksail）
-description: senate cmd youtube 的使用說明：配置環境（先量這台、換一台電腦搬 .enc 或重新授權、從零設定 Google 端的每一格）、persona 平常怎麼上傳（交付單 → dry_run → upload）、改資料只限本工具上傳的影片、交付單欄位與檢查規則、exit code、憑證與上傳帳本住哪、會咬人的幾格。
+description: senate cmd youtube 的使用說明：配置環境（先量這台、換一台電腦搬 .enc 或重新授權、從零設定 Google 端的每一格）、persona 平常怎麼上傳（交付單 → dry_run → upload）、改資料只限本工具上傳的影片、交付單欄位與檢查規則、數據（Analytics：觀看時長、留存、流量來源；Reporting：縮圖曝光與點閱率）、exit code、憑證與上傳帳本住哪、會咬人的幾格。
 cmds: [youtube]
-last_updated: 2026-11-10
+last_updated: 2026-11-12
 target_audience: [AI_Agent, Tim, Tools_Maintainer]
 ---
 
@@ -31,6 +31,7 @@ senate cmd youtube            # 不連網：用戶端、登入兩格、授權的
 | 用戶端、登入都「可用」 | 好了；`op=whoami` 回讀頻道名就收工，直接看 §2 |
 | 用戶端、登入都「**沒有**」，別台已經設好 | §1.1 換一台電腦 |
 | 用戶端可用、登入沒有，或指令回 exit 3 | 只缺授權 ⇒ §1.1 B 的第 3 步 |
+| 登入可用，但「Analytics」那一行是「沒有授權」（數據的 op 回 exit 3） | 上傳不受影響；要看數據走 §3.2 的三步 |
 | 連 Google 端都沒設過 | §1.2 從零開始 |
 
 現況（2026-11-09 設好的那一套，換電腦時對得上用）：
@@ -41,6 +42,7 @@ senate cmd youtube            # 不連網：用戶端、登入兩格、授權的
 | OAuth 用戶端 | 電腦版應用程式，client_id `972318882660-5ul4c297f44jh4t3gir81qsourt372t8.apps.googleusercontent.com` |
 | 同意畫面 | 外部、**實際運作中**（正式版）；品牌名 `Farstar-studio YouTube`、授權網域 `farstar-studio.com` |
 | 授權的頻道 | **Yeh Tim**（`UCp0kzj4Sr5NM3JEVggLlmfQ`，`@yehtim171`）—— Tim 原本的頻道，舊影片 `update` 改不了 |
+| 授權範圍 | `youtube.force-ssl`（必要）。2026-11-12 起登入多要 `yt-analytics.readonly`、`youtube.readonly`（選用，數據用，§3.2）—— 2026-11-09 那一次登入沒有這兩個 |
 
 ⚠ 密碼檔與用戶端 JSON **只給路徑**（打字貼路徑）。⛔ 不要貼內容，也不要用 `@` 指它們 —— `@` 會把整份內容讀進對話。
 
@@ -82,6 +84,7 @@ senate cmd youtube --arg op=whoami
 
 1. **啟用 API**：[console.cloud.google.com](https://console.cloud.google.com) 選專案 →「API 和服務 → 程式庫」→ **YouTube Data API v3** → 啟用。
    ⚠ Google Auth Platform 自己的側欄**沒有**這個入口 ⇒ 用頂端搜尋列直接搜，或左上 ☰。
+   要看數據（§3.2）再啟用 **YouTube Analytics API** 與 **YouTube Reporting API** —— 跟 Data API v3 是不同的 API，各自啟用。
 2. **Google Auth Platform → 品牌**：
    - 應用程式名稱、使用者支援電子郵件、開發人員聯絡信箱；
    - **應用程式首頁**與**隱私權政策連結** —— ⚠ 缺這兩格，「發布應用程式」會是灰的；
@@ -90,7 +93,8 @@ senate cmd youtube --arg op=whoami
 3. **目標對象**：使用者類型「外部」→「**發布應用程式**」→ 狀態變「**實際運作中**」。
    留在「測試」⇒ refresh token **7 天過期**，而且只有測試使用者名單上的帳號登得進來。
    旁邊「使用者人數上限 100」「未經驗證的應用程式」不用理 —— 只有自己的帳號在用，不送驗證。
-4. **資料存取權**：加 `https://www.googleapis.com/auth/youtube.force-ssl`，一個就夠（上傳、改資料、縮圖、播放清單、留言）。
+4. **資料存取權**：加 `https://www.googleapis.com/auth/youtube.force-ssl`（必要：上傳、改資料、縮圖、播放清單、留言）。
+   要看數據（§3.2）再加 `https://www.googleapis.com/auth/yt-analytics.readonly` 與 `https://www.googleapis.com/auth/youtube.readonly`。
    ⚠ 篩選條件比對**完整字串**：搜 `.../auth/youtube` 只撈得到 `youtube` 那一個 ⇒ 把全名貼進「手動新增範圍」→「新增至資料表」→ 勾起來 →「更新」→「儲存」。
    它會落在「**機密範圍**」（sensitive；不是「受限範圍」）⇒ 不用安全評估。
 5. **用戶端**：建立 → 類型「**電腦版應用程式**」→ **建好的當下就下載 JSON**（密鑰只顯示一次）。
@@ -109,6 +113,9 @@ senate cmd youtube --arg op=list [--arg max=20]                              # �
 senate cmd youtube --arg op=playlists                                        # 頻道的播放清單、公開度、支數（唯讀）
 senate cmd youtube --arg op=playlist-create --arg slip_file=<清單交付單.json> [--arg dry_run=1]   # 建播放清單（系列）
 senate cmd youtube --arg op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg position=0] [--arg dry_run=1]   # 把影片加進清單
+senate cmd youtube --arg op=analytics [--arg video_ids=<id,id>] [--arg start=YYYY-MM-DD] [--arg end=YYYY-MM-DD]   # 數據一張表（§3.2）
+senate cmd youtube --arg op=analytics --arg video_id=<id>                    # 單支：總覽＋流量來源＋留存
+senate cmd youtube --arg op=reach                                            # 縮圖曝光與點閱率（先 op=reach-setup 一次）
 ```
 
 - 上傳成功印 `https://youtu.be/<id>`，然後回讀公開度與處理狀態（剛傳完通常是 `uploaded`，YouTube 還在轉檔）。
@@ -185,6 +192,44 @@ Tim 2026-11-10：「YT跟B站 是否可以把Senate相關做成系列」。清�
 - ⚠ 公開的清單裡放了不公開（unlisted）的影片 ⇒ 那支影片的網址等於跟著清單公開。
 - 沒有改清單標題／說明、移出影片、刪清單的 op ⇒ 到 YouTube Studio 手動做。
 
+### 3.2 數據（Analytics／Reporting）
+
+Tim 2026-11-12：「幫工具接 Analytics」（TASK-0016）。全部唯讀；只有 `reach-setup` 會在 YouTube 那邊建一個報表工作（頻道上別人看不到）。
+
+**第一次要 Tim 做的三步**（`op=status` 的「Analytics」那一行是「沒有授權」時；數據的 op 也會 exit 3 並印出同樣這三步）：
+
+1. Cloud Console（專案 `fir-demo-412cc`）→「API 和服務 → 程式庫」→ 啟用 **YouTube Analytics API** 與 **YouTube Reporting API**。
+2. Google Auth Platform →「資料存取權」→ 手動新增範圍 `https://www.googleapis.com/auth/yt-analytics.readonly`、`https://www.googleapis.com/auth/youtube.readonly` → 更新 → 儲存。
+3. `op=login` 重新授權，同意畫面上 YouTube 與 YouTube Analytics 的幾格都勾。
+   沒勾 Analytics 也算登入成功（上傳照常），只是數據的 op 會擋。
+   要 `youtube.readonly` 的原因：Analytics 的 reports.query 說明頁寫「API requests to this method now require access to the youtube.readonly scope」。
+
+```bash
+senate cmd youtube --arg op=analytics                                  # 本工具上傳的全部，最近 365 天
+senate cmd youtube --arg op=analytics --arg video_ids=<id,id> --arg start=2026-11-01
+senate cmd youtube --arg op=analytics --arg video_id=<id>              # 單支：總覽＋流量來源＋留存
+senate cmd youtube --arg op=reach-setup --arg dry_run=1                # 看會建什麼
+senate cmd youtube --arg op=reach-setup                                # 建 reach 報表工作（只要一次；已經有就不重建）
+senate cmd youtube --arg op=reach [--arg video_ids=<id,id>] [--arg start=] [--arg end=]
+```
+
+| 讀數 | 意思 |
+|---|---|
+| 觀看、觀看分鐘 | Analytics 結算過的數字，跟 `op=list` 的即時觀看數不一定一樣 |
+| 平均觀看、平均看完 | `averageViewDuration`（秒）、`averageViewPercentage` |
+| 3 秒、30 秒還在看 | 留存曲線上最近的那一格（報表每 1% 一格 ⇒ 是「約」，輸出會寫實際是第幾秒）。官方的量尺：30 秒後還有 5 成以上就算「開頭高於平均」 |
+| 相對表現 | `relativeRetentionPerformance`：0.5 ＝ 同長度影片的中位數 |
+| 流量來源 | `insightTrafficSourceType`；中文後面括號是原代碼 |
+| 曝光、點閱率 | reach 報表的 `video_thumbnail_impressions`、`video_thumbnail_impressions_ctr`；點閱率照曝光加權（Σ 曝光×點閱率 ／ Σ 曝光） |
+
+- 🩸 **曝光與點閱率不在 Analytics API**（它的指標表沒有；`adImpressions` 是廣告的、`cardImpressions` 是資訊卡的）⇒ 只能走 Reporting API 的 `channel_reach_basic_a1`：
+  建報表工作後 **48 小時內**才出第一份、會回補建立前 30 天；一份 CSV 一天；報表留 60 天（回補的那 30 天只留 30 天）。
+- Analytics 通常落後 1～2 天；這段期間沒有資料的影片照實印「沒有資料」，⛔ 不是 0。
+- 留存只在觀看夠多時才有（YouTube 不給就是不給）；而且一次只能查一支（留存報表的 filters 只收一支）。
+- 點閱率是比例還是百分比，文件沒寫 ⇒ 看到 > 1 的值就整批當百分比，輸出會講這一批當成哪一種。
+- 曝光只算 YouTube 站內的縮圖曝光；外部連結（噗浪、Discord）點進來的觀看沒有曝光。
+- 下載報表的網址是 API 回應裡讀來的 ⇒ 只送到 `*.googleapis.com`，access token 不跟不認得的網址出去。
+
 ## 4. 擋下的幾種情況
 
 | 情況 | exit | 怎麼辦 |
@@ -193,6 +238,9 @@ Tim 2026-11-10：「YT跟B站 是否可以把Senate相關做成系列」。清�
 | 同一支檔案（SHA-256 一樣）已經上傳過 | 2 | 真的要再傳加 `--arg allow_duplicate=1` |
 | `update` 的影片不是本工具上傳的 | 2 | 頻道上原本的影片一律不碰；`op=list` 的 Senate 欄是「—」的就是 |
 | 沒登入、refresh token 失效 | 3 | Tim 重跑 `op=login` |
+| 數據的 op：登入時沒拿到 Analytics 的授權 | 3 | §3.2 的三步（連網前就擋，不去撞 403） |
+| 數據的 op：Cloud 專案沒啟用 Analytics／Reporting API | 1 | 輸出會說是哪一支、去哪啟用；剛啟用要等幾分鐘 |
+| `op=reach`：還沒有 reach 報表工作 | 2 | 先 `op=reach-setup` |
 | API 或網路失敗（額度用完 `quotaExceeded`、逾時…） | 1 | 看訊息；上傳額度預設每天 100 支 |
 
 本工具**沒有刪除**。要刪到 YouTube Studio 手動刪。
@@ -210,9 +258,11 @@ Tim 2026-11-10：「YT跟B站 是否可以把Senate相關做成系列」。清�
 
 - 帳本放這裡而不放資料根其他地方：**unlisted 影片的 id 就等於網址**，進公開 repo 等於公開。
 - 帳本讀不懂（壞檔）⇒ `upload`／`update`／`playlist-create`／`playlist-add` 擋下，⛔ 不拿空帳本蓋掉它。
-- 程式：`src/Senate.Core/Cmd_YouTube.cs`（交付單、檢查、帳本）、`src/Senate.Core/Cmd_YouTube.Playlists.cs`（播放清單那一半）、`src/Senate.Core/YouTubeClient.cs`（憑證、OAuth loopback＋PKCE、API）。
+- reach 報表工作住在 YouTube 那邊（`op=reach-setup` 先列出來、有同類型的就不重建），本機不記。
+- 程式：`src/Senate.Core/Cmd_YouTube.cs`（交付單、檢查、帳本）、`src/Senate.Core/Cmd_YouTube.Playlists.cs`（播放清單那一半）、`src/Senate.Core/Cmd_YouTube.Analytics.cs`（數據那一半）、`src/Senate.Core/YouTubeClient.cs`（憑證、OAuth loopback＋PKCE、API）。
+  不連網的部分有自我測試：`senate selftest --only YouTubePlaylistSlipAndLedgerCleanRoom,YouTubeAnalyticsCleanRoom`。
 
 ## 6. 還沒做
 
-讀留言／回留言、數據進 wake brief、上傳公告到酒館領薪、Blocksail 錄影與船隻轉台的素材產線 —— 見 [YouTube_Proposal](YouTube_Proposal.md) §5.2、§5.4。
+讀留言／回留言、數據進 wake brief（數據本身 2026-11-12 起讀得到了，§3.2）、上傳公告到酒館領薪、Blocksail 錄影與船隻轉台的素材產線 —— 見 [YouTube_Proposal](YouTube_Proposal.md) §5.2、§5.4。
 （HTML 動畫 → 影片、VOICEVOX 配音、ffmpeg 混音這條已經走通一次，做法在 [YouTube_Video_Tools](YouTube_Video_Tools.md)。）

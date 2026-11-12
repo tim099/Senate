@@ -1,5 +1,6 @@
 // 區塊職責：`senate cmd youtube` —— persona 運營 YouTube 頻道（Blocksail 宣傳）：憑證、登入、上傳、改資料、列影片。
 // 物理意義：底層（憑證、OAuth、HTTP）在 YouTubeClient.cs；本檔是交付單、檢查、上傳帳本與輸出。
+//           播放清單在 Cmd_YouTube.Playlists.cs；數據（Analytics API、Reporting API 的 reach 報表，TASK-0016）在 Cmd_YouTube.Analytics.cs。
 //           方案與平台事實見 `Docs/Workflows/YouTube_Proposal.md`，用法見 `Docs/Workflows/YouTube.md`。
 //           Tim 2026-11-09：「不需要太複雜的紀律 主要當成運營&遊戲宣傳」⇒ 沒有 confirm 關卡；`upload` 先跑檢查，沒過就不送。
 // 數值影響：
@@ -23,7 +24,7 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
     public override string Name => "youtube";
     public override string Category => SCP_CmdCategory.Reading;
 
-    public override string Summary => "YouTube 頻道運營：憑證（一步加密）、登入授權、上傳影片（交付單先檢查）、改標題／說明／公開度／縮圖、列頻道影片、播放清單（列出／建立／加影片）";
+    public override string Summary => "YouTube 頻道運營：憑證（一步加密）、登入授權、上傳影片（交付單先檢查）、改標題／說明／公開度／縮圖、列頻道影片、播放清單（列出／建立／加影片）、數據（觀看時長、留存、流量來源、縮圖曝光與點閱率）";
 
     public override string Details =>
         "· `op=status`（預設）：憑證與登入狀態、授權到的頻道、帳本筆數（不連網）。\n"
@@ -37,6 +38,12 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
         + "· `op=playlist-create --arg slip_file=<清單交付單.json> [--arg dry_run=1] [--arg allow_duplicate=1]`：建播放清單；同名的已經有了就擋。"
         + "交付單欄位：persona、title、privacy（必填）、description、videos（建好之後依序加進去的影片 id，只收本工具上傳的）。\n"
         + "· `op=playlist-add --arg playlist_id=<id> --arg video_ids=<id,id> [--arg position=<第幾個，0 起算>] [--arg dry_run=1]`：把本工具上傳的影片加進**本工具建的**清單；已經在裡面的跳過；沒給 position 就加在最後。\n"
+        + "· `op=analytics [--arg video_ids=<id,id>] [--arg start=YYYY-MM-DD] [--arg end=YYYY-MM-DD]`：Analytics API 一張表（觀看、觀看分鐘、平均觀看、讚、分享、漲粉）；"
+        + "沒給 video_ids ⇒ 本工具上傳的全部；沒給日期 ⇒ 最近 365 天。唯讀。\n"
+        + "· `op=analytics --arg video_id=<id>`：單支的總覽、流量來源、留存（3 秒、30 秒時還剩幾成）。唯讀。\n"
+        + "· `op=reach-setup [--arg dry_run=1]`：建 Reporting API 的 reach 報表工作（縮圖曝光與點閱率；已經有就不重建；48 小時內出第一份，回補前 30 天）。\n"
+        + "· `op=reach [--arg video_ids=<id,id>] [--arg start=] [--arg end=]`：下載 reach 報表，每支影片的曝光與點閱率。唯讀。\n"
+        + "Analytics 那三個 op 要登入時拿到 `yt-analytics.readonly` 與 `youtube.readonly`（`op=status` 看得到），Cloud 專案也要啟用 YouTube Analytics API 與 YouTube Reporting API。\n"
         + "交付單欄位：persona、video、title、description、privacy（private／unlisted／public，必填）、tags、category_id（預設 20 遊戲）、"
         + "made_for_kids（預設 false）、synthetic_media（預設 false）、language、thumbnail、playlist_id。欄位表與限制看 `Docs/Workflows/YouTube.md`。";
 
@@ -44,7 +51,7 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
 
     public override IReadOnlyList<SCP_CmdArgSpec> ArgSpecs => new[]
     {
-        new SCP_CmdArgSpec("op", "做什麼", iDefault: "status", iChoices: new[] { "status", "set-credentials", "login", "whoami", "upload", "update", "list", "playlists", "playlist-create", "playlist-add" }),
+        new SCP_CmdArgSpec("op", "做什麼", iDefault: "status", iChoices: new[] { "status", "set-credentials", "login", "whoami", "upload", "update", "list", "playlists", "playlist-create", "playlist-add", "analytics", "reach-setup", "reach" }),
         new SCP_CmdArgSpec("client_path", "set-credentials：Google Cloud 下載的用戶端 JSON（電腦版應用程式）", iDefault: ""),
         new SCP_CmdArgSpec("passphrase_path", "set-credentials／login：放加密密碼的檔（⛔ 不收密碼本身）", iDefault: ""),
         new SCP_CmdArgSpec("hint", "set-credentials／login：密碼提示（不參與加密）", iDefault: ""),
@@ -52,15 +59,17 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
         new SCP_CmdArgSpec("timeout", "login：等瀏覽器回來的秒數", iDefault: "300"),
         new SCP_CmdArgSpec("open_browser", "login：1＝自動開瀏覽器；0＝只印網址", iDefault: "1", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("slip_file", "upload／update／playlist-create：交付單（JSON，絕對路徑）", iDefault: ""),
-        new SCP_CmdArgSpec("video_id", "update：要改的影片 id（必須是本工具上傳過的）", iDefault: ""),
-        new SCP_CmdArgSpec("dry_run", "upload／update／playlist-create／playlist-add：1＝只檢查並印出要送的內容，不送", iDefault: "0", iChoices: new[] { "0", "1" }),
+        new SCP_CmdArgSpec("video_id", "update：要改的影片 id（必須是本工具上傳過的）；analytics：只看這一支（多了流量來源與留存）", iDefault: ""),
+        new SCP_CmdArgSpec("dry_run", "upload／update／playlist-create／playlist-add／reach-setup：1＝只檢查並印出要送的內容，不送", iDefault: "0", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("allow_duplicate", "upload：1＝同一支檔案已上傳過也照傳；playlist-create：1＝頻道上已經有同名清單也照建", iDefault: "0", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("notify", "upload：1＝通知訂閱者（預設 1）", iDefault: "1", iChoices: new[] { "0", "1" }),
         new SCP_CmdArgSpec("upload_timeout", "upload：上傳檔案的逾時秒數", iDefault: "3600"),
         new SCP_CmdArgSpec("max", "list：最多列幾支（1–50）", iDefault: "20"),
         new SCP_CmdArgSpec("playlist_id", "playlist-add：要加進去的播放清單 id（必須是本工具建的）", iDefault: ""),
-        new SCP_CmdArgSpec("video_ids", "playlist-add：影片 id，逗號分隔（必須是本工具上傳的）", iDefault: ""),
+        new SCP_CmdArgSpec("video_ids", "playlist-add：影片 id，逗號分隔（必須是本工具上傳的）；analytics／reach：只看這幾支（analytics 沒給 ⇒ 本工具上傳的全部）", iDefault: ""),
         new SCP_CmdArgSpec("position", "playlist-add：從第幾個位置開始插入（0 ＝ 最前面）；空＝加在最後", iDefault: ""),
+        new SCP_CmdArgSpec("start", "analytics／reach：起日 YYYY-MM-DD（analytics 沒給 ⇒ end 往前 365 天；reach 沒給 ⇒ 全部報表）", iDefault: ""),
+        new SCP_CmdArgSpec("end", "analytics／reach：迄日 YYYY-MM-DD（analytics 沒給 ⇒ 今天）", iDefault: ""),
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（憑證住 <資料根>/Secret/）", iRequired: true),
         new SCP_CmdArgSpec("letters_root", "信件庫根（驗 persona 存在）", iDefault: ""),
     };
@@ -87,6 +96,9 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
             "playlists" => Playlists(aRoot),
             "playlist-create" => PlaylistCreate(aRoot, iArgs),
             "playlist-add" => PlaylistAdd(aRoot, iArgs),
+            "analytics" => Analytics(aRoot, iArgs),
+            "reach-setup" => ReachSetup(aRoot, iArgs),
+            "reach" => Reach(aRoot, iArgs),
             _ => Status(aRoot),
         };
     }
@@ -104,12 +116,17 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
             + (s.TokenReady ? $"　頻道 **{s.ChannelTitle}**（{s.ChannelId}，{s.ObtainedAt} 授權）" : " ⇒ `op=login`"));
         if (s.TokenReady && s.ClientId.Length > 0 && s.TokenClientId.Length > 0 && s.TokenClientId != s.ClientId)
             r.Lines.Add("  ⚠ token 是舊用戶端拿的 ⇒ 重跑 `op=login`");
+        if (s.TokenReady)
+            r.Lines.Add(s.AnalyticsReady
+                ? "- Analytics：已授權（`op=analytics`、`op=reach-setup`、`op=reach` 可用）"
+                : "- Analytics：**沒有授權**（登入時沒要或沒勾）⇒ 要用 `op=analytics` 先重跑 `op=login`（步驟看 `Docs/Workflows/YouTube.md` §3.2）");
         if (s.Problem.Length > 0) r.Lines.Add("  ⚠ " + s.Problem);
         if (s.DirWarning.Length > 0) r.Lines.Add("  ⚠ " + s.DirWarning);
         r.Lines.Add(aLedger == null ? "- 上傳帳本：✗ " + aLedgerErr : $"- 上傳帳本：{aLedger.Count} 支（`{YouTubeClient.LedgerPath(iRoot)}`）");
         r.Lines.Add($"- 憑證資料夾：`{s.SecretsDir}`");
         r.AddValue("client_ready", s.ClientReady ? "1" : "0");
         r.AddValue("token_ready", s.TokenReady ? "1" : "0");
+        r.AddValue("analytics_ready", s.AnalyticsReady ? "1" : "0");
         r.AddValue("channel_id", s.ChannelId);
         r.AddValue("uploads", aLedger == null ? "" : aLedger.Count.ToString(CultureInfo.InvariantCulture));
         return r;
@@ -153,11 +170,16 @@ public sealed partial class Cmd_YouTube : SCP_Cmd
                 l => Console.Error.WriteLine(l), out YouTubeClient.LoginResult aRes, out aErr))
             return SCP_CmdResult.Fail(2, "✗ 登入沒有完成：" + aErr);
         YouTubeCredStatus s = YouTubeClient.Status(iRoot);
-        return SCP_CmdResult.Success($"✅ 已授權頻道 **{aRes.ChannelTitle}**（{aRes.ChannelId}）",
+        SCP_CmdResult r = SCP_CmdResult.Success($"✅ 已授權頻道 **{aRes.ChannelTitle}**（{aRes.ChannelId}）",
                 $"- refresh token 已加密：`{s.TokenEncPath}`（明文 `{s.TokenPlainPath}`）" + (aRes.Replaced ? "（蓋掉了上一次的登入）" : ""),
                 "- 之後上傳不用再登入；token 失效時指令會回 exit 3 並叫你重登")
             .AddValue("channel_id", aRes.ChannelId)
-            .AddValue("channel_title", aRes.ChannelTitle);
+            .AddValue("channel_title", aRes.ChannelTitle)
+            .AddValue("analytics_ready", aRes.MissingOptional.Count == 0 ? "1" : "0");
+        r.Lines.Add(aRes.MissingOptional.Count == 0
+            ? "- Analytics：✓ 也授權了（`op=analytics`、`op=reach-setup`、`op=reach` 可用）"
+            : "- ⚠ Analytics 沒授權到（同意畫面上沒勾：" + string.Join("、", aRes.MissingOptional) + "）—— 上傳照常；要看數據就再跑一次 `op=login` 把那幾格勾起來");
+        return r;
     }
 
     static SCP_CmdResult? Access(string iRoot, out string oAccess)

@@ -12,8 +12,14 @@
 // 數值影響：
 //   · ⛔ client_secret、refresh token、access token 不進任何輸出與錯誤訊息（`Scrub`）。上傳的 session 網址也不印（它本身就是上傳權）。
 //   · 登入時聽 127.0.0.1 的隨機埠；等不到就逾時（預設 300 秒），不留常駐的東西。
-//   · scope 只要一個 `youtube.force-ssl`（上傳、改資料、縮圖、播放清單、留言都涵蓋）；
+//   · scope：`youtube.force-ssl`（上傳、改資料、縮圖、播放清單、留言都涵蓋）是**必要**的，沒拿到就算登入失敗；
 //     2026-11-09 Tim 在 Cloud Console 讀到它歸「機密範圍」（sensitive）⇒ 自用不送驗證，登入時會多一頁「尚未驗證」警告。
+//   · 2026-11-12（TASK-0016，Tim：「幫工具接 Analytics」）多要兩個**選用**的：`yt-analytics.readonly`（Analytics API 與 Reporting API）
+//     與 `youtube.readonly`（Analytics 的 reports.query 頁面寫「API requests to this method now require access to the youtube.readonly scope」）。
+//     Google 的同意畫面讓人逐項取消勾選 ⇒ 這兩個沒拿到只警告、不算登入失敗（上傳照常）；拿到哪些記在 token 檔的 `scope`，
+//     Analytics 那幾個 op 先看這一欄，沒有就 exit 3 叫人重登，不去撞一個看不懂的 403。
+//   · Analytics（youtubeanalytics.googleapis.com）與 Reporting（youtubereporting.googleapis.com）是 Cloud 專案裡**另外兩支 API**，
+//     要個別啟用；沒啟用的錯誤訊息由 Cmd_YouTube.Analytics.cs 翻成「去哪啟用哪一支」。
 #nullable enable
 using System.Diagnostics;
 using System.Globalization;
@@ -47,6 +53,10 @@ public sealed class YouTubeCredStatus
     public string ObtainedAt = "";
     /// <summary>token 是用哪個 client_id 拿的；跟現在的用戶端不同 ⇒ refresh 一定失敗，要重登。</summary>
     public string TokenClientId = "";
+    /// <summary>登入時 Google 實際給的 scope（空白分隔）。舊的 token 檔也有這一欄（2026-11-09 起就記了）。</summary>
+    public string GrantedScope = "";
+    /// <summary>Analytics 要的 scope 都在 <see cref="GrantedScope"/> 裡。</summary>
+    public bool AnalyticsReady => TokenReady && YouTubeClient.MissingScopes(GrantedScope, YouTubeClient.AnalyticsScopes).Count == 0;
     /// <summary>讀檔時的問題（壞檔、缺欄位）；空 ＝ 沒問題。</summary>
     public string Problem = "";
 }
@@ -63,7 +73,14 @@ public sealed class YouTubeHttp
 
 public static class YouTubeClient
 {
+    /// <summary>必要的 scope：上傳、改資料、縮圖、播放清單、留言。</summary>
     public const string Scope = "https://www.googleapis.com/auth/youtube.force-ssl";
+    public const string AnalyticsScope = "https://www.googleapis.com/auth/yt-analytics.readonly";
+    public const string ReadonlyScope = "https://www.googleapis.com/auth/youtube.readonly";
+    /// <summary>Analytics／Reporting 那幾個 op 要的（選用：登入時沒拿到只警告）。</summary>
+    public static readonly string[] AnalyticsScopes = { AnalyticsScope, ReadonlyScope };
+    /// <summary>登入時一次要的全部 scope。</summary>
+    public static readonly string[] LoginScopes = { Scope, AnalyticsScope, ReadonlyScope };
     public const string ClientSecretName = "youtube_client";
     public const string TokenSecretName = "youtube_token";
     public const string LedgerFileName = "youtube_uploads.json";
@@ -72,6 +89,8 @@ public static class YouTubeClient
     const string TokenUrl = "https://oauth2.googleapis.com/token";
     const string ApiBase = "https://www.googleapis.com/youtube/v3";
     const string UploadBase = "https://www.googleapis.com/upload/youtube/v3";
+    const string AnalyticsBase = "https://youtubeanalytics.googleapis.com/v2";
+    const string ReportingBase = "https://youtubereporting.googleapis.com/v1";
     const int ApiTimeoutSec = 30;
 
     static readonly HttpClient s_Http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
@@ -110,6 +129,7 @@ public static class YouTubeClient
                 s.ChannelTitle = t.GetString("channel_title", "");
                 s.ObtainedAt = t.GetString("obtained_at", "");
                 s.TokenClientId = t.GetString("client_id", "");
+                s.GrantedScope = t.GetString("scope", "");
                 if (!s.TokenReady) aProblems.Add("token 明文裡沒有 refresh_token");
             }
             catch (Exception e) { aProblems.Add($"token 明文讀不懂：{e.GetType().Name}"); }
@@ -171,6 +191,15 @@ public static class YouTubeClient
         public string ChannelTitle = "";
         public string Scope = "";
         public bool Replaced;
+        /// <summary>要了卻沒拿到的選用 scope（同意畫面上沒勾）。空 ＝ 全拿到。</summary>
+        public List<string> MissingOptional = new();
+    }
+
+    /// <summary><paramref name="iNeed"/> 裡不在 <paramref name="iGranted"/>（空白分隔）的那些。</summary>
+    public static List<string> MissingScopes(string iGranted, IEnumerable<string> iNeed)
+    {
+        var aHave = new HashSet<string>((iGranted ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+        return iNeed.Where(x => !aHave.Contains(x)).ToList();
     }
 
     /// <summary>
@@ -199,14 +228,14 @@ public static class YouTubeClient
                 + "?client_id=" + Uri.EscapeDataString(aClientId)
                 + "&redirect_uri=" + Uri.EscapeDataString(aRedirect)
                 + "&response_type=code"
-                + "&scope=" + Uri.EscapeDataString(Scope)
+                + "&scope=" + Uri.EscapeDataString(string.Join(" ", LoginScopes))
                 + "&access_type=offline"
                 + "&prompt=consent"                         // 每次都問 ⇒ Google 一定回 refresh token
                 + "&code_challenge=" + aChallenge
                 + "&code_challenge_method=S256"
                 + "&state=" + aState;
 
-            iNotice($"🔐 請在瀏覽器登入 Google → 選要運營的頻道 → 看到「尚未驗證」按「進階 → 前往」→ 允許（{iTimeoutSec} 秒內）");
+            iNotice($"🔐 請在瀏覽器登入 Google → 選要運營的頻道 → 看到「尚未驗證」按「進階 → 前往」→ YouTube 與 YouTube Analytics 的幾格都勾 → 允許（{iTimeoutSec} 秒內）");
             iNotice("   瀏覽器沒自己打開的話，手動開這個網址：");
             iNotice("   " + aUrl);
             if (iOpenBrowser)
@@ -237,11 +266,12 @@ public static class YouTubeClient
                 oError = "Google 沒給 refresh token ⇒ 到 https://myaccount.google.com/permissions 移除這個應用程式的存取權，再登入一次";
                 return false;
             }
-            if (!aScope.Split(' ').Contains(Scope))
+            if (MissingScopes(aScope, new[] { Scope }).Count > 0)
             {
-                oError = "授權時沒有勾 YouTube 的權限（同意畫面上那一格要打勾）⇒ 再跑一次 `op=login`";
+                oError = "授權時沒有勾 YouTube 的權限（同意畫面上「管理你的 YouTube 影片」那一格要打勾）⇒ 再跑一次 `op=login`";
                 return false;
             }
+            oResult.MissingOptional = MissingScopes(aScope, AnalyticsScopes);
 
             if (!TryGetJson(aAccess, "/channels?part=snippet&mine=true", out SCP_JsonData ch, out oError)) { oError = "登入成功，但讀不到頻道：" + oError; return false; }
             if (ch["items"].Count == 0) { oError = "登入的帳號底下沒有 YouTube 頻道 ⇒ 先到 YouTube 建頻道，或登入時選對品牌帳號"; return false; }
@@ -454,6 +484,56 @@ public static class YouTubeClient
         return TrySendJson(iAccess, HttpMethod.Post, "/playlistItems?part=snippet", j.ToJson(false), out _, out oError);
     }
 
+    // ── Analytics／Reporting（TASK-0016）────────────────────────────
+
+    /// <summary>YouTube Analytics API v2 `reports.query`。<paramref name="iQuery"/> 是組好的查詢字串（不含 `?`）。唯讀。</summary>
+    public static bool TryAnalyticsReport(string iAccess, string iQuery, out SCP_JsonData oJson, out string? oError)
+    {
+        var aReq = new HttpRequestMessage(HttpMethod.Get, AnalyticsBase + "/reports?" + iQuery);
+        aReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", iAccess);
+        return Finish(Send(aReq, ApiTimeoutSec), "Analytics 報表", iAccess, out oJson, out oError);
+    }
+
+    /// <summary>YouTube Reporting API 的 GET（`/reportTypes`、`/jobs`、`/jobs/{id}/reports`）。唯讀。</summary>
+    public static bool TryReportingGet(string iAccess, string iPathAndQuery, out SCP_JsonData oJson, out string? oError)
+    {
+        var aReq = new HttpRequestMessage(HttpMethod.Get, ReportingBase + iPathAndQuery);
+        aReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", iAccess);
+        return Finish(Send(aReq, ApiTimeoutSec), "Reporting " + StripQuery(iPathAndQuery), iAccess, out oJson, out oError);
+    }
+
+    /// <summary>YouTube Reporting API：建一個報表工作（`POST /jobs`）。之後 YouTube 每天產一份報表，並回補建立前 30 天。</summary>
+    public static bool TryReportingCreateJob(string iAccess, string iReportTypeId, string iName, out SCP_JsonData oJob, out string? oError)
+    {
+        var j = SCP_JsonData.NewObject();
+        j.Set("reportTypeId", iReportTypeId);
+        j.Set("name", iName);
+        var aReq = new HttpRequestMessage(HttpMethod.Post, ReportingBase + "/jobs")
+        {
+            Content = new StringContent(j.ToJson(false), new UTF8Encoding(false), "application/json"),
+        };
+        aReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", iAccess);
+        return Finish(Send(aReq, ApiTimeoutSec), "Reporting 建報表工作", iAccess, out oJob, out oError);
+    }
+
+    /// <summary>
+    /// 下載一份報表（Reporting API 給的 `downloadUrl`，要帶 access token）⇒ CSV 原文。
+    /// ⛔ 只送到 googleapis.com 底下：網址是回應裡讀來的，access token 不能跟著一個不認得的網址出去。
+    /// </summary>
+    public static bool TryDownloadReport(string iAccess, string iUrl, out string oText, out string? oError)
+    {
+        oText = ""; oError = null;
+        if (!Uri.TryCreate(iUrl, UriKind.Absolute, out Uri? u) || u.Scheme != Uri.UriSchemeHttps
+            || !(u.Host == "googleapis.com" || u.Host.EndsWith(".googleapis.com", StringComparison.OrdinalIgnoreCase)))
+        { oError = "報表網址不是 https://*.googleapis.com —— 不帶 token 送出去"; return false; }
+        var aReq = new HttpRequestMessage(HttpMethod.Get, u);
+        aReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", iAccess);
+        YouTubeHttp h = Send(aReq, 120);
+        if (!h.Ok) { oError = "下載報表失敗：" + Scrub(ApiError(h), iAccess); return false; }
+        oText = h.Body;
+        return true;
+    }
+
     // ── HTTP 共用 ────────────────────────────────────────────────
 
     static YouTubeHttp PostForm(string iUrl, Dictionary<string, string> iFields)
@@ -497,6 +577,10 @@ public static class YouTubeClient
             if (e.IsObject)
             {
                 string aReason = e["errors"].IsArray && e["errors"].Count > 0 ? e["errors"][0].GetString("reason", "") : "";
+                // Analytics／Reporting 有時沒有 errors[]，原因只在 details[].reason（例：SERVICE_DISABLED、ACCESS_TOKEN_SCOPE_INSUFFICIENT）或 status。
+                if (aReason.Length == 0 && e["details"].IsArray)
+                    foreach (SCP_JsonData d in e["details"]) { if (d.IsObject && d["reason"].IsString) { aReason = d.GetString("reason", ""); break; } }
+                if (aReason.Length == 0 && e["status"].IsString) aReason = e.GetString("status", "");
                 return $"HTTP {h.Status}" + (aReason.Length > 0 ? $" {aReason}" : "") + "：" + e.GetString("message", "");
             }
         }
