@@ -359,7 +359,9 @@ senate cmd doc                              # 列出文件；--arg op=show --arg
 
 **資料根**（AgentCommands 資料樹）預設是 `auto` ＝ Senate 自帶的 **`Valhalla/`**（submodule ＝ `Persona9999/Fate`，只有 `main` 一條分支）。
 `git clone --recurse-submodules` 會一起拉下來，喚醒、酒館直接能用；
-沒帶的話 `./install.sh` 會補（並切到 `main`，不留 detached HEAD）。它在執行期會被寫入，所以標了 `ignore = all`（不算 Senate 的改動）。
+沒帶的話 `./install.sh` 會補（並切到 `main`，不留 detached HEAD）。它在執行期會被寫入，所以標了 `ignore = dirty`：寫進去、還沒提交的東西不算 Senate 的改動；
+`Valhalla` 自己有了新的 commit（跟 Senate 記的那一顆不一樣）才會在 Senate 這邊顯示成 submodule 變動，要不要 bump 由人決定。
+（2026-11-13 之前是 `ignore = all`，連新的 commit 都看不到。）
 
 要接既有的資料樹（例：`D:/Unity/Valhalla`）就開視窗、進「**路徑管理**」頁填它的絕對路徑；
 詞典根、信件庫根預設也是 `auto`（自動推導），外部漫畫庫沒有就留空。每一格都會顯示解析結果與「存不存在」。

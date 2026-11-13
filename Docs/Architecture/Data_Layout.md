@@ -1,7 +1,7 @@
 ---
 title: SenateData 資料根版面
 description: Senate 自己的設定檔與專案內資料一律住 SenateData/ — 三層分類的判準（config / prefs / runtime）、新東西該往哪放、路徑分兩族（Senate 自己的檔 vs 外部動態路徑）與各自的唯一決定點、以及改路徑必須同時做 migration 的理由
-last_updated: 2026-10-02 (.gitignore 形狀改 /SenateData/* ＋ install_catalog.json，TASK-0375)
+last_updated: 2026-11-13 (Valhalla 的 submodule ignore 由 all 改成 dirty)
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -202,7 +202,7 @@ git check-ignore -v --no-index SenateData/config/senate.local.example.json  # �
 | `build/` `publish/` | **產物**，跟資料是兩回事（產物可以整個刪掉重建，資料不行）。執行檔 `publish/senate.exe` 住這裡 |
 | `senate.lnk` | 一鍵 build 放的雙擊捷徑，**只服務滑鼠**（PATH 掛的是 `publish/`） |
 | `.claude/` `.codex/` `.agents/` | 那是 agent 工具的家，不是 Senate 的 |
-| `Glossary/` `Valhalla/` | submodule：詞典、自帶的資料樹（`Persona9999/Fate`，只有 `main`；裡面只掛 persona 的信件庫）—— `glossaryRoot`／`agentCommandsRoot` 的 `auto` 指這裡。各自是 git repo，寫入與提交進它們自己的歷史，⛔ 不收進 `SenateData/`。`Valhalla` 標 `ignore = all`（執行期寫入不算 Senate 的改動）；`clone --recurse-submodules` 一起拉 |
+| `Glossary/` `Valhalla/` | submodule：詞典、自帶的資料樹（`Persona9999/Fate`，只有 `main`；裡面只掛 persona 的信件庫）—— `glossaryRoot`／`agentCommandsRoot` 的 `auto` 指這裡。各自是 git repo，寫入與提交進它們自己的歷史，⛔ 不收進 `SenateData/`。`Valhalla` 標 `ignore = dirty`（執行期寫進去、還沒提交的東西不算 Senate 的改動；它有新的 commit 才顯示成 submodule 變動 —— 2026-11-13 之前是 `ignore = all`，連新的 commit 都看不到）；`clone --recurse-submodules` 一起拉 |
 
 ## 相關
 
