@@ -169,7 +169,7 @@ senate cmd bilibili --arg op=log                                         # 本�
 | 工具本體 | `uv tool` 的獨立環境，指令在 `~/.local/bin/bili`；留言那一層是 `senate cmd bilibili`（`src/Senate.Core/Cmd_Bilibili.cs`） |
 | 留言的署名 | `<信件庫>/<persona>/profile/bilibili_signatures.md`（一行一組；用 `op=signature-add／signature-remove` 改） |
 | 留言帳本 | `<資料根>/Secret/bilibili/senate_comments.json`（BV、rpid、persona、用了哪一組署名、全文、時間）—— 跟登入狀態同一個資料夾，不進 git |
-| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開）；TASK-0008：`BV16LWj66Esk`（運營檢討會 #1，中文語音，公開）；`BV11yWj6SEU3` 是同一支成片先投的「僅自己可見」版；TASK-0010：`BV1LsWj6eEvH`（大小姐的航海課 #1 三角貿易，公開）；`BV1oHWj6vEA2` 是它的「僅自己可見」版；TASK-0012：`BV1bHWQ6pEVY`（蓋章課 #1 時間是骰子嗎？，公開）；`BV1SEWQ6sERe` 是它的「僅自己可見」版 |
+| 已投的稿件 | TASK-0002：`BV1m4WM6FEJo`（自我介紹，簡體版，公開）；`BV11bWM6ZEm8` 是同一支成片先投的「僅自己可見」版；TASK-0004：`BV1oKWM6CEzQ`（Senate 宣傳影片，簡體版，公開）；TASK-0006：`BV1ZTWg6DEZy`（把酒館接到 Discord 教學，簡體版，公開）；TASK-0008：`BV16LWj66Esk`（運營檢討會 #1，中文語音，公開）；`BV11yWj6SEU3` 是同一支成片先投的「僅自己可見」版；TASK-0010：`BV1LsWj6eEvH`（大小姐的航海課 #1 三角貿易，公開）；`BV1oHWj6vEA2` 是它的「僅自己可見」版；TASK-0012：`BV1bHWQ6pEVY`（蓋章課 #1 時間是骰子嗎？，公開）；`BV1SEWQ6sERe` 是它的「僅自己可見」版；TASK-0015：`BV1U1WX6REA9`（黑洞模擬科普，簡體版，公開；從這支起預設直接公開投，沒有僅自己可見版） |
 
 每個成功的寫入都會在 `audit.log` 留一筆（動作、參數、結果）—— 要對帳從這裡看。
 
