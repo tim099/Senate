@@ -78,6 +78,10 @@ done
 echo '── Senate 一鍵 build ───────────────────────────'
 command -v dotnet >/dev/null 2>&1 || { echo '✗ 找不到 dotnet —— 先跑 ./install.sh' >&2; exit 1; }
 
+# 平台：決定 publish 的 RID 與執行檔副檔名（Linux 沒有 .exe）。判定集中在 platform.sh，check.sh 共用。
+. "$root/platform.sh"
+echo "· 平台：$rid"
+
 
 # ── 編譯到暫存目錄（TASK-0438，Tim 2026-10-06）──────────────────────────
 # 物理意義：舊版一開頭就停 Server、`-o publish` 直接覆寫 ⇒ **整段編譯期間 Server 都是停的**
@@ -109,7 +113,7 @@ echo "· build id：$build_id"
 
 dotnet publish src/Senate.Cli   -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false \
   -c Release \
-  -r win-x64 \
+  -r "$rid" \
   --self-contained \
   -p:PublishSingleFile=true \
   -o "$stage" \
@@ -124,18 +128,18 @@ dotnet publish src/Senate.Cli   -p:InformationalVersion="$build_id" -p:IncludeSo
 # ⚠ 出到 publish/server/ 而不是 publish/：兩顆自足單檔進同一層會互相蓋 pdb 與原生層。
 # 🔴 build_id 必須跟上面那顆**同一個**：`BuildMatches` 比的是 AssemblyInformationalVersion，
 #    不一致的症狀是每一支委派 Cmd 都 build_mismatch（而兩顆都是「成功 build 出來的」）。
-dotnet publish src/Senate.Server -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false   -c Release   -r win-x64   --self-contained   -p:PublishSingleFile=true    -o "$stage/server"   --nologo -v minimal
+dotnet publish src/Senate.Server -p:InformationalVersion="$build_id" -p:IncludeSourceRevisionInInformationalVersion=false   -c Release   -r "$rid"   --self-contained   -p:PublishSingleFile=true    -o "$stage/server"   --nologo -v minimal
 
-server_exe="$stage/server/senate-server.exe"
+server_exe="$stage/server/senate-server${x}"
 if [ -f "$server_exe" ]; then
-  echo "· Server exe（暫存）：build/stage/server/senate-server.exe（$(du -h "$server_exe" | cut -f1)）"
+  echo "· Server exe（暫存）：build/stage/server/senate-server${x}（$(du -h "$server_exe" | cut -f1)）"
   # 護欄的活體那一半：GUI 原生層**不該**出現在 Server 那一層。
   # ⛔ csproj 那道 <Error> 只擋 ProjectReference；傳遞相依混進來時它不會叫。
-  for gui in cimgui.dll glfw3.dll; do
+  for gui in $native_libs; do
     [ -f "$stage/server/$gui" ] && echo "⚠ build/stage/server/$gui 不該存在 —— Server 又把 GUI 那一套拖進來了（TASK-0209 A1）"
   done
 else
-  echo "✗ build/stage/server/senate-server.exe 不存在 —— Server publish 沒成功；publish/ 沒動、在跑的 Server 也沒停" >&2; exit 1
+  echo "✗ build/stage/server/senate-server${x} 不存在 —— Server publish 沒成功；publish/ 沒動、在跑的 Server 也沒停" >&2; exit 1
 fi
 
 swap_t0=$(date +%s)
@@ -161,16 +165,16 @@ build_flag="$root/SenateData/runtime/_build_in_progress.flag"
 mkdir -p "$(dirname "$build_flag")"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$build_flag"
 echo "· 已落「build 進行中」旗標 ⇒ 換檔期間 autostart／server start 都起不來（換完才收）"
-if [ -f "$root/publish/senate.exe" ]; then
+if [ -f "$root/publish/senate${x}" ]; then
   # ⚠ 用 `list` 不用 `status`：status 不指名時只有一顆的情況下才代表全部，
   #   而 `list` 的 exit 0 逐字就是「至少有一顆活著」（TASK-0244）。
-  if "$root/publish/senate.exe" server list > /dev/null 2>&1; then had_server=1; fi
+  if "$root/publish/senate${x}" server list > /dev/null 2>&1; then had_server=1; fi
   # 記下**哪幾顆**在跑，收尾照這份起回來（TASK-0309 ④）。第二欄是狀態，只收 running*。
-  running_ids="$("$root/publish/senate.exe" server list 2>/dev/null | awk '$2 ~ /^running/ {print $1}' | tr '\n' ' ')"
+  running_ids="$("$root/publish/senate${x}" server list 2>/dev/null | awk '$2 ~ /^running/ {print $1}' | tr '\n' ' ')"
   # 🔴 TASK-0244：一律 `--all` —— 這裡要的不是「停某一顆」，是**把所有鎖著 exe 的都放掉**。
   #   ⛔ 不指名也不指定 `main`：漏停一顆的樣子是 publish 撞 `Access to the path ... is denied`，
   #     而那個錯誤訊息**不會說是誰**（這一段檔頭上面那兩筆血證就是它）。
-  "$root/publish/senate.exe" server stop --all || echo "⚠ server stop 回非零 —— 若複製撞鎖，先手動收掉 Server 再重跑"
+  "$root/publish/senate${x}" server stop --all || echo "⚠ server stop 回非零 —— 若複製撞鎖，先手動收掉 Server 再重跑"
   # ⚠ 射程：停的是**那顆常駐 Server**（不分它是哪顆 exe 起的 —— 它們 watch 同一個 stop-request 檔）。
   #   ⇒ 這一停同時解掉 publish/senate.exe 與 publish/server/senate-server.exe 兩個鎖。
   # ⚠ 寫成 `[ ... ] && echo` 會在**沒有 Server 在跑**時讓整支腳本當場 abort：
@@ -190,7 +194,7 @@ if [ -f "$root/publish/senate.exe" ]; then
     #     因為它只比對 `Path -eq publish/senate.exe`。
     #     ⇒ 那不是「沒收到」，是**它從一開始就不在清單上**，而那兩件事在畫面上同形。
     #   ⛔ 仍然比對 Path 前綴而不是 process 名：別份 clone 的 senate 不干我的事。
-    SENATE_EXE_WIN="$(cygpath -w "$root/publish/senate.exe" 2>/dev/null || echo "$root/publish/senate.exe")" \
+    SENATE_EXE_WIN="$(cygpath -w "$root/publish/senate${x}" 2>/dev/null || echo "$root/publish/senate${x}")" \
     SENATE_ROOT_WIN="$(cygpath -w "$root" 2>/dev/null || echo "$root")" \
     powershell.exe -NoProfile -NonInteractive -Command '
       $t = $env:SENATE_EXE_WIN
@@ -260,7 +264,7 @@ if [ "$had_server" -eq 1 ]; then
   for sid in $running_ids; do
     # ⚠ `set +e`：起不回來是要講出來的事，⛔ 不該讓整支 build 在這裡 abort（exe 已經換好了）。
     set +e
-    "$root/publish/senate.exe" server start --detach --id "$sid" > "$root/build/build_restart_$sid.log" 2>&1
+    "$root/publish/senate${x}" server start --detach --id "$sid" > "$root/build/build_restart_$sid.log" 2>&1
     _src=$?
     set -e
     if [ "$_src" -eq 0 ]; then
@@ -285,12 +289,12 @@ fi
 #   代價是 78 MB 的第二顆檔案、會過期、而且複製本身會撞「exe 正在執行中」的鎖。
 #   ⇒ 改由 csproj 的 <AssemblyName>senate</AssemblyName> 直接產出對的檔名，
 #     PATH 指向 publish/（install.sh 負責），根層只留一個給人雙擊的捷徑。
-exe="$root/publish/senate.exe"
-[ -f "$exe" ] || { echo "✗ publish/senate.exe 不存在 —— publish 沒成功？" >&2; exit 1; }
+exe="$root/publish/senate${x}"
+[ -f "$exe" ] || { echo "✗ publish/senate${x} 不存在 —— publish 沒成功？" >&2; exit 1; }
 
 # 原生 DLL 必須跟 exe 同層 —— 少一顆的症狀是「文字模式好、開窗掛」。
 # publish 會自己把它們放進 publish/，所以這裡只驗不搬（搬就是又一份會過期的複本）。
-for dll in cimgui.dll glfw3.dll; do
+for dll in $native_libs; do
   [ -f "$root/publish/$dll" ] || echo "⚠ publish/$dll 不存在 —— 開窗可能會失敗（Silk.NET 找不到原生層）"
 done
 
@@ -303,33 +307,33 @@ if command -v powershell.exe >/dev/null 2>&1; then
   windir="$(cygpath -w "$root/publish" 2>/dev/null || echo "$root/publish")"
   powershell.exe -NoProfile -NonInteractive -Command \
     "\$s=(New-Object -ComObject WScript.Shell).CreateShortcut('$winlnk'); \$s.TargetPath='$winexe'; \$s.WorkingDirectory='$windir'; \$s.Save()" >/dev/null 2>&1 \
-    && echo "✓ 根層捷徑：senate.lnk → publish/senate.exe（雙擊用）" \
-    || echo "⚠ 捷徑沒建成 —— 不影響指令，publish/senate.exe 照樣能跑"
+    && echo "✓ 根層捷徑：senate.lnk → publish/senate${x}（雙擊用）" \
+    || echo "⚠ 捷徑沒建成 —— 不影響指令，publish/senate${x} 照樣能跑"
 fi
 
 # senate-sync.exe（Tim 2026-10-02）：**同一份二進位**換個檔名 —— 沒帶參數時只開 Submodule 同步頁、⛔ 不拉 Server
 #   （先同步、再讓 Server 起來補跨日發券；理由見 src/Senate.Cli/SyncWindowExe.cs）。
 # ⚠ 用複製不用 hardlink：理由同上（下一次 publish 會打斷 link，外層靜默停在舊版）。
 #   每趟 build 都重新複製 ⇒ 兩顆永遠是同一趟 build，不會版本不符。
-sync_exe="$root/publish/senate-sync.exe"
+sync_exe="$root/publish/senate-sync${x}"
 if cp -f "$exe" "$sync_exe" 2>/dev/null; then
-  echo "✓ publish/senate-sync.exe（senate.exe 的複本；雙擊只開 Submodule 同步頁、不拉 Server）"
+  echo "✓ publish/senate-sync${x}（senate${x} 的複本；雙擊只開 Submodule 同步頁、不拉 Server）"
   if command -v powershell.exe >/dev/null 2>&1; then
     winsync="$(cygpath -w "$sync_exe" 2>/dev/null || echo "$sync_exe")"
     winsynclnk="$(cygpath -w "$root/senate-sync.lnk" 2>/dev/null || echo "$root/senate-sync.lnk")"
     powershell.exe -NoProfile -NonInteractive -Command \
       "\$s=(New-Object -ComObject WScript.Shell).CreateShortcut('$winsynclnk'); \$s.TargetPath='$winsync'; \$s.WorkingDirectory='$windir'; \$s.Save()" >/dev/null 2>&1 \
-      && echo "✓ 根層捷徑：senate-sync.lnk → publish/senate-sync.exe（雙擊用）" \
-      || echo "⚠ senate-sync.lnk 沒建成 —— publish/senate-sync.exe 照樣能雙擊"
+      && echo "✓ 根層捷徑：senate-sync.lnk → publish/senate-sync${x}（雙擊用）" \
+      || echo "⚠ senate-sync.lnk 沒建成 —— publish/senate-sync${x} 照樣能雙擊"
   fi
 else
   # ⛔ 不靜默：沒複製成功的話，外層那顆是**上一趟**的 senate-sync.exe，而它看起來完全正常。
-  echo "⚠ 複製 publish/senate-sync.exe 失敗（多半是它還開著）—— 那顆仍是上一趟 build 的，關掉它再重跑 build"
+  echo "⚠ 複製 publish/senate-sync${x} 失敗（多半是它還開著）—— 那顆仍是上一趟 build 的，關掉它再重跑 build"
 fi
 
 mb=$(( $(stat -c %s "$exe" 2>/dev/null || stat -f %z "$exe") / 1048576 ))
 echo
-echo "✓ 產物：$exe（${mb} MB）＋ 同層的 cimgui.dll / glfw3.dll"
+echo "✓ 產物：$exe（${mb} MB）＋ 同層的 $native_libs"
 
 
 # ── 收尾 ────────────────────────────────────────────────────────────────

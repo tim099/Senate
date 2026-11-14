@@ -76,6 +76,20 @@ cd Senate
 
 （不在 Git Bash 裡？在 CMD、PowerShell 打 `install.cmd`，或在檔案總管雙擊它，是同一件事。）
 
+### Linux（實驗性，`linux` 分支）
+
+x86_64 與 aarch64。前置一樣是 Git 2.25 以上、.NET 10 SDK。
+
+```bash
+./install.sh --no-path
+```
+
+- 會 build（`linux-x64`／`linux-arm64`，產物是 `publish/senate`、`publish/server/senate-server`，沒有 `.exe`）→ `init` → `doctor`。
+- **不改 PATH**：自己 `ln -s "$PWD/publish/senate" ~/.local/bin/senate`，或在 shell profile 加 `publish/`。不帶 `--no-path` 會印這段提示後停下。
+- 沒有 ICU 的機器（精簡容器）跑 `dotnet` 本身要先 `export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`；Senate 的產物本來就是 invariant，不受影響。
+- ⚠ `init`／`doctor` 會自動拉起常駐 Server，而 Server 會把酒館的新訊息送到 `Valhalla` 資料裡綁的 Discord webhook。只是想試編譯的話，先別跑它們，或改用自己的資料根。
+- 視窗（`senate ui --window`）沒有在 Linux 驗過。
+
 ### 裝好之後
 
 **重新開一個 agent 視窗（或終端機）**，把工作資料夾選成 `Senate` 那個資料夾，對它說「**早安大小姐**」。

@@ -21,7 +21,8 @@
 #   doctor 首列（build stamp ＋ 對照 HEAD）自己講（TASK-0138）。
 set -eu
 root="$(cd "$(dirname "$0")" && pwd)"
-exe="$root/publish/senate.exe"
+. "$root/platform.sh"
+exe="$root/publish/senate${x}"
 
 gates="doctor,self,gui,server"
 only=""
@@ -102,9 +103,9 @@ if has_gate server; then
     # ⭐ TASK-0209 A7：出貨之後自動啟動優先起 publish/server/senate-server.exe
     #   ⇒ 這一關要驗**出貨那顆**，不然驗過的跟真正跑起來的是兩顆 exe。
     #   ⛔ 不存在就退回用 CLI 自己起，而且**說出來** —— 「驗的是哪一顆」不可以靠猜。
-    server_exe="$root/publish/server/senate-server.exe"
-    if [ -f "$server_exe" ]; then echo "· 起的是出貨的 Server exe：publish/server/senate-server.exe"
-    else server_exe="$exe"; echo "· publish/server/senate-server.exe 不在 ⇒ 改用 CLI 自己起（還沒跑過新版 build.sh？）"; fi
+    server_exe="$root/publish/server/senate-server${x}"
+    if [ -f "$server_exe" ]; then echo "· 起的是出貨的 Server exe：publish/server/senate-server${x}"
+    else server_exe="$exe"; echo "· publish/server/senate-server${x} 不在 ⇒ 改用 CLI 自己起（還沒跑過新版 build.sh？）"; fi
     "$server_exe" server start > "$root/build/build_server.log" 2>&1 &
     server_pid=$!
     # ⭐ TASK-0167：等待「等一個讀數」（`server status`），而**等不到要說出來** ——
