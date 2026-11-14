@@ -250,6 +250,7 @@ public static partial class SelfTest
         // 不影響外觀的修改不限作者＋拆件（TASK-0646）：本體在 SelfTest.SculptSplit0646.cs
         One(nameof(SculptSplitCleanRoom), "sculpture", SculptSplitCleanRoom),
         One(nameof(SculptLadderNotAuthorCleanRoom), "sculpture", SculptLadderNotAuthorCleanRoom),
+        One(nameof(SculptRepairNotAuthorCleanRoom), "sculpture", SculptRepairNotAuthorCleanRoom),
         // 雕刻關聯材質 → .vxk 檔頭 materials（TASK-0616）：本體在 SelfTest.SculptureMaterial0616.cs
         One(nameof(SculptureMaterialCleanRoom), "sculpture", SculptureMaterialCleanRoom),
         // 雕刻 .vxk 封裝（TASK-0518）：本體在 SelfTest.SculptureVxk0518.cs

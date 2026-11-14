@@ -217,6 +217,7 @@ public sealed partial class Cmd_Sculpture : SCP_Cmd
         new SCP_CmdArgSpec("facing", "stamp 類：貼片法線 x+|x-|y+|y-|z+|z-（預設 z+；stampvox 不吃）"),
         new SCP_CmdArgSpec("thickness", "stamp 類：層數（stampvox 不吃）／work rope：繩的直徑（格，可帶小數；不給 ⇒ " + SCP_SculptRopes.DefaultThickness.ToString(CultureInfo.InvariantCulture) + "）", iDefault: "1"),
         new SCP_CmdArgSpec("overwrite", "work assemble/move：1允許覆蓋（預設碰撞拒絕）；stamp類預設跳過／render-profile copy：1覆蓋既有目標／work mark：1覆蓋同名同類的標記"),
+        new SCP_CmdArgSpec("repair", "stampvox：補缺口的單號（例 TASK-1293）—— 不是作者也能落，只補空格（不能帶 overwrite=1、不進草稿、要帶 expect_pixels）；每一刀記進那件作品的 meta_log.jsonl（Tim 2026-11-14「修復缺口不算」）"),
         new SCP_CmdArgSpec("expect_pixels", "stamp 類：預覽印出的非透明像素數（stampvox／carvevox ＝ 清單格數），對不上即拒絕（**強烈建議帶**）"),
         new SCP_CmdArgSpec("alpha_threshold", "stamp 類：alpha 門檻（預設 128）"),
         new SCP_CmdArgSpec("allow_clip", "stamp 類／carvevox：1 ＝ 接受越界裁切（預設越界即拒絕）"),

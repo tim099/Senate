@@ -9,6 +9,9 @@
 //          Ship_Guns §4.4）跟梯子同一條門 —— 換砲之後環要跟著挪，換砲的人自己刻。
 //          帆：Tim 2026-11-01「放寬帆的作者門」⇒ 帆（sail／unsail：角、綁法、free、顏色、貼圖）不限作者（起因：好旅號的船旗四角全綁、作者以外改不了）。
 //          一條一條的繩照舊只有作者。
+//          補缺口（TASK-1293）：Tim 2026-11-14「只有作者可編輯作品這點 修復缺口不算(這算是補上瑕疵)」⇒ stampvox 帶 repair=<單號> 不限作者 ——
+//          只補空格（⛔ 不准帶 overwrite=1：落子類預設碰到有格的就跳過 ⇒ 原有的一格都不動）、⛔ 不進草稿（草稿 apply 照舊只有作者）、要帶 expect_pixels（清單幾格先講好）。
+//          只開 stampvox：刻（carvevox、carve）、換色、move、undo 照舊只有作者 ⇒ 補錯了由作者拿掉（或補的人照同一份清單請作者處理）。
 // 留痕：不是作者改的、而且成功了 ⇒ 那件作品的 meta_log.jsonl 記一筆（誰、作者是誰、哪一種、哪一個名字、給了哪些參數）。
 //       作者自己改 ⇒ 不記（跟以前一樣，models.json／links.json 的 persona 欄照舊）。
 using System.Globalization;
@@ -27,10 +30,16 @@ public sealed partial class Cmd_Sculpture
     static readonly string[] s_GameLayerLogArgs = { "name", "source_work", "file", "at", "pivot", "rotate", "scale", "mirror", "turn", "axes", "color", "enabled", "note", "meta", "recolor", "link_hide", "link_carve", "overwrite",
                                                     "rope_a", "rope_b", "step", "start", "stop", "min_span", "thickness", "group", "climb", "foot", "head",   // 這排：橫繩組（TASK-0678）
                                                     "voxels", "region", "delta", "expect_pixels", "draft",   // 梯子、砲具的格子（落子、move）
-                                                    "corners", "corner_names", "free", "bind", "res", "fullness", "texture" };   // 帆（Tim 2026-11-01）
+                                                    "corners", "corner_names", "free", "bind", "res", "fullness", "texture",   // 帆（Tim 2026-11-01）
+                                                    "repair" };   // 補缺口（TASK-1293）
 
     /// <summary>帆不限作者的規則出處（記進 meta_log）。</summary>
     const string SailsRule = "Tim 2026-11-01：放寬帆的作者門 —— 帆（角、綁法、顏色、貼圖）不限作者";
+
+    /// <summary>補缺口不限作者的規則出處（記進 meta_log）。</summary>
+    const string RepairRule = "Tim 2026-11-14：只有作者可編輯作品這點 修復缺口不算（這算是補上瑕疵）⇒ stampvox 帶 repair=<單號>、只補空格（不帶 overwrite=1、不進草稿）不限作者";
+
+    static readonly System.Text.RegularExpressions.Regex s_RepairRef = new(@"^TASK-\d{1,6}$");
 
     /// <summary>格子不限作者的作品種類（關聯的 meta kind ⇒ 規則出處）。</summary>
     static readonly (string kind, string rule)[] s_VoxelGameKinds =
@@ -58,8 +67,18 @@ public sealed partial class Cmd_Sculpture
     static string? VoxelGate(Ctx c, SCP_SculptWork iCard, string iSub, string iDeny, System.Func<string?> iRun)
     {
         if (c.Persona.Length > 0 && c.Persona == iCard.owner) return iRun();
+        if (c.Persona.Length > 0 && c.Args.IsExplicit("repair"))      // 補缺口（TASK-1293，見檔頭）
+        {
+            string aRef = c.Args.Get("repair").Trim();
+            if (iSub != "stampvox") return Blocked(c, 2, "repair（補缺口）只開 stampvox：只補空格；刻、換色、move、undo 照舊只有作者 " + iCard.owner + " 能做");
+            if (!s_RepairRef.IsMatch(aRef)) return Blocked(c, 2, "repair 要給單號（例 TASK-1293）—— 補了什麼、為什麼補，查得到");
+            if (c.Args.Get("overwrite").Trim() == "1") return Blocked(c, 2, "repair 只補空格：⛔ 不能帶 overwrite=1（會蓋掉作者原有的格）");
+            if (c.Draft) return Blocked(c, 2, "repair 不進草稿（草稿 apply 只有作者能做）：直接落、補之前先看清單");
+            if (!c.Args.IsExplicit("expect_pixels")) return Blocked(c, 2, "repair 要帶 expect_pixels（清單幾格先講好）");
+            return GameLayer(c, iCard, "repair", iSub, iRun, RepairRule + "（" + aRef + "）");
+        }
         var aKind = c.Persona.Length == 0 ? null : VoxelGameKind(c, iCard.id);
-        if (aKind == null) return Blocked(c, 2, iDeny + "（例外：梯子、砲具作品 —— 被 kind=ladders／kind=gunfittings 關聯引用的 —— 不限作者）");
+        if (aKind == null) return Blocked(c, 2, iDeny + "（例外：梯子、砲具作品 —— 被 kind=ladders／kind=gunfittings 關聯引用的 —— 不限作者；補缺口 ⇒ stampvox 帶 repair=<單號>、只補空格）");
         return GameLayer(c, iCard, aKind.Value.kind, iSub, iRun, aKind.Value.rule);
     }
 
