@@ -4,6 +4,7 @@
 //           ③ B 讀單（`tasks`）⇒ 讀到的是 C 的單　④ C 不在線 ⇒ exit 6、三台都沒有新檔　⑤ C 收了不回 ⇒ exit 7
 //           ⑥ B 不在允許名單 ⇒ exit 1、C 沒有新檔　⑦ 主機改了轉送中的請求 ⇒ C 驗章不過、不執行
 //           ⑧ 同一個 rid 送兩次 ⇒ 只寫一次、第二次回第一次的結果　⑨ 舊版收到 req ⇒ 略過、不斷線、聊天照通
+//           ⑦之二 用另一把金鑰冒充 B ⇒ 擋下　⑦之三 帶 scope ⇒ Task Server 自己擋　⑦之四 persona=../… ⇒ 擋下、資料根外面沒東西
 //           外加：設定寫壞了 ⇒ 不知道寫哪 ⇒ 擋下。
 //           執行請求的掛鉤：`task` 直接對 C 的暫存資料根跑寫入端（淨室裡沒有 Server）；`tasks` 走正式的那一支。
 // 數值影響：只寫系統暫存資料夾（通過就刪；沒過留著並印出位置）；開一個本機迴路的埠。約 30～60 秒。
@@ -250,6 +251,58 @@ public static class SenatePeerTaskSelfTest
             A.Link.DebugTamperForward = null;
             Check("⑦ 反向：主機改了轉送中的請求 ⇒ C 驗章不過、不執行", r7.ExitCode == 1 && TaskCount(C) == aBefore7 && r7.Lines.Any(l => l.Contains("簽章")),
                 $"exit={r7.ExitCode} C 的單 {aBefore7} → {TaskCount(C)}　{r7.Lines.FirstOrDefault(l => l.Contains("簽章"))}");
+
+            // ⑦之二 冒充：另一把金鑰簽、from 填允許名單上的 B（pub 填自己的，或照抄 B 的）
+            string aForger = Path.Combine(aBase, "forger").Replace('\\', '/');
+            Directory.CreateDirectory(aForger);
+            PeerIdentity aIdD = SenatePeerStore.LoadOrCreateIdentity(aForger);
+            string aPubB = SenatePeerStore.LoadOrCreateIdentity(B.Root).SignPub;
+            int aBefore7b = TaskCount(C), aServed7b = C.Link.RpcServed;
+            var aArgs7b = new Dictionary<string, string> { ["op"] = "create", ["persona"] = "Bob", ["title"] = "冒充 B 的單", ["criteria"] = "- [ ] x" };
+            B.Link.DebugForgeKey = (aIdD.SignPriv, aIdD.SignPub);
+            PeerRpcResult a7b = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7b, TimeSpan.FromSeconds(20));
+            B.Link.DebugForgeKey = (aIdD.SignPriv, aPubB);
+            PeerRpcResult b7b = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7b, TimeSpan.FromSeconds(20));
+            B.Link.DebugForgeKey = null;
+            Check("⑦之二 反向：用另一把金鑰簽、from 填 B（pub 填自己的／照抄 B 的）⇒ C 擋下、不執行、沒有新檔",
+                a7b.Outcome == PeerRpcOutcome.Refused && b7b.Outcome == PeerRpcOutcome.Refused && a7b.Why.Contains("簽章") && b7b.Why.Contains("簽章")
+                && TaskCount(C) == aBefore7b && C.Link.RpcServed == aServed7b,
+                $"pub 自己的={a7b.OutcomeWord} pub 抄 B={b7b.OutcomeWord} C 的單 {aBefore7b} → {TaskCount(C)} C 執行數 {aServed7b} → {C.Link.RpcServed}　{a7b.Why}");
+
+            // ⑦之三 Task Server 端自己擋 scope：B 自己組一筆帶 scope 的 claim（繞過入口的拿掉）
+            string aEvilScope = Path.Combine(aBase, "scope-evil").Replace('\\', '/');
+            Directory.CreateDirectory(aEvilScope);
+            var aArgs7c = new Dictionary<string, string> { ["op"] = "claim", ["persona"] = "Mallory", ["index"] = V(r1, "index"), ["scope"] = aEvilScope };
+            int aServed7c = C.Link.RpcServed;
+            PeerRpcResult a7c = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7c, TimeSpan.FromSeconds(20));
+            PeerRpcReply s7c = SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall { Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name, Args = new(aArgs7c, StringComparer.Ordinal) });
+            var aCodingC7c = SCP.Core.Session.SCP_ActivitySessionStore.Load<SCP.Core.Session.SCP_CodingSession>(new SCP_DataRoot(C.Root), "Mallory", SCP.Core.Session.SCP_ActivitySessionKind.Coding);
+            Check("⑦之三 反向：別台送來帶 scope 的 claim ⇒ 連線上擋下、正式的 Serve 也擋下（exit 1），C 上沒有 Coding 場",
+                a7c.Outcome == PeerRpcOutcome.Refused && a7c.Why.Contains("scope") && s7c.Exit == 1 && (aCodingC7c == null || !aCodingC7c.active) && C.Link.RpcServed == aServed7c,
+                $"連線={a7c.OutcomeWord} Serve exit={s7c.Exit} C 有場={aCodingC7c?.active}　{a7c.Why}");
+
+            // ⑦之四 persona 帶 ../ ⇒ 擋下，資料根外面不多任何東西
+            string aTok = "far57-escape-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            int aBefore7d = TaskCount(C), aServed7d = C.Link.RpcServed;
+            var aOuts7d = new List<string>();
+            foreach (string aEvil in new[] { "../" + aTok, "../../../../" + aTok, "..\\" + aTok })
+            {
+                var aArgs7d = new Dictionary<string, string> { ["op"] = "create", ["persona"] = aEvil, ["title"] = "逃出去", ["criteria"] = "- [ ] x" };
+                PeerRpcResult x = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7d, TimeSpan.FromSeconds(20));
+                aOuts7d.Add(x.Outcome == PeerRpcOutcome.Refused && x.Why.Contains("persona") ? "擋" : x.OutcomeWord + "（" + x.Why + "）");
+            }
+            PeerRpcReply s7d = SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall
+            {
+                Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name,
+                Args = new(StringComparer.Ordinal) { ["op"] = "create", ["persona"] = "../" + aTok, ["title"] = "逃出去", ["criteria"] = "- [ ] x" },
+            });
+            // 往上跳幾層都只會落在 C 的資料根的某個祖先（看第一層）或暫存資料夾底下（整棵看）
+            var aLeaks = Directory.GetFileSystemEntries(aBase, "*" + aTok + "*", SearchOption.AllDirectories).ToList();
+            for (DirectoryInfo? d = new DirectoryInfo(C.Root).Parent; d != null; d = d.Parent)
+                try { aLeaks.AddRange(Directory.GetFileSystemEntries(d.FullName, "*" + aTok + "*")); } catch (Exception) { }
+            Check("⑦之四 反向：persona=../… ⇒ 連線上擋下、正式的 Serve 也擋下（exit 1），哪裡都沒有多出檔案或資料夾",
+                aOuts7d.All(o => o == "擋") && s7d.Exit == 1 && aLeaks.Count == 0 && TaskCount(C) == aBefore7d && C.Link.RpcServed == aServed7d,
+                $"連線={string.Join("／", aOuts7d)} Serve exit={s7d.Exit} 多出來的={string.Join("、", aLeaks)}");
 
             // ⑤ C 收了不回 ⇒ 不知道
             C.Link.DebugSwallowRequests = true;

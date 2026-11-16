@@ -110,6 +110,29 @@ public static class SenateTaskServer
     public static readonly string[] LocalOnlyArgs =
         { "data_root", "letters_root", "bank_root", "repo_root", "glossary_root", "activities_root", "out_json", SCP_CmdArgs.ForwardedExplicitKey };
 
+    /// <summary>
+    /// Task Server 那一端**帶了就擋**的參數（⛔ 不靠請求端自律）：`scope` 是請求端那一台的絕對路徑，
+    /// 在 Task Server 上會走 `claim` 的開 Coding 場那一步 ⇒ 用別台給的路徑、替任何 persona 開一場。
+    /// </summary>
+    public static readonly string[] RefusedArgs = { "scope" };
+
+    /// <summary>值是 persona 名字的參數：會被拼進 Task Server 的路徑（`Letters/&lt;persona&gt;/…`）⇒ 名字要合法。</summary>
+    static readonly string[] PersonaArgs = { "persona", "target_persona", "assignee" };
+
+    /// <summary>
+    /// 別台送來的參數這一台收不收：不收 ⇒ 回原因（⇒ exit 1，什麼都不跑）；收 ⇒ null。
+    /// 跨主機連線收到 `req`、以及 <see cref="Serve"/> 都會先過這一關。
+    /// </summary>
+    public static string? RefuseReason(IReadOnlyDictionary<string, string> iArgs)
+    {
+        foreach (string k in RefusedArgs)
+            if (iArgs.ContainsKey(k)) return $"不收 {k}（那是請求端那一台的路徑；Coding 場只開在請求端）";
+        foreach (string k in PersonaArgs)
+            if (iArgs.TryGetValue(k, out string? v) && v.Trim().Length > 0 && !SCP.Core.Letters.SCP_RegisteredMail.IsValidPersonaName(v))
+                return $"{k} 的名字不合法（不能有 / \\ : 或 ..）";
+        return null;
+    }
+
     /// <summary>照這台的 `peer_config.json` 判斷 Task 要寫在哪一台。</summary>
     public static TaskServerRoute Resolve(string iDataRoot)
     {
@@ -230,6 +253,13 @@ public static class SenateTaskServer
     /// </summary>
     public static PeerRpcReply Serve(string iDataRoot, string iNodeName, PeerRpcCall iCall)
     {
+        string? aBad = RefuseReason(iCall.Args);
+        if (aBad != null)
+        {
+            var aNo = new PeerRpcReply { Exit = 1 };
+            aNo.Lines.Add($"⛔ Task Server {iNodeName} 擋下這一筆：{aBad}（什麼都沒寫）");
+            return aNo;
+        }
         var aArgs = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var kv in iCall.Args) if (Array.IndexOf(LocalOnlyArgs, kv.Key) < 0) aArgs[kv.Key] = kv.Value;
         aArgs["data_root"] = iDataRoot;

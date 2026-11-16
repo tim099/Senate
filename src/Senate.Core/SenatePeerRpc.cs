@@ -98,6 +98,8 @@ public sealed partial class SenatePeerLink
     internal bool DebugSwallowRequests;
     /// <summary>主機轉送時改內容（模擬中間人）。</summary>
     internal Func<SCP_JsonData, SCP_JsonData>? DebugTamperForward;
+    /// <summary>送請求時 `from` 照填這台，簽章改用這把金鑰、`pub` 改填這個（模擬冒充別台）。</summary>
+    internal (string Priv, string Pub)? DebugForgeKey;
 
     List<string> MyServes()
         => m_Cfg.ServesTask && m_Cfg.TaskServerError.Length == 0 ? new List<string> { SvcTask } : new List<string>();
@@ -180,8 +182,9 @@ public sealed partial class SenatePeerLink
         string aTs = SenatePeerStore.NowIso();
         SCP_JsonData f = Obj("req");
         f.Set("rid", aRid); f.Set("svc", iSvc); f.Set("from", aMe.Id); f.Set("to", iTo); f.Set("ts", aTs); f.Set("cmd", iCmd);
-        f.Set("args", aArgsJson); f.Set("pub", aMe.SignPub);
-        f.Set("sig", SenatePeerCrypto.Sign(aMe.SignPriv, Encoding.UTF8.GetBytes(ReqText(aRid, iSvc, aMe.Id, iTo, aTs, iCmd, aArgsJson))));
+        (string Priv, string Pub) aKey = DebugForgeKey ?? (aMe.SignPriv, aMe.SignPub);
+        f.Set("args", aArgsJson); f.Set("pub", aKey.Pub);
+        f.Set("sig", SenatePeerCrypto.Sign(aKey.Priv, Encoding.UTF8.GetBytes(ReqText(aRid, iSvc, aMe.Id, iTo, aTs, iCmd, aArgsJson))));
         if (Encoding.UTF8.GetByteCount(f.ToJson(false)) > MaxFrameBytes - 4096)
             return Fail(PeerRpcOutcome.NotSent, "請求太大（超過一個 frame 的上限 1 MB）");
 
@@ -363,6 +366,8 @@ public sealed partial class SenatePeerLink
             foreach (string k in a.Keys) if (a[k].IsString) aCall.Args[k] = a[k].AsString();
         }
         catch (Exception e) { Refuse("參數解不開（" + e.Message + "）"); return; }
+        string? aBadArgs = SenateTaskServer.RefuseReason(aCall.Args);
+        if (aBadArgs != null) { Refuse(aBadArgs); return; }
 
         var aEntry = new SeenRpc { At = DateTime.UtcNow };
         lock (m_Seen)

@@ -196,7 +196,7 @@ senate cmd peer --arg op=set --arg task_server=-
   |---|---|---|
   | 這台的連線關著、酒館 Server 起不來、那一台不在線、它沒說自己是 Task Server、主機轉不過去 | 6 | 確定沒寫，修好重跑是安全的 |
   | 送出了，但沒等到結果（逾時、中途斷線、那一台是舊版） | 7 | 不知道，先 `tasks --arg index=<單號>` 回讀，別直接重打 |
-  | 那一台擋下（不在允許名單、簽章驗不過、不是 task／tasks） | 1 | 什麼都沒寫，原因在輸出裡 |
+  | 那一台擋下（不在允許名單、簽章驗不過、不是 task／tasks、帶了 `scope`、persona 名字不合法） | 1 | 什麼都沒寫，原因在輸出裡 |
   | 那一台跑完 | 它的 exit | 第一行是「⤷ 於 Task Server <節點名> 執行」 |
 
   設定寫壞了（`task_server` 認不得、設定檔讀不了）⇒ 也是 exit 6：不知道該寫在哪一台，就不寫。
@@ -204,6 +204,8 @@ senate cmd peer --arg op=set --arg task_server=-
   Task Server 是另一端時請求會經過主機，主機看得到內容，但改不了、也冒充不了別台（改了就驗不過）。
   請求時間跟 Task Server 差超過 2 分鐘就拒收；同一筆（同一個 rid）10 分鐘內再來只回上一次的結果，不再執行。
   Task Server 只執行 `task_clients` 名單上的節點送來的 `task`／`tasks`；名單空的 ⇒ 一個都不收。
+  參數也由 Task Server 自己把關，不靠請求端：帶了 `scope`（請求端那一台的路徑）就擋下；
+  `persona`、`target_persona`、`assignee` 含 `/`、`\`、`:` 或 `..` 就擋下（這些名字會被拼進那一台的檔案路徑）。
 - **切換 Task Server 不搬單子**：舊的單留在原本那一台。要換台，先用 `sync.tasks` 或直接複製 `Tasks/` 把單子搬過去。
 - 內部通道是 `senate cmd peer-rpc`（指定給酒館 Server，lane `peer-rpc`）：連線只活在酒館 Server 裡，CLI 經它送出去。人不用直接打。
 
