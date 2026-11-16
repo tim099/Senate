@@ -107,7 +107,10 @@ public static class ServerSpawn
         //     並印 build_mismatch（A6 那道閘），⛔ 不是靜默用一顆舊的。
         //   ⛔ 找不到就退回用自己起（開發樹、或還沒跑過 build.sh 的環境）—— 那是降級**路徑**，
         //     不是降級**行為**：兩個入口共用同一份前置與本體（A1）。
-        string aSibling = Path.Combine(Path.GetDirectoryName(aExe) ?? "", "server", "senate-server.exe");
+        //   ⚠ 檔名跟著平台走：Linux 的 publish 產物沒有 .exe ⇒ 寫死 .exe 的話 File.Exists 永遠 false，
+        //     症狀是靜默退回「用自己起」，而那顆載著 GUI 原生層。
+        string aSibling = Path.Combine(Path.GetDirectoryName(aExe) ?? "", "server",
+                                       OperatingSystem.IsWindows() ? "senate-server.exe" : "senate-server");
         bool aUseSibling = File.Exists(aSibling);
         if (aUseSibling) aExe = aSibling;
 
@@ -184,12 +187,12 @@ public static class ServerSpawn
     /// <para>⚠ 判準是**回讀親代**，不是「指令回了 0」：WMI 回 ReturnValue=0 只代表它受理了。
     /// 拿到 pid 之後再去問一次 `ParentProcessId`，對不上就當沒成功（讓呼叫端退回直接 spawn），
     /// ⛔ 不要讓一個「看起來成功」的脫樹把真正的失敗蓋掉。</para>
-    /// <para>⛔ 非 Windows 一律回 false（不是失敗，是這條路不適用）—— 那邊沒有套件身分這回事。</para>
+    /// <para>非 Windows 走 <see cref="TrySpawnDetachedUnix"/>（那邊沒有套件身分這回事，要脫的是 stdio 與 session）。</para>
     /// </summary>
     internal static bool TrySpawnDetached(ProcessStartInfo iInfo, bool iShowConsole, out int oPid, out string oWhy)
     {
         oPid = 0; oWhy = "";
-        if (!OperatingSystem.IsWindows()) { oWhy = "非 Windows，這條路不適用"; return false; }
+        if (!OperatingSystem.IsWindows()) return TrySpawnDetachedUnix(iInfo, out oPid, out oWhy);
 
         // 組回一條完整命令列（WMI 只吃字串）。路徑一律加引號 —— 我們的 repo 路徑可以有空白。
         var aCmd = new StringBuilder();
@@ -237,6 +240,42 @@ public static class ServerSpawn
             { oWhy = $"生出來了（pid={aPid}）但親代仍是本 process ⇒ 沒有真的脫樹"; return false; }
 
             oPid = aPid;
+            return true;
+        }
+        catch (Exception e) { oWhy = e.GetType().Name + ": " + e.Message; return false; }
+    }
+
+    /// <summary>
+    /// Linux／macOS 的脫離：`/bin/sh` 把 stdio 全接到 /dev/null，再 `exec setsid` 成 Server。
+    /// <para>🩸 不做這步的話（直接 spawn），Server 會繼承呼叫端的 stdout／stderr 管線 ⇒
+    /// `senate doctor | tail` 這種呼叫**永遠等不到 EOF**（實測 Linux 2026-11-14：卡到逾時）；
+    /// 而沒有 setsid 的話，呼叫端的終端機一關，SIGHUP 會把常駐的 Server 一起帶走。</para>
+    /// <para>⚠ `exec` 讓 sh 原地變成 Server ⇒ pid 不變，回給呼叫端的就是 Server 的 pid。
+    /// 親代仍是本 process，直到本 process 退出（之後由 init 收養）—— Linux 上這不影響任何事，
+    /// ⛔ 所以這裡不像 Windows 那條回讀親代。沒有 setsid 的系統（macOS 預設沒有）只做 stdio 那一半。</para>
+    /// <para>console 顯示（iShowConsole）在這裡不適用：沒有「開一個新 console 視窗」這回事，一律不顯示；
+    /// Server 的輸出本來就由它自己寫 log 檔。</para>
+    /// </summary>
+    static bool TrySpawnDetachedUnix(ProcessStartInfo iInfo, out int oPid, out string oWhy)
+    {
+        oPid = 0; oWhy = "";
+        try
+        {
+            var aPsi = new ProcessStartInfo("/bin/sh")
+            {
+                UseShellExecute = false,
+                WorkingDirectory = iInfo.WorkingDirectory ?? "",
+            };
+            aPsi.ArgumentList.Add("-c");
+            aPsi.ArgumentList.Add("exec </dev/null >/dev/null 2>&1; "
+                                  + "if command -v setsid >/dev/null; then exec setsid \"$@\"; else exec \"$@\"; fi");
+            aPsi.ArgumentList.Add("senate-spawn");   // $0
+            aPsi.ArgumentList.Add(iInfo.FileName);
+            foreach (string aArg in iInfo.ArgumentList) aPsi.ArgumentList.Add(aArg);
+
+            Process? aP = Process.Start(aPsi);
+            if (aP == null) { oWhy = "/bin/sh 起不來（Process.Start 回 null）"; return false; }
+            oPid = aP.Id;
             return true;
         }
         catch (Exception e) { oWhy = e.GetType().Name + ": " + e.Message; return false; }

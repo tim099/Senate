@@ -33,19 +33,24 @@ root="$(cd "$(dirname "$0")" && pwd)"
 winroot="$(cygpath -w "$root/publish" 2>/dev/null || echo "$root/publish")"
 winlegacy="$(cygpath -w "$root" 2>/dev/null || echo "$root")"
 
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) ;;
-  *)
-    echo "本腳本只處理 Windows 的使用者 PATH。"
-    echo "Linux / macOS：ln -s \"$root/senate\" ~/.local/bin/senate（或把 $root 加進 shell profile 的 PATH）"
-    exit 1
-    ;;
-esac
+. "$root/platform.sh"
+# 掛 PATH 只有 Windows 那一套（HKCU 使用者 PATH）。Linux 上 build／init／doctor 照走，
+#   但 PATH 一律不動 —— 要求顯式帶 --no-path，免得人以為裝完就能直接打 `senate`。
+# ⛔ 不替使用者改 shell profile：那是使用者自己的檔，改壞的症狀是下一個 shell 起不來。
+is_windows=0
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) is_windows=1 ;; esac
+linux_path_hint() {
+  echo "Linux：本腳本不改 PATH。build 完要全域使用的話，自己擇一："
+  echo "  ln -s \"$root/publish/senate\" ~/.local/bin/senate"
+  echo "  或在 shell profile 加：export PATH=\"$root/publish:\$PATH\""
+}
 
 ps() { powershell.exe -NoProfile -NonInteractive -Command "$1"; }
 
 # 讀使用者 PATH（原樣，不展開 %VAR% —— 我們只做包含判斷與前後拼接，不重寫別人的段）
-current="$(ps "[Environment]::GetEnvironmentVariable('Path','User')" | tr -d '\r')"
+# Linux 沒有使用者 PATH 這回事（也不掛）⇒ 不叫 powershell。
+current=""
+[ "$is_windows" -eq 1 ] && current="$(ps "[Environment]::GetEnvironmentVariable('Path','User')" | tr -d '\r')"
 
 # 逐段比對（大小寫不敏感、去尾斜線）—— 子字串比對會把 D:\Unity\Senate2 誤判成已安裝
 has_entry() {  # $1 = 要找的 Windows 路徑
@@ -71,7 +76,7 @@ usage() {
   echo "用法：./install.sh [--skip-build] [--no-path]"
   echo "  （不帶參數）  前置檢查 → 補子模組 → build → 建本機設定 → 掛使用者 PATH → 驗收"
   echo "  --skip-build  沿用現有的 publish/，不重新 build"
-  echo "  --no-path     試裝：**不動 PATH**（也不清別份 Senate 的註冊）。裝完用 publish/senate.exe 的完整路徑叫它"
+  echo "  --no-path     試裝：**不動 PATH**（也不清別份 Senate 的註冊）。裝完用 publish/senate${x} 的完整路徑叫它"
   echo "  移除：./uninstall.sh（先看會動什麼：./uninstall.sh --dry-run）"
 }
 while [ $# -gt 0 ]; do
@@ -83,6 +88,12 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if [ "$is_windows" -eq 0 ] && [ "$no_path" -eq 0 ]; then
+  linux_path_hint
+  echo "⇒ 要在這台試裝（build＋init＋doctor，不動 PATH）：./install.sh --no-path"
+  exit 1
+fi
 
 # ── 安裝 ────────────────────────────────────────────────────────
 echo '── Senate 安裝 ─────────────────────────────────'
@@ -180,8 +191,8 @@ fi
 #   ⇒ build 只留一個入口，第二條路不是備援是分岔。
 if [ "$skip_build" -eq 1 ]; then
   echo '── build（--skip-build：沿用現有產物，不重新 build）'
-  [ -f "$root/publish/senate.exe" ] || {
-    echo "✗ 沒有 publish/senate.exe 可沿用 —— 拿掉 --skip-build 再跑一次" >&2; exit 1; }
+  [ -f "$root/publish/senate${x}" ] || {
+    echo "✗ 沒有 publish/senate${x} 可沿用 —— 拿掉 --skip-build 再跑一次" >&2; exit 1; }
 else
   echo '── build（走 build.sh；第一次約一到數分鐘）────'
   # ⚠ `--no-window`：build.sh 在終端機裡跑時收尾會自己開一顆後台視窗 —— 安裝時不要：
@@ -196,12 +207,12 @@ fi
 
 # 本機設定 —— init 只在檔案不存在時建立，絕不覆寫（那是 init 自己的保證，不是這裡的）
 echo '── 本機設定（init）─────────────────────────────'
-"$root/publish/senate.exe" init
+"$root/publish/senate${x}" init
 
 # 環境檢查：exe 生出來了 ⇒ 判定交給 doctor（C#），這裡只看它的結束碼。
 # ⚠ 上面的 init 自己會印一次那張表；這裡通過時只印一行結論，沒過才整張再印一次，並且停手不掛 PATH。
 echo '── 環境檢查（senate doctor）────────────────────'
-if doctor_out="$("$root/publish/senate.exe" doctor 2>&1)"; then
+if doctor_out="$("$root/publish/senate${x}" doctor 2>&1)"; then
   echo "✓ $(printf '%s\n' "$doctor_out" | grep '^⇒' | tail -1 | sed 's/^⇒ *//')　（整張表：senate doctor）"
 else
   printf '%s\n' "$doctor_out"
@@ -236,12 +247,17 @@ next_steps() {  # $1 = 怎麼叫 senate（`senate` 或完整路徑）
 #   （一台機器只留一份），而那會把正在用的那一份換掉。⇒ 這條路**一個位元組都不寫進 PATH**。
 if [ "$no_path" -eq 1 ]; then
   echo '── PATH（--no-path：不掛、也不清別份的註冊）────'
-  winexe="$(cygpath -w "$root/publish/senate.exe" 2>/dev/null || echo "$root/publish/senate.exe")"
-  "$root/publish/senate.exe" --help >/dev/null 2>&1 || {
-    echo "✗ publish/senate.exe 跑不起來 —— 試裝沒成功" >&2; exit 1; }
+  winexe="$(cygpath -w "$root/publish/senate${x}" 2>/dev/null || echo "$root/publish/senate${x}")"
+  "$root/publish/senate${x}" --help >/dev/null 2>&1 || {
+    echo "✗ publish/senate${x} 跑不起來 —— 試裝沒成功" >&2; exit 1; }
   echo "✓ 試裝完成 —— \`senate\` **沒有**進 PATH。要叫它得用完整路徑："
   echo "    $winexe"
-  echo "  ⚠ agent 的 skill 打的是 \`senate …\`：試裝的這一份要給 agent 用，得先正式安裝（./install.sh --skip-build）。"
+  if [ "$is_windows" -eq 1 ]; then
+    echo "  ⚠ agent 的 skill 打的是 \`senate …\`：試裝的這一份要給 agent 用，得先正式安裝（./install.sh --skip-build）。"
+  else
+    echo "  ⚠ agent 的 skill 打的是 \`senate …\`：要給 agent 用，得先讓 PATH 找得到它 ——"
+    linux_path_hint | sed 's/^/    /'
+  fi
   next_steps "\"$winexe\""
   exit 0
 fi
