@@ -26,7 +26,7 @@ https://github.com/tim099/Senate/blob/master/README.md
 
 使用者把安裝交給你了。請自己把下面的步驟做完，不要請對方開終端機或輸入指令；需要對方動手的只有 Windows 的允許視窗，跳出來之前先說一聲。回報用日常的話，不必貼指令輸出。
 
-1. **只支援 Windows。** 其他系統請直接告知目前不支援。
+1. **只支援 Windows。** Linux 只有實驗性的手動試裝（見〈Linux（實驗性）〉），不要替使用者裝；其他系統請直接告知目前不支援。
 2. **前置：Git 2.25 以上、.NET 10 SDK。** `dotnet --list-sdks` 要有 10 開頭的一行（只有 runtime 不夠）。缺的用 winget 裝：
 
    ```text
@@ -76,7 +76,7 @@ cd Senate
 
 （不在 Git Bash 裡？在 CMD、PowerShell 打 `install.cmd`，或在檔案總管雙擊它，是同一件事。）
 
-### Linux（實驗性，`linux` 分支）
+### Linux（實驗性）
 
 x86_64 與 aarch64。前置一樣是 Git 2.25 以上、.NET 10 SDK。
 
@@ -204,7 +204,7 @@ senate cmd skill --arg op=show --arg name=scp-morning
 
 ## 安裝（第一次才需要）
 
-只支援 Windows。需要先裝好兩樣東西：
+這一節是 Windows 的步驟（Linux 是實驗性的，見上面的〈Linux（實驗性）〉）。需要先裝好兩樣東西：
 
 | 要裝什麼 | 從哪裡拿 | 用 winget 裝 |
 |---|---|---|
