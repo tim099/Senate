@@ -1,7 +1,8 @@
 // 區塊職責：`peer-rpc` —— 把一筆服務請求經跨主機連線送到另一台、等結果（FAR-53）；以及「Task Server 在哪一台」的判斷。
 // 物理意義：連線只活在**酒館 Server** 裡（SenatePeerJob），CLI 是跑完就結束的行程，碰不到那條線
-//           ⇒ 本支是一支 ServerDelegateCmd，指定給酒館 Server（lane `peer-rpc`）：CLI 打它 ⇒ 排進酒館 Server 的佇列 ⇒
-//           酒館 Server 用手上的連線送 `req`、等 `res`。
+//           ⇒ 本支是一支 ServerDelegateCmd，指定給酒館 Server（lane `peer-rpc-<persona>`）：CLI 打它 ⇒ 排進酒館 Server 的佇列 ⇒
+//           酒館 Server 用手上的連線送 `req`、等 `res`。依 persona 分 lane（FAR-58）：同 lane 依序、不同 lane 同時跑
+//           ⇒ Task Server 回得慢時，同一台別的 persona 不會被卡 30 秒就回 queue_busy；同一個 persona 還是一條。
 //           入口 `task`（寫單）與 `tasks`（讀單）在 Task Server 是別台時改走這一支；⛔ 那時候絕不在本機寫。
 // 數值影響：一次呼叫 ＝ 一筆 req／res。等結果的時間預設 60 秒（`wait`）。
 // ⚠ 結果怎麼判（跟 `task` 的三態一致）：
@@ -36,8 +37,27 @@ public sealed class Cmd_PeerRpc : ServerDelegateCmd
     protected override string ServerId => SCP_ServerIds.Tavern;
 
     public const string RpcLane = "peer-rpc";
-    protected override string Lane(SCP_CmdArgs iArgs) => RpcLane;
+    protected override string Lane(SCP_CmdArgs iArgs) => LaneOf(iArgs.Get("args_json"));
+    /// <summary>lane 名稱只拿來分開排隊，⛔ 不代表身分。</summary>
     protected override bool IsPersonaLane(string iLane) => false;
+    internal bool LaneIsPersona(string iLane) => IsPersonaLane(iLane);
+
+    /// <summary>
+    /// `args_json` 裡的 `persona` 合法 ⇒ `peer-rpc-&lt;persona&gt;`；沒帶、解不開、名字不合法 ⇒ `peer-rpc`。
+    /// ⚠ lane 會變成酒館 Server 佇列底下的資料夾名 ⇒ 除了 persona 名字的規則，也不收這個系統檔名不能用的字元。
+    /// </summary>
+    internal static string LaneOf(string iArgsJson)
+    {
+        try
+        {
+            Dictionary<string, string>? a = JsonSerializer.Deserialize<Dictionary<string, string>>(iArgsJson);
+            string p = a != null && a.TryGetValue("persona", out string? v) && v != null ? v.Trim() : "";
+            if (p.Length <= 64 && SCP.Core.Letters.SCP_RegisteredMail.IsValidPersonaName(p) && p.IndexOfAny(Path.GetInvalidFileNameChars()) < 0)
+                return RpcLane + "-" + p;
+        }
+        catch (Exception) { }
+        return RpcLane;
+    }
 
     /// <summary>酒館 Server 剛起來時，線還沒接上：在這段時間內「對方不在線」多等一下再判。</summary>
     const int WarmupSec = 30;
@@ -123,11 +143,38 @@ public static class SenateTaskServer
     static readonly string[] NameArgs = { "persona", "target_persona", "assignee", "memory_topic" };
 
     /// <summary>
+    /// ⚠ 只給自我測試：<see cref="RefuseReason"/> 一律放行（確認「就算它被改壞，自我測試也只呼叫到只記錄的執行端」）。
+    /// 打開的一方要用 try/finally 關回去。
+    /// </summary>
+    internal static bool DebugRefuseNothing;
+
+    /// <summary>別台帶來的 `timeout`（Task Server 這邊等自己的寫入端多久）最多幾秒。</summary>
+    public const int MaxRemoteTimeoutSec = 300;
+
+    /// <summary>
+    /// 別台帶來的 `timeout` 壓到 <see cref="MaxRemoteTimeoutSec"/> 以下：大於上限的（含 Infinity）⇒ 上限；
+    /// 解不開、不是正數 ⇒ 拿掉（照寫入端的預設 60 秒）；沒帶 ⇒ 不加。一律寫成整數（哪個語系都讀得一樣）。
+    /// </summary>
+    internal static void ClampTimeout(Dictionary<string, string> ioArgs)
+    {
+        if (!ioArgs.TryGetValue("timeout", out string? v)) return;
+        if (!double.TryParse(v.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double d)
+            || double.IsNaN(d) || d <= 0)
+        {
+            ioArgs.Remove("timeout");
+            return;
+        }
+        int aSec = d >= MaxRemoteTimeoutSec ? MaxRemoteTimeoutSec : (int)Math.Ceiling(d);
+        ioArgs["timeout"] = aSec.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
     /// 別台送來的參數這一台收不收：不收 ⇒ 回原因（⇒ exit 1，什麼都不跑）；收 ⇒ null。
     /// 跨主機連線收到 `req`、以及 <see cref="Serve"/> 都會先過這一關。
     /// </summary>
     public static string? RefuseReason(IReadOnlyDictionary<string, string> iArgs)
     {
+        if (DebugRefuseNothing) return null;
         foreach (string k in RefusedArgs)
             if (iArgs.ContainsKey(k)) return $"不收 {k}（那是請求端那一台的路徑；Coding 場只開在請求端）";
         foreach (string k in NameArgs)
@@ -194,7 +241,8 @@ public static class SenateTaskServer
         {
             case PeerRpcOutcome.NotSent:
                 aRes.ExitCode = 6;
-                aRes.Lines.Add("✗ 沒有送到 Task Server：" + r.Why);
+                aRes.Lines.Add((r.Busy ? "✗ Task Server 沒有執行這一筆：" : "✗ 沒有送到 Task Server：") + r.Why);
+                if (r.Busy) aRes.AddValue("peer_busy", "1");
                 break;
             case PeerRpcOutcome.Unknown:
                 aRes.ExitCode = 7;
@@ -253,8 +301,11 @@ public static class SenateTaskServer
     /// <summary>
     /// 在這台（Task Server）跑別台送來的 `task`／`tasks`。資料根用這台自己的；回傳檔的路徑改成「在 這台 上：路徑」，
     /// 內文帶回去（請求端那台沒有這個檔）。⚠ `task` 走它原本的路：酒館通知、工作記憶都在這一台做。
+    /// <paramref name="iRun"/>：真正執行指令的那一步（預設 `SCP_CmdRegistry.Dispatch`）。
+    /// ⚠ 只給自我測試換成只記錄、不執行的版本：正式的會起 Server、發通知（FAR-58）。
     /// </summary>
-    public static PeerRpcReply Serve(string iDataRoot, string iNodeName, PeerRpcCall iCall)
+    public static PeerRpcReply Serve(string iDataRoot, string iNodeName, PeerRpcCall iCall,
+        Func<string, Dictionary<string, string>, SCP_CmdResult>? iRun = null)
     {
         string? aBad = RefuseReason(iCall.Args);
         if (aBad != null)
@@ -265,8 +316,9 @@ public static class SenateTaskServer
         }
         var aArgs = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var kv in iCall.Args) if (Array.IndexOf(LocalOnlyArgs, kv.Key) < 0) aArgs[kv.Key] = kv.Value;
+        ClampTimeout(aArgs);   // 請求帶的 timeout 會交給寫入端：⛔ 不讓別台叫這台等多久都可以
         aArgs["data_root"] = iDataRoot;
-        SCP_CmdResult r = SCP_CmdRegistry.Dispatch(iCall.Cmd, aArgs);
+        SCP_CmdResult r = iRun != null ? iRun(iCall.Cmd, aArgs) : SCP_CmdRegistry.Dispatch(iCall.Cmd, aArgs);
         var aReply = new PeerRpcReply { Exit = r.ExitCode };
         aReply.Lines.AddRange(r.Lines);
         foreach (var kv in r.Values) aReply.Values.Add(kv);

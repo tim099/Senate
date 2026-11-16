@@ -2,12 +2,18 @@
 // 物理意義：照 `PeerLinkCleanRoom` 的做法（綁 127.0.0.1、通道與 UPnP 關、不連 Discord），逐項驗：
 //           ① B 開單 ⇒ 只寫在 C（經 `task` 入口，走 Task Server 那條分支）　② 主機 A 送給 C ⇒ 也只寫在 C
 //           ③ B 讀單（`tasks`）⇒ 讀到的是 C 的單　④ C 不在線 ⇒ exit 6、三台都沒有新檔　⑤ C 收了不回 ⇒ exit 7
-//           ⑥ B 不在允許名單 ⇒ exit 1、C 沒有新檔　⑦ 主機改了轉送中的請求 ⇒ C 驗章不過、不執行
+//           ⑥ B 不在允許名單 ⇒ exit 1、C 沒有新檔　⑦ 主機改了轉送中的請求 ⇒ C 驗章不過、不執行、不回（exit 7）
 //           ⑧ 同一個 rid 送兩次 ⇒ 只寫一次、第二次回第一次的結果　⑨ 舊版收到 req ⇒ 略過、不斷線、聊天照通
-//           ⑦之二 用另一把金鑰冒充 B ⇒ 擋下　⑦之三 帶 scope ⇒ Task Server 自己擋　⑦之四 persona=../…、memory_topic=../… 或絕對路徑 ⇒ 擋下、資料根外面沒東西
+//           ⑦之二 用另一把金鑰冒充 B ⇒ 擋下、不回　⑦之三 帶 scope ⇒ Task Server 自己擋　⑦之四 persona=../…、memory_topic=../… 或絕對路徑 ⇒ 擋下、資料根外面沒東西
+//           ⑦之五 RefuseReason 被改壞（測試開關）⇒ 呼叫到的也只是只記錄的執行端
+//           FAR-58：⑩ timeout 壓到 300 秒　⑪ 同時最多 4 筆，第 5 筆「忙碌」exit 6、同一個 rid 之後重送會執行
+//           ⑫ 不在允許名單的連送 30 筆 ⇒ 最多回 10 筆、log 最多 1 行　⑬ 簽章驗不過的連送 30 筆 ⇒ 一筆都不回、log 最多 1 行
+//           ⑭ `peer-rpc` 依 persona 分 lane
 //           外加：設定寫壞了 ⇒ 不知道寫哪 ⇒ 擋下。
 //           執行請求的掛鉤：`task` 直接對 C 的暫存資料根跑寫入端（淨室裡沒有 Server）；`tasks` 走正式的那一支。
-// 數值影響：只寫系統暫存資料夾（通過就刪；沒過留著並印出位置）；開一個本機迴路的埠。約 30～60 秒。
+//           ⛔ 直接呼叫 `SenateTaskServer.Serve` 的地方一律傳只記錄的執行端：正式的 `task` 會起 Server、發通知。
+// 數值影響：只寫系統暫存資料夾（通過就刪；沒過留著並印出位置）；開一個本機迴路的埠。約 40～80 秒。
+// ⚠ 擋下的回覆每個 from 每分鐘最多 10 筆：B 在允許名單時被擋的（⑪ 的忙碌、⑦之三、⑦之四）加起來要留在 10 筆以內。
 #nullable enable
 using System.Net;
 using System.Net.Sockets;
@@ -26,8 +32,38 @@ public static class SenatePeerTaskSelfTest
         public string Root = "", Name = "", Id = "";
         public SenatePeerLink Link = null!;
         public List<string> Log = new();
+        /// <summary>非 null ⇒ 執行端先卡在這裡（⑪：讓請求同時在跑）。</summary>
+        public volatile ManualResetEventSlim? Hold;
         public void Dispose() => Link.Dispose();
     }
+
+    static int LogCount(Node n, string iText)
+    {
+        lock (n.Log) return n.Log.Count(l => l.Contains(iText));
+    }
+
+    static string LastLog(Node n, string iText)
+    {
+        lock (n.Log) return n.Log.LastOrDefault(l => l.Contains(iText)) ?? "（沒有）";
+    }
+
+    /// <summary>同時送 <paramref name="iCount"/> 筆（各自一條執行緒、各等 <paramref name="iWaitSec"/> 秒）。</summary>
+    static List<PeerRpcResult> Flood(Node iFrom, string iTo, string iCmd, Dictionary<string, string> iArgs, int iCount, int iWaitSec)
+    {
+        var aOut = new PeerRpcResult[iCount];
+        var aThreads = new List<Thread>();
+        for (int i = 0; i < iCount; i++)
+        {
+            int k = i;
+            var t = new Thread(() => aOut[k] = iFrom.Link.Request(iTo, SenatePeerLink.SvcTask, iCmd, iArgs, TimeSpan.FromSeconds(iWaitSec))) { IsBackground = true };
+            aThreads.Add(t);
+            t.Start();
+        }
+        foreach (Thread t in aThreads) t.Join(TimeSpan.FromSeconds(iWaitSec + 15));
+        return aOut.Select(x => x ?? new PeerRpcResult { Outcome = PeerRpcOutcome.Unknown, Why = "執行緒沒結束" }).ToList();
+    }
+
+    const int PeerRpcMaxRunning = SenatePeerLink.RpcMaxRunning;
 
     static int FreePort()
     {
@@ -41,6 +77,7 @@ public static class SenatePeerTaskSelfTest
     /// <summary>淨室的執行端：`task` 直接對這一台的暫存資料根跑寫入端；`tasks` 走正式那一支（資料根換成這一台的）。</summary>
     static PeerRpcReply Serve(Node n, PeerRpcCall c)
     {
+        n.Hold?.Wait(TimeSpan.FromSeconds(30));
         if (c.Cmd != "task") return SenateTaskServer.Serve(n.Root, n.Name, c);
         var aArgs = new Dictionary<string, string>(c.Args, StringComparer.Ordinal);
         aArgs.Remove("op"); aArgs.Remove("persona"); aArgs.Remove("timeout");   // 入口 `task` 自己的參數，不是寫入端的
@@ -236,6 +273,56 @@ public static class SenatePeerTaskSelfTest
                 a8.Outcome == PeerRpcOutcome.Done && b8.Outcome == PeerRpcOutcome.Done && TaskCount(C) == aBefore8 + 1 && I(a8).Length > 0 && I(a8) == I(b8) && C.Link.RpcServed >= 1,
                 $"第一次={a8.OutcomeWord} 第二次={b8.OutcomeWord} index {I(a8)}／{I(b8)} C 的單 {aBefore8} → {TaskCount(C)}");
 
+            // 直接呼叫 Serve 用的執行端：⛔ 只記錄、不執行（正式的會起 Server、發通知）
+            var aRec = new List<(string Cmd, Dictionary<string, string> Args)>();
+            SCP_CmdResult Record(string iCmd, Dictionary<string, string> iArgs)
+            {
+                lock (aRec) aRec.Add((iCmd, new Dictionary<string, string>(iArgs, StringComparer.Ordinal)));
+                return new SCP_CmdResult { ExitCode = 0 };
+            }
+            PeerRpcReply ServeC(Dictionary<string, string> iArgs) => SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall
+            {
+                Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name, Args = new(iArgs, StringComparer.Ordinal),
+            }, Record);
+
+            // ⑩ timeout 上限：大於 300（含 Infinity）⇒ 300；30 照原樣；沒帶不加；解不開 ⇒ 拿掉
+            var aGot10 = new List<string>();
+            foreach (string? t in new[] { "99999", "Infinity", "30", null, "abc" })
+            {
+                var a = new Dictionary<string, string> { ["op"] = "create", ["persona"] = "Bob", ["title"] = "x" };
+                if (t != null) a["timeout"] = t;
+                aRec.Clear();
+                ServeC(a);
+                aGot10.Add(aRec.Count == 1 ? aRec[0].Args.GetValueOrDefault("timeout", "（沒有）") : $"（記到 {aRec.Count} 筆）");
+            }
+            Check("⑩ Task Server 收到的 timeout 壓到 300 秒以下：99999／Infinity ⇒ 300，30 照原樣，沒帶不加，解不開拿掉",
+                aGot10.SequenceEqual(new[] { "300", "300", "30", "（沒有）", "（沒有）" }) && aRec.Count == 1 && aRec[0].Args.GetValueOrDefault("data_root") == C.Root,
+                $"99999／Infinity／30／沒帶／abc ⇒ {string.Join("／", aGot10)}");
+            aRec.Clear();
+
+            // ⑪ 同時最多 4 筆：C 的執行端先卡住，B 送 4 筆佔滿，第 5 筆「忙碌」⇒ 沒執行（6）；放行後 4 筆都完成，同一個 rid 重送會執行
+            var aArgs11 = new Dictionary<string, string> { ["status"] = "all" };
+            int aServed11 = C.Link.RpcServed;
+            C.Hold = new ManualResetEventSlim(false);
+            List<PeerRpcResult>? aRes11 = null;
+            var aT11 = new Thread(() => aRes11 = Flood(B, C.Id, "tasks", aArgs11, PeerRpcMaxRunning, 30)) { IsBackground = true };
+            aT11.Start();
+            bool aFull11 = Until(() => C.Link.RpcRunning == PeerRpcMaxRunning, 15, All);
+            PeerRpcResult a11 = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "tasks", aArgs11, TimeSpan.FromSeconds(10), "selftest-rid-0011");
+            SCP_CmdResult c11 = SenateTaskServer.ToCmdResult(a11);
+            int aRunning11 = C.Link.RpcRunning;
+            C.Hold.Set();
+            aT11.Join(TimeSpan.FromSeconds(45));
+            C.Hold = null;
+            bool aAllDone11 = aRes11 != null && aRes11.All(x => x.Outcome == PeerRpcOutcome.Done);
+            int aServedDelta11 = C.Link.RpcServed - aServed11;
+            PeerRpcResult b11 = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "tasks", aArgs11, TimeSpan.FromSeconds(20), "selftest-rid-0011");
+            Check($"⑪ 同時最多 {PeerRpcMaxRunning} 筆：第 {PeerRpcMaxRunning + 1} 筆拿到「忙碌」（exit 6，沒執行）；放行後前 {PeerRpcMaxRunning} 筆都完成；同一個 rid 之後重送會執行",
+                aFull11 && a11.Outcome == PeerRpcOutcome.NotSent && a11.Busy && c11.ExitCode == 6 && aRunning11 == PeerRpcMaxRunning
+                && aAllDone11 && aServedDelta11 == PeerRpcMaxRunning && b11.Outcome == PeerRpcOutcome.Done,
+                $"佔滿={aFull11} 第 5 筆={a11.OutcomeWord} busy={a11.Busy} exit={c11.ExitCode} 當時在跑={aRunning11} 前 4 筆={string.Join(",", aRes11?.Select(x => x.OutcomeWord) ?? Array.Empty<string>())} "
+                + $"C 執行數多 {aServedDelta11} 重送={b11.OutcomeWord}　{c11.Lines.FirstOrDefault()}");
+
             // ⑥ B 不在允許名單
             SetCfg(C, c => c.TaskClients = new List<string> { A.Id });
             Settle(3, All);
@@ -243,6 +330,16 @@ public static class SenatePeerTaskSelfTest
             SCP_CmdResult r6 = Task(B, ("op", "create"), ("persona", "Bob"), ("title", "不該寫進去"), ("criteria", "- [ ] x"));
             Check("⑥ 反向：B 不在 C 的允許名單 ⇒ exit 1，C 沒有新檔", r6.ExitCode == 1 && V(r6, "wrote") == "0" && TaskCount(C) == aBefore6 && TaskCount(B) == 0 && C.Link.RpcRefused > 0,
                 $"exit={r6.ExitCode} wrote={V(r6, "wrote")} C 的單 {aBefore6} → {TaskCount(C)}　{r6.Lines.FirstOrDefault(l => l.Contains("允許名單"))}");
+
+            // ⑫ 驗過身分、被擋下的連送：B 一分鐘內送 30 筆 ⇒ 擋下的回覆最多 10 筆（其餘不回 ⇒ 7），C 的 log 最多 1 行，計數照算
+            int aRef12 = C.Link.RpcRefused, aLog12 = LogCount(C, "擋下"), aBefore12 = TaskCount(C);
+            List<PeerRpcResult> r12 = Flood(B, C.Id, "task", new Dictionary<string, string> { ["op"] = "create", ["persona"] = "Bob", ["title"] = "連送", ["criteria"] = "- [ ] x" }, 30, 3);
+            int aReplied12 = r12.Count(x => x.Outcome == PeerRpcOutcome.Refused), aSilent12 = r12.Count(x => x.Outcome == PeerRpcOutcome.Unknown);
+            bool aCounted12 = Until(() => C.Link.RpcRefused - aRef12 == 30, 5, All);
+            int aLogs12 = LogCount(C, "擋下") - aLog12;
+            Check($"⑫ 反向：不在允許名單的 B 一分鐘內連送 30 筆 ⇒ 擋下的回覆最多 {SenatePeerLink.RefuseRepliesPerWindow} 筆、C 的 log 最多 1 行，30 筆都有算進 rpc_refused、沒有新檔",
+                aReplied12 >= 1 && aReplied12 <= SenatePeerLink.RefuseRepliesPerWindow && aSilent12 == 30 - aReplied12 && aCounted12 && aLogs12 <= 1 && TaskCount(C) == aBefore12,
+                $"有回={aReplied12} 沒回={aSilent12} rpc_refused 多 {C.Link.RpcRefused - aRef12} log 多 {aLogs12} 行 C 的單 {aBefore12} → {TaskCount(C)}");
             SetCfg(C, c => c.TaskClients = new List<string> { B.Id, A.Id });
             Settle(3, All);
 
@@ -254,28 +351,42 @@ public static class SenatePeerTaskSelfTest
                 x.Set("args", x.GetString("args", "").Replace("原本的標題", "被主機改過的標題"));
                 return x;
             };
-            int aBefore7 = TaskCount(C);
-            SCP_CmdResult r7 = Task(B, ("op", "create"), ("persona", "Bob"), ("title", "原本的標題"), ("criteria", "- [ ] x"));
+            // 簽章驗不過 ⇒ C 不回（FAR-58）⇒ B 等到逾時拿 7；直接用連線本體送、只等 3 秒（走入口要多等 20 秒）
+            int aBefore7 = TaskCount(C), aRef7 = C.Link.RpcRefused;
+            var aArgs7 = new Dictionary<string, string> { ["op"] = "create", ["persona"] = "Bob", ["title"] = "原本的標題", ["criteria"] = "- [ ] x" };
+            SCP_CmdResult r7 = SenateTaskServer.ToCmdResult(B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7, TimeSpan.FromSeconds(3)));
             A.Link.DebugTamperForward = null;
-            Check("⑦ 反向：主機改了轉送中的請求 ⇒ C 驗章不過、不執行", r7.ExitCode == 1 && TaskCount(C) == aBefore7 && r7.Lines.Any(l => l.Contains("簽章")),
-                $"exit={r7.ExitCode} C 的單 {aBefore7} → {TaskCount(C)}　{r7.Lines.FirstOrDefault(l => l.Contains("簽章"))}");
+            Check("⑦ 反向：主機改了轉送中的請求 ⇒ C 驗章不過、不執行、不回 ⇒ B 拿到 exit 7（不知道）；C 的 log 有一行「簽章驗不過」",
+                r7.ExitCode == 7 && TaskCount(C) == aBefore7 && C.Link.RpcRefused == aRef7 + 1 && LogCount(C, "簽章驗不過") >= 1,
+                $"exit={r7.ExitCode} C 的單 {aBefore7} → {TaskCount(C)} rpc_refused 多 {C.Link.RpcRefused - aRef7}　C 的 log：{LastLog(C, "簽章")}");
 
             // ⑦之二 冒充：另一把金鑰簽、from 填允許名單上的 B（pub 填自己的，或照抄 B 的）
             string aForger = Path.Combine(aBase, "forger").Replace('\\', '/');
             Directory.CreateDirectory(aForger);
             PeerIdentity aIdD = SenatePeerStore.LoadOrCreateIdentity(aForger);
             string aPubB = SenatePeerStore.LoadOrCreateIdentity(B.Root).SignPub;
-            int aBefore7b = TaskCount(C), aServed7b = C.Link.RpcServed;
+            int aBefore7b = TaskCount(C), aServed7b = C.Link.RpcServed, aRef7b = C.Link.RpcRefused;
             var aArgs7b = new Dictionary<string, string> { ["op"] = "create", ["persona"] = "Bob", ["title"] = "冒充 B 的單", ["criteria"] = "- [ ] x" };
             B.Link.DebugForgeKey = (aIdD.SignPriv, aIdD.SignPub);
-            PeerRpcResult a7b = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7b, TimeSpan.FromSeconds(20));
+            PeerRpcResult a7b = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7b, TimeSpan.FromSeconds(3));
             B.Link.DebugForgeKey = (aIdD.SignPriv, aPubB);
-            PeerRpcResult b7b = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7b, TimeSpan.FromSeconds(20));
+            PeerRpcResult b7b = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7b, TimeSpan.FromSeconds(3));
             B.Link.DebugForgeKey = null;
-            Check("⑦之二 反向：用另一把金鑰簽、from 填 B（pub 填自己的／照抄 B 的）⇒ C 擋下、不執行、沒有新檔",
-                a7b.Outcome == PeerRpcOutcome.Refused && b7b.Outcome == PeerRpcOutcome.Refused && a7b.Why.Contains("簽章") && b7b.Why.Contains("簽章")
+            Check("⑦之二 反向：用另一把金鑰簽、from 填 B（pub 填自己的／照抄 B 的）⇒ C 擋下、不執行、不回（7），沒有新檔",
+                a7b.Outcome == PeerRpcOutcome.Unknown && b7b.Outcome == PeerRpcOutcome.Unknown && C.Link.RpcRefused == aRef7b + 2 && C.Link.RpcLastRefused.Contains("簽章")
                 && TaskCount(C) == aBefore7b && C.Link.RpcServed == aServed7b,
-                $"pub 自己的={a7b.OutcomeWord} pub 抄 B={b7b.OutcomeWord} C 的單 {aBefore7b} → {TaskCount(C)} C 執行數 {aServed7b} → {C.Link.RpcServed}　{a7b.Why}");
+                $"pub 自己的={a7b.OutcomeWord} pub 抄 B={b7b.OutcomeWord} rpc_refused 多 {C.Link.RpcRefused - aRef7b} C 的單 {aBefore7b} → {TaskCount(C)} C 執行數 {aServed7b} → {C.Link.RpcServed}　{C.Link.RpcLastRefused}");
+
+            // ⑬ 簽章驗不過的連送 30 筆 ⇒ 一筆都不回、C 的 log 最多 1 行、計數照算
+            int aRef13 = C.Link.RpcRefused, aLog13 = LogCount(C, "擋下"), aBefore13 = TaskCount(C), aServed13 = C.Link.RpcServed;
+            B.Link.DebugForgeKey = (aIdD.SignPriv, aIdD.SignPub);
+            List<PeerRpcResult> r13 = Flood(B, C.Id, "task", aArgs7b, 30, 3);
+            B.Link.DebugForgeKey = null;
+            bool aCounted13 = Until(() => C.Link.RpcRefused - aRef13 == 30, 5, All);
+            int aLogs13 = LogCount(C, "擋下") - aLog13;
+            Check("⑬ 反向：簽章驗不過的連送 30 筆 ⇒ C 一筆都不回（都是 7）、log 最多 1 行，30 筆都有算進 rpc_refused、沒有執行",
+                r13.All(x => x.Outcome == PeerRpcOutcome.Unknown) && aCounted13 && aLogs13 <= 1 && TaskCount(C) == aBefore13 && C.Link.RpcServed == aServed13,
+                $"結果={string.Join(",", r13.GroupBy(x => x.OutcomeWord).Select(g => g.Key + "×" + g.Count()))} rpc_refused 多 {C.Link.RpcRefused - aRef13} log 多 {aLogs13} 行 C 執行數 {aServed13} → {C.Link.RpcServed}");
 
             // ⑦之三 Task Server 端自己擋 scope：B 自己組一筆帶 scope 的 claim（繞過入口的拿掉）
             string aEvilScope = Path.Combine(aBase, "scope-evil").Replace('\\', '/');
@@ -283,11 +394,12 @@ public static class SenatePeerTaskSelfTest
             var aArgs7c = new Dictionary<string, string> { ["op"] = "claim", ["persona"] = "Mallory", ["index"] = V(r1, "index"), ["scope"] = aEvilScope };
             int aServed7c = C.Link.RpcServed;
             PeerRpcResult a7c = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7c, TimeSpan.FromSeconds(20));
-            PeerRpcReply s7c = SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall { Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name, Args = new(aArgs7c, StringComparer.Ordinal) });
+            aRec.Clear();
+            PeerRpcReply s7c = ServeC(aArgs7c);
             var aCodingC7c = SCP.Core.Session.SCP_ActivitySessionStore.Load<SCP.Core.Session.SCP_CodingSession>(new SCP_DataRoot(C.Root), "Mallory", SCP.Core.Session.SCP_ActivitySessionKind.Coding);
-            Check("⑦之三 反向：別台送來帶 scope 的 claim ⇒ 連線上擋下、正式的 Serve 也擋下（exit 1），C 上沒有 Coding 場",
-                a7c.Outcome == PeerRpcOutcome.Refused && a7c.Why.Contains("scope") && s7c.Exit == 1 && (aCodingC7c == null || !aCodingC7c.active) && C.Link.RpcServed == aServed7c,
-                $"連線={a7c.OutcomeWord} Serve exit={s7c.Exit} C 有場={aCodingC7c?.active}　{a7c.Why}");
+            Check("⑦之三 反向：別台送來帶 scope 的 claim ⇒ 連線上擋下、Serve 也擋下（exit 1，執行端一筆都沒收到），C 上沒有 Coding 場",
+                a7c.Outcome == PeerRpcOutcome.Refused && a7c.Why.Contains("scope") && s7c.Exit == 1 && aRec.Count == 0 && (aCodingC7c == null || !aCodingC7c.active) && C.Link.RpcServed == aServed7c,
+                $"連線={a7c.OutcomeWord} Serve exit={s7c.Exit} 執行端收到 {aRec.Count} 筆 C 有場={aCodingC7c?.active}　{a7c.Why}");
 
             // ⑦之四 persona 帶 ../、memory_topic 帶 ../ 或絕對路徑 ⇒ 擋下，資料根外面不多任何東西，C 的單沒被改
             string aTok = "far57-escape-" + Guid.NewGuid().ToString("N").Substring(0, 8);
@@ -304,11 +416,9 @@ public static class SenatePeerTaskSelfTest
             {
                 PeerRpcResult x = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7d, TimeSpan.FromSeconds(20));
                 aOuts7d.Add(x.Outcome == PeerRpcOutcome.Refused && x.Why.Contains(aKey) ? "擋" : x.OutcomeWord + "（" + x.Why + "）");
-                PeerRpcReply s = SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall
-                {
-                    Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name, Args = new(aArgs7d, StringComparer.Ordinal),
-                });
-                aOuts7d.Add(s.Exit == 1 ? "擋" : $"Serve exit={s.Exit}");
+                aRec.Clear();
+                PeerRpcReply s = ServeC(aArgs7d);
+                aOuts7d.Add(s.Exit == 1 && aRec.Count == 0 ? "擋" : $"Serve exit={s.Exit} 執行端收到 {aRec.Count} 筆");
             }
             // 往上跳幾層都只會落在 C 的資料根的某個祖先（看第一層）或暫存資料夾底下（整棵看）
             var aLeaks = Directory.GetFileSystemEntries(aBase, "*" + aTok + "*", SearchOption.AllDirectories).ToList();
@@ -318,6 +428,35 @@ public static class SenatePeerTaskSelfTest
             Check("⑦之四 反向：persona=../…、memory_topic=../… 或絕對路徑 ⇒ 連線上擋下、正式的 Serve 也擋下（exit 1），C 的單沒被改，哪裡都沒有多出檔案或資料夾",
                 aOuts7d.All(o => o == "擋") && aSnapSame7d && aLeaks.Count == 0 && TaskCount(C) == aBefore7d && C.Link.RpcServed == aServed7d,
                 $"結果={string.Join("／", aOuts7d)} C 的單沒變={aSnapSame7d} 多出來的={string.Join("、", aLeaks)}");
+
+            // ⑦之五 RefuseReason 被改壞（測試開關讓它一律放行）⇒ Serve 走到執行那一步，但呼叫到的是只記錄的版本：
+            //        ⛔ 不起 Server、不發通知，C 的單和 Coding 場都沒動
+            string aSnap7e = TaskSnapshot(C);
+            aRec.Clear();
+            var aExits7e = new List<int>();
+            try
+            {
+                SenateTaskServer.DebugRefuseNothing = true;
+                aExits7e.Add(ServeC(aArgs7c).Exit);
+                foreach (var (_, aArgs7d) in aCases7d) aExits7e.Add(ServeC(aArgs7d).Exit);
+            }
+            finally { SenateTaskServer.DebugRefuseNothing = false; }
+            int aRec7e = aRec.Count;
+            bool aStillRefuses7e = SenateTaskServer.RefuseReason(aArgs7c) != null;
+            var aCodingC7e = SCP.Core.Session.SCP_ActivitySessionStore.Load<SCP.Core.Session.SCP_CodingSession>(new SCP_DataRoot(C.Root), "Mallory", SCP.Core.Session.SCP_ActivitySessionKind.Coding);
+            Check("⑦之五 反向：RefuseReason 被改壞（一律放行）⇒ 自我測試呼叫到的只有只記錄的執行端：C 的單、Coding 場都沒動；開關關回去後照常擋",
+                aRec7e == 1 + aCases7d.Count && aExits7e.All(x => x == 0) && TaskSnapshot(C) == aSnap7e && (aCodingC7e == null || !aCodingC7e.active) && aStillRefuses7e,
+                $"執行端收到 {aRec7e} 筆（應 {1 + aCases7d.Count}）exit={string.Join(",", aExits7e)} C 的單沒變={TaskSnapshot(C) == aSnap7e} C 有場={aCodingC7e?.active} 關回去後照擋={aStillRefuses7e}");
+            aRec.Clear();
+
+            // ⑭ `peer-rpc` 依 persona 分 lane；名字沒帶、不合法 ⇒ 共用的 `peer-rpc`；lane 名稱不代表身分
+            string L(string? p) => Cmd_PeerRpc.LaneOf(p == null ? "{}" : System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["persona"] = p }));
+            var aCmd14 = new Cmd_PeerRpc();
+            var aLanes14 = new[] { L("Alice"), L("Bob"), L(null), L("../x"), L("a/b"), Cmd_PeerRpc.LaneOf("{ 壞掉"), Cmd_PeerRpc.LaneOf("{\"persona\":1}") };
+            Check("⑭ peer-rpc 依 persona 分 lane：Alice／Bob 各一條；沒帶、../x、a/b、args 壞掉 ⇒ peer-rpc；lane 不代表身分",
+                aLanes14.SequenceEqual(new[] { "peer-rpc-Alice", "peer-rpc-Bob", "peer-rpc", "peer-rpc", "peer-rpc", "peer-rpc", "peer-rpc" })
+                && !aCmd14.LaneIsPersona("peer-rpc-Alice") && !aCmd14.LaneIsPersona("peer-rpc"),
+                $"{string.Join("／", aLanes14)} 代表身分={aCmd14.LaneIsPersona("peer-rpc-Alice")}");
 
             // ⑤ C 收了不回 ⇒ 不知道
             C.Link.DebugSwallowRequests = true;
@@ -372,6 +511,7 @@ public static class SenatePeerTaskSelfTest
         finally
         {
             SenateTaskServer.SendOverride = aKeepOverride;
+            SenateTaskServer.DebugRefuseNothing = false;
             foreach (Node n in aNodes) { try { n.Dispose(); } catch { } }
             if (aFails.Count > 0)
             {

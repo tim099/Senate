@@ -8,7 +8,12 @@
 //   · 擋重放：`ts` 差超過 2 分鐘拒收；Server 記住 10 分鐘內看過的 (from, rid)，看過的不再執行，回上一次的結果。
 //   · Server 那一端只在這幾件都成立時執行：這台設成 Task Server（`task_server=self`）、`from` 在 `task_clients`、
 //     `svc=task`、`cmd` 是 `task` 或 `tasks`。其餘一律回「被擋下」（exit 1，什麼都沒寫）並記一筆。
-// 數值影響：請求端在呼叫者的執行緒上等（酒館 Server 的 `peer-rpc` lane）；執行端在背景執行緒跑 ⇒ ⛔ 不擋收訊迴圈。
+//   · 擋下的限頻（FAR-58）：簽章還沒驗過（rid 不對、簽章驗不過）⇒ ⛔ 一律不回（`from` 是對方自己填的，回了等於誰都能叫這台簽東西），
+//     log 每條線每分鐘 1 行；驗過的 ⇒ 依 `from` 每分鐘最多回 10 筆、log 1 行（不在允許名單的共用一份：身分可以無限生）。
+//     超過的只計數（`rpc_refused`），下一次寫 log 時一起報。
+//   · 同時最多執行 RpcMaxRunning 筆（FAR-58）：滿了 ⇒ 回簽章過的「忙碌」（`busy`＋`refused`），rid 不記 ⇒ 同一個 rid 重送會執行。
+//     新版請求端判成「確定沒寫」（exit 6）；舊版只看得懂 `refused` ⇒ exit 1，一樣是什麼都沒寫。
+// 數值影響：請求端在呼叫者的執行緒上等（酒館 Server 的 `peer-rpc-<persona>` lane）；執行端在背景執行緒跑 ⇒ ⛔ 不擋收訊迴圈。
 //           回傳的行數與回傳檔內文有上限（超過就截斷並註明），frame 沿用 1 MB 上限。
 #nullable enable
 using System.Globalization;
@@ -44,6 +49,8 @@ public enum PeerRpcOutcome
 public sealed class PeerRpcResult
 {
     public PeerRpcOutcome Outcome;
+    /// <summary>Server 那一台收到了，但同時在跑的已滿 ⇒ 沒有執行（Outcome 是 NotSent）。</summary>
+    public bool Busy;
     public string Why = "";
     public string ServerId = "", ServerName = "";
     public PeerRpcReply Reply = new();
@@ -65,6 +72,11 @@ public sealed partial class SenatePeerLink
     const int RpcSeenSec = 600;
     const int RpcMaxLinesChars = 100_000;
     const int RpcMaxReportChars = 120_000;
+    /// <summary>同時最多執行幾筆：`task` 寫入最後都排 main Server 同一條 `task-write` lane，開再多也只是排隊。</summary>
+    public const int RpcMaxRunning = 4;
+    const int RefuseWindowSec = 60;
+    /// <summary>驗過身分、被擋下的：每個 `from` 每分鐘最多回幾筆。</summary>
+    public const int RefuseRepliesPerWindow = 10;
 
     sealed class Pending
     {
@@ -79,9 +91,19 @@ public sealed partial class SenatePeerLink
         public SCP_JsonData? Res;   // null ＝ 還在跑
     }
 
+    /// <summary>擋下的限頻：一個 key 一窗一分鐘。</summary>
+    sealed class RefuseWindow
+    {
+        public DateTime Start;
+        public int Replies;
+        public bool Logged;
+        public int Muted;   // 擋下了、但限頻沒寫 log 的（下一次寫 log 時一起報）
+    }
+
     readonly Dictionary<string, Pending> m_Pending = new(StringComparer.Ordinal);
     readonly Dictionary<string, SeenRpc> m_Seen = new(StringComparer.Ordinal);
-    int m_RpcServed, m_RpcRefused;
+    readonly Dictionary<string, RefuseWindow> m_RefuseWin = new(StringComparer.Ordinal);
+    int m_RpcServed, m_RpcRefused, m_RpcRunning;
     string m_RpcLastRefused = "";
     readonly DateTime m_CreatedUtc = DateTime.UtcNow;
 
@@ -90,6 +112,8 @@ public sealed partial class SenatePeerLink
 
     public int RpcServed => m_RpcServed;
     public int RpcRefused => m_RpcRefused;
+    public int RpcRunning => Volatile.Read(ref m_RpcRunning);
+    public string RpcLastRefused => m_RpcLastRefused;
 
     // ── 自我測試用的開關 ─────────────────────────────────────────────
     /// <summary>當成舊版：收到 req／res 一律略過（不斷線）。</summary>
@@ -278,7 +302,7 @@ public sealed partial class SenatePeerLink
             return;
         }
         var aReply = new PeerRpcReply { Exit = int.TryParse(aExit, NumberStyles.Integer, CultureInfo.InvariantCulture, out int x) ? x : 70 };
-        bool aRefused = false;
+        bool aRefused = false, aBusy = false;
         string aWhy = "", aName = p.ToName;
         try
         {
@@ -289,6 +313,7 @@ public sealed partial class SenatePeerLink
                     if (kv.IsArray && kv.Count == 2) aReply.Values.Add(new KeyValuePair<string, string>(kv[0].AsString(), kv[1].AsString()));
             aReply.Report = b.GetString("report", "");
             aRefused = b.GetBool("refused", false);
+            aBusy = aRefused && b.GetBool("busy", false);
             aWhy = b.GetString("why", "");
             if (b.GetString("server_name", "").Length > 0) aName = SenatePeerStore.CleanName(b.GetString("server_name", ""));
         }
@@ -298,10 +323,11 @@ public sealed partial class SenatePeerLink
             p.Done.TrySetResult(new PeerRpcResult { Outcome = PeerRpcOutcome.Unknown, ServerId = p.To, ServerName = aName, Why = "結果的內文解不開（" + e.Message + "）" });
             return;
         }
+        // 忙碌 ⇒ 那一台確定沒執行 ⇒ 跟「沒送到」一樣是 exit 6（稍後再試是安全的）
         p.Done.TrySetResult(new PeerRpcResult
         {
-            Outcome = aRefused ? PeerRpcOutcome.Refused : PeerRpcOutcome.Done,
-            ServerId = p.To, ServerName = aName, Why = aWhy, Reply = aReply,
+            Outcome = aBusy ? PeerRpcOutcome.NotSent : aRefused ? PeerRpcOutcome.Refused : PeerRpcOutcome.Done,
+            Busy = aBusy, ServerId = p.To, ServerName = aName, Why = aWhy, Reply = aReply,
         });
     }
 
@@ -311,20 +337,31 @@ public sealed partial class SenatePeerLink
         string aCmd = j.GetString("cmd", ""), aArgs = j.GetString("args", "");
         string aFromName = FindNode(aFrom)?.Name ?? (aFrom == s.NodeId ? s.NodeName : aFrom);
 
-        void Refuse(string iWhy)
+        // iVerified：簽章驗過（`from` 是真的）⇒ 可以回（限頻）；沒驗過 ⇒ ⛔ 一律不回，只計數、log 限頻
+        void Refuse(string iWhy, bool iVerified = true, bool iBusy = false)
         {
             Interlocked.Increment(ref m_RpcRefused);
             m_RpcLastRefused = $"{SenatePeerStore.NowIso()} {aFromName}（{aFrom}）{aCmd}：{iWhy}";
-            m_Hooks.Err($"⚠ 跨主機連線：擋下 {aFromName}（{aFrom}）送來的 {aSvc}/{aCmd} —— {iWhy}");
-            var aReply = new PeerRpcReply { Exit = 1 };
-            aReply.Lines.Add($"⛔ Task Server {m_Cfg.NodeName} 擋下這一筆：{iWhy}（什麼都沒寫）");
-            Send(s, BuildRes(aRid, aFrom, aReply, true, iWhy));
+            // 限頻的 key：沒驗過 ⇒ 依這條線；驗過 ⇒ 依 from，但不在允許名單的共用一份（新身分隨時生得出來，各給一份等於沒限）
+            string aKey = !iVerified ? "link:" + s.NodeId
+                : m_Cfg.TaskClients.Contains(aFrom) ? "from:" + aFrom : "from:*";
+            (bool aReplyOk, bool aLogOk, int aMuted) = RefuseGate(aKey, iVerified ? RefuseRepliesPerWindow : 0);
+            if (aLogOk)
+                m_Hooks.Err($"⚠ 跨主機連線：擋下 {aFromName}（{aFrom}）送來的 {aSvc}/{aCmd} —— {iWhy}"
+                    + (iVerified ? "" : "（沒驗過身分 ⇒ 不回）")
+                    + (aMuted > 0 ? $"（這之前另外擋下 {aMuted} 筆，限頻沒寫 log）" : ""));
+            if (!aReplyOk) return;
+            var aReply = new PeerRpcReply { Exit = iBusy ? 6 : 1 };
+            aReply.Lines.Add(iBusy
+                ? $"✗ Task Server {m_Cfg.NodeName} 沒有執行這一筆：{iWhy}（什麼都沒寫）"
+                : $"⛔ Task Server {m_Cfg.NodeName} 擋下這一筆：{iWhy}（什麼都沒寫）");
+            Send(s, BuildRes(aRid, aFrom, aReply, true, iWhy, iBusy));
         }
 
-        if (aRid.Length < 8 || aRid.Length > 64) { Refuse("請求的 rid 不對"); return; }
+        if (aRid.Length < 8 || aRid.Length > 64) { Refuse("請求的 rid 不對", iVerified: false); return; }
         if (!VerifySigned(j, aFrom, ReqText(aRid, aSvc, aFrom, m_Me!.Id, aTs, aCmd, aArgs)))
         {
-            Refuse("簽章驗不過（請求在路上被改過，或不是 from 那一台送的）");
+            Refuse("簽章驗不過（請求在路上被改過，或不是 from 那一台送的）", iVerified: false);
             return;
         }
         if (!DateTime.TryParse(aTs, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out DateTime aAt)
@@ -369,13 +406,20 @@ public sealed partial class SenatePeerLink
         string? aBadArgs = SenateTaskServer.RefuseReason(aCall.Args);
         if (aBadArgs != null) { Refuse(aBadArgs); return; }
 
+        // 同時在跑的滿了 ⇒ 不執行；rid ⛔ 不記進「看過的」⇒ 請求端用同一個 rid 重送還是會執行
+        if (!TryTakeRunSlot())
+        {
+            Refuse($"Task Server 忙碌中（同時最多 {RpcMaxRunning} 筆）⇒ 這筆沒有執行，可以稍後再試", iBusy: true);
+            return;
+        }
         var aEntry = new SeenRpc { At = DateTime.UtcNow };
+        bool aDup;
         lock (m_Seen)
         {
-            if (m_Seen.ContainsKey(aKey)) return;
-            m_Seen[aKey] = aEntry;
+            aDup = m_Seen.ContainsKey(aKey);
+            if (!aDup) m_Seen[aKey] = aEntry;
         }
-        if (DebugSwallowRequests) return;
+        if (aDup || DebugSwallowRequests) { Interlocked.Decrement(ref m_RpcRunning); return; }
 
         _ = Task.Run(() =>
         {
@@ -386,6 +430,7 @@ public sealed partial class SenatePeerLink
                 aReply = new PeerRpcReply { Exit = 70 };
                 aReply.Lines.Add($"✗ Task Server {m_Cfg.NodeName} 執行時炸了：{e.GetType().Name}：{e.Message} —— 寫了沒有不確定，先回讀");
             }
+            finally { Interlocked.Decrement(ref m_RpcRunning); }
             SCP_JsonData aRes = BuildRes(aRid, aFrom, aReply, false, "");
             lock (m_Seen) aEntry.Res = aRes;
             Interlocked.Increment(ref m_RpcServed);
@@ -394,7 +439,42 @@ public sealed partial class SenatePeerLink
         });
     }
 
-    SCP_JsonData BuildRes(string iRid, string iTo, PeerRpcReply iReply, bool iRefused, string iWhy)
+    /// <summary>佔一個執行的位子；滿了（已經 RpcMaxRunning 筆在跑）⇒ false。</summary>
+    bool TryTakeRunSlot()
+    {
+        while (true)
+        {
+            int n = Volatile.Read(ref m_RpcRunning);
+            if (n >= RpcMaxRunning) return false;
+            if (Interlocked.CompareExchange(ref m_RpcRunning, n + 1, n) == n) return true;
+        }
+    }
+
+    /// <summary>
+    /// 擋下的這一筆要不要回、要不要寫 log：每個 key 每分鐘最多回 <paramref name="iReplyCap"/> 筆、寫 1 行 log。
+    /// 回的 Muted ＞ 0 ⇒ 這行 log 要一起報「這之前另外擋下幾筆」（限頻時沒寫 log 的）。
+    /// </summary>
+    (bool Reply, bool Log, int Muted) RefuseGate(string iKey, int iReplyCap)
+    {
+        DateTime aNow = DateTime.UtcNow;
+        lock (m_RefuseWin)
+        {
+            // 很久沒動的收掉（key 只有線、允許名單上的節點、加一個共用的 ⇒ 本來就不多）
+            foreach (string k in m_RefuseWin.Where(kv => (aNow - kv.Value.Start).TotalSeconds > RefuseWindowSec * 10).Select(kv => kv.Key).ToList())
+                m_RefuseWin.Remove(k);
+            if (!m_RefuseWin.TryGetValue(iKey, out RefuseWindow? w)) m_RefuseWin[iKey] = w = new RefuseWindow { Start = aNow };
+            else if ((aNow - w.Start).TotalSeconds >= RefuseWindowSec) { w.Start = aNow; w.Replies = 0; w.Logged = false; }
+            bool aReply = w.Replies < iReplyCap;
+            if (aReply) w.Replies++;
+            if (w.Logged) { w.Muted++; return (aReply, false, 0); }
+            w.Logged = true;
+            int aMuted = w.Muted;
+            w.Muted = 0;
+            return (aReply, true, aMuted);
+        }
+    }
+
+    SCP_JsonData BuildRes(string iRid, string iTo, PeerRpcReply iReply, bool iRefused, string iWhy, bool iBusy = false)
     {
         var b = SCP_JsonData.NewObject();
         var aLines = SCP_JsonData.NewArray();
@@ -420,6 +500,7 @@ public sealed partial class SenatePeerLink
             aReport = aReport.Substring(0, RpcMaxReportChars) + $"\n\n⚠（回傳檔太長，後面截掉了；完整的在 {m_Cfg.NodeName} 上）\n";
         b.Set("report", aReport);
         if (iRefused) b.Set("refused", true);
+        if (iBusy) b.Set("busy", true);   // 新版判「沒執行」（6）；舊版看不懂，只看 refused（1）—— 兩種都是什麼都沒寫
         b.Set("why", iWhy);
         b.Set("server_name", m_Cfg.NodeName);
         string aBody = b.ToJson(false);
@@ -436,6 +517,7 @@ public sealed partial class SenatePeerLink
     {
         j.Set("task_server", m_Cfg.TaskServer);
         j.Set("rpc_served", m_RpcServed);
+        j.Set("rpc_running", RpcRunning);
         j.Set("rpc_refused", m_RpcRefused);
         j.Set("rpc_last_refused", m_RpcLastRefused);
     }

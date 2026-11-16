@@ -146,7 +146,7 @@ Tim 2026-11-11：「需要不限制區網的連線」「做自動開埠」。
 
 ```bash
 senate selftest --only PeerLinkCleanRoom     # 暫存資料夾裡起一台主機與三個另一端，走本機迴路跑整條路（約 20～40 秒）
-senate selftest --only PeerTaskCleanRoom     # Task Server（§10）：一台主機、兩個另一端，其中一個當 Task Server（約 30～60 秒）
+senate selftest --only PeerTaskCleanRoom     # Task Server（§10）：一台主機、兩個另一端，其中一個當 Task Server（約 40～80 秒）
 ```
 
 逐項讀數寫在系統暫存資料夾的 `senate-peer-selftest-last.txt`、`senate-peertask-selftest-last.txt`。它們不連 Discord、不開通道。
@@ -194,21 +194,22 @@ senate cmd peer --arg op=set --arg task_server=-
 
   | 情況 | exit | 意思 |
   |---|---|---|
-  | 這台的連線關著、酒館 Server 起不來、那一台不在線、它沒說自己是 Task Server、主機轉不過去 | 6 | 確定沒寫，修好重跑是安全的 |
-  | 送出了，但沒等到結果（逾時、中途斷線、那一台是舊版） | 7 | 不知道，先 `tasks --arg index=<單號>` 回讀，別直接重打 |
-  | 那一台擋下（不在允許名單、簽章驗不過、不是 task／tasks、帶了 `scope`、persona 或主題名字不合法） | 1 | 什麼都沒寫，原因在輸出裡 |
+  | 這台的連線關著、酒館 Server 起不來、那一台不在線、它沒說自己是 Task Server、主機轉不過去、那一台忙碌中（同時在跑的滿了） | 6 | 確定沒寫，修好（或稍後）重跑是安全的 |
+  | 送出了，但沒等到結果（逾時、中途斷線、那一台是舊版、簽章驗不過所以那一台不回） | 7 | 不知道，先 `tasks --arg index=<單號>` 回讀，別直接重打 |
+  | 那一台擋下（不在允許名單、不是 task／tasks、帶了 `scope`、persona 或主題名字不合法） | 1 | 什麼都沒寫，原因在輸出裡 |
   | 那一台跑完 | 它的 exit | 第一行是「⤷ 於 Task Server <節點名> 執行」 |
 
   設定寫壞了（`task_server` 認不得、設定檔讀不了）⇒ 也是 exit 6：不知道該寫在哪一台，就不寫。
 - **信任**：每個請求和結果都用發送那一台自己的身分金鑰簽章，收的一方驗「公鑰的指紋 ＝ 節點 id」與簽章。
   Task Server 是另一端時請求會經過主機，主機看得到內容，但改不了、也冒充不了別台（改了就驗不過）。
-  請求時間跟 Task Server 差超過 2 分鐘就拒收；同一筆（同一個 rid）10 分鐘內再來只回上一次的結果，不再執行。
+  請求時間跟 Task Server 差超過 2 分鐘就拒收；簽章驗不過的不回（不知道是誰送的，回了等於誰都能叫它簽東西）；同一筆（同一個 rid）10 分鐘內再來只回上一次的結果，不再執行。
   Task Server 只執行 `task_clients` 名單上的節點送來的 `task`／`tasks`；名單空的 ⇒ 一個都不收。
   參數也由 Task Server 自己把關，不靠請求端：帶了 `scope`（請求端那一台的路徑）就擋下；
   `persona`、`target_persona`、`assignee`、`memory_topic` 含 `/`、`\`、`:` 或 `..` 就擋下（這些名字會被拼進那一台的檔案路徑；
   `memory_topic` 在 `wrapup` 帶 `why` 時變成 `WorkMemory/<主題>/`，絕對路徑也會被擋）。
 - **切換 Task Server 不搬單子**：舊的單留在原本那一台。要換台，先用 `sync.tasks` 或直接複製 `Tasks/` 把單子搬過去。
-- 內部通道是 `senate cmd peer-rpc`（指定給酒館 Server，lane `peer-rpc`）：連線只活在酒館 Server 裡，CLI 經它送出去。人不用直接打。
+- 內部通道是 `senate cmd peer-rpc`（指定給酒館 Server，lane `peer-rpc-<persona>`；沒帶 persona 或名字不合法 ⇒ `peer-rpc`）：
+  連線只活在酒館 Server 裡，CLI 經它送出去。人不用直接打。不同 persona 各走一條，Task Server 回得慢時不會互相卡住。
 
 已知限制（第一版）：
 - 後台任務頁的清單、早安 brief **還是讀這台的檔**（不經連線）。Task Server 在別台時，任務頁頂端會提示「這裡的清單是本機的舊資料」。
@@ -216,3 +217,13 @@ senate cmd peer --arg op=set --arg task_server=-
 - 回傳的行數與回傳檔內文有上限，太長就截斷並註明（完整的在 Task Server 上）。
 - 目前只有 Task。訊息裡留了 `svc` 欄位，之後 bank 等服務可以照同樣的方式加。
 - 兩台實體機器互連沒有實際跑過；自我測試 `PeerTaskCleanRoom` 在同一台機器上起三個節點驗。
+- **主機可以說謊或丟掉請求**：簽章擋得住主機改內容、冒充別台，擋不住主機謊稱「轉不過去」（請求端回 6，其實可能已經轉過去了）、
+  或直接丟掉請求（請求端回 7）。拿到 6 又懷疑主機的話，一樣先回讀。
+- **節點 id 只取公鑰 SHA-256 的前 64 位**（16 個十六進位字元）：拿來比對人工設定的 `task_server`、`task_clients` 夠用，但不是完整的指紋。
+- **Task Server 那一端的上限**（FAR-58）：
+  - 請求帶的 `timeout`（Task Server 等自己的寫入端多久）最多 300 秒，超過的壓到 300；解不開的拿掉，照預設 60 秒。
+  - 同時最多跑 4 筆。滿了 ⇒ 回「忙碌」，請求端 exit 6（沒執行）；那一筆的 rid 不記，稍後用同一個 rid 重送會執行。舊版請求端看不懂「忙碌」，會當成擋下（exit 1），一樣是什麼都沒寫。
+  - 擋下的回覆每個節點每分鐘最多 10 筆，不在允許名單的節點共用這 10 筆（新的身分隨時生得出來）；log 每個節點每分鐘 1 行。
+    超過的不回（請求端拿到 7）、不寫 log，只算進後台頁的 `rpc_refused`，下一次寫 log 時一起報「這之前另外擋下 N 筆」。
+  - 簽章驗不過、rid 不對的（還不知道是誰送的）⇒ 一律不回，請求端等到逾時拿 7；log 每條線每分鐘 1 行。原因看 Task Server 那一台的後台頁（`rpc_last_refused`）或 log。
+- **同一個 persona 同一時間只有一條 lane**：同一個 persona 同時打兩筆 `task`，第二筆會等第一筆；等超過 30 秒就回 6（`queue_busy`，沒送出）。
