@@ -12,6 +12,7 @@
 //     ⇒ 斷線期間的訊息重連後補上、同一則不會進來兩次。第一次接上不回放歷史；積壓超過 <see cref="MaxBacklog"/> 則跳到最新並說出來。
 //   · **在線名單**：每一端把自己的 persona lock 掃出來的名單送給主機；主機把「自己＋其他另一端」的名單送給每個另一端。
 //     收到的名單寫進 `peer_presence.json`（⛔ 不寫進本機的 lock）。
+//   · **服務請求**（FAR-53）：`req`／`res` 兩種 frame 把 Task 指令送到 Task Server 那一台、結果傳回來。本體在 `SenatePeerRpc.cs`。
 // 數值影響：網路與酒館寫入都在背景執行緒 ⇒ ⛔ 不擋 Server 的心跳。同一個錯誤只印一次。
 // ⚠ 伺服端不用 HttpListener：在 Windows 上它要管理員先登記網址才能聽非本機位址。這裡自己處理 WebSocket 的升級握手，
 //   之後交給 .NET 內建的 WebSocket（`WebSocket.CreateFromStream`）。
@@ -30,7 +31,7 @@ using SCP.Core.Tavern;
 
 namespace Senate.Core;
 
-public sealed class SenatePeerLink : IDisposable
+public sealed partial class SenatePeerLink : IDisposable
 {
     public const int MaxBacklog = 500;
     public const int BatchSize = 50;
@@ -50,6 +51,11 @@ public sealed class SenatePeerLink : IDisposable
         public Action<string> Err = _ => { };
         /// <summary>在本機酒館留一則系統訊息（接上了）。沒接 ⇒ 不留。⛔ 內容不放 token、位址。</summary>
         public Action<string>? Note;
+        /// <summary>
+        /// 執行別台送來的服務請求（FAR-53；這台是 Task Server 時才會被叫）。在背景執行緒跑，⛔ 不擋收訊迴圈。
+        /// 沒接 ⇒ 一律回「被擋下」。自我測試換成直接對暫存資料根寫單的版本。
+        /// </summary>
+        public Func<PeerRpcCall, PeerRpcReply>? Serve;
     }
 
     sealed class Session
@@ -589,6 +595,7 @@ public sealed class SenatePeerLink : IDisposable
         if (!m_Disposed || iWhy != "收工")
             m_Hooks.Out($"· 🌐 跨主機連線：跟 {s.NodeName}（{s.NodeId}）的線斷了 —— {iWhy}（收 {s.MsgIn} 則、送 {s.MsgOut} 則）");
         if (!s.ServerSide) m_NextDial = DateTime.UtcNow.AddSeconds(2);
+        FailPendingVia(s, iWhy);
     }
 
     void CloseAll(Func<Session, bool> iWhich, string iWhy)
@@ -613,6 +620,7 @@ public sealed class SenatePeerLink : IDisposable
                 return null;
             }
             case "presence": OnPresence(s, j); return null;
+            case "req": case "res": case "rpcfail": OnRpcFrame(s, j); return null;
             case "bye": return "對面說再見：" + j.GetString("why", "");
             default: return null;   // 不認得的 frame 略過（新版多送的欄位不該讓舊版斷線）
         }
@@ -784,6 +792,7 @@ public sealed class SenatePeerLink : IDisposable
                 if (n["online"].IsArray)
                     foreach (SCP_JsonData o in n["online"])
                         p.Online.Add(new PeerOnline { Name = o.GetString("name", ""), Agent = o.GetString("agent", ""), Status = o.GetString("status", "") });
+                p.Serves = SenatePeerStore.Strs(n["serves"]);
                 aList.Add(p);
             }
         s.Remote = aList;
@@ -915,6 +924,7 @@ public sealed class SenatePeerLink : IDisposable
             a.Add(x);
         }
         o.Set("online", a);
+        if (n.Serves.Count > 0) o.Set("serves", SenatePeerStore.Arr(n.Serves));
         return o;
     }
 
@@ -922,7 +932,7 @@ public sealed class SenatePeerLink : IDisposable
     {
         if (!s.SyncReceived || s.Closed) return;
         var aNodes = SCP_JsonData.NewArray();
-        aNodes.Add(NodeJson(new PeerNodePresence { Id = m_Me!.Id, Name = m_Cfg.NodeName, Online = m_LocalOnline }));
+        aNodes.Add(NodeJson(new PeerNodePresence { Id = m_Me!.Id, Name = m_Cfg.NodeName, Online = m_LocalOnline, Serves = MyServes() }));
         if (s.ServerSide)   // 主機：把其他另一端的名單也帶給它
             foreach (Session o in Snapshot())
                 if (!ReferenceEquals(o, s))
@@ -999,6 +1009,7 @@ public sealed class SenatePeerLink : IDisposable
             aSess.Add(o);
         }
         j.Set("sessions", aSess);
+        AppendRpcStatus(j);
         lock (Extra) foreach (KeyValuePair<string, string> kv in Extra) j.Set(kv.Key, kv.Value);
         string aSig = j.ToJson(false);
         if (aSig == m_StatusSig && (DateTime.UtcNow - m_StatusAt).TotalSeconds < 5) return;

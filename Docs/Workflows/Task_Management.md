@@ -201,6 +201,7 @@ senate cmd tasks --arg project=Blockside --arg status=open   # 只列那個專�
 Tim 2026-10-22：「支援填寫git repo與branch 自動同步到遠端的git repo」「讓task有新增 或改動時自動commit」「同時push」。
 在「路徑管理」頁的「同步遠端」填 repo ＋ branch（`senate.local.json` 的 `sync.tasks`，兩格都填才同步；空 ＝ 只寫本機）。
 
+- ⚠ **Task Server 是別台時**（跨主機連線的 `task_server`，[Peer_Link §10](Peer_Link.md)）：這台的 `task`／`tasks` 整筆送到那一台執行，**這台的 sync.tasks 不跑**（寫單、同步都在那一台）。兩套不要同時當主要的路：用了 Task Server，其他台的 sync.tasks 建議關掉；要換 Task Server 的時候，sync.tasks 是搬單子的一個辦法。
 - **本機的 `<資料根>/Tasks` 就是那條 branch 的工作副本** —— 讀單照舊讀本機；`tasks` 讀單之前 CLI 每分鐘最多拉一次（順便推還沒推上去的），別台開的單才看得到。
 - **缺目錄 ⇒ 第一次用到時自動 clone**（寫單、讀單、`task-sync`）。⛔ 設了遠端就不建空目錄：clone 不下來時寫單擋下（空板接上遠端會從 0001 整排撞號）。
 - **每次寫單（`task` 寫入成功）⇒ 自動 commit＋push**：sync.tasks 開著時，寫單**整套在入口（CLI）這一邊**做 —— 拉 → 寫 → commit → push → 重放，全在任務板的跨行程鎖（Global 具名 mutex）裡，⛔ 不交給 Server（Server 不跑 git，見下面 ⚠）。回傳檔多一段「🔄 同步遠端」，`🔢 sync` = `pushed`／`pending`（斷網、沒權限：已在本機提交，之後再推）／`conflict`／`mismatch`。

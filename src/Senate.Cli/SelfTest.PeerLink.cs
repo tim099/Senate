@@ -4,6 +4,7 @@
 //           本體在 `Cmd_Peer.RunSelfTest`（`senate cmd peer --arg op=selftest` 跑的是同一支）。
 // 數值影響：只寫系統暫存資料夾（通過就刪；沒過留著並印出位置）；開一個本機迴路的埠。
 //           ⛔ 不碰真的資料根、不連 Discord、不開 Cloudflare 通道。約 20～40 秒。
+//           `PeerTaskCleanRoom`（FAR-53）：Task 指令經連線送到 Task Server；本體在 `SenatePeerTaskSelfTest.Run`。
 #nullable enable
 using Senate.Core;
 
@@ -22,6 +23,21 @@ public static partial class SelfTest
         return new CheckRow(aName,
             aFails.Count == 0
                 ? $"{aPass} 項全過（含反向：token 不對連不上、冒充主機不連、重送只落一則、不迴圈）；逐項讀數在 {aReport}"
+                : $"沒過 {aFails.Count} 項：{string.Join("；", aFails)}　〔" + string.Join(" ｜ ", aLines.Where(l => l.StartsWith("✗ ", StringComparison.Ordinal))) + "〕",
+            aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
+    }
+
+    static CheckRow PeerTaskCleanRoom()
+    {
+        const string aName = "跨主機連線：Task 指令送到 Task Server（寫只在那一台／連不到說出來／簽章與允許名單／擋重送）（FAR-53）";
+        var aLines = new List<string>();
+        List<string> aFails = SenatePeerTaskSelfTest.Run(aLines);
+        string aReport = Path.Combine(Path.GetTempPath(), "senate-peertask-selftest-last.txt");
+        try { File.WriteAllLines(aReport, aLines); } catch (Exception) { aReport = "（寫不出來）"; }
+        int aPass = aLines.Count(l => l.StartsWith("✓ ", StringComparison.Ordinal) && l != "✓ 全部通過");
+        return new CheckRow(aName,
+            aFails.Count == 0
+                ? $"{aPass} 項全過（含反向：不在線 exit 6、不回 exit 7、不在名單／被改過 exit 1、同一個 rid 只寫一次）；逐項讀數在 {aReport}"
                 : $"沒過 {aFails.Count} 項：{string.Join("；", aFails)}　〔" + string.Join(" ｜ ", aLines.Where(l => l.StartsWith("✗ ", StringComparison.Ordinal))) + "〕",
             aFails.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
     }

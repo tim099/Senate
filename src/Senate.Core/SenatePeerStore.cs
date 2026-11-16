@@ -3,6 +3,8 @@
 //   · 全部住 `<機密資料夾>/peer/`（預設 `Secret/peer/`）：資料根會用 git 同步到別台，而這些檔**每台都不一樣**
 //     （誰當主機、私鑰、對方的位址）⇒ 放在 git 一律忽略的那個資料夾，⛔ 不進版控。
 //   · `peer_config.json`：模式（off／host／client）、節點名、埠、要串的頻道、通道開關。每一輪重讀 ⇒ 改完不必重啟 Server。
+//     另外記「服務放在哪一台」（FAR-53）：`task_server`（空＝本機寫；`self`＝這台就是 Task Server；節點 id＝送到那一台）
+//     與 `task_clients`（這台是 Task Server 時，收哪些節點送來的 Task 指令）。⚠ 跟誰當主機無關：主機只是被連的那一端。
 //   · `peer_identity.json`：這台的簽章金鑰。第一次用到時產生。
 //   · `peer_state.json`：主機這一場的 token、收到的主機公告、認識的節點（每個節點在每個頻道收到第幾號）。
 //   · `peer_presence.json`：另一邊在線的人（酒館追讀的「在線」會讀它；讀法在 SCP_Core 的 `SCP_PeerPresence`）。
@@ -29,9 +31,18 @@ public sealed class PeerConfig
     public string AnnounceWebhookId = "";  // 空 ⇒ 主頻道的分類綁的 webhook
     public bool ForwardExternal;           // Discord 轉進來的訊息要不要也送到另一邊（預設不送：另一邊自己會從 Discord 收）
     public List<string> Rooms = new() { SCP_TavernChannels.MainChannelId };
+    public string TaskServer = "";         // 空｜self｜節點 id（FAR-53）
+    public List<string> TaskClients = new();   // 這台是 Task Server 時收哪些節點的 Task 指令；空 ⇒ 一個都不收
     public string Error = "";
+    public string TaskServerError = "";    // task_server／task_clients 寫壞了 ⇒ ⛔ 不猜（Task 寫入一律擋下）
+    public bool ReadFailed;                // 設定檔在、但讀不了 ⇒ 不知道 Task Server 是哪一台
 
     public string NodeName => SenatePeerStore.CleanName(Name.Length > 0 ? Name : Environment.MachineName);
+
+    /// <summary>這台說自己是 Task Server（收別台送來的 Task 指令）。</summary>
+    public bool ServesTask => TaskServer == PeerConfig.Self;
+
+    public const string Self = "self";
 }
 
 /// <summary>主機貼到 Discord 的公告（另一端靠它連線）。</summary>
@@ -97,6 +108,7 @@ public sealed class PeerNodePresence
 {
     public string Id = "", Name = "";
     public List<PeerOnline> Online = new();
+    public List<string> Serves = new();     // 這個節點說自己提供哪些服務（FAR-53：`task`）。只拿來給人選，真正以 task_server 為準
 }
 
 public static class SenatePeerStore
@@ -166,7 +178,7 @@ public static class SenatePeerStore
     {
         var c = new PeerConfig();
         SCP_JsonData? j = ReadJson(ConfigPath(iDataRoot), out string? aErr);
-        if (aErr != null) { c.Error = "設定檔讀不了（" + ConfigPath(iDataRoot) + "）：" + aErr; return c; }
+        if (aErr != null) { c.Error = "設定檔讀不了（" + ConfigPath(iDataRoot) + "）：" + aErr; c.ReadFailed = true; return c; }
         if (j == null || !j.IsObject) return c;
         string aMode = j.GetString("mode", "off");
         c.Mode = aMode == "host" || aMode == "client" ? aMode : "off";
@@ -182,8 +194,23 @@ public static class SenatePeerStore
         List<string> aRooms = Strs(j["rooms"]);
         if (aRooms.Count > 0) c.Rooms = aRooms;
         if (c.Port < 1 || c.Port > 65535) { c.Error = "port 不在 1～65535：" + c.Port; c.Mode = "off"; }
+        c.TaskServer = j.GetString("task_server", "").Trim().ToLowerInvariant();
+        if (!IsTaskServerValue(c.TaskServer)) c.TaskServerError = "task_server 認不得：'" + c.TaskServer + "'（要是空的、self，或 16 碼的節點 id）";
+        c.TaskClients = Strs(j["task_clients"]).Select(x => x.Trim().ToLowerInvariant()).Distinct().ToList();
+        string? aBadClient = c.TaskClients.FirstOrDefault(x => !IsNodeId(x));
+        if (aBadClient != null) c.TaskServerError = "task_clients 裡有認不得的節點 id：'" + aBadClient + "'";
         return c;
     }
+
+    /// <summary>節點 id 的形狀：16 個小寫 hex（<see cref="SenatePeerCrypto.IdOf"/>）。</summary>
+    public static bool IsNodeId(string iId) => iId.Length == 16 && iId.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    public static bool IsTaskServerValue(string iValue) => iValue.Length == 0 || iValue == PeerConfig.Self || IsNodeId(iValue);
+
+    /// <summary>逗號分隔的節點 id ⇒ 清單（去空白、轉小寫、去重複）。</summary>
+    public static List<string> ParseIds(string iText)
+        => (iText ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(x => x.ToLowerInvariant()).Distinct().ToList();
 
     public static void SaveConfig(string iDataRoot, PeerConfig c)
     {
@@ -191,6 +218,7 @@ public static class SenatePeerStore
         j.Set("mode", c.Mode); j.Set("name", c.Name); j.Set("port", c.Port); j.Set("bind", c.Bind); j.Set("tunnel", c.Tunnel); j.Set("port_map", c.PortMap);
         j.Set("cloudflared_path", c.CloudflaredPath); j.Set("public_url", c.PublicUrl); j.Set("announce_webhook_id", c.AnnounceWebhookId);
         j.Set("forward_external", c.ForwardExternal); j.Set("rooms", Arr(c.Rooms));
+        j.Set("task_server", c.TaskServer); j.Set("task_clients", Arr(c.TaskClients));
         lock (s_Lock) WriteJson(ConfigPath(iDataRoot), j);
     }
 
@@ -340,6 +368,21 @@ public static class SenatePeerStore
 
     // ── 另一邊的在線名單 ─────────────────────────────────────────────
 
+    /// <summary>在線名單裡說自己提供某個服務的節點（id → 名字）。讀不到 ⇒ 空。⚠ 名單過期與否看 `SCP_PeerPresence.Read(...).Live`。</summary>
+    public static Dictionary<string, string> PresenceServers(string iDataRoot, string iSvc)
+    {
+        var d = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            SCP_JsonData? j = ReadJson(PresencePath(iDataRoot), out _);
+            if (j == null || !j["nodes"].IsArray) return d;
+            foreach (SCP_JsonData n in j["nodes"])
+                if (Strs(n["serves"]).Contains(iSvc)) d[n.GetString("id", "")] = n.GetString("name", "");
+        }
+        catch (Exception) { }
+        return d;
+    }
+
     public static void WritePresence(string iDataRoot, string iRole, string iLink, string iVia, IEnumerable<PeerNodePresence> iNodes)
     {
         var j = SCP_JsonData.NewObject();
@@ -357,6 +400,7 @@ public static class SenatePeerStore
                 aOn.Add(x);
             }
             o.Set("online", aOn);
+            if (n.Serves.Count > 0) o.Set("serves", Arr(n.Serves));
             aNodes.Add(o);
         }
         j.Set("nodes", aNodes);
