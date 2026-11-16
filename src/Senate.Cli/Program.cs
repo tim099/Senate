@@ -1633,9 +1633,13 @@ public static class Program
         // 資料夾同步（sync.bookNotes／sync.workMemory）：那幾支跑之前拉、跑完 commit＋push —— 在 CLI 這一邊做，⛔ 不交給 Server（見 FolderSyncHook）。
         List<FolderSyncHook.Target> aFolderSync = FolderSyncHook.Resolve(iRepoRoot, aName);
         FolderSyncHook.Before(aFolderSync, aRawArgs);
-        TaskSyncHook.BeforeRead(iRepoRoot, aName);   // 任務單（sync.tasks）：`tasks` 讀單之前拉（寫單的那一側在 Cmd_Task 自己做）
+        // Task Server 在別台（FAR-53）⇒ `tasks` 送到那一台讀（本機的 Tasks 不是最新的）；本機的 sync.tasks 也不拉
+        SCP.Core.Cmd.SCP_CmdResult? aForwarded = string.Equals(aName, "tasks", StringComparison.OrdinalIgnoreCase)
+            ? SenateTaskServer.TryForwardRead(aRawArgs, aUserKeys) : null;
+        if (aForwarded == null)
+            TaskSyncHook.BeforeRead(iRepoRoot, aName);   // 任務單（sync.tasks）：`tasks` 讀單之前拉（寫單的那一側在 Cmd_Task 自己做）
 
-        SCP.Core.Cmd.SCP_CmdResult aResult = SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
+        SCP.Core.Cmd.SCP_CmdResult aResult = aForwarded ?? SCP.Core.Cmd.SCP_CmdRegistry.Dispatch(aName, aRawArgs);
 
         foreach (string aLine in aResult.Lines)
         {

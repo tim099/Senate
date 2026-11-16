@@ -122,7 +122,26 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
             if (!e.IsClosed() && e.blocked_by.Count > 0) m_Blockers[e.index] = SCP_TaskStore.OpenBlockers(aRoot, e);
         SCP_TaskStore.CountStats(aRoot, m_All, out m_Open, out m_Stale, out m_Broken, out m_Blocked);
         m_Stamp = ReadStamp();
+        m_TaskServerNote = TaskServerNote(m_DataRoot);
         if (aWarn.Count > 0) m_Error = $"有 {aWarn.Count} 張單讀取時出聲（壞欄位落回預設）：{aWarn[0]}";
+    }
+
+    /// <summary>
+    /// Task Server 在別台（FAR-53）⇒ 這頁的清單讀的是本機的檔，不是最新的；按鈕的寫入會送到那一台。
+    /// ⚠ 第一版清單不經連線讀（只提示）。
+    /// </summary>
+    string? m_TaskServerNote;
+
+    static string? TaskServerNote(string iDataRoot)
+    {
+        try
+        {
+            Senate.Core.TaskServerRoute r = Senate.Core.SenateTaskServer.Resolve(iDataRoot);
+            if (r.Blocked != null) return "[注意] Task Server 的設定有問題：" + r.Blocked + " —— 這頁的按鈕寫不進去";
+            if (r.Remote) return $"[注意] Task 在 {r.Label}：這裡的清單是本機的舊資料；按鈕的寫入會送到那一台（看最新的：senate cmd tasks）";
+        }
+        catch (Exception) { }
+        return null;
     }
 
     (int, int) ReadStamp()
@@ -210,6 +229,7 @@ public sealed class TaskManagerPage : SCP_GuiToolPage
         PollForNew();
         g.Title("任務與專案管理");
         if (m_Error != null) g.Note("[注意] " + m_Error);
+        if (m_TaskServerNote != null) g.Note(m_TaskServerNote);
         if (m_Job != null) g.Note($"執行中：{m_JobLabel}（寫入端是 Senate Server；完成後自動重讀）");
         if (m_Message != null) g.Note(m_Message);
 

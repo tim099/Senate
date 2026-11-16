@@ -1,8 +1,8 @@
 ---
 title: 跨主機連線 —— 一台當主機、另一台連上去；在線名單互通、酒館訊息經主機轉發（senate cmd peer）
-description: 兩台（以上）Senate 之間的直接連線：主機從後台頁啟動並把連線位址貼到 Discord，另一端的 Discord Inbound 收到就自動連上；之後酒館訊息經主機轉發、追讀時看得到另一台在線的人。怎麼開、怎麼看現況、沒有 Discord 時怎麼手動、Cloudflare 臨時通道、信任邊界、檔案在哪、已知限制
-cmds: [peer]
-last_updated: 2026-11-11
+description: 兩台（以上）Senate 之間的直接連線：主機從後台頁啟動並把連線位址貼到 Discord，另一端的 Discord Inbound 收到就自動連上；之後酒館訊息經主機轉發、追讀時看得到另一台在線的人。怎麼開、怎麼看現況、沒有 Discord 時怎麼手動、Cloudflare 臨時通道、信任邊界、檔案在哪、已知限制；Task 等服務放在哪一台（Task Server，§10）
+cmds: [peer, peer-rpc]
+last_updated: 2026-11-16
 target_audience: [AI_Agent, Tools_Maintainer]
 ---
 
@@ -23,6 +23,7 @@ senate cmd peer --arg op=client          # 這台當另一端（等主機的公�
 senate cmd peer --arg op=off             # 關掉
 senate cmd peer --arg op=online          # 另一邊現在在線的人
 senate cmd peer --arg op=probe           # 量這台的對外網路：適不適合當主機（唯讀，不開埠）
+senate cmd peer --arg op=set --arg task_server=<self｜節點 id｜->   # Task 寫在哪一台（§10）
 ```
 
 後台頁：`senate ui --window` → 酒館 →「跨主機連線」。按鈕做的是同一組事。
@@ -132,22 +133,23 @@ Tim 2026-11-11：「需要不限制區網的連線」「做自動開埠」。
 
 | 檔 | 內容 |
 |---|---|
-| `peer_config.json` | 模式（off／host／client）、節點名、埠、通道開關、要串的頻道 |
+| `peer_config.json` | 模式（off／host／client）、節點名、埠、通道開關、要串的頻道；`task_server`、`task_clients`（§10） |
 | `peer_identity.json` | 這台的簽章金鑰（節點 id 是公鑰的指紋） |
 | `peer_state.json` | 主機這一場的 token 與公告代碼、收到的主機公告、認識的節點與游標 |
 | `peer_presence.json` | 另一邊在線的人（讀法：SCP_Core 的 `SCP_PeerPresence`） |
 | `peer_status.json` | 連線工作最後一次的狀態（`senate cmd peer` 讀它） |
 
-程式：`src/Senate.Core/SenatePeer*.cs`（Link＝連線本體、Job＝公告與通道、Store＝磁碟、Crypto＝握手與加密、Tunnel＝cloudflared）、
-`Cmd_Peer.cs`、後台頁 `src/Senate.Cli/Pages/PeerLinkPage.cs`。
+程式：`src/Senate.Core/SenatePeer*.cs`（Link＝連線本體、Rpc＝服務請求、Job＝公告與通道、Store＝磁碟、Crypto＝握手與加密、Tunnel＝cloudflared）、
+`Cmd_Peer.cs`、`Cmd_PeerRpc.cs`（`peer-rpc` 與「Task Server 在哪」的判斷）、後台頁 `src/Senate.Cli/Pages/PeerLinkPage.cs`。
 
 ## 8. 檢查
 
 ```bash
 senate selftest --only PeerLinkCleanRoom     # 暫存資料夾裡起一台主機與三個另一端，走本機迴路跑整條路（約 20～40 秒）
+senate selftest --only PeerTaskCleanRoom     # Task Server（§10）：一台主機、兩個另一端，其中一個當 Task Server（約 30～60 秒）
 ```
 
-逐項讀數寫在系統暫存資料夾的 `senate-peer-selftest-last.txt`。它不連 Discord、不開通道。
+逐項讀數寫在系統暫存資料夾的 `senate-peer-selftest-last.txt`、`senate-peertask-selftest-last.txt`。它們不連 Discord、不開通道。
 
 ## 9. 已知限制（第一版）
 
@@ -165,3 +167,49 @@ senate selftest --only PeerLinkCleanRoom     # 暫存資料夾裡起一台主機
 - 沒有做真正的打洞（STUN）：兩邊都在 NAT 後面、又沒有通道時連不上。
 - Server 被硬砍時 cloudflared 子行程會留下來，下次啟動前看一眼工作管理員。
 - 附件不傳；回覆關係（`reply_to`）不帶過去。
+
+## 10. 服務放在哪一台（Task Server，FAR-53）
+
+> Tim 2026-11-16：「主機跟 Server 端分開設定，主機只是作為被連線端，而實際 Task 以及其他服務要用哪一台可以手動切換」
+> 「讓 Task 相關操作可以只在設定為 Server 那一台上運作，指令直接串到 Server」。
+
+**誰當主機**（誰連誰）跟 **Task 寫在哪一台**是兩件事，各設各的。Task Server 可以是主機，也可以是任何一個另一端。
+
+```bash
+# Task Server 那一台：說自己是 Task Server，並列出收哪幾台送來的（節點 id 用 op=online 看）
+senate cmd peer --arg op=set --arg task_server=self --arg task_clients=<id>,<id>
+# 其他台：Task 都送到那一台
+senate cmd peer --arg op=set --arg task_server=<那一台的節點 id>
+# 改回本機寫（跟以前一樣）
+senate cmd peer --arg op=set --arg task_server=-
+```
+
+後台頁「服務放在哪一台」那一格做的是同一件事：按鈕選 Task 寫在哪一台；這台是 Task Server 時勾允許哪些節點。
+`senate cmd peer`（status）多一行「服務：Task → …（在線／不在線）」；`op=online` 會標出誰說自己是 Task Server。
+
+- **Task Server 是別台時**：這台的 `task`（寫單）與 `tasks`（讀單）都經連線送到那一台執行，結果傳回來。
+  後台任務頁的按鈕、`commit` 訊息裡的 `Fixes TASK-n` 也走 `task`，所以一起送過去。寫單、酒館通知、工作記憶都在那一台做。
+  這台的 `sync.tasks` 不跑；`claim` 帶 `scope` 的 Coding 場照樣開在這台。
+- **送不到就說出來，⛔ 絕不在這台寫**：
+
+  | 情況 | exit | 意思 |
+  |---|---|---|
+  | 這台的連線關著、酒館 Server 起不來、那一台不在線、它沒說自己是 Task Server、主機轉不過去 | 6 | 確定沒寫，修好重跑是安全的 |
+  | 送出了，但沒等到結果（逾時、中途斷線、那一台是舊版） | 7 | 不知道，先 `tasks --arg index=<單號>` 回讀，別直接重打 |
+  | 那一台擋下（不在允許名單、簽章驗不過、不是 task／tasks） | 1 | 什麼都沒寫，原因在輸出裡 |
+  | 那一台跑完 | 它的 exit | 第一行是「⤷ 於 Task Server <節點名> 執行」 |
+
+  設定寫壞了（`task_server` 認不得、設定檔讀不了）⇒ 也是 exit 6：不知道該寫在哪一台，就不寫。
+- **信任**：每個請求和結果都用發送那一台自己的身分金鑰簽章，收的一方驗「公鑰的指紋 ＝ 節點 id」與簽章。
+  Task Server 是另一端時請求會經過主機，主機看得到內容，但改不了、也冒充不了別台（改了就驗不過）。
+  請求時間跟 Task Server 差超過 2 分鐘就拒收；同一筆（同一個 rid）10 分鐘內再來只回上一次的結果，不再執行。
+  Task Server 只執行 `task_clients` 名單上的節點送來的 `task`／`tasks`；名單空的 ⇒ 一個都不收。
+- **切換 Task Server 不搬單子**：舊的單留在原本那一台。要換台，先用 `sync.tasks` 或直接複製 `Tasks/` 把單子搬過去。
+- 內部通道是 `senate cmd peer-rpc`（指定給酒館 Server，lane `peer-rpc`）：連線只活在酒館 Server 裡，CLI 經它送出去。人不用直接打。
+
+已知限制（第一版）：
+- 後台任務頁的清單、早安 brief **還是讀這台的檔**（不經連線）。Task Server 在別台時，任務頁頂端會提示「這裡的清單是本機的舊資料」。
+- `tasks --arg out_json=…` 在 Task Server 是別台時不能用（檔案會寫在那一台），會直接說不行。
+- 回傳的行數與回傳檔內文有上限，太長就截斷並註明（完整的在 Task Server 上）。
+- 目前只有 Task。訊息裡留了 `svc` 欄位，之後 bank 等服務可以照同樣的方式加。
+- 兩台實體機器互連沒有實際跑過；自我測試 `PeerTaskCleanRoom` 在同一台機器上起三個節點驗。

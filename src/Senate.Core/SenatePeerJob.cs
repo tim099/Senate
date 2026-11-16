@@ -7,6 +7,8 @@
 //        找不到 ⇒ **說出來**（只公告區網位址），⛔ 不靜默、不代為安裝。
 //     ③ **收公告**：Discord Inbound 輪詢時遇到帶公告標記的訊息，原文交到 <see cref="OnDiscordSignals"/>
 //        （⛔ 那種訊息不寫進酒館：裡面有 token 與位址，而酒館的訊息檔會進版控）。
+//   · **服務請求**（FAR-53）：這台是 Task Server（task_server=self）時，別台送來的 `task`／`tasks` 在這顆 Server 裡執行
+//     （`SenateTaskServer.Serve`：資料根用這台自己的）。送出去的那一半走 `peer-rpc`（拿 <see cref="Link"/> 送）。
 //   · 已經接上的節點的 Discord webhook id 交給 `SCP_DiscordInbound.LinkedWebhookIds` ⇒ 它們的訊息不再從 Discord 重收一次。
 //   · 開關：`peer_config.json` 的 `mode`，每一輪讀 ⇒ 後台頁或 `senate cmd peer` 改完不必重啟 Server。
 // 數值影響：全部在背景執行緒 ⇒ ⛔ 不擋心跳。同一個錯誤只印一次。
@@ -26,6 +28,9 @@ public static class SenatePeerJob
 
     static SenatePeerLink? s_Link;
     static string s_Root = "";
+
+    /// <summary>這顆 Server 手上的連線本體（`peer-rpc` 拿它送請求）。沒在跑 ⇒ null。</summary>
+    public static SenatePeerLink? Link => s_Link;
     static readonly SenatePeerTunnel s_Tunnel = new();
     static Task? s_Chore;
     static DateTime s_NextChore = DateTime.MinValue;
@@ -75,6 +80,7 @@ public static class SenatePeerJob
             {
                 Out = iOut, Err = iErr,
                 Note = aBody => Note?.Invoke(iDataRoot, aBody),
+                Serve = aCall => SenateTaskServer.Serve(iDataRoot, SenatePeerStore.LoadConfig(iDataRoot).NodeName, aCall),
                 // 酒館這顆本來就是唯一寫入端；@ 通知、封存閘都在 tavern-write 那條路上
                 WriteTavern = (aRoom, aMsg) =>
                 {

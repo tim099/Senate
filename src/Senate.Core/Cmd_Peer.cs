@@ -1,6 +1,7 @@
 // 區塊職責：`senate cmd peer` —— 跨主機連線（TASK-0011）的開關、設定、狀態、手動交換公告代碼、自我測試。
 // 物理意義：真正連線的是酒館 Server 裡的 SenatePeerJob（每一輪重讀設定檔）；本支只**改設定檔與狀態檔**、讀它寫的狀態。
 //           ⇒ 改完不必重啟 Server。後台「跨主機連線」頁按的是同一組操作。
+// ⚠ 服務放在哪一台（FAR-53）跟誰當主機分開設：`op=set --arg task_server=<self｜節點 id｜->`、`--arg task_clients=<id,id>`。
 // 數值影響：host／client／off／set／join／forget 會寫 `<機密資料夾>/peer/` 底下的檔；status／code／online 純讀；
 //           selftest 只動暫存資料夾（⛔ 不碰真的酒館、不連 Discord、不開通道）。
 // ⚠ exit code：0 成功；2 用法錯；4 量不到（設定檔／狀態檔讀不了）；5 自我測試有沒過的。
@@ -45,6 +46,8 @@ public sealed class Cmd_Peer : SCP_Cmd
         new SCP_CmdArgSpec("announce_webhook_id", "set：公告貼到哪一條 webhook（空 ⇒ 主頻道的分類綁的那幾條）；`-` ⇒ 清掉"),
         new SCP_CmdArgSpec("rooms", "set：要串的頻道，逗號分隔（預設只有主頻道）"),
         new SCP_CmdArgSpec("forward_external", "set：1 ⇒ Discord 轉進來的訊息也送到另一邊（預設 0）", iChoices: new[] { "0", "1" }),
+        new SCP_CmdArgSpec("task_server", "set：Task 寫在哪一台 —— `self`（這台就是 Task Server，收別台送來的 Task 指令）｜節點 id（送到那一台）｜`-`（清掉 ＝ 本機寫，跟以前一樣）。跟誰當主機無關。⚠ 切換不搬單子"),
+        new SCP_CmdArgSpec("task_clients", "set：這台是 Task Server 時，收哪些節點送來的 Task 指令（節點 id，逗號分隔；`-` ⇒ 清掉 ＝ 一個都不收）"),
         new SCP_CmdArgSpec("code", "join：主機的公告代碼（`SENATE-HOST1 …`）。長 ⇒ 走 `--arg-file`"),
         new SCP_CmdArgSpec("data_root", "AgentCommands 資料根（沒給 ⇒ 用設定檔那一格）"),
     };
@@ -110,6 +113,20 @@ public sealed class Cmd_Peer : SCP_Cmd
             c.Rooms = aRooms;
         }
         if (iArgs.Get("forward_external").Length > 0) c.ForwardExternal = iArgs.Get("forward_external") == "1";
+        string aOldTaskServer = c.TaskServer;
+        if (iArgs.Get("task_server").Length > 0)
+        {
+            string v = Dash(iArgs.Get("task_server").Trim()).ToLowerInvariant();
+            if (!SenatePeerStore.IsTaskServerValue(v)) return SCP_CmdResult.Fail(2, $"✗ task_server 要是 self、16 碼的節點 id，或 `-`（清掉）：'{v}'");
+            c.TaskServer = v;
+        }
+        if (iArgs.Get("task_clients").Length > 0)
+        {
+            List<string> aIds = SenatePeerStore.ParseIds(Dash(iArgs.Get("task_clients")));
+            string? aBad = aIds.FirstOrDefault(x => !SenatePeerStore.IsNodeId(x));
+            if (aBad != null) return SCP_CmdResult.Fail(2, $"✗ task_clients 裡有認不得的節點 id：'{aBad}'（16 碼；`senate cmd peer --arg op=online` 看得到在線的 id）");
+            c.TaskClients = aIds;
+        }
 
         // 當主機 ⇒ 換一場新的 token（舊的公告作廢）；身分金鑰第一次用到時產生
         PeerIdentity aMe = SenatePeerStore.LoadOrCreateIdentity(iData);
@@ -119,6 +136,11 @@ public sealed class Cmd_Peer : SCP_Cmd
 
         var r2 = SCP_CmdResult.Success($"✓ 已寫入 {SenatePeerStore.ConfigPath(iData)}（讀回 mode={aBack.Mode}，原本 {aOld}）");
         r2.Lines.Add($"· 這台：{aBack.NodeName}（id {aMe.Id}）　埠 {aBack.Port}　聽 {aBack.Bind}　對外埠 {aBack.PortMap}　通道 {aBack.Tunnel}　頻道 {string.Join("、", aBack.Rooms)}");
+        r2.Lines.Add("· 服務：" + TaskServiceText(iData, aBack));
+        if (aBack.TaskServer != aOldTaskServer)
+            r2.Lines.Add("⚠ Task Server 換了：**單子不會自動搬過去**。舊的單留在原本那一台；要換台，先用 sync.tasks 或複製 `Tasks/` 把單子搬過去。");
+        if (aBack.ServesTask && aBack.TaskClients.Count == 0)
+            r2.Lines.Add("⚠ 這台是 Task Server，但允許名單（task_clients）是空的 ⇒ 別台送來的一律擋下。");
         if (aBack.Mode == "host")
         {
             r2.Lines.Add("· 主機：酒館 Server 下一輪就會開埠，並把連線位址貼到 Discord（主頻道的分類綁的 webhook）。");
@@ -219,6 +241,7 @@ public sealed class Cmd_Peer : SCP_Cmd
         l.Add($"· 模式：{ModeText(c.Mode)}　這台：{c.NodeName}（id {aId}）");
         l.Add($"· 設定：埠 {c.Port}　聽 {c.Bind}　對外埠 {c.PortMap}　通道 {c.Tunnel}　頻道 {string.Join("、", c.Rooms)}"
               + (c.PublicUrl.Length > 0 ? "　對外位址 " + c.PublicUrl : "") + (c.ForwardExternal ? "　Discord 轉進來的也送" : ""));
+        l.Add("· 服務：" + TaskServiceText(iData, c));
 
         SCP_JsonData? s = ReadStatusFile(iData, out double aAge);
         bool aFresh = s != null && aAge <= 15;
@@ -240,6 +263,9 @@ public sealed class Cmd_Peer : SCP_Cmd
                 foreach (SCP_JsonData x in s["sessions"])
                     l.Add($"  - {(x.GetString("side", "") == "host" ? "主機" : "另一端")} {x.GetString("name", "")}（{x.GetString("id", "")}）　經 {x.GetString("via", "")}　自 {x.GetString("since", "")}　收 {x.GetInt("in", 0)} 則／送 {x.GetInt("out", 0)} 則");
             if (s.GetString("last_warn", "").Length > 0) l.Add("· 最後一則警告：" + s.GetString("last_warn", ""));
+            if (s.GetInt("rpc_served", 0) > 0 || s.GetInt("rpc_refused", 0) > 0)
+                l.Add($"· 替別台跑的 Task 指令：{s.GetInt("rpc_served", 0)} 筆；擋下 {s.GetInt("rpc_refused", 0)} 筆"
+                      + (s.GetString("rpc_last_refused", "").Length > 0 ? "（最後一筆：" + s.GetString("rpc_last_refused", "") + "）" : ""));
         }
         if (c.Mode == "client")
         {
@@ -248,6 +274,31 @@ public sealed class Cmd_Peer : SCP_Cmd
                 : $"· 主機公告：{a.Name}（id {a.Id}）{(a.Closed ? "　**已關閉**" : "")}　{a.Ts}　{a.Addrs.Count} 個位址");
         }
         return l;
+    }
+
+    /// <summary>「服務：Task → 哪一台（在不在線）」那一行（FAR-53）。</summary>
+    public static string TaskServiceText(string iData, PeerConfig c)
+    {
+        if (c.TaskServerError.Length > 0) return "Task 的設定有問題 —— " + c.TaskServerError + "（⛔ Task 寫入會被擋下）";
+        if (c.TaskServer.Length == 0) return "Task → 這台（本機寫，不經過連線）";
+        string aMe = File.Exists(SenatePeerStore.IdentityPath(iData)) ? SenatePeerStore.LoadOrCreateIdentity(iData).Id : "";
+        if (c.ServesTask || c.TaskServer == aMe)
+            return "Task → **這台是 Task Server**" + (c.TaskClients.Count == 0
+                ? "　允許名單是空的 ⇒ 別台送來的一律擋下"
+                : "　收這幾台送來的：" + string.Join("、", c.TaskClients.Select(id => NodeLabel(iData, id))));
+        string aOnline;
+        SCP_PeerPresenceView v = SCP_PeerPresence.Read(iData);
+        if (c.Mode == "off") aOnline = "**送不過去**：這台的連線是關的";
+        else if (!v.Live) aOnline = "不知道在不在線（在線名單不是新的：酒館 Server 沒在跑，或線沒接上）";
+        else if (!v.Nodes.Any(n => n.Id == c.TaskServer)) aOnline = "**不在線**";
+        else aOnline = SenatePeerStore.PresenceServers(iData, SenatePeerLink.SvcTask).ContainsKey(c.TaskServer) ? "在線" : "在線，但它沒有說自己是 Task Server（那台的 task_server 不是 self）";
+        return $"Task → {NodeLabel(iData, c.TaskServer)}　{aOnline}　⇒ 這台的 task／tasks 會送到那一台";
+    }
+
+    static string NodeLabel(string iData, string iId)
+    {
+        string n = SenateTaskServer.KnownName(iData, iId);
+        return n.Length > 0 ? $"{n}（{iId}）" : iId;
     }
 
     static string ModeText(string m) => m == "host" ? "主機（host）" : m == "client" ? "另一端（client）" : "關（off）";
@@ -273,6 +324,13 @@ public sealed class Cmd_Peer : SCP_Cmd
         if (sb.Length == 0) r.Lines.Add("· 這台沒有開跨主機連線（或從來沒開過）⇒ 沒有另一邊的名單");
         else r.Lines.AddRange(sb.ToString().TrimEnd().Split('\n').Select(x => x.TrimEnd('\r')));
         SCP_PeerPresenceView v = SCP_PeerPresence.Read(iData);
+        // 誰說自己是 Task Server（FAR-53）：給人選 task_server 用；真正以設定為準
+        Dictionary<string, string> aServers = SenatePeerStore.PresenceServers(iData, SenatePeerLink.SvcTask);
+        if (v.Exists)
+        {
+            r.Lines.Add("· 在線的節點：" + (v.Nodes.Count == 0 ? "（沒有）" : string.Join("、", v.Nodes.Select(n => $"{n.Name}（{n.Id}）" + (aServers.ContainsKey(n.Id) ? "［Task Server］" : "")))));
+            r.Lines.Add("· " + TaskServiceText(iData, SenatePeerStore.LoadConfig(iData)));
+        }
         r.AddValue("live", v.Live ? "1" : "0");
         r.AddValue("remote_online", v.Live ? v.Nodes.Sum(n => n.Online.Count).ToString() : "unknown");
         return r;

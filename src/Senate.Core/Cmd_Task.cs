@@ -10,6 +10,9 @@
 // ⚠ 結果四態（照 `tavern-post`）：exit 0 已寫（或 dry-run／冪等零寫入，看 `🔢 wrote`）／
 //   exit 1 被閘擋下（**零寫入**，原因在回傳檔）／exit 6 **確定沒寫**（寫入端沒收到，重跑安全）／
 //   exit 7 **不知道**（送出了但等不到回執）⇒ ⛔ 先 `senate cmd tasks --arg index=<n>` 回讀，別直接重打。
+// ⚠ Task Server 在別台（`peer_config.json` 的 `task_server` 是別台的節點 id，FAR-53）⇒ ② 之後改走 `peer-rpc`：
+//   整筆 `task` 送到那一台跑（寫單、通知、記憶都在那一台），結果傳回來；⛔ 本機不寫、不跑 sync.tasks、不再發一次通知。
+//   送不到 ⇒ exit 6（確定沒寫）；送出了沒等到 ⇒ exit 7（不知道）；那一台擋下 ⇒ exit 1。claim 帶 scope 的 Coding 場照樣開在本機。
 // ⚠ 寫完之後的附帶效果（通知、記憶）失敗**只是警告**：單子已經寫好了，⛔ 不能讓 exit code 說「失敗」
 //   （照直覺重打會再寫一次 —— 留言多一則、勾選多一格）。
 using System.Diagnostics;
@@ -130,10 +133,23 @@ public sealed class Cmd_Task : SCP_Cmd
         if (!TryResolveRoots(iArgs, out string aDataRoot, out string aWhere, out SCP_CmdResult? aFail))
             return aFail!;
         var aResult = new SCP_CmdResult();
+        // Task Server 在哪一台（FAR-53）。不知道 ⇒ ⛔ 不寫（寫在本機的話，那一筆會跟 Task Server 上的單分家）
+        TaskServerRoute aRoute = SenateTaskServer.Resolve(aDataRoot);
+        if (aRoute.Blocked != null)
+        {
+            aResult.ExitCode = 6;
+            aResult.Lines.Add("✗ 任務寫入**確定沒寫**：" + aRoute.Blocked + " —— 修好後重跑是安全的");
+            aResult.Lines.Add("  ⛔ 不改寫在本機（那一筆會跟 Task Server 上的單分家）。看設定：" + SCP_CmdRegistry.Invoke("peer"));
+            aResult.AddValue("delegate_failure", "task_server_unknown");
+            return aResult;
+        }
         // sync.tasks 開著 ⇒ 入口在本行程（CLI）自己寫＋git（⛔ 不交給 Server：經 WMI 起的 Server 跑 git 會被 Defender 砍，Repo_Sync §0）。
         //   已經在 Server 裡（內部派發）⇒ 照舊交給 task-write，那一支只寫檔、不碰 git。
-        TaskRepoTarget? aSyncTarget = ServerContext.InServer ? null : TaskRepoTarget.From(SenateConfigSource.Provider?.Invoke().Config);
-        aResult.Lines.Add(aSyncTarget != null
+        //   Task Server 在別台 ⇒ 本機的 sync.tasks 不跑（單子在那一台）
+        TaskRepoTarget? aSyncTarget = ServerContext.InServer || aRoute.Remote ? null : TaskRepoTarget.From(SenateConfigSource.Provider?.Invoke().Config);
+        aResult.Lines.Add(aRoute.Remote
+            ? $"⤷ 任務寫入：Senate 入口驗參數 → 經跨主機連線送到 Task Server {aRoute.Label} @ {aWhere}"
+            : aSyncTarget != null
             ? $"⤷ 任務寫入：Senate 入口驗參數 → 本機寫單＋同步（sync.tasks：{aSyncTarget.Repo} {aSyncTarget.Branch}）@ {aWhere}"
             : $"⤷ 任務寫入：Senate 入口驗參數 → Senate Server 寫單 @ {aWhere}");
         var aLetters = SCP_DataPaths.Letters(new SCP_DataRoot(aDataRoot));
@@ -166,6 +182,8 @@ public sealed class Cmd_Task : SCP_Cmd
 
         // ── ④ 交給寫入端 ─────────────────────────────────────────────
         string aTimeout = iArgs.Get("timeout").Trim();
+        if (aRoute.Remote)
+            return WriteOnTaskServer(aRoute, aDataRoot, aOp, aPersona, aOpArgs, aTimeout, aPayload, aPre, aStartedSession, aResult);
         SCP_CmdResult aWrite = aSyncTarget != null
             ? WriteHere(aDataRoot, aSyncTarget, aOp, aPersona, aOpArgs)
             : SCP_CmdRegistry.Dispatch("task-write", new Dictionary<string, string>(StringComparer.Ordinal)
@@ -232,6 +250,66 @@ public sealed class Cmd_Task : SCP_Cmd
         catch (Exception e) { aResult.Lines.Add($"⚠ 回傳檔沒寫成（{e.Message}）—— 單子的寫入不受影響"); }
         if (aWrite.ExitCode != 0) aResult.Lines.Add("  ⇒ 原因在回傳檔的 `## ❌ 失敗`／`## blocked`／`## ❌ 同步衝突`");
         return aResult;
+    }
+
+    // ===========================================================
+    // 區塊職責：Task Server 在別台（FAR-53）⇒ 整筆 `task` 經跨主機連線送到那一台跑，結果傳回來。
+    // 物理意義：那一台跑的是完整的 `task`（寫單、酒館通知、工作記憶都在那一台）⇒ 這裡 ⛔ 不再發通知、不寫記憶；
+    //           只落本機的回傳檔（內文是那一台的回傳檔）、claim 剛開的 Coding 場沒寫成就收掉。
+    // 數值影響：一次呼叫 ＝ 一筆 `peer-rpc`。exit：那一台跑完 ⇒ 它的 exit；擋下 ⇒ 1；沒送到 ⇒ 6；不知道 ⇒ 7。
+    // ===========================================================
+    static SCP_CmdResult WriteOnTaskServer(TaskServerRoute iRoute, string iDataRoot, string iOp, string iPersona,
+        Dictionary<string, string> iOpArgs, string iTimeout, string iPayload, List<string> iPre, bool iStartedSession, SCP_CmdResult oResult)
+    {
+        var aArgs = new Dictionary<string, string>(iOpArgs, StringComparer.Ordinal) { ["op"] = iOp, ["persona"] = iPersona };
+        // claim 帶 scope：Coding 場已經開在這台（③）⇒ ⛔ scope 不送過去（送了那一台會用這台的路徑再開一場）
+        bool aScopeKept = aArgs.Remove("scope");
+        int aWait = int.TryParse(iTimeout, NumberStyles.Integer, CultureInfo.InvariantCulture, out int w) && w > 0 ? w : 60;
+        // 那一台的寫入端照同一個秒數等它自己的 Server；這邊多等一點，不然它回來之前這邊先放棄（⇒ 誤判成「不知道」）
+        aArgs["timeout"] = aWait.ToString(CultureInfo.InvariantCulture);
+        SCP_CmdResult aRpc = SenateTaskServer.Send(iRoute, "task", aArgs, aWait + 20);
+        int aExit = SenateTaskServer.ExitOf(aRpc, out string aOutcome);
+        string aWhere = SenateTaskServer.Label(iRoute, aRpc);
+        oResult.AddValue("task_server", iRoute.Id);
+        oResult.ExitCode = aExit;
+
+        if (aOutcome != "done")
+        {
+            // 沒寫（6、擋下）⇒ 剛開的場收掉；不知道（7）⇒ 留著（可能已經認領了）
+            if (iStartedSession && aExit != 7) iPre.Add(RollbackCodingSession(iDataRoot, iPersona));
+            oResult.Lines.Add(aOutcome switch
+            {
+                "refused" => $"⛔ Task Server {aWhere} **擋下這一筆**（什麼都沒寫）—— 原因在下面",
+                "unknown" => $"✗ 任務寫入**結果不明**（Task Server {aWhere}）—— ⛔ 別直接重打，先回讀：{SCP_CmdRegistry.Invoke("tasks --arg index=<單號>")}",
+                _ => $"✗ 任務寫入**確定沒寫**（Task Server {aWhere} 沒收到）—— 修好後重跑是安全的；⛔ 也沒有改寫在本機",
+            });
+            foreach (string l in aRpc.Lines) oResult.Lines.Add("  │ " + l);
+            oResult.Lines.AddRange(iPre.Select(l => "  " + l));
+            oResult.AddValue("delegate_failure", "peer_" + aOutcome);
+            if (aOutcome == "refused") oResult.AddValue("wrote", "0");
+            return oResult;
+        }
+
+        // 那一台跑完了：它的輸出照原樣接回來（第一行說是在哪一台跑的）
+        oResult.Lines.Add($"⤷ 於 Task Server {aWhere} 執行（寫單、酒館通知、工作記憶都在那一台）");
+        oResult.Lines.AddRange(aRpc.Lines);
+        if (aScopeKept)
+            iPre.Add("- ⓘ scope 沒有送到 Task Server：Coding 場開在**這台**（那一台回報裡「沒有開 Coding 場」那句說的是那一台）");
+        foreach (var kv in SenateTaskServer.RemoteValues(aRpc))
+            if (kv.Key is "wrote" or "index" or "comment_id" or "status" or "from_status" or "heal_attempts" or "sync" or "sync_conflict_file"
+                       or "notify_sent" or "notify_failed" or "notify_queued" or "memory" or "delegate_failure")
+                oResult.AddValue(kv.Key, kv.Value);
+        if (aExit != 0 && iStartedSession) { string rb = RollbackCodingSession(iDataRoot, iPersona); iPre.Add(rb); oResult.Lines.Add(rb); }
+
+        var aReport = new StringBuilder();
+        aReport.AppendLine($"> ⤷ 這一筆在 Task Server {aWhere} 執行；下面是那一台的回傳檔。");
+        aReport.AppendLine();
+        string aRemote = SenateTaskServer.Value(aRpc, "peer_report");
+        aReport.AppendLine(aRemote.Length > 0 ? aRemote.TrimEnd() : "（那一台沒有回傳檔）");
+        foreach (string l in iPre) aReport.AppendLine(l);
+        try { SCP_CmdPayload.Write(iPayload, aReport.ToString()); oResult.AddOutput(iPayload); }
+        catch (Exception e) { oResult.Lines.Add($"⚠ 本機的回傳檔沒寫成（{e.Message}）—— 單子的寫入不受影響"); }
+        return oResult;
     }
 
     // ===========================================================

@@ -183,6 +183,7 @@ public static partial class SelfTest
         One(nameof(DiscordReadinessCleanRoom), "tavern", DiscordReadinessCleanRoom),       // 開關開著卻跑不起來要說出來（Tim 2026-11-10）：本體在 SelfTest.DiscordReadiness.cs
         One(nameof(DiscordPeerWebhookCleanRoom), "tavern", DiscordPeerWebhookCleanRoom),   // 同伴 webhook：本體在 SelfTest.DiscordPeer.cs
         One(nameof(PeerLinkCleanRoom), "tavern", PeerLinkCleanRoom),                       // 跨主機連線（TASK-0011）：本體在 SelfTest.PeerLink.cs
+        One(nameof(PeerTaskCleanRoom), "tavern", PeerTaskCleanRoom),                       // Task 指令送到 Task Server（FAR-53）：本體在 SenatePeerTaskSelfTest.cs
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         One(nameof(BankRequestSourceNotInLedgerNotice), "bank", BankRequestSourceNotInLedgerNotice),
         One(nameof(DocEditCleanRoom), "freetime", DocEditCleanRoom),
