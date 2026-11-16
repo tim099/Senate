@@ -116,8 +116,11 @@ public static class SenateTaskServer
     /// </summary>
     public static readonly string[] RefusedArgs = { "scope" };
 
-    /// <summary>值是 persona 名字的參數：會被拼進 Task Server 的路徑（`Letters/&lt;persona&gt;/…`）⇒ 名字要合法。</summary>
-    static readonly string[] PersonaArgs = { "persona", "target_persona", "assignee" };
+    /// <summary>
+    /// 值是名字的參數：會被拼進 Task Server 的路徑 ⇒ 名字要合法（只能一層、不能是絕對路徑）。
+    /// persona 類 ⇒ `Letters/&lt;persona&gt;/…`；`memory_topic` 存進單子，之後 `wrapup` 帶 `why` 時 ⇒ `WorkMemory/&lt;topic&gt;/`。
+    /// </summary>
+    static readonly string[] NameArgs = { "persona", "target_persona", "assignee", "memory_topic" };
 
     /// <summary>
     /// 別台送來的參數這一台收不收：不收 ⇒ 回原因（⇒ exit 1，什麼都不跑）；收 ⇒ null。
@@ -127,7 +130,7 @@ public static class SenateTaskServer
     {
         foreach (string k in RefusedArgs)
             if (iArgs.ContainsKey(k)) return $"不收 {k}（那是請求端那一台的路徑；Coding 場只開在請求端）";
-        foreach (string k in PersonaArgs)
+        foreach (string k in NameArgs)
             if (iArgs.TryGetValue(k, out string? v) && v.Trim().Length > 0 && !SCP.Core.Letters.SCP_RegisteredMail.IsValidPersonaName(v))
                 return $"{k} 的名字不合法（不能有 / \\ : 或 ..）";
         return null;

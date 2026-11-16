@@ -4,7 +4,7 @@
 //           ③ B 讀單（`tasks`）⇒ 讀到的是 C 的單　④ C 不在線 ⇒ exit 6、三台都沒有新檔　⑤ C 收了不回 ⇒ exit 7
 //           ⑥ B 不在允許名單 ⇒ exit 1、C 沒有新檔　⑦ 主機改了轉送中的請求 ⇒ C 驗章不過、不執行
 //           ⑧ 同一個 rid 送兩次 ⇒ 只寫一次、第二次回第一次的結果　⑨ 舊版收到 req ⇒ 略過、不斷線、聊天照通
-//           ⑦之二 用另一把金鑰冒充 B ⇒ 擋下　⑦之三 帶 scope ⇒ Task Server 自己擋　⑦之四 persona=../… ⇒ 擋下、資料根外面沒東西
+//           ⑦之二 用另一把金鑰冒充 B ⇒ 擋下　⑦之三 帶 scope ⇒ Task Server 自己擋　⑦之四 persona=../…、memory_topic=../… 或絕對路徑 ⇒ 擋下、資料根外面沒東西
 //           外加：設定寫壞了 ⇒ 不知道寫哪 ⇒ 擋下。
 //           執行請求的掛鉤：`task` 直接對 C 的暫存資料根跑寫入端（淨室裡沒有 Server）；`tasks` 走正式的那一支。
 // 數值影響：只寫系統暫存資料夾（通過就刪；沒過留著並印出位置）；開一個本機迴路的埠。約 30～60 秒。
@@ -84,6 +84,14 @@ public static class SenatePeerTaskSelfTest
     {
         string d = SCP_TaskIO.TasksDir(new SCP_DataRoot(n.Root));
         return Directory.Exists(d) ? Directory.GetFiles(d, "*.md").Length : 0;
+    }
+
+    /// <summary>這台全部單子的內容（依檔名排序串起來）：比前後有沒有被改過。</summary>
+    static string TaskSnapshot(Node n)
+    {
+        string d = SCP_TaskIO.TasksDir(new SCP_DataRoot(n.Root));
+        if (!Directory.Exists(d)) return "";
+        return string.Join("\n", Directory.GetFiles(d, "*.md").OrderBy(p => p, StringComparer.Ordinal).Select(p => p + "\n" + File.ReadAllText(p)));
     }
 
     static bool Until(Func<bool> iCond, int iSeconds, params Node[] iNodes)
@@ -281,28 +289,35 @@ public static class SenatePeerTaskSelfTest
                 a7c.Outcome == PeerRpcOutcome.Refused && a7c.Why.Contains("scope") && s7c.Exit == 1 && (aCodingC7c == null || !aCodingC7c.active) && C.Link.RpcServed == aServed7c,
                 $"連線={a7c.OutcomeWord} Serve exit={s7c.Exit} C 有場={aCodingC7c?.active}　{a7c.Why}");
 
-            // ⑦之四 persona 帶 ../ ⇒ 擋下，資料根外面不多任何東西
+            // ⑦之四 persona 帶 ../、memory_topic 帶 ../ 或絕對路徑 ⇒ 擋下，資料根外面不多任何東西，C 的單沒被改
             string aTok = "far57-escape-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             int aBefore7d = TaskCount(C), aServed7d = C.Link.RpcServed;
-            var aOuts7d = new List<string>();
+            string aSnap7d = TaskSnapshot(C);
+            var aCases7d = new List<(string Key, Dictionary<string, string> Args)>();
             foreach (string aEvil in new[] { "../" + aTok, "../../../../" + aTok, "..\\" + aTok })
+                aCases7d.Add(("persona", new Dictionary<string, string> { ["op"] = "create", ["persona"] = aEvil, ["title"] = "逃出去", ["criteria"] = "- [ ] x" }));
+            // memory_topic 存進單子，之後 wrapup 帶 why ⇒ WorkMemory/<topic>/（絕對路徑會讓 Path.Combine 丟掉前面的根）
+            foreach (string aEvil in new[] { "../" + aTok, Path.GetFullPath(Path.Combine(aBase, aTok)) })
+                aCases7d.Add(("memory_topic", new Dictionary<string, string> { ["op"] = "update", ["persona"] = "Bob", ["index"] = V(r1, "index"), ["memory_topic"] = aEvil }));
+            var aOuts7d = new List<string>();
+            foreach (var (aKey, aArgs7d) in aCases7d)
             {
-                var aArgs7d = new Dictionary<string, string> { ["op"] = "create", ["persona"] = aEvil, ["title"] = "逃出去", ["criteria"] = "- [ ] x" };
                 PeerRpcResult x = B.Link.Request(C.Id, SenatePeerLink.SvcTask, "task", aArgs7d, TimeSpan.FromSeconds(20));
-                aOuts7d.Add(x.Outcome == PeerRpcOutcome.Refused && x.Why.Contains("persona") ? "擋" : x.OutcomeWord + "（" + x.Why + "）");
+                aOuts7d.Add(x.Outcome == PeerRpcOutcome.Refused && x.Why.Contains(aKey) ? "擋" : x.OutcomeWord + "（" + x.Why + "）");
+                PeerRpcReply s = SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall
+                {
+                    Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name, Args = new(aArgs7d, StringComparer.Ordinal),
+                });
+                aOuts7d.Add(s.Exit == 1 ? "擋" : $"Serve exit={s.Exit}");
             }
-            PeerRpcReply s7d = SenateTaskServer.Serve(C.Root, C.Name, new PeerRpcCall
-            {
-                Svc = SenatePeerLink.SvcTask, Cmd = "task", FromId = B.Id, FromName = B.Name,
-                Args = new(StringComparer.Ordinal) { ["op"] = "create", ["persona"] = "../" + aTok, ["title"] = "逃出去", ["criteria"] = "- [ ] x" },
-            });
             // 往上跳幾層都只會落在 C 的資料根的某個祖先（看第一層）或暫存資料夾底下（整棵看）
             var aLeaks = Directory.GetFileSystemEntries(aBase, "*" + aTok + "*", SearchOption.AllDirectories).ToList();
             for (DirectoryInfo? d = new DirectoryInfo(C.Root).Parent; d != null; d = d.Parent)
                 try { aLeaks.AddRange(Directory.GetFileSystemEntries(d.FullName, "*" + aTok + "*")); } catch (Exception) { }
-            Check("⑦之四 反向：persona=../… ⇒ 連線上擋下、正式的 Serve 也擋下（exit 1），哪裡都沒有多出檔案或資料夾",
-                aOuts7d.All(o => o == "擋") && s7d.Exit == 1 && aLeaks.Count == 0 && TaskCount(C) == aBefore7d && C.Link.RpcServed == aServed7d,
-                $"連線={string.Join("／", aOuts7d)} Serve exit={s7d.Exit} 多出來的={string.Join("、", aLeaks)}");
+            bool aSnapSame7d = TaskSnapshot(C) == aSnap7d;
+            Check("⑦之四 反向：persona=../…、memory_topic=../… 或絕對路徑 ⇒ 連線上擋下、正式的 Serve 也擋下（exit 1），C 的單沒被改，哪裡都沒有多出檔案或資料夾",
+                aOuts7d.All(o => o == "擋") && aSnapSame7d && aLeaks.Count == 0 && TaskCount(C) == aBefore7d && C.Link.RpcServed == aServed7d,
+                $"結果={string.Join("／", aOuts7d)} C 的單沒變={aSnapSame7d} 多出來的={string.Join("、", aLeaks)}");
 
             // ⑤ C 收了不回 ⇒ 不知道
             C.Link.DebugSwallowRequests = true;
