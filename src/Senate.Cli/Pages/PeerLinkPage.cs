@@ -3,6 +3,7 @@
 //           按鈕走的是 `senate cmd peer` 同一支（Tim 2026-11-11：一端當主機，從後台介面啟動）。
 //           「服務放在哪一台」那一格（FAR-53）：Task 寫在哪一台跟誰當主機分開選；這台當 Task Server 時勾允許哪些節點。
 //           ⚠ 沒有下拉選單元件 ⇒ 用一排按鈕選（這台／不用連線／每個在線的節點各一顆）。
+//           「自我測試」那一格（FAR-64）：另開子行程跑 `selftest --only PeerLinkCleanRoom／PeerTaskCleanRoom`，逐項結果列在頁面上（見 PeerLinkSelfTest）。
 // 數值影響：按鈕才寫檔（`<機密資料夾>/peer/`）；畫面每次重畫都重讀狀態檔（很小）。
 // ⚠ 視窗文字不放 emoji（ImWchar 16 位元，U+FFFF 以上畫成方框 —— TASK-0356）。
 #nullable enable
@@ -24,6 +25,11 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
     Task<SCP_CmdResult>? m_ProbeJob;     // 量網路要幾秒（等路由器與 STUN 回應）⇒ 視窗模式放背景，不卡畫面
     List<string>? m_Probe;               // 最近一次量到的（null ＝ 這次開頁還沒量）
     string m_ProbeAt = "";
+    Task<PeerLinkSelfTest.Outcome>? m_TestJob;   // 自我測試：視窗模式放背景，一次只跑一個子行程
+    PeerLinkSelfTest.Pick? m_TestNow;
+    DateTime m_TestNowAt;
+    readonly Queue<PeerLinkSelfTest.Pick> m_TestQueue = new();
+    readonly List<PeerLinkSelfTest.Outcome> m_TestDone = new();   // 只放記憶體：關掉後台再開就沒了
 
     public PeerLinkPage(SenateModel iModel) : base() { m_Model = iModel; }
 
@@ -68,6 +74,46 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
         m_ProbeAt = DateTime.Now.ToString("HH:mm:ss");
     }
 
+    /// <summary>按下按鈕：清掉上一次的結果，依序跑這幾個。文字模式每一次呼叫都是新行程 ⇒ 直接跑完再畫。</summary>
+    void StartSelfTests(params PeerLinkSelfTest.Pick[] iPicks)
+    {
+        if (m_TestJob != null) return;
+        m_TestDone.Clear();
+        m_TestQueue.Clear();
+        foreach (var p in iPicks) m_TestQueue.Enqueue(p);
+        if (!SCP_GuiHost.RedrawsContinuously)
+        {
+            while (m_TestQueue.Count > 0) m_TestDone.Add(PeerLinkSelfTest.Run(m_Model.RepoRoot, m_TestQueue.Dequeue()));
+            return;
+        }
+        NextSelfTest();
+    }
+
+    void NextSelfTest()
+    {
+        m_TestNow = m_TestQueue.Count > 0 ? m_TestQueue.Dequeue() : null;
+        if (m_TestNow == null) return;
+        m_TestNowAt = DateTime.Now;
+        PeerLinkSelfTest.Pick p = m_TestNow;
+        string aRoot = m_Model.RepoRoot;
+        m_TestJob = Task.Run(() => PeerLinkSelfTest.Run(aRoot, p));
+    }
+
+    void PumpSelfTests()
+    {
+        if (m_TestJob == null || !m_TestJob.IsCompleted) return;
+        Task<PeerLinkSelfTest.Outcome> j = m_TestJob;
+        m_TestJob = null;
+        if (j.IsCompletedSuccessfully) m_TestDone.Add(j.Result);
+        else
+        {
+            Exception e = j.Exception?.InnerException ?? (Exception?)j.Exception ?? new TaskCanceledException();
+            m_TestDone.Add(PeerLinkSelfTest.Summarize(m_TestNow!.Label, null, -1, "跑的時候出錯了：" + e.GetType().Name + ": " + e.Message,
+                                                      m_TestNowAt, DateTime.Now - m_TestNowAt));
+        }
+        NextSelfTest();
+    }
+
     void Reload()
     {
         m_Gen++;
@@ -94,7 +140,7 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
     }
 
     // 指令輸出裡的 emoji 換成文字（本頁畫不出來）
-    static string Plain(string s)
+    internal static string Plain(string s)
         => s.Replace("✓", "[好]").Replace("✗", "[不行]").Replace("⚠", "[注意]").Replace("⛔", "[不要]").Replace("📡", "").Replace("📴", "");
 
     Dictionary<string, string> Fields(SCP_Ui g, string iOp)
@@ -134,6 +180,8 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
             }
             if (m_ProbeJob == null && g.Button(m_Probe == null ? "量這台的網路" : "重新量", "peer-link/btn/probe")) StartProbe();
         }
+
+        DrawSelfTest(g);
 
         using (g.Box("這一台", "peer-link/box/config"))
         {
@@ -187,6 +235,39 @@ public sealed class PeerLinkPage : SCP_GuiToolPage
         if (m_Message != null)
             using (g.Box("上一步的結果", "peer-link/box/result"))
                 foreach (string l in m_Message.Split('\n')) g.Label(l);
+    }
+
+    /// <summary>「自我測試」：兩個淨室測試各一顆按鈕＋兩個都跑；跑完逐項列出，沒過的排最上面。</summary>
+    void DrawSelfTest(SCP_Ui g)
+    {
+        PumpSelfTests();
+        using (g.Box("自我測試（只在暫存資料夾跑，只連本機 127.0.0.1，不連 Discord、不開通道）", "peer-link/box/selftest"))
+        {
+            g.Note("背後跑的是 senate selftest --only …（另開一個子行程，不動這個後台的狀態）。結果只留在這次開著的後台裡。");
+            if (m_TestJob != null && m_TestNow != null)
+                g.Note($"測試中（{m_TestNow.Label}），已經跑了 {(int)(DateTime.Now - m_TestNowAt).TotalSeconds} 秒"
+                       + (m_TestQueue.Count > 0 ? "；跑完接著跑" + string.Join("、", m_TestQueue.Select(x => x.Label)) : ""));
+            else
+                using (g.Row())
+                {
+                    var L = PeerLinkSelfTest.Link;
+                    var T = PeerLinkSelfTest.TaskServer;
+                    if (g.Button($"跑{L.Label}（{L.Eta}）", "peer-link/btn/selftest-link")) StartSelfTests(L);
+                    if (g.Button($"跑 {T.Label}（{T.Eta}）", "peer-link/btn/selftest-task")) StartSelfTests(T);
+                    if (g.Button("兩個都跑", "peer-link/btn/selftest-both")) StartSelfTests(L, T);
+                }
+
+            foreach (PeerLinkSelfTest.Outcome o in m_TestDone)
+            {
+                g.Label((o.Ok ? "[好] " : "[不行] ") + o.Label + "：" + o.Headline);
+                foreach (string r in o.Rows) g.Label("　" + r);
+                if (o.Notes.Count > 0)
+                {
+                    g.Label("　備註：");
+                    foreach (string n in o.Notes) g.Label("　　" + n);
+                }
+            }
+        }
     }
 
     /// <summary>「服務放在哪一台」：Task Server 選哪一台；這台是 Task Server 時，允許哪些節點送 Task 指令過來。</summary>
