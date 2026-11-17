@@ -1,7 +1,7 @@
 ---
 title: Senate 文件索引
 description: 維護用文件入口 — 架構、UI 框架、建置流程、CLI 與設定規格、設計拍板紀錄。使用者導覽在 repo 根的 README.md
-last_updated: 2026-11-11
+last_updated: 2026-11-16
 target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 ---
 
@@ -21,6 +21,7 @@ target_audience: [AI_Agent, Tools_Maintainer, Backend_Programmer]
 | [Data_Layout](Architecture/Data_Layout.md) | **`SenateData/` 資料根**：三層分類判準（config / prefs / runtime）、新東西該往哪放、**路徑分兩族**（Senate 自己的檔 vs 外部動態路徑）與各自的唯一決定點、⛔ 「決定點包含值存在哪」、⛔ 改路徑必須同時做 migration |
 | [Voucher_System](Architecture/Voucher_System.md) | **券＝以 id 區分的貨幣**：檔案格式（永久 ＋ 多筆限時）、⛔ **只有 Server 能寫**、券不記歷史與它的代價、`granted` 為什麼要存、分區遷移的冪等鍵、🩸 發放端／消費端分岔那次的讀數 |
 | [Ui_Framework](Architecture/Ui_Framework.md) | UI 中間層：節點樹、撰寫 API、四種 renderer／驅動方式、**id 規則**、慢一幀的事件語意、⛔ **頁面要宿主的值一律問介面**（不自存第二份設定） |
+| [Desktop_Engine_WebUI_Proposal](Architecture/Desktop_Engine_WebUI_Proposal.md) | **桌面遊戲引擎架構規劃（提案）**：Windows／Linux 雙平台、C# 主導 ＋ Silk.NET／OpenGL ＋ 按需 `extern "C"` C++ 外掛 ＋ 離屏渲染 Web UI（模式 A，未實作） |
 
 ## Workflows — 怎麼做事
 
