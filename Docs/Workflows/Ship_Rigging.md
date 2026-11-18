@@ -1,7 +1,7 @@
 ---
 title: 造船：繩、帆、旗與它們的 meta
 description: 靜索、ratlines（橫繩組、繩梯 climb）、動索、帆（方帆、縱帆、三角帆）、預設風、帆角綁帆桁模型；帆、繩、旗給遊戲的 meta
-last_updated: 2026-10-26（從 Sculpture_Shipbuilding 拆出來，內文照搬、§ 編號照舊；Tim 2026-10-26「把造船流程的一些細節拆成獨立文件 按步驟建造到那一步才去讀取對應細節」；同日補 §9.1「帆裝三段各張哪幾面」—— 蓬特號的帆打不到）
+last_updated: 2026-11-18（補 §7／§9.1 硬骨帆／中式竹篾硬篷 `battens=<N>` 規格、貼圖對齊與落篷收帆；2026-10-26 從 Sculpture_Shipbuilding 拆出來）
 target_audience: [AI_Agent]
 related:
   - Ship_Steps.md | Ship_Steps | 造船步驟表：每一步讀哪幾份
@@ -58,6 +58,11 @@ related:
 - 數值：預設風 **4.5,−1.5,0**（4.7 m/s）、fullness 1.05（7.6 m/s ＋ 1.08 ⇒ 像降落傘）；帆布 #f2ead8。鼓度主要的旋鈕是**風**，fullness 只差幾格（kotoko 兩點的試驗表）。
 - 帆角綁帆桁模型（`model:<桅關聯>/yard-<帆桁>/earing-P`）⇒ 帆桁一轉，帆跟著走。下角綁在甲板上的（course、三角帆的 sheet）：遊戲把 sheet 長度照「帆腳跟著這面帆的帆桁轉過之後」到甲板那一端的距離放長（Blockside 30_rig_physics.js tethYard，2026-10-18）⇒ 帆桁轉很大（拋錨、大轉彎）帆腳不會被拉回原處、整片拖到甲板（持火號前帆以前偏 7.3 m，修完 1.7 m）。
   ⇒ sheet 一定要標 `kind=sheet, sail=<帆名>`（§9.1）；帆要綁在帆桁模型上（綁最多點的那根算這面帆的帆桁）。
+- **硬骨帆／中式竹篾硬篷（`meta battens=<N>`，`1..16`）**：亞洲竹筏、沙船、廣船等有水平竹骨（furling/stiffening battens）的四邊形帆，在帆的 `meta` 標 `battens=<N>`（代表上下帆桁之間有 `N` 根內竹骨、將帆面縱向分為 `P = N + 1` 格篷葉）：
+  - **搭配綁邊**：使用上下雙帆桁時照常設 `bind=0,2`（上緣 `0→1` 沿上桁、下緣 `3→2` 沿下桁），引擎會將縱向解析度 `res` 自動對齊為 `(N + 1)` 的倍數（每格篷葉 ≥ 4 細分），使第 `m` 根竹骨精準落在 `v = m / (N + 1)` 的格網上。
+  - **物理表現**：竹骨列啟用橫向剛性長弦與抱桅／繚繩垂直錨定約束（`1.0` 不鬆弛、不腰縮），縱向彎曲折角在竹骨處不跨列傳遞，使兩根竹骨之間的篷葉獨立鼓成水平肋拱摺紋（Scalloped Pleats）；遊戲內物理（Blockside `29_sailrecipe.js`／`30_rig_physics.js`）亦同歩保持竹骨剛性，且收帆（`sailSet = 0`）改為**往下落篷（Drop Furl）**——上帆桁與各道竹骨水平疊落到下帆桁上。
+  - **貼圖對齊**：若有帶橫竹條的 `textures/<name>.png`，圖片高度建議取 **`(N + 1)` 的整數倍**（如 `battens=4` 對應 5 格篷葉，取 `60×60` px），將第 `m` 道竹骨橫條畫在 `y ≈ m / (N + 1) × H`（如 `y = 11..12, 23..24, 35..36, 47..48`），像素紋路就會與物理竹骨稜線完全重合、不彎垂。
+  - ⚠ **限制**：`battens` 僅限四邊形帆（3 角帆設定會被驗證擋下）。
 
 ### 9.1 帆、繩、旗的 meta（遊戲照 meta 判斷；TASK-0539）
 
@@ -73,6 +78,7 @@ Tim 2026-10-13：「之後依 meta 判斷吧（然後需要定義好 meta）」�
 | `mast` | `fore`／`main`／`mizzen`／`bonaventure`／`bowsprit` | 掛在哪根桅（跟帆桁 meta 的 `mast`、桅關聯的 `kind=mast` 同一套；三角帆掛艏斜桅 ⇒ `bowsprit`） |
 | `sail`（帆） | `course`／`topsail`／`topgallant`／`royal`／`gaff`（縱主帆：spanker、夜隼號的 mainsail）／`staysail`／`jib` | 帆的種類 ⇒ 帆裝（W／S）的預設：收帆 ＝ topsail、jib；戰鬥帆再加 topgallant、gaff；滿帆 ＝ 全部 |
 | `set`（帆，可選） | `1`／`2`／`3` | 例外：最少在哪一段帆裝打開（1 收帆、2 戰鬥帆、3 滿帆）—— 跟種類的預設不同才寫（憲法號 fore-topmast-staysail `2`、flying-jib `3`；只有兩面帆的船要分得出段：持火號前帆 `3`、中帆 `1` ⇒ 收帆、戰鬥帆只張中帆，Tim 2026-10-18「沒有單帆狀態」） |
+| `battens`（帆，可選） | `1..16`（整數；限四邊形） | 硬骨帆／中式竹篾硬篷的水平竹骨根數（分成 `N+1` 格篷葉）：啟用橫向剛性竹骨、節間肋拱鼓風，以及遊戲內往下落篷（Drop Furl）收帆動畫 |
 | `flag`（旗；`kind=flag` 才寫） | `ensign`（國旗：船尾旗桿或後桅斜桁頂）／`pennant`（長旗：桅頂）／`jack`（艏旗：艏斜桅旗桿）／`signal`（信號旗） | 降旗時降 `ensign`；遊戲的陣營旗要換掉作品的哪一面，照這個種類找（下面「旗」） |
 | `nation`（旗；`kind=flag` 才寫） | 這面畫的是哪一國：Blockside 預設旗的 key（`gb-red`、`spain`、`france`、`dutch`、`portugal`、`ottoman`、`byzantine`…；沒有預設旗的國照寫 `usa`、`qing`、`japan`）／`none`（不是國旗：作者自己的旗、裝飾旗） | 船掛別國的旗時這面一起換（下面「旗」）；**`flag=ensign` 一定要寫**，沒寫 ⇒ 換旗時主控台喊 |
 
