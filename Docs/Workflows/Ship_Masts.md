@@ -10,6 +10,7 @@ related:
   - Ship_Guns.md | Ship_Guns | 砲 —— 一門一件子作品、擺上船退到零碰撞、固定點、砲具與砲索、缺的砲種做成通用部件
   - Ship_Turrets.md | Ship_Turrets | 迴旋砲、砲塔、裝甲子模組、砲塔層、揚弾機
   - Ship_Rigging.md | Ship_Rigging | 繩、帆、旗與它們的 meta
+  - Ship_Battens.md | Ship_Battens | 硬骨帆（中式竹篾硬篷）：battens、竹篾桿（只有造這類船才讀）
   - Ship_Magazine.md | Ship_Magazine | 彈藥庫與火藥桶
   - Ship_Render.md | Ship_Render | 模型在遊戲裡的低面數畫法（render=lathe／pole／shell／wheel）
   - Ship_Decks.md | Ship_Decks | 甲板、梯子、空艙房（給遊戲的 meta）
@@ -54,6 +55,7 @@ related:
     | `topsail`／`topgallant`／`royal`… 其他沒列在這裡的值 | 同方帆桁 | —— |
     | `gaff`／`boom` | 縱帆：繞桅往下風擺 8°–80°（`rig=lateen` 再限擺角，見上） | `boom` 上的帆綁點收帆時**跟著往上收**（不是收攏點） |
     | `signal` | 不轉、不掛帆 | 只給遊戲認桅（蒸汽船的戰鬥桅） |
+    | `batten` | 同方帆桁（跟同一面帆的上下帆桁一起轉） | 硬骨帆的實體竹篾：再標 `batten=<m>`（從上往下第幾根）⇒ 帆那一列整排綁在它上面 —— 擺法與讀數 ⇒ `Ship_Battens` |
 
     ⛔ 不要為了「收帆時往上收」把方帆的下帆桁標 `boom`：它就會照縱帆往下風擺，跟上面那根方帆桁轉的角度不一樣，帆面被扭開。
   - **上下兩根帆桁夾一面方帆**（古埃及、蓬特號這類：帆頂綁上帆桁、帆腳綁下帆桁，沒有 sheet 綁甲板）：
