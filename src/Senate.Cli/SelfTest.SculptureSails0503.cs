@@ -268,6 +268,23 @@ public static partial class SelfTest
             Check(rBig.Sails.TrueForAll(s => s.State == SCP_SculptSailReading.Ok) && rBig.Steps == 180, "二十四面帆都 ok、180 步");
             readings.Add("24 面帆×625 布點：3 秒 180 步共 " + ms3.ToString("0") + " ms（每步 " + rBig.LastStepMs.ToString("0.###") + " ms）");
 
+            // ⑧ 硬骨帆外緣弧線 roach（TASK-1321）：中段列照 roach 向兩側弦向拱出，邊 0/2 兩端仍釘在框上；壞格式擋下
+            Check(Sub("ship", "meta", ("part", "sail"), ("name", "course"), ("meta", "{\"battens\":3,\"roach\":\"0.1,0.2\"}")).ExitCode == 0, "設定 battens+roach");
+            var rRoach = Rig("ship", WindY, 0.5);
+            var cRoach = Sail(rRoach, "course");
+            Check(cRoach?.Geom?.Roach != null && cRoach.Geom.Roach.Length == 2, "roach 解析並寫進 Geom");
+            if (cRoach?.Geom != null)
+            {
+                int rrRes = cRoach.Resolution, jMid = rrRes / 2;
+                double xLeftMid = Pt(cRoach.Geom, jMid * (rrRes + 1))[0], xRightMid = Pt(cRoach.Geom, jMid * (rrRes + 1) + rrRes)[0];
+                Check(xLeftMid < 5.5 - 2.0 && xRightMid > 35.5 + 4.0, "roach 中段向兩側外拱：" + xLeftMid.ToString("0.##") + ".." + xRightMid.ToString("0.##"));
+                Check(Math.Abs(Pt(cRoach.Geom, 0)[0] - 5.5) < 1e-6 && Math.Abs(Pt(cRoach.Geom, rrRes)[0] - 35.5) < 1e-6, "roach 上緣兩角仍在耳點上");
+            }
+            var aBadRoachSail = new SCP_SculptSail { name = "bad", corners = SCP_SculptSails.ReadSails(store.SpacePaths("ship")).sails[0].corners };
+            aBadRoachSail.meta["roach"] = SCP.Core.Json.SCP_JsonData.NewString("0.9,0.1");
+            Check(SCP_SculptSails.Check(aBadRoachSail) != null, "壞 roach（超界）被 Check 擋下");
+            Check(Sub("ship", "meta", ("part", "sail"), ("name", "course"), ("meta", "{\"battens\":null,\"roach\":null}")).ExitCode == 0, "還原 course meta");
+
             return new CheckRow(name, failures.Count == 0 ? string.Join("；", readings) : string.Join("；", failures), failures.Count == 0 ? CheckResult.Pass : CheckResult.Fail);
         }
         catch (Exception e) { return new CheckRow(name, e.ToString(), CheckResult.Fail); }
