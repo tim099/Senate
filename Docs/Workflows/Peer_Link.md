@@ -151,6 +151,9 @@ senate selftest --only PeerTaskCleanRoom     # Task Server（§10）：一台主
 
 逐項讀數寫在系統暫存資料夾的 `senate-peer-selftest-last.txt`、`senate-peertask-selftest-last.txt`。它們不連 Discord、不開通道。
 
+後台「跨主機連線」頁的「自我測試」格也能跑（FAR-64），結果直接列在頁面上，沒過的排最上面。背後跑的是同一個 `selftest`：
+頁面另開一個子行程，用環境變數 `SENATE_PEER_SELFTEST_REPORT_DIR` 把逐項讀數寫到它自己的資料夾，讀完就刪。
+
 ## 9. 已知限制（第一版）
 
 - **Discord 公告與 Cloudflare 通道沒有在真的環境跑過**。自我測試驗到的是：公告代碼的產生與解讀、另一端照代碼連上、

@@ -184,6 +184,7 @@ public static partial class SelfTest
         One(nameof(DiscordPeerWebhookCleanRoom), "tavern", DiscordPeerWebhookCleanRoom),   // 同伴 webhook：本體在 SelfTest.DiscordPeer.cs
         One(nameof(PeerLinkCleanRoom), "tavern", PeerLinkCleanRoom),                       // 跨主機連線（TASK-0011）：本體在 SelfTest.PeerLink.cs
         One(nameof(PeerTaskCleanRoom), "tavern", PeerTaskCleanRoom),                       // Task 指令送到 Task Server（FAR-53）：本體在 SenatePeerTaskSelfTest.cs
+        One(nameof(PeerLinkSelfTestView), "tavern", PeerLinkSelfTestView),                 // 跨主機連線頁「自我測試」格（FAR-64）：本體在 SelfTest.PeerLinkPage.cs
         One(nameof(BankRequestRoundTrip), "bank", BankRequestRoundTrip),
         One(nameof(BankRequestSourceNotInLedgerNotice), "bank", BankRequestSourceNotInLedgerNotice),
         One(nameof(DocEditCleanRoom), "freetime", DocEditCleanRoom),
